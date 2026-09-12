@@ -36,6 +36,169 @@ function offeredAction(
   };
 }
 
+/**
+ * One bounded Active-definition list item exactly as the Operations
+ * projection advertises it, parameterized by identity so the combined
+ * Active/Draft-only page boundary can be reproduced item by item.
+ */
+function listDefinitionPayload(
+  id: string,
+  overrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const operationsRoute = `/api/v1/operations/automation/task-definitions/${id}`;
+  const automationRoute = `/api/v1/automation/task-definitions/${id}`;
+  return {
+    id,
+    name: `Automation ${id}`,
+    definitionState: "active",
+    enabled: false,
+    resourceLibraryId: "source",
+    mode: "scan-only",
+    itemLimit: 5,
+    sourceScope: null,
+    intervalSeconds: 3600,
+    activeConfiguration: {
+      revisionId: "rev-1",
+      version: 3,
+      revisionSequence: 2,
+      status: "active",
+    },
+    occurrenceState: {
+      nextRunAt: null,
+      lastOccurrenceAt: null,
+      lastJobId: null,
+      lastTaskId: null,
+      lastOutcome: null,
+      lastReason: null,
+      nextAction: null,
+      lastFailureCategory: null,
+      outcomeSummary: null,
+    },
+    unattendedExecutionGrant: {
+      status: "none",
+      active: false,
+      grantId: null,
+      definitionId: id,
+      definitionChangedSinceGrant: false,
+      nextAction: "review the exact bounds and explicitly grant",
+    },
+    draftState: {
+      present: false,
+      reason: "no open successor Draft contains this definition",
+      revisionId: null,
+      revisionVersion: null,
+      revisionStatus: null,
+      baseActiveRevisionId: null,
+      updatedAt: null,
+      validatedAt: null,
+      validationErrors: [],
+    },
+    actions: {
+      detail: {
+        available: true,
+        reason: null,
+        method: "GET",
+        path: operationsRoute,
+        requiresConfirmation: false,
+      },
+      occurrences: {
+        available: true,
+        reason: null,
+        method: "GET",
+        path: `${operationsRoute}/occurrences`,
+        requiresConfirmation: false,
+      },
+      preview: {
+        available: false,
+        reason: "not Active yet",
+        method: "POST",
+        path: `${automationRoute}/preview`,
+        requiresConfirmation: false,
+      },
+      grantState: {
+        available: true,
+        reason: null,
+        method: "GET",
+        path: `${automationRoute}/grant-state`,
+        requiresConfirmation: false,
+      },
+      grant: {
+        available: false,
+        reason: "not Active yet",
+        method: "POST",
+        path: `${automationRoute}/grant`,
+        requiresConfirmation: true,
+      },
+      revoke: {
+        available: false,
+        reason: "not Active yet",
+        method: "POST",
+        path: `${automationRoute}/revoke`,
+        requiresConfirmation: false,
+      },
+      copy: {
+        available: false,
+        reason: "an open successor Draft is required to copy this definition",
+        method: "POST",
+        path: `${automationRoute}/copy`,
+        requiresConfirmation: false,
+      },
+      draftCreate: {
+        available: true,
+        reason: null,
+        method: "POST",
+        path: "/api/v1/configuration/revisions/rev-1/successor",
+        requiresConfirmation: false,
+      },
+    },
+    ...overrides,
+  };
+}
+
+function definitionsPagePayload(
+  items: readonly unknown[],
+): Record<string, unknown> {
+  return {
+    activeConfiguration: {
+      revisionId: "rev-1",
+      version: 3,
+      revisionSequence: 2,
+      status: "active",
+    },
+    items,
+    total: 101,
+    truncated: true,
+    draftState: {
+      present: false,
+      reason: "no open successor Draft exists",
+      revisionId: null,
+      revisionVersion: null,
+      revisionStatus: null,
+      baseActiveRevisionId: null,
+      updatedAt: null,
+      validatedAt: null,
+      validationErrors: [],
+    },
+    resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
+    actions: {
+      create: {
+        available: true,
+        reason: null,
+        method: "POST",
+        path: "/api/v1/automation/task-definitions",
+        requiresConfirmation: false,
+      },
+      createDraft: {
+        available: true,
+        reason: null,
+        method: "POST",
+        path: "/api/v1/configuration/revisions/rev-1/successor",
+        requiresConfirmation: false,
+      },
+    },
+  };
+}
+
 describe("normalizeAutomationAction transport binding", () => {
   it("binds the grant action to the exact definition route and confirmation", () => {
     const model = normalizeAutomationAction(
@@ -510,6 +673,37 @@ describe("normalizeAutomationDefinitionsPage", () => {
       normalizeAutomationDefinitionsPage({
         ...({ items: "many" } as unknown as Record<string, unknown>),
       }),
+    ).toThrow(AutomationNormalizationError);
+  });
+
+  it("accepts the combined 100-Active + 1-Draft-only boundary page", () => {
+    // The backend caps the combined Active + Draft-only page at exactly 100
+    // items and reports the truthful total/truncated semantics when a
+    // Draft-only definition is dropped beyond the deterministic limit —
+    // precisely the page this normalizer must accept.
+    const items = Array.from({ length: 100 }, (_unused, index) =>
+      listDefinitionPayload(
+        index === 99 ? "draft-only-task" : `task-${index}`,
+        {
+          definitionState: index === 99 ? "draft-only" : "active",
+        },
+      ),
+    );
+    const page = normalizeAutomationDefinitionsPage(
+      definitionsPagePayload(items),
+    );
+    expect(page.items).toHaveLength(100);
+    expect(page.total).toBe(101);
+    expect(page.truncated).toBe(true);
+    expect(page.items[99]?.definitionState).toBe("draft-only");
+  });
+
+  it("fails closed when the combined page exceeds the deterministic limit", () => {
+    const items = Array.from({ length: 101 }, (_unused, index) =>
+      listDefinitionPayload(`task-${index}`),
+    );
+    expect(() =>
+      normalizeAutomationDefinitionsPage(definitionsPagePayload(items)),
     ).toThrow(AutomationNormalizationError);
   });
 

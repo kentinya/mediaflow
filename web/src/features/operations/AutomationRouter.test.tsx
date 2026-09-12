@@ -628,6 +628,30 @@ describe("V2 Automation journey", () => {
     ).toBeVisible();
   });
 
+  it("renders the truthful combined-page bound when the list is truncated", async () => {
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/automation/task-definitions") {
+        return jsonResponse(
+          listDocument({
+            items: [definitionDocument(), draftOnlyDefinitionDocument()],
+            total: 3,
+            truncated: true,
+          }),
+        );
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/automation");
+
+    await screen.findByRole("heading", { name: "Automation" });
+    // The bounded list says exactly what it shows and what it excludes.
+    expect(
+      screen.getByText(/Showing the first 2 of 3 definitions/),
+    ).toBeVisible();
+    expect(screen.getByText(/Created automation/)).toBeVisible();
+  });
+
   it("renders no create entry when the backend withholds the action", async () => {
     const page = listDocument();
     (page["actions"] as Json)["create"] = action({
