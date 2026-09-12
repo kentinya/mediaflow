@@ -129,6 +129,66 @@ function previewExecuteAction(): Json {
   };
 }
 
+/**
+ * The exact failed-execution document the real backend publishes for a terminal
+ * failure: the aggregate and per-item bounded evidence plus the recovery
+ * handoff the backend offers without any transport (available, no method, no
+ * route, no reason), exactly as `_organize_execution_document()` emits it.
+ */
+function failedExecutionDocument(): Json {
+  const value = executionDocument();
+  value["status"] = "failed";
+  value["durableState"] = "terminal_failure";
+  value["nextAction"] =
+    "inspect each failed item, repair the cause and request a fresh Preview; " +
+    "uncertain effects are never replayed automatically";
+  value["failedItemCount"] = 1;
+  value["completedItemCount"] = 0;
+  value["failure"] = {
+    category: "destination_collision",
+    durableState: "TaskItem and Result are durable with a failed outcome",
+    message: "destination collision: the configured destination already exists",
+    nextAction:
+      "inspect the destination and resolve the collision before explicitly retrying this item",
+    retrySafe: false,
+    sideEffects: "none",
+  };
+  value["knownEffects"] = {
+    failedWithoutEffectCount: 1,
+    statement:
+      "one or more items require investigation; MediaFlow never replays an " +
+      "uncertain mutation automatically",
+    uncertainItemCount: 0,
+    verifiedItemCount: 0,
+  };
+  const item = (value["items"] as Json[])[0];
+  item["status"] = "failed";
+  item["stage"] = "failed";
+  item["effectCertainty"] = "none";
+  item["completedOperations"] = [];
+  item["uncertainEffects"] = [];
+  item["effects"] = [];
+  item["failure"] = {
+    category: "destination_collision",
+    durableState: "TaskItem and Result are durable with a failed outcome",
+    message: "destination collision: the configured destination already exists",
+    nextAction:
+      "inspect the destination and resolve the collision before explicitly retrying this item",
+    retrySafe: false,
+    sideEffects: "none",
+  };
+  item["nextAction"] =
+    "inspect the pre-mutation failure, repair it, then request a fresh Preview";
+  const actions = value["actions"] as Json;
+  (actions["detail"] as Json)["nextAction"] = value["nextAction"];
+  const recovery = actions["recovery"] as Json;
+  recovery["available"] = true;
+  recovery["reason"] = null;
+  recovery["method"] = null;
+  recovery["path"] = null;
+  return value;
+}
+
 describe("V2 manual Organize journey", () => {
   it("renders the durable intent, saves one optimistic choice edit and creates the exact Preview", async () => {
     const user = userEvent.setup();
@@ -519,8 +579,11 @@ describe("V2 manual Organize journey", () => {
 
   it("renders no Execute control when the execute action names another route or method", async () => {
     // The Execute control is rendered only from the mutating POST route of
-    // this exact Preview. A contradictory transport — a safe method or a route
-    // belonging to another object — is malformed, never an executable control.
+    // this exact Preview. A contradictory transport — a safe method, a route
+    // belonging to another object, or a same-object route that is not exactly
+    // this Preview's POST /execute route (the read route itself, an arbitrary
+    // descendant or a wrong fixed suffix) — is malformed, never an executable
+    // control.
     const wrongTransports: readonly Json[] = [
       { ...previewExecuteAction(), method: "GET" },
       {
@@ -530,6 +593,23 @@ describe("V2 manual Organize journey", () => {
       {
         ...previewExecuteAction(),
         path: "/api/v1/operations/tasks/task-1",
+      },
+      {
+        // The Preview's own read route without the /execute suffix is never
+        // the mutating transport, even with the right method.
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/organize/previews/preview-1",
+      },
+      {
+        // An arbitrary descendant of the owned route is not the exact
+        // published Execute route either.
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/organize/previews/preview-1/execute/extra",
+      },
+      {
+        // A same-object route with a wrong fixed suffix is malformed too.
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/organize/previews/preview-1/executes",
       },
     ];
     for (const transport of wrongTransports) {
@@ -556,5 +636,39 @@ describe("V2 manual Organize journey", () => {
       cleanup();
       authStore.clearToken();
     }
+  });
+
+  it("renders a real failed execution with its per-item evidence and the non-transport recovery handoff", async () => {
+    // A terminal failure is durable, truthful evidence, never a malformed
+    // read: the failed item, its bounded finding and the recovery handoff the
+    // backend offers without any transport must all render, and nothing may
+    // replay or submit the uncertain work.
+    const document = failedExecutionDocument();
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/executions/execution-1") {
+        return jsonResponse(document);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/execution/execution-1");
+
+    await screen.findByRole("heading", { name: "Manual organize execution" });
+    const rendered = (await screen.findByRole("main")).textContent ?? "";
+    expect(rendered).not.toMatch(/could not be understood as the expected/);
+    // The per-item evidence is rendered, not swallowed by a malformed state:
+    // the bounded finding appears on the execution and on the failed item.
+    expect(screen.getAllByText(/destination collision:/)).toHaveLength(2);
+    expect(
+      screen.getByText(
+        /inspect the pre-mutation failure, repair it, then request a fresh Preview/,
+      ),
+    ).toBeVisible();
+    // The safe Slice 34 destination is offered exactly once as a handoff.
+    expect(
+      screen.getByRole("link", { name: "Open Review & Recovery" }),
+    ).toBeVisible();
+    // Recovery is a destination, not a mutation: nothing was ever submitted.
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 });
