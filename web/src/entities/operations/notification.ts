@@ -52,6 +52,25 @@ export type NotificationDeliveryStatus =
 export const NOTIFICATION_OPEN_DRAFT_STATUSES = ["draft", "validated"] as const;
 
 /**
+ * Definition and delivery identities travel in exact route segments: a strict
+ * URI-safe value is part of the contract, and anything else (paths, spaces,
+ * percent-encoding) is malformed evidence rather than a coercible identity.
+ */
+export const NOTIFICATION_URI_SAFE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+function uriSafeSegment(
+  source: Record<string, unknown>,
+  field: string,
+  maxLength: number,
+): string {
+  const value = text(source, field, maxLength);
+  if (!NOTIFICATION_URI_SAFE_SEGMENT.test(value)) {
+    return fail(field);
+  }
+  return value;
+}
+
+/**
  * Where the definition durably lives: in the immutable Active configuration,
  * or only inside an open successor Draft (newly created or copied). A
  * document without this exact state marker is malformed so no Draft can ever
@@ -537,7 +556,7 @@ export function normalizeWebhookDefinitionDocument(
     return fail(`${field}.secretReadiness`);
   }
   return {
-    id: text(source, "id"),
+    id: uriSafeSegment(source, "id", 64),
     url: text(source, "url", 2048),
     secretEnv: text(source, "secretEnv", 128),
     events: rawEvents.map((item, index) =>
@@ -751,7 +770,7 @@ export function normalizeNotificationDraftDocument(
   payload: unknown,
 ): NotificationDraftDocumentModel {
   const source = readRecord(payload, "notification_definition_draft");
-  const webhookId = text(source, "webhookId");
+  const webhookId = uriSafeSegment(source, "webhookId", 64);
   const activeConfiguration = normalizeNotificationActiveConfiguration(
     source["activeConfiguration"],
   );
@@ -850,8 +869,16 @@ export interface WebhookTestResultModel {
   readonly nextAction: string;
 }
 
+/** The exact mutation identity a success document must answer for. */
+export interface WebhookTestRequestBinding {
+  readonly webhookId: string;
+  readonly revisionId: string;
+  readonly version: number;
+}
+
 export function normalizeWebhookTestResult(
   payload: unknown,
+  requested: WebhookTestRequestBinding,
 ): WebhookTestResultModel {
   const source = readRecord(payload, "webhook_test_result");
   const revision = readRecord(source["revision"], "revision");
@@ -875,9 +902,9 @@ export function normalizeWebhookTestResult(
   ) {
     return fail("responseStatus");
   }
-  return {
+  const model = {
     testId: optionalText(source, "testId", 128),
-    webhookId: text(webhook, "id", 64),
+    webhookId: uriSafeSegment(webhook, "id", 64),
     revisionId: text(revision, "revisionId", 128),
     revisionVersion: count(revision, "version"),
     revisionStatus: text(revision, "status", 32),
@@ -889,6 +916,16 @@ export function normalizeWebhookTestResult(
     retrySafe: flag(source, "retrySafe"),
     nextAction: text(source, "nextAction", 512),
   };
+  if (
+    model.webhookId !== requested.webhookId ||
+    model.revisionId !== requested.revisionId ||
+    model.revisionVersion !== requested.version
+  ) {
+    // A response about another Webhook or another revision never renders as
+    // the outcome of this explicit test.
+    return fail("webhook");
+  }
+  return model;
 }
 
 export interface NotificationActivationModel {
@@ -899,12 +936,19 @@ export interface NotificationActivationModel {
   readonly webhook: WebhookDefinitionDocumentModel | null;
 }
 
+export interface NotificationActivationRequestBinding {
+  readonly webhookId: string;
+  readonly revisionId: string;
+  readonly version: number;
+}
+
 export function normalizeNotificationActivation(
   payload: unknown,
+  requested: NotificationActivationRequestBinding,
 ): NotificationActivationModel {
   const source = readRecord(payload, "notification_activation");
   const rawWebhook = optionalRecord(source["webhook"], "webhook");
-  return {
+  const model = {
     activatedRevisionId: text(source, "activatedRevisionId", 128),
     activatedVersion: count(source, "activatedVersion"),
     revisionSequence: count(source, "revisionSequence"),
@@ -916,6 +960,20 @@ export function normalizeNotificationActivation(
         ? null
         : normalizeWebhookDefinitionDocument(rawWebhook, "webhook"),
   };
+  if (
+    model.webhook === null ||
+    model.webhook.id !== requested.webhookId ||
+    text(source, "publishedFromRevisionId", 128) !== requested.revisionId ||
+    count(source, "publishedFromVersion") !== requested.version ||
+    model.activeConfiguration === null ||
+    model.activeConfiguration.revisionId !== model.activatedRevisionId ||
+    model.activeConfiguration.version !== model.activatedVersion
+  ) {
+    // A success document about another Webhook, another reviewed revision or
+    // an inconsistent Active identity never renders as this activation.
+    return fail("webhook");
+  }
+  return model;
 }
 
 /** One durable delivery row as the bounded list/detail operator model. */
@@ -959,9 +1017,9 @@ function normalizeDeliveryIdentity(
     return fail(`${field}.responseStatus`);
   }
   return {
-    deliveryId: text(source, "deliveryId", 128),
-    webhookId: text(source, "webhookId", 64),
-    eventId: text(source, "eventId", 128),
+    deliveryId: uriSafeSegment(source, "deliveryId", 64),
+    webhookId: uriSafeSegment(source, "webhookId", 64),
+    eventId: uriSafeSegment(source, "eventId", 128),
     eventType: enumOrFail(
       source["eventType"],
       `${field}.eventType`,
@@ -1104,6 +1162,12 @@ export function normalizeNotificationDeliveryDetail(
 ): NotificationDeliveryDetailModel {
   const source = readRecord(payload, "notification_delivery_detail");
   const delivery = normalizeDeliveryIdentity(source, "delivery");
+  const lease = normalizeDeliveryLease(source["lease"], "lease");
+  if ((delivery.status === "delivering") !== (lease.state !== "not_leased")) {
+    // A lease window only exists for an in-progress delivery: a lease state
+    // inconsistent with the durable status is contradictory evidence.
+    return fail("lease.state");
+  }
   const recovery = readRecord(source["recovery"], "recovery");
   const rawAvailable = recovery["availableActions"];
   if (!Array.isArray(rawAvailable) || rawAvailable.length > 2) {
@@ -1116,6 +1180,20 @@ export function normalizeNotificationDeliveryDetail(
       DELIVERY_RECOVERY_ACTIONS,
     ),
   );
+  if (
+    availableActions.includes("requeue-dead-letter") &&
+    delivery.status !== "dead-letter"
+  ) {
+    // Only a terminal dead-letter delivery is ever eligible for a requeue.
+    return fail("recovery.availableActions");
+  }
+  if (
+    availableActions.includes("resolve-stale") &&
+    (delivery.status !== "delivering" || lease.state !== "expired")
+  ) {
+    // Only an expired in-progress lease is ever eligible for stale resolution.
+    return fail("recovery.availableActions");
+  }
   const rawEvidence = recovery["actions"];
   if (
     rawEvidence !== null &&
@@ -1126,6 +1204,16 @@ export function normalizeNotificationDeliveryDetail(
   }
   if (Array.isArray(rawEvidence) && rawEvidence.length > 2) {
     return fail("recovery.actions");
+  }
+  const evidence = (rawEvidence ?? []).map((item, index) =>
+    normalizeRecoveryEvidence(item, `recovery.actions[${index}]`),
+  );
+  for (const item of evidence) {
+    if (!availableActions.includes(item.name)) {
+      // Recovery evidence without the backend's eligibility advertisement is
+      // a contradictory document: no control may be rendered from it.
+      return fail("recovery.actions");
+    }
   }
   const actions = optionalRecord(source["actions"], "actions");
   const requeueAction =
@@ -1166,16 +1254,14 @@ export function normalizeNotificationDeliveryDetail(
   }
   return {
     delivery,
-    lease: normalizeDeliveryLease(source["lease"], "lease"),
+    lease,
     knownEffects: text(source, "knownEffects", 512),
     retrySafe: flag(source, "retrySafe"),
     nextAction: text(source, "nextAction", 512),
     recovery: {
       availableActions,
       reason: text(recovery, "reason", 256),
-      evidence: (rawEvidence ?? []).map((item, index) =>
-        normalizeRecoveryEvidence(item, `recovery.actions[${index}]`),
-      ),
+      evidence,
     },
     actions: { requeue: requeueAction, resolveStale: resolveStaleAction },
   };
@@ -1193,18 +1279,25 @@ export interface NotificationRecoveryResultModel {
   readonly nextAction: string;
 }
 
+export interface NotificationRecoveryRequestBinding {
+  readonly deliveryId: string;
+  readonly action: (typeof DELIVERY_RECOVERY_ACTIONS)[number];
+  readonly previousStatus: NotificationDeliveryStatus;
+}
+
 export function normalizeNotificationRecoveryResult(
   payload: unknown,
+  requested: NotificationRecoveryRequestBinding,
 ): NotificationRecoveryResultModel {
   const source = readRecord(payload, "notification_recovery_result");
   const action = text(source, "action", 64);
   if (!(DELIVERY_RECOVERY_ACTIONS as readonly string[]).includes(action)) {
     return fail("action");
   }
-  return {
+  const model = {
     action: action as (typeof DELIVERY_RECOVERY_ACTIONS)[number],
     outcome: text(source, "outcome", 32),
-    deliveryId: text(source, "deliveryId", 128),
+    deliveryId: uriSafeSegment(source, "deliveryId", 64),
     previousStatus: enumOrFail(
       source["previousStatus"],
       "previousStatus",
@@ -1220,4 +1313,18 @@ export function normalizeNotificationRecoveryResult(
     atLeastOnce: text(source, "atLeastOnce", 384),
     nextAction: text(source, "nextAction", 384),
   };
+  if (
+    model.deliveryId !== requested.deliveryId ||
+    model.action !== requested.action ||
+    model.previousStatus !== requested.previousStatus ||
+    model.status !== "pending" ||
+    (model.action === "requeue-dead-letter" &&
+      model.previousStatus !== "dead-letter") ||
+    (model.action === "resolve-stale" && model.previousStatus !== "delivering")
+  ) {
+    // A result about another delivery, another action or an impossible
+    // transition never renders as the outcome of this recovery.
+    return fail("deliveryId");
+  }
+  return model;
 }

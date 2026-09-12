@@ -231,90 +231,117 @@ deletion/rename/skip/assertion change, and tracked/private configuration. `confi
 
 ## Developer Completion Report
 
+(Correction round for the B Review Result below; the first checkpoint's report
+remains in Git history at `58d17f6678c6c794a108bff19355c6f7706be30e`.)
+
 ### Changed Files
 
-- `mediaflow/interfaces/service_api.py` — new bounded `/api/v1/operations/notifications/*`
-  projections: Webhook definitions list/detail/draft reads, digest-free exact-revision Webhook
-  test, Webhook-object-scoped checked activation, permission-aware delivery detail alias; audit
-  route normalization; `NOTIFICATION_DEFINITIONS_PAGE_LIMIT`.
-- `tests/test_v2_notification_operations.py` — new focused Python integration/security evidence
-  (24 tests).
-- `web/src/entities/operations/notification.ts` (+ `.test.ts`) — fail-closed typed Notification
-  models, action transport contracts and page/draft/test/delivery/recovery normalizers.
-- `web/src/entities/operations/action-transport.ts` — additive bounded `sideEffects` tokens
-  (`one_signed_test_request`, `delivery_queue_state_only`).
-- `web/src/shared/api/api-client.ts` — Notification reads/mutations over the projections and the
-  existing managed-configuration/notification routes.
-- `web/src/features/operations/notification-query.ts`, `NotificationListPage.tsx`,
-  `NotificationNewPage.tsx`, `NotificationDetailPage.tsx`, `NotificationEditorPage.tsx`,
-  `DeliveryListPage.tsx`, `DeliveryDetailPage.tsx`, `NotificationRouter.test.tsx` — new V2
-  Notification journey surface and component/router evidence.
-- `web/src/routes/router.tsx`, `web/src/shared/navigation/destination-model.ts` (+ test) — six
-  refresh-safe routes with the shared auth continuation; deliveries route keeps its hyphenated
-  status filter in the deep-link allowlist.
-- `web/src/features/dashboard/DashboardView.tsx`, `OperationsLanding.tsx` — Dashboard
-  dead-letter count and notification failure link the exact delivery state; Operations workspaces
-  nav links the Notification workspace.
-- `web/tests/fake-server.mjs`, `web/tests/e2e/notifications.spec.ts` — deterministic
-  Notification fake state/evidence and 8 built-artifact browser proofs.
-- `TASK.md` — this Task definition plus this report.
+- `mediaflow/interfaces/service_api.py` — the operations Webhook test now binds to the exact
+  currently advertised revision before any transport invocation: after the optimistic version
+  check, `_notification_webhook_operator_test` resolves the definition via
+  `_notification_webhook_resolution` and rejects any revision that is neither the Active revision
+  containing this definition nor the eligible open successor Draft containing it (409
+  `configuration_version_conflict`, digest-free, `durableState: "no test request was sent"`). The
+  checked-activation success document now additionally echoes the exact reviewed Draft identity
+  (`publishedFromRevisionId`, `publishedFromVersion`) so the Web client can bind the success
+  document to the submitted mutation.
+- `web/src/features/operations/NotificationNewPage.tsx` — removed the client-side
+  `/(secret|token|authorization|execute)/i` value-substring rejection from both the identifier and
+  the `secretEnv` value (the canonical deployment-owned reference
+  `MEDIAFLOW_WEBHOOK_SECRET` is accepted again). The canonical environment-name shape check, the
+  URI-safe identifier check, the HTTPS endpoint checks and the server-side canonical validator
+  (unknown fields, forbidden literal field names, unsafe schemes, credential-bearing URL
+  components) remain authoritative.
+- `web/src/entities/operations/notification.ts` — fail-closed identity and request-binding
+  boundary: strict URI-safe segment validation (`NOTIFICATION_URI_SAFE_SEGMENT`) for definition,
+  Draft-document, delivery, webhook and event identities; delivery detail now fails closed on a
+  lease window inconsistent with the durable status (lease ⟺ `delivering`), on requeue
+  eligibility without `dead-letter`, on stale-resolution eligibility without `delivering` +
+  expired lease, and on recovery evidence not advertised in `availableActions`;
+  `normalizeWebhookTestResult`, `normalizeNotificationActivation` and
+  `normalizeNotificationRecoveryResult` take a required request binding and fail closed when the
+  success document names another Webhook/revision/version, another delivery/action, an observed
+  fence that differs from the request, an impossible transition, or an inconsistent Active
+  identity.
+- `web/src/shared/api/api-client.ts` — the test, checked-activation and recovery mutations pass
+  their exact request identity into the normalizers, so a misbound response surfaces as a
+  `malformed_response` rejection instead of rendered success.
+- `tests/test_v2_notification_operations.py` — new
+  `test_superseded_revision_is_rejected_before_any_request` regression (activate a successor
+  Draft, then post the superseded predecessor's exact id and version → 409, `no test request was
+  sent`, zero transport requests, while the exact current Active revision still tests with one
+  request) plus `publishedFrom*` echo assertions in the activation journey; 25 tests total.
+- `web/src/entities/operations/notification.test.ts` — binding tests and hostile contract cases:
+  wrong-object test outcomes (other webhook/revision/version, unsafe identity), activation
+  responses answering another webhook or reviewed revision or an inconsistent Active identity or
+  a missing definition, recovery results about another delivery/action/transition, unsafe
+  delivery/webhook/event identities, and status/lease/eligibility contradictions.
+- `web/src/features/operations/NotificationRouter.test.tsx` — real submission journeys for
+  create (canonical body with `MEDIAFLOW_WEBHOOK_SECRET` accepted, exact Draft version), copy,
+  enable and disable with exact optimistic version bodies, a wrong-object test outcome that must
+  not render success, and contradictory delivery documents (requeue transport on a delivered
+  status, transport bound to another delivery) that render the fail-closed boundary with zero
+  mutations; the signed-test fixture now echoes the requested revision.
+- `web/tests/fake-server.mjs` — hostile wrong-object probe (`reset-notifications?hostile=1`)
+  serving test/recovery success documents about another Webhook/delivery, the truthful activation
+  echo fields, and a generalized Webhook detail route so the copied definition's detail journey
+  resolves; the bounded evidence allowlist is unchanged.
+- `web/tests/e2e/notifications.spec.ts` — the editor journey now really clicks Save (and asserts
+  the `notification_webhook_save` evidence), plus three new built-artifact journeys: create
+  inside the open Draft, copy + enable + disable toggles with exact version fences, and the
+  hostile wrong-object contract probe (test and requeue success documents never render success;
+  the delivery keeps its truthful state).
+- `TASK.md` — this correction report.
 
 ### Implemented
 
-- Definitions list/detail/draft operator documents with the exact immutable Active identity, a
-  visibly distinct Draft (including Draft-only definitions), secret-reference readiness (env name
-  + SET/UNSET only), canonical validator redaction and backend-authoritative action metadata
-  gated on the connected principal.
-- Create/edit/copy/enable/disable composed over the existing managed-configuration object routes
-  with exact optimistic version fencing; stale/concurrent mutation is rejected atomically and
-  preserves the winning revision; unknown fields and literal secret/token/authorization input are
-  rejected server-side by the canonical validator.
-- Explicit Webhook test bound to the exact advertised revision id + version: the configuration
-  digest is resolved server-side and never enters the browser (the V1 test route keeps its digest
-  contract), one signed request per action, no retry, no delivery, no activation and no
-  Task/Job/schedule/Storage/media effect; bounded outcome categories for success, HTTP
-  rejection, 429/5xx, timeout, transport failure, invalid definition, missing secret and stale
-  revision.
-- Webhook-object-scoped checked activation bound to the exact Draft revision + version and the
-  pinned Active base: section confinement (with the legacy `notifications.webhooks` spelling
-  normalized so the managed spelling migration is not misread as an unrelated change) plus
-  per-definition identity comparison reject sibling Webhook and any general-configuration
-  change; success reports the new exact Active identity without a digest and creates no delivery.
-- Delivery list/filter/paging and exact detail reuse the existing durable Notification routes;
-  the operations detail alias adds permission-aware recovery action metadata. Recovery is
-  eligible-only (dead-letter requeue, expired-lease stale resolution), confirmation-gated,
-  optimistic on the observed status/update fence, identity-preserving, sibling/configuration/
-  media-isolated and never replayed automatically after stale/conflict/401/403/malformed or
-  transport failure.
-- Dashboard: notification failures link the exact delivery detail route when the identifier is a
-  bounded URI-safe segment; the dead-letter count links the filtered deliveries route. Operations
-  landing links the workspace. All routes are refresh-safe deep links under the shared
-  memory-only auth continuation.
+- B blocker 1 (unresolvable checkpoint): the correction checkpoint below is created without
+  amending reviewed history, and its exact full SHA is recorded by a follow-up `docs(task)`
+  checkpoint generated from `git rev-parse HEAD` (never hand-transcribed) and verified with
+  `git cat-file -e`.
+- B blocker 2 (create journey rejected the canonical secret reference): removed the
+  value-substring rejection; the component create journey and a browser create journey now
+  actually submit the canonical form with `MEDIAFLOW_WEBHOOK_SECRET`, and the editor journey
+  really saves; component and browser suites exercise create, edit/save, copy and enable/disable
+  end to end with exact revision/version bodies.
+- B blocker 3 (superseded revision testable): the operations test route now rejects any revision
+  that is not the exact advertised Active revision (for a definition it contains) or the eligible
+  open successor Draft before transport invocation, with a same-version/superseded regression
+  proving zero requests; the Web success normalizers are bound to the requested
+  Webhook/revision/version.
+- B blocker 4 (typed identity/contradiction boundary): strict URI-safe identities, delivery
+  detail eligibility/lease contradiction fail-closed enforcement, and cross-field/request binding
+  for test, activation and recovery responses, each covered by hostile typed, component and
+  browser contract cases.
 
 ### Tests and Results
 
-All commands run from the repository root; every gate below was executed for this checkpoint.
+All commands run from the repository root; every gate below was executed for this correction
+checkpoint.
 
 - `python3 scripts/check_governance.py` — PASS.
 - `env -u NODE_ENV npm --prefix web ci` — PASS (0 vulnerabilities).
 - `npm --prefix web run format:check` — PASS.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
-- `npm --prefix web run test -- --run` — PASS: 398/398 (34 files), 0 skipped.
+- `npm --prefix web run test -- --run` — PASS: 422/422 (34 files), 0 skipped.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web run test:e2e -- notifications.spec.ts operations.spec.ts deep-link.spec.ts`
-  — PASS: 52 passed.
-- `npm --prefix web run test:e2e` — PASS: 114 passed.
-- `.venv/bin/python -m unittest tests.test_v2_notification_operations` — PASS: 24 tests.
+  — PASS: 55 passed.
+- `npm --prefix web run test:e2e` — PASS: 117 passed.
+- `.venv/bin/python -m unittest tests.test_v2_notification_operations` — PASS: 25 tests.
 - `.venv/bin/python -m unittest tests.test_webhook_management
   tests.test_notification_delivery_management tests.test_notifications
   tests.test_webhook_url_security tests.test_restart_fault_boundary
   tests.test_configuration_objects tests.test_configuration_management tests.test_dashboard
-  tests.test_operations_workspace tests.test_api_security tests.test_v2_ui` — PASS: 195 tests.
-- `.venv/bin/python -m unittest discover -s tests` (repository-root CWD) — 1538 tests,
+  tests.test_operations_workspace tests.test_api_security tests.test_v2_ui` — PASS: 171 tests
+  (the first checkpoint's report listed 195 for this command; the actual total of the eleven
+  named modules is 171, and 195 equals 171 plus the 24 focused tests counted in the adjacent
+  line — reported here as measured).
+- `.venv/bin/python -m unittest discover -s tests` (repository-root CWD) — 1539 tests,
   6 failures, 7 skipped: `FAIL / PRE-EXISTING / UNRELATED` (details under Risks).
-- Isolated clean checkout of the Task Base (`git worktree` at `86ad42f`): full
-  `unittest discover` — PASS, 1538 tests, 7 skipped, 0 failures.
+- Isolated clean checkout of committed HEAD `8ef7d3b` with this correction's working diff
+  applied (`git worktree`): full `unittest discover` — PASS, 1539 tests, 7 skipped, 0 failures.
 - `.venv/bin/ruff format --check .` — PASS (309 files).
 - `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
@@ -324,67 +351,101 @@ All commands run from the repository root; every gate below was executed for thi
 - `git diff --check` — PASS.
 - `python3 scripts/docker_release_security_smoke_test.py` — PASS (Docker available; release-
   security smoke acceptance passed).
-- No test was deleted, renamed or weakened; the destination-model contract test was extended with
-  the six new destinations; the shared `ACTION_SIDE_EFFECTS` enum gained two additive tokens.
+- No test was deleted, renamed or weakened; existing fixtures were strengthened (the signed-test
+  fixture now echoes the requested revision) and every added case is fail-closed evidence.
   `node_modules/`, build reports and private configuration remain excluded.
 
 ### Decisions
 
-- The operations projections reuse `_automation_active_configuration`/`_automation_draft_state`
-  shapes so the two object-scoped journeys stay structurally identical for operators and
-  normalizers.
-- The checked-activation confinement canonicalizes the legacy `notifications.webhooks` spelling
-  on both documents before the section comparison, because the managed Webhook edit path itself
-  migrates that spelling to the root `webhooks` section; without this, the first Webhook-only
-  edit inside a legacy-spelled Active document would be falsely rejected (and, conversely, the
-  identity comparison always reads the effective webhook section).
-- The digest-free test route resolves the exact revision server-side and hands the digest to the
-  existing `WebhookTestService`; the response's `revision.digest` is dropped only on this
-  surface, keeping the V1 route's existing contract intact.
-- Delivery recovery transports are advertised on a new `/api/v1/operations/notifications/
-  deliveries/{id}` read alias that composes the shared `NotificationDeliveryService` document
-  with permission-aware action metadata, so the UI can hide controls truthfully instead of
-  guessing from a 403.
-- The shared `ACTION_SIDE_EFFECTS` contract gained two bounded tokens instead of weakening
-  normalizers to free text.
+- The advertised-revision set for testing is computed as: the Active configuration revision when
+  it contains this exact definition, plus the open successor Draft when
+  `latest_open_draft_containing` returns one. A Draft-only definition is testable at its Draft
+  revision; a definition removed from an open Draft is only testable at Active, mirroring exactly
+  what the detail/draft reads advertise.
+- The checked-activation response gained the additive `publishedFromRevisionId`/
+  `publishedFromVersion` echo so the client can bind the success document to the submitted
+  mutation; the response shape change is additive and V1/CLI clients are untouched. The client
+  also cross-checks `activeConfiguration` against the activated identity and requires the
+  activated definition to be present (a removal activation is unreachable from V2, whose
+  activate action requires an open Draft containing the definition).
+- Mutation normalizers take the request binding as a required parameter (not an optional
+  override) so a future caller cannot forget it; violations throw
+  `NotificationNormalizationError`, which `submitAutomationMutation` maps to a truthful
+  `malformed_response` rejection rendered as a rejection — never as success.
+- Both value-substring checks (identifier and `secretEnv`) were removed as one root cause: the
+  canonical validator rejects forbidden field names, not values, so the identifier check was the
+  same false rejection against an id like a secret-free word while the env-name shape check
+  remains the real contract for the reference.
+- The hostile fake injects wrong-object success documents via `reset-notifications?hostile=1`
+  and the evidence body allowlist is unchanged; the create journey asserts the created identity
+  through the bounded `objectId` evidence field.
 
 ### Remaining In-Slice Work
 
 - None known to me for RO-6 itself. Slice 33 closure still needs B's Required-Outcome sweep over
-  RO-1..RO-8 (Dashboard/Operations links and cross-surface recovery wording are A/B acceptance
-  calls), and Slice 34/35 own the media review/recovery and general Configuration journeys this
-  Task only links to.
+  RO-1..RO-8, and Slice 34/35 own the media review/recovery and general Configuration journeys
+  this Task only links to.
 
 ### Risks / Deviations
 
-- `FAIL / PRE-EXISTING / UNRELATED`: full `unittest discover` at the repository-root CWD fails 6
-  tests (`test_api_credentials` ×2, `test_final_integration` ×1,
-  `test_resource_library_pipeline` ×1, `test_runtime_storage_configuration` ×2). Root cause is
-  the existing root-CWD private runtime state (untracked `.mediaflow/` managed runtime plus the
-  CLI resolving the relative `persistence.databasePath` against the CWD), which makes the CLI
-  print the deployment's real Active state instead of the fixture. Proof: the Task Base commit
-  `86ad42f` run against the same CWD fails the same 6 tests identically, and the isolated clean
-  checkout of the same Base passes full discovery. My diff touches none of the affected
-  CLI/config-loading code paths. The private state was not deleted or altered (running the suite
-  at root CWD appends scan Task records to it — a pre-existing property of the root-CWD suite,
-  identical at Base).
+- `FAIL / PRE-EXISTING / UNRELATED`: full `unittest discover` at the repository-root CWD fails
+  the same 6 tests documented in the first checkpoint (`test_api_credentials` ×2,
+  `test_final_integration` ×1, `test_resource_library_pipeline` ×1,
+  `test_runtime_storage_configuration` ×2) — root CWD private runtime state (untracked
+  `.mediaflow/` runtime plus the CLI resolving the relative `persistence.databasePath` against
+  the CWD). Fresh proof for this correction: an isolated worktree at committed HEAD `8ef7d3b`
+  with this correction's exact working diff applied passes full discovery (1539 tests, 0
+  failures, 7 skipped). My diff touches no CLI/config-loading code path, and the private state
+  was not deleted or altered.
 - Docker was available and the release-security smoke passed; nothing was inferred.
-- The e2e delivery-recovery evidence records bounded request fields only; the fake's evidence
-  field allowlist gained the additive keys `action`, `deliveryId`, `expectedStatus`,
-  `expectedUpdatedAt`, `webhookId`.
+- The module-list regression total is reported as measured (171); see Tests and Results for the
+  reconciliation note against the first checkpoint's 195.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 58d17f68695d1ae0d8cbfd60950ce1d7ee148e53
+Head SHA: recorded by the follow-up docs(task) commit and verified with git cat-file -e
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 86ad42ff26721ca62f61653e1f0ed9129732cbeb..58d17f6678c6c794a108bff19355c6f7706be30e
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The reported checkpoint cannot be resolved: `git cat-file -e
+  58d17f68695d1ae0d8cbfd60950ce1d7ee148e53^{commit}` exits 128, while the actual implementation
+  commit after Task Base is `58d17f6678c6c794a108bff19355c6f7706be30e`. Create a correction checkpoint without amending
+  reviewed history and report its exact full committed SHA so the next review has one truthful,
+  resolvable Head.
+- The authorized create journey rejects the canonical deployment-owned secret reference used by
+  this Task's own fixtures. `NotificationNewPage.tsx` applies
+  `/(secret|token|authorization|execute)/i` to the `secretEnv` value, so
+  `MEDIAFLOW_WEBHOOK_SECRET` always produces a form issue even though
+  `WebhookDefinition.from_document` accepts that environment-variable name. Remove this
+  value-substring rejection while retaining the canonical environment-name and server-side
+  literal-field validation. Add component/router and built-artifact journeys that actually submit
+  create, edit/save, copy and enable/disable with exact revision/version bodies; the current 39
+  focused Web tests and 52 browser tests pass, but the browser "editor journey saves" test never
+  clicks Save and neither suite exercises create/copy/enable/disable end to end.
+- Exact displayed-revision test binding fails closed only on a missing revision or wrong version,
+  not on a valid historical revision. A real API probe activated a successor, then posted the
+  superseded predecessor's exact id/version to
+  `POST /api/v1/operations/notifications/webhooks/operations-webhook/test`; it returned `200`,
+  reported revision status `superseded`, and sent one signed request. Reject any revision that is
+  not the exact currently advertised Active revision or eligible open successor Draft for that
+  definition before transport invocation, and add a same-version/different-or-superseded revision
+  regression proving zero requests. Also bind the Web client success normalizers to the requested
+  Webhook/revision/version so a misbound response cannot render success.
+- Typed delivery/test/activation/recovery normalization does not meet the required fail-closed
+  identity and contradiction boundary. Delivery identities use bounded text rather than strict
+  URI-safe segments; delivery detail accepts recovery eligibility/transport inconsistent with the
+  durable status or lease; and test, activation and recovery mutation responses are not checked
+  against the requested Webhook, revision, delivery and action/transition. Enforce those
+  cross-field/request bindings before any control or success state is rendered, and add hostile
+  typed/component/browser contract cases for unsafe identities, wrong-object responses and
+  status/lease/action contradictions.

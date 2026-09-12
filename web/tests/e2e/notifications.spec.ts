@@ -152,6 +152,11 @@ test("the editor journey saves, validates and checked-activates the Webhook-only
     page.getByText(/Draft revision notification-draft-rev-e2e-001/),
   ).toBeVisible();
 
+  // The bounded form is really stored inside the open Draft at its exact
+  // optimistic version before validation and activation.
+  await page.getByRole("button", { name: "Save into Draft" }).click();
+  await expect(page.getByText(/version 5/)).toBeVisible();
+
   await page.getByRole("button", { name: "Validate Draft" }).click();
   await expect(
     page.getByRole("heading", { name: "Draft validated" }),
@@ -167,6 +172,14 @@ test("the editor journey saves, validates and checked-activates the Webhook-only
   );
 
   const evidence = await notificationsEvidence(page);
+  const saves = evidence.items.filter(
+    (item) => item.objectType === "notification_webhook_save",
+  );
+  expect(saves).toHaveLength(1);
+  expect(saves[0].body).toMatchObject({
+    webhookId: WEBHOOK_ID,
+    expectedVersion: 4,
+  });
   const activations = evidence.items.filter(
     (item) => item.objectType === "notification_webhook_activation",
   );
@@ -175,6 +188,135 @@ test("the editor journey saves, validates and checked-activates the Webhook-only
     expectedRevisionId: DRAFT_REVISION,
   });
   expect(JSON.stringify(evidence.items)).not.toMatch(/digest|Bearer /i);
+});
+
+test("an authorized operator creates a Webhook definition inside the open Draft", async ({
+  page,
+}) => {
+  await connect(page);
+  await openNotifications(page);
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await expect(
+    page.getByText(/revision notification-draft-rev-e2e-001/),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "New Webhook definition" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/notifications\/webhooks\/new$/,
+  );
+  // The canonical deployment-owned secret reference is accepted; no secret
+  // value is ever requested or stored.
+  await page.getByLabel("Identifier").fill("created-webhook");
+  await page
+    .getByLabel("HTTPS endpoint")
+    .fill("https://example.invalid/hooks/created");
+  await page
+    .getByLabel("Secret environment reference")
+    .fill("MEDIAFLOW_WEBHOOK_SECRET");
+  await page.getByLabel("Event job.completed").check();
+  await page
+    .getByRole("button", { name: "Create definition in Draft" })
+    .click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/notifications\/webhooks\/created-webhook$/,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Webhook created-webhook" }),
+  ).toBeVisible();
+  await expect(page.getByText(/Draft only/).first()).toBeVisible();
+
+  const evidence = await notificationsEvidence(page);
+  const creates = evidence.items.filter(
+    (item) => item.objectType === "notification_webhook_create",
+  );
+  expect(creates).toHaveLength(1);
+  // The evidence body is bounded; the created identity travels as objectId.
+  expect(creates[0].objectId).toBe("created-webhook");
+  expect(creates[0].body).toMatchObject({ expectedVersion: 4 });
+  expect(JSON.stringify(evidence.items)).not.toMatch(
+    /Bearer |digest|X-MediaFlow-Signature/i,
+  );
+});
+
+test("an authorized operator copies a definition and toggles it inside the Draft", async ({
+  page,
+}) => {
+  await connect(page);
+  await openNotifications(page);
+  await page.getByRole("button", { name: "Start successor Draft" }).click();
+  await page.getByRole("link", { name: "Open definition" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}$`),
+  );
+  await page.getByRole("button", { name: "Copy into Draft" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/notifications\/webhooks\/ops-webhook-copy$/,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Webhook ops-webhook-copy" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Enable in Draft" }).click();
+  // The page refreshes to the durable Draft truth before the next exact
+  // optimistic mutation, so the disable submits the refetched version fence.
+  await expect(page.getByText(/version 6/)).toBeVisible();
+  await page.getByRole("button", { name: "Disable in Draft" }).click();
+  await expect(page.getByText(/version 7/)).toBeVisible();
+
+  const evidence = await notificationsEvidence(page);
+  for (const kind of ["copy", "enable", "disable"]) {
+    const actions = evidence.items.filter(
+      (item) => item.objectType === `notification_webhook_${kind}`,
+    );
+    expect(actions).toHaveLength(1);
+  }
+  // The copy is bound to the reviewed source identity; the toggles act on the
+  // copied definition inside the same open Draft.
+  const copyAction = evidence.items.find(
+    (item) => item.objectType === "notification_webhook_copy",
+  );
+  expect(copyAction?.body).toMatchObject({ webhookId: WEBHOOK_ID });
+  const enableAction = evidence.items.find(
+    (item) => item.objectType === "notification_webhook_enable",
+  );
+  expect(enableAction?.body).toMatchObject({
+    webhookId: "ops-webhook-copy",
+    expectedVersion: 5,
+  });
+  const disableAction = evidence.items.find(
+    (item) => item.objectType === "notification_webhook_disable",
+  );
+  expect(disableAction?.body).toMatchObject({
+    webhookId: "ops-webhook-copy",
+    expectedVersion: 6,
+  });
+  expect(JSON.stringify(evidence.items)).not.toMatch(/digest|Bearer /i);
+});
+
+test("a wrong-object success document never renders as a completed mutation", async ({
+  page,
+}) => {
+  // The hostile fake answers mutations with success documents about another
+  // Webhook and another delivery; the V2 client must refuse to render them.
+  await page.request.post("/__test__/reset-notifications?hostile=1");
+  await connect(page);
+  await openNotifications(page);
+  await page.getByRole("link", { name: "Open definition" }).click();
+  await page.getByRole("button", { name: "Test this exact revision" }).click();
+  await expect(page.getByText(/The test was rejected/)).toBeVisible();
+  await expect(page.getByText(/Test succeeded/)).toHaveCount(0);
+
+  await page.getByRole("link", { name: "Open deliveries" }).click();
+  await page.getByRole("link", { name: "Open delivery" }).first().click();
+  await page.getByLabel("Confirm dead-letter requeue").check();
+  await page
+    .getByRole("button", { name: "Requeue dead-letter delivery" })
+    .click();
+  await expect(
+    page.getByText(/The recovery action was rejected/),
+  ).toBeVisible();
+  // The delivery itself stays on its truthful dead-letter state.
+  await expect(
+    page.locator("dl").getByText("dead-letter", { exact: true }),
+  ).toBeVisible();
 });
 
 test("the delivery list filters dead letters and the detail page requeues with explicit confirmation", async ({

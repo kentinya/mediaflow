@@ -47,8 +47,6 @@ function unsafeUrlReason(value: string): string | null {
   }
 }
 
-const FORBIDDEN_FIELD_PATTERN = /(secret|token|authorization|execute)/i;
-
 export function NotificationNewPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
@@ -103,9 +101,6 @@ export function NotificationNewPage() {
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(webhookId)) {
     formIssues.push("the identifier must be 1-64 URI-safe characters");
   }
-  if (FORBIDDEN_FIELD_PATTERN.test(webhookId)) {
-    formIssues.push("the identifier must not name a secret-like field");
-  }
   const urlProblem = unsafeUrlReason(url.trim());
   if (urlProblem !== null) {
     formIssues.push(urlProblem);
@@ -114,9 +109,6 @@ export function NotificationNewPage() {
     formIssues.push(
       "the secret reference must be a valid environment variable name",
     );
-  }
-  if (FORBIDDEN_FIELD_PATTERN.test(secretEnv)) {
-    formIssues.push("the secret reference must not contain a literal secret");
   }
   if (events.length === 0) {
     formIssues.push("select at least one supported event");
