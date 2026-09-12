@@ -628,8 +628,11 @@ describe("NotificationEditorPage checked activation", () => {
             409,
           );
         }
+        // The real managed save stores the successor Draft version.
         return jsonResponse({
           revisionId: DRAFT_REVISION,
+          version: 5,
+          status: "draft",
           webhook: webhookDocument(),
         });
       }
@@ -641,14 +644,16 @@ describe("NotificationEditorPage checked activation", () => {
           );
         }
         return jsonResponse({
+          // The managed activation preserves the reviewed Draft revision
+          // identity (same id, same version) as the new Active identity.
           activatedRevisionId: DRAFT_REVISION,
-          activatedVersion: 5,
+          activatedVersion: 4,
           revisionSequence: 3,
           publishedFromRevisionId: DRAFT_REVISION,
           publishedFromVersion: 4,
           activeConfiguration: {
             revisionId: DRAFT_REVISION,
-            version: 5,
+            version: 4,
             revisionSequence: 3,
             status: "active",
           },
@@ -830,6 +835,10 @@ describe("NotificationNewPage create journey", () => {
 
 describe("NotificationDetailPage draft actions", () => {
   it("submits copy, enable and disable with the exact optimistic version", async () => {
+    // The fake Draft advances one optimistic version per stored mutation and
+    // every definition read serves the current exact fence, mirroring the
+    // real managed revision semantics.
+    let draftVersion = 4;
     const { calls } = recordingFetch((call) => {
       if (
         call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
@@ -843,9 +852,10 @@ describe("NotificationDetailPage draft actions", () => {
         call.url ===
         `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
       ) {
+        draftVersion += 1;
         return jsonResponse({
           revisionId: DRAFT_REVISION,
-          version: 5,
+          version: draftVersion,
           status: "draft",
           object: { id: "ops-webhook-copy", enabled: false },
         });
@@ -859,6 +869,7 @@ describe("NotificationDetailPage draft actions", () => {
             id: "ops-webhook-copy",
             definitionState: "draft-only",
             secretReadiness: [],
+            draftState: draftState({ revisionVersion: draftVersion }),
           }),
           activeConfiguration: activeConfiguration(),
         });
@@ -867,9 +878,10 @@ describe("NotificationDetailPage draft actions", () => {
         call.url ===
         `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/enable`
       ) {
+        draftVersion += 1;
         return jsonResponse({
           revisionId: DRAFT_REVISION,
-          version: 6,
+          version: draftVersion,
           status: "draft",
           object: { id: "ops-webhook-copy", enabled: true },
         });
@@ -878,9 +890,10 @@ describe("NotificationDetailPage draft actions", () => {
         call.url ===
         `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/disable`
       ) {
+        draftVersion += 1;
         return jsonResponse({
           revisionId: DRAFT_REVISION,
-          version: 7,
+          version: draftVersion,
           status: "draft",
           object: { id: "ops-webhook-copy", enabled: false },
         });
@@ -918,8 +931,8 @@ describe("NotificationDetailPage draft actions", () => {
       call.url.endsWith("/ops-webhook-copy/disable"),
     );
     expect(enableCall?.method).toBe("POST");
-    expect(enableCall?.body).toMatchObject({ expectedVersion: 4 });
-    expect(disableCall?.body).toMatchObject({ expectedVersion: 4 });
+    expect(enableCall?.body).toMatchObject({ expectedVersion: 5 });
+    expect(disableCall?.body).toMatchObject({ expectedVersion: 6 });
     expect(JSON.stringify([enableCall?.body, disableCall?.body])).not.toMatch(
       /digest|Bearer /i,
     );
@@ -964,6 +977,214 @@ describe("NotificationDetailPage draft actions", () => {
     );
     expect(await screen.findByText(/The test was rejected/)).toBeVisible();
     expect(screen.queryByText(/Test succeeded/)).toBeNull();
+  });
+});
+
+describe("Notification definition mutation binding", () => {
+  it("does not render a wrong-revision create response as success", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/notifications/webhooks") {
+        return jsonResponse(listPayload());
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+      ) {
+        // A success document about another revision (the immutable Active
+        // configuration instead of the submitted Draft) never renders as this
+        // create's outcome and never navigates to a definition.
+        return jsonResponse({
+          revisionId: ACTIVE_REVISION,
+          version: 5,
+          status: "draft",
+          webhook: { id: "created-webhook", enabled: false },
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/webhooks/new");
+    await userEvent.type(
+      await screen.findByLabelText("Identifier"),
+      "created-webhook",
+    );
+    await userEvent.type(
+      screen.getByLabelText("HTTPS endpoint"),
+      "https://example.invalid/hooks/created",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Secret environment reference"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(screen.getByLabelText("Event job.completed"));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Create definition in Draft" }),
+    );
+    expect(
+      await screen.findByText(/Creating the Webhook definition was rejected/),
+    ).toBeVisible();
+    // No false success: the create journey stays on the form and never opens
+    // any definition, and the rejected mutation is never replayed.
+    expect(
+      await screen.findByRole("heading", { name: "New Webhook definition" }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Webhook created-webhook" }),
+    ).toBeNull();
+    expect(
+      calls.filter(
+        (call) =>
+          call.method === "POST" &&
+          call.url ===
+            `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does not render a save response without the saved definition as success", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+        return jsonResponse(draftDocumentPayload());
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}`
+      ) {
+        // A missing definition document is malformed evidence, never a
+        // completed save.
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 5,
+          status: "draft",
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Save into Draft" }),
+    );
+    expect(
+      await screen.findByText(/Saving the Draft was rejected/),
+    ).toBeVisible();
+    expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
+  });
+
+  it("does not render a wrong-object copy response as success", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload(),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
+      ) {
+        // An unrelated definition is not derived from this copy mutation; the
+        // journey must never navigate to it as the copied identity.
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 5,
+          status: "draft",
+          object: { id: "another-webhook", enabled: false },
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy into Draft" }),
+    );
+    expect(
+      await screen.findByText(/The copy action was rejected/),
+    ).toBeVisible();
+    // No false success: the detail page stays on the reviewed source.
+    expect(
+      await screen.findByRole("heading", { name: `Webhook ${WEBHOOK_ID}` }),
+    ).toBeVisible();
+    expect(screen.queryByText(/Webhook another-webhook/)).toBeNull();
+    expect(calls.filter((call) => call.url.endsWith("/copy"))).toHaveLength(1);
+  });
+
+  it("does not render a contradictory enable toggle as success", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload(),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/enable`)) {
+        // An enable success document claiming a disabled definition is
+        // contradictory evidence, never this toggle's outcome.
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 5,
+          status: "draft",
+          object: { id: WEBHOOK_ID, enabled: false },
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Enable in Draft" }),
+    );
+    expect(
+      await screen.findByText(/The enable action was rejected/),
+    ).toBeVisible();
+    expect(calls.filter((call) => call.url.endsWith("/enable"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("does not render a split-identity activation as success", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/draft`)) {
+        return jsonResponse(draftDocumentPayload());
+      }
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/activate-draft`)) {
+        // The activated identity differs from the exact reviewed Draft
+        // identity the mutation was bound to: never rendered as success.
+        return jsonResponse({
+          activatedRevisionId: ACTIVE_REVISION,
+          activatedVersion: 5,
+          revisionSequence: 3,
+          publishedFromRevisionId: DRAFT_REVISION,
+          publishedFromVersion: 4,
+          activeConfiguration: {
+            revisionId: ACTIVE_REVISION,
+            version: 5,
+            revisionSequence: 3,
+            status: "active",
+          },
+          webhook: webhookDocument(),
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/editor/${WEBHOOK_ID}`);
+    await userEvent.click(
+      await screen.findByLabelText("Confirm checked activation"),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Activate checked Draft" }),
+    );
+    expect(await screen.findByText(/Activation was rejected/)).toBeVisible();
+    // The rejected activation is never replayed.
+    expect(
+      calls.filter((call) => call.url.endsWith("/activate-draft")),
+    ).toHaveLength(1);
   });
 });
 

@@ -111,7 +111,9 @@ export function NotificationDetailPage() {
         void queryClient.invalidateQueries({
           queryKey: [notificationDefinitionQueryKey],
         });
-        if (input.kind === "copy" && result.model.id !== null) {
+        if (input.kind === "copy") {
+          // The bound model is the exact copied identity derived from this
+          // mutation; no local or unrelated id is ever navigated to.
           void navigate({
             to: "/operations/notifications/webhooks/$webhookId",
             params: { webhookId: result.model.id },

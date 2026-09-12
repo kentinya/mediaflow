@@ -6994,6 +6994,25 @@ const server = createServer(async (req, res) => {
         expectedVersion: document.expectedVersion,
       },
     });
+    if (state.hostile) {
+      // Split-identity contract probe: an activated identity that differs
+      // from the exact reviewed Draft identity must never render as success.
+      sendJson(res, 200, {
+        activatedRevisionId: NOTIFICATION_ACTIVE_REVISION,
+        activatedVersion: state.draftVersion,
+        revisionSequence: 4,
+        publishedFromRevisionId: NOTIFICATION_DRAFT_REVISION,
+        publishedFromVersion: state.draftVersion,
+        activeConfiguration: {
+          revisionId: NOTIFICATION_ACTIVE_REVISION,
+          version: state.draftVersion,
+          revisionSequence: 4,
+          status: "active",
+        },
+        webhook: webhookDocument(state, token),
+      });
+      return;
+    }
     sendJson(res, 200, {
       activatedRevisionId: NOTIFICATION_DRAFT_REVISION,
       activatedVersion: state.draftVersion,
@@ -7112,6 +7131,17 @@ const server = createServer(async (req, res) => {
       path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks",
       body: { id: createdId, expectedVersion: document.expectedVersion },
     });
+    if (state.hostile) {
+      // Wrong-revision contract probe: a success document answering for
+      // another revision must never render as this create's outcome.
+      sendJson(res, 200, {
+        revisionId: NOTIFICATION_ACTIVE_REVISION,
+        version: state.draftVersion,
+        status: state.draftStatus,
+        webhook: { id: createdId, enabled: false },
+      });
+      return;
+    }
     sendJson(res, 200, {
       revisionId: NOTIFICATION_DRAFT_REVISION,
       version: state.draftVersion,
@@ -7152,6 +7182,16 @@ const server = createServer(async (req, res) => {
         expectedVersion: document.expectedVersion,
       },
     });
+    if (state.hostile) {
+      // Missing-definition contract probe: a success document without the
+      // saved definition must never render as this save's outcome.
+      sendJson(res, 200, {
+        revisionId: NOTIFICATION_DRAFT_REVISION,
+        version: state.draftVersion,
+        status: state.draftStatus,
+      });
+      return;
+    }
     sendJson(res, 200, {
       revisionId: NOTIFICATION_DRAFT_REVISION,
       version: state.draftVersion,
@@ -7199,11 +7239,42 @@ const server = createServer(async (req, res) => {
         expectedVersion: document.expectedVersion,
       },
     });
+    if (state.hostile) {
+      if (action === "copy") {
+        // Wrong-object contract probe: an unrelated definition is not derived
+        // from this copy mutation and must never render as its outcome.
+        sendJson(res, 200, {
+          revisionId: NOTIFICATION_DRAFT_REVISION,
+          version: state.draftVersion,
+          status: state.draftStatus,
+          object: { id: "another-webhook", enabled: false },
+        });
+      } else {
+        // Contradictory-toggle contract probe: a success document whose
+        // enabled state contradicts the submitted toggle is malformed
+        // evidence, never this toggle's outcome.
+        sendJson(res, 200, {
+          revisionId: NOTIFICATION_DRAFT_REVISION,
+          version: state.draftVersion,
+          status: state.draftStatus,
+          object: {
+            id: notificationObjectActionMatch[2],
+            enabled: action !== "enable",
+          },
+        });
+      }
+      return;
+    }
+    // The managed copy stores a disabled Draft definition; enable/disable
+    // stores the submitted toggle state.
     sendJson(res, 200, {
       revisionId: NOTIFICATION_DRAFT_REVISION,
       version: state.draftVersion,
       status: state.draftStatus,
-      object: { id: objectId, enabled: action !== "enable" },
+      object: {
+        id: objectId,
+        enabled: action === "enable" ? true : false,
+      },
     });
     return;
   }
