@@ -1,13 +1,13 @@
-# Task 33.3 — Web-native exact manual Organize admission and outcome journey
+# Task 33.4 — V2 scheduled Automation definition and occurrence journey
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to the
 current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 33.3
+Task ID: 33.4
 Parent Slice: 33
-Status: FIX REQUIRED
-Task Base: e1dba1f87bb32cdcd573f565b6772e3da21823bf
+Status: PLANNED
+Task Base: 2be1eb0b99d64720aeba81f86eab052788121dea
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,179 +15,153 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete Slice 33 RO-4 and the applicable RO-7/RO-8 boundary: starting from recognizable V2 Library
-or Operations context, an authorized operator can create and edit a durable manual intent, review
-and select exact immutable Preview items, give meaningful mutation/destructive confirmation, admit
-the reviewed work through backend-bound one-shot authority, and follow independent durable outcomes
-without issuing, seeing or copying a CLI execution token or supplying paths/plans to the request.
+Complete Slice 33 RO-5 and the applicable RO-1/RO-2/RO-7/RO-8 boundary: an authorized operator can
+use V2 to discover and manage a bounded Automation Task Definition, distinguish editable Draft from
+the immutable Active snapshot, validate and Preview the exact definition, checked-activate only its
+owned configuration change, explicitly grant or revoke scoped unattended authority, and inspect
+schedule/occurrence history with linked Job, Task and Result state.
 
 ## Why This Task Exists
 
-Task 33.2 completed bounded manual Scan and full zero-mutation Preview, including server-resolved
-current-source identity and durable findings. The existing Python V1 foundation already provides
-manual intent/choice persistence, exact Preview versioning, one-shot authorization, source/
-capability/conflict revalidation, OrganizerExecutor-only mutation and per-item Result/effect
-evidence. V2 currently exposes none of the intent, choice, authorization, execution or outcome
-journey.
+Tasks 33.1–33.3 completed the shared Operations workspace, durable Task/Job observation, bounded
+Scan/Preview and Web-native manual Organize journey. The Python Application/API and V1 surface
+already implement Automation Task Definition lifecycle, exact zero-mutation Preview, managed
+revision validation/checked activation, persistent grant/revocation, Scheduler occurrence fencing
+and linked work/results, but V2 has no Automation routes, typed model, editor or recovery journey.
 
-The current file-level manual execute endpoint also performs OrganizerExecutor work synchronously
-inside the API request. That cannot satisfy the Slice contract that admitted long work receive a
-durable identity promptly and remain followable without holding the browser request open. The
-manual Organize journey is therefore one coherent high-risk vertical boundary: splitting the form,
-authority, admission or outcome into separate Tasks would leave an unusable or misleading mutation
-surface. Automation and Notification remain later independent Slice 33 Tasks.
+Automation is the largest remaining coherent business unit because definition editing, publication,
+Preview, unattended authority and occurrence evidence are one safety chain: exposing only one link
+would either be unusable or could misrepresent Draft/schedule state as execution authority.
+Notification operation is a separate delivery lifecycle and remains the final independent Slice 33
+unit.
 
 ## Implementation Scope
 
-The implementation boundary is:
+Deliver the existing Automation authority chain through one bounded vertical slice:
 
 ```text
-existing manual intent / immutable Preview / one-shot execution domain and SQLite state
-→ backend-authoritative Web-native authorization and queued admission
-→ existing Processing Worker and OrganizerExecutor-only execution
-→ bounded backward-compatible /api/v1/* operator projections
-→ strict V2 intent / choice / authorization / execution entities and mutations
-→ Library / Operations manual Organize routes and durable outcome follow-up
-→ Python, component/router and built-artifact browser safety tests
+Domain/Persistence (reuse) → Application projection → /api/v1 authority → typed Web → browser proof
 ```
 
-- Add a complete refresh-safe V2 manual Organize route family reachable from current FileIndex
-  detail, ResourceLibrary Operations scope and executable Preview detail. Register it centrally so
-  deep-link authentication continuation, titles, active navigation and bounded return context follow
-  the shared shell contract. Durable identifiers may appear only as route identities needed to
-  reopen state, never as values the operator must discover or paste.
-- Extend the backend manual action/readiness projection so Organize is offered only for the exact
-  principal, current FileIndex/ResourceLibrary scope, loaded Active runtime and available services.
-  The frontend must not infer execute permission, source currentness, Preview eligibility,
-  capability, destructive authority or queue readiness from route or cached state.
-- Reuse `ManualOrganizeIntentService` as the single intent and choice authority. Create intents from
-  server-resolved current FileIndex selections, expose only enabled/permitted recognition, metadata
-  and policy choices from the pinned runtime, and update one item with optimistic intent/item
-  versions. Choice edits invalidate prior Preview evidence. Requests cannot submit a raw
-  occurrence/fingerprint, configuration digest, arbitrary source/target path, provider payload,
-  operation or unadvertised policy identity.
-- Reuse `ManualOrganizePreviewService` for every initial or regenerated exact Preview. The operator
-  can select only current, complete, untruncated, executable Preview items and can inspect the
-  Task-33.2 findings plus the precise operation, attachments, conflict/capability state and whether
-  Overwrite or source cleanup/destruction would be authorized. Blocked/unselected siblings remain
-  independently visible and do not gain authority.
-- Provide a Python Application/API admission boundary for the routine Web journey that obtains and
-  binds short-lived one-shot authority on the server to the authenticated principal, permission,
-  exact intent/Preview/configuration/item versions, selected items, allowed effects and expiry. The
-  browser never receives, submits, persists or logs a raw execution token/secret or digest. Existing
-  CLI/remote-token compatibility may remain, but it is not called or linked by V2.
-- Treat meaningful Execute confirmation as one operator action. The backend may internally create
-  and consume an authorization record, but it must not force a second confirmation or make the
-  operator transfer an implementation credential when no new intent boundary exists. Explicit
-  Overwrite and source cleanup/delete choices are separate, default false, shown only when the exact
-  selected plans require them, and rejected unless policy, permission and confirmation all allow
-  them.
-- Admit the selected exact work durably and return execution plus Job/Task identity before
-  OrganizerExecutor work completes. Use the resident Processing Worker/claim/fencing boundary, not
-  an API-owned background thread or second executor. Admission atomically consumes or rejects the
-  one-shot authority, is idempotent/concurrency-safe, survives restart, and never creates duplicate
-  Tasks or mutation attempts for repeated/concurrent submission.
-- The Worker reconstructs execution only from persisted immutable Preview data, pinned runtime and
-  server-held authority, rechecking source occurrence/fingerprint, conflicts, capabilities, limits,
-  locks and allowed effects immediately before each not-yet-performed mutation. Only
-  `OrganizerExecutor` mutates Storage. HardLink/SoftLink never falls back; Overwrite/delete/cleanup
-  is never inferred; RecognitionType C remains C.
-- Keep existing manual execution/Task/TaskItem/Result/checkpoint records as the durable outcome
-  model. Add bounded operator projections and V2 progress/detail that distinguish admission, Worker
-  ownership, aggregate state, independent selected/unselected/blocked item state, known completed
-  effects, effect certainty, Result linkage and current next action without publishing raw paths,
-  fingerprints, plan payloads, authority material or exceptions.
-- Pre-admission invalid/stale intent, changed source, stale Preview/item/configuration,
-  expired/consumed authority, insufficient permission, limits, queue pressure, unavailable Worker,
-  conflict/capability and concurrent admission must yield no mutation and a fresh-read/re-preview/
-  reauthorization action. Partial or uncertain effects remain truthful and never auto-replayed;
-  link them to V1 or Slice 34 Review & Recovery without implementing recovery here.
-- Use centralized typed entities, API functions and TanStack Query boundaries. Components issue no
-  raw `fetch`, cache no domain authority, never automatically retry a mutation after ambiguity/
-  401/403/conflict/malformed response, and clear unsubmitted choices and authenticated mutation
-  state on disconnect or rejected authentication.
-- Extend the local Playwright fake with deterministic, secret-free intent/choice/Preview/admission/
-  Worker/outcome state. Reject unsupported methods/bodies, prove one meaningful Execute action, and
-  record only bounded request evidence without Bearer values, authority, digests, fingerprints,
-  paths or raw plans.
-- Preserve V1 `/ui`, existing synchronous/manual and remote-token API compatibility routes, Task
-  33.1 Task/Job controls, Task 33.2 Scan/Preview and Python-only production serving. If queued manual
-  execution needs an additive runtime schema change, make it forward-only, fail-closed and restart/
-  migration-tested with temporary copied fixtures.
+- Reuse the existing `AutomationTaskDefinition`, managed Configuration revision, Automation Preview,
+  unattended grant, Scheduler occurrence, AutomationJob, Task/TaskItem and Result stores and services.
+  Do not create a parallel definition store, scheduler, execution pipeline or frontend-owned state
+  machine.
+- Add only the smallest backward-compatible Application/API projection or action metadata needed for
+  V2 to discover the exact Active revision and an eligible owned Draft, render backend-authoritative
+  permissions/readiness/versions, and invoke existing definition, validation, checked-activation,
+  Preview, grant/revoke and occurrence behaviors. Existing API and V1 routes remain compatible.
+- Add refresh-safe V2 Automation list, create/copy, detail/editor, Preview/detail/items and occurrence
+  navigation under `/ui-v2/operations`. Link occurrences to the existing exact Job/Task detail and
+  safe Library/Result context where authoritative evidence exists; do not require raw revision,
+  grant, occurrence, Job or Task identifiers as ordinary entry inputs.
+- Provide a forms-first bounded editor for name, enabled state, ResourceLibrary, relative source
+  scope, run mode (`scan-only`, `scan-and-plan`, `automatic-organization`), item limit and exactly one
+  interval or Cron/timezone schedule. Options and constraints come from authoritative projections;
+  the form cannot select per-file Provider, policy, destination or Storage operation.
+- Compose successor-Draft creation, optimistic create/edit/copy/enable/disable, validation and
+  object-scoped checked activation. The surface must identify the exact Draft and Active snapshots,
+  refuse stale/concurrent or unrelated configuration activation, and never label a saved or
+  validated Draft as Active.
+- Compose the exact zero-mutation Automation Preview, including bounded item paging, independent
+  findings/blockers, configuration/definition identity, scope, targets/conflicts/capabilities and
+  grant eligibility. Editing, copying, enabling/disabling or changing the referenced revision makes
+  older Preview evidence visibly stale and non-authoritative.
+- Compose explicit unattended grant and revoke actions for the exact Active definition and eligible
+  Preview. The browser does not receive or ask the operator to supply raw grant authority; schedule
+  enablement, validation, activation and Preview remain distinct from grant authority. Destructive
+  permissions are not inferred.
+- Show schedule/timezone/due state, bounded occurrence history and each occurrence's pinned snapshot,
+  admission/Job/Task/Result state, independent failures and safe next action. Reading or navigating
+  must not emit an occurrence, submit work or mutate Storage.
+- Use central typed entities, API helpers and TanStack Query boundaries. Components perform no raw
+  `fetch`, cache no authority, derive no permission from hidden controls, and never automatically
+  retry a mutation after ambiguity, stale state, 401/403, conflict or malformed data.
+- Extend the deterministic Playwright fake with secret-free Automation state and exact method/body
+  assertions. Captured evidence excludes Bearer values, raw grant/revision digests, source
+  fingerprints, private paths/endpoints, plans and provider payloads.
+- If an additive persistence/schema change is genuinely necessary, make it forward-only,
+  fail-closed, atomic and restart-tested using temporary copied fixtures.
 
 Frozen for this Task:
 
 - `SLICE.md`, `docs/roadmap.md`, canonical/stable requirements, product-experience and architecture
   authority text, including Slice Base and every A-owned Contract field.
-- Recognition/Metadata/Classification review decisions, conflict resolution, Reprocess,
-  checkpoint continuation, failed-item retry, reconciliation controls and uncertain-effect recovery
-  owned by Slice 34. This Task shows durable state and a truthful destination only.
-- Automation definitions/activation/schedules/grants/occurrences and Notification definitions/
-  tests/deliveries; these remain later Slice 33 Tasks.
-- General Configuration/Settings editing or activation owned by Slice 35. A broken dependency may
-  hand off to the current V1 Configuration surface.
+- Notification/Webhook definition, test, activation and delivery operation; that is the next
+  independent Slice 33 Task.
+- General Configuration/Settings administration, arbitrary object lifecycle, revision comparison,
+  evidence administration and import/export owned by Slice 35. The Automation surface may create
+  and checked-activate only the narrow successor Draft needed for its owned definition and may hand
+  general repair to the current V1 Configuration journey.
+- Slice 34 review/recovery actions, failed-item retry, checkpoint continuation, Reprocess and
+  uncertain-effect recovery. This Task shows durable state and links truthfully without imitating
+  those actions.
 - Provider, Storage, recognition, metadata, naming, classification, planning and conflict semantics;
-  auth redesign; arbitrary bulk execution; Node production serving; `config/alist.json` and private
-  runtime state.
+  auth redesign; Node production serving; `config/alist.json` and private runtime state.
 
 ## Acceptance Criteria
 
-- [ ] From V2 FileIndex, ResourceLibrary Operations context or an eligible Preview, an authorized
-      operator can enter/refresh one complete manual Organize journey, create or reopen its durable
-      intent, inspect recognizable sources and return safely without handling an internal ID as an
-      input or losing useful Library/Operations context.
-- [ ] The backend action projection is authoritative for the exact principal, source/scope, Active
-      runtime, service/Worker/queue readiness and limits. Viewer/forbidden, stale, unavailable or
-      unsupported states render no executable control.
-- [ ] Intent creation and choice editing use only server-resolved current FileIndex sources and
-      enabled pinned options. Optimistic versions reject stale/cross-intent/cross-item edits
-      atomically, preserve siblings, invalidate old Preview items and accept no raw fingerprint,
-      digest, path, provider payload, operation or arbitrary policy/target.
-- [ ] A fresh immutable Preview is required after each relevant choice/source/configuration change.
-      The UI renders exact selected/unselected and independently blocked items, complete existing
-      findings, targets, attachments, operations, conflicts, capabilities and destructive
-      implications without treating Preview as execution authority.
-- [ ] Only current, complete, untruncated and executable Preview items can be selected. Item and
-      batch limits are backend-enforced; blocked or unselected siblings remain visible and cannot be
-      silently included.
-- [ ] One explicit Web Execute action creates and atomically consumes/rejects short-lived one-shot
-      backend authority bound to principal, permission, exact intent/Preview/configuration/item
-      versions, selected set, expiry and allowed effects. No CLI step, raw token/secret, digest or
-      avoidable second confirmation appears.
-- [ ] Overwrite and source cleanup/delete remain default-denied and separately explained/confirmed
-      only when required. Missing policy/permission/intent fails before mutation. HardLink/SoftLink
-      capability failure never falls back to Copy or Move.
-- [ ] Successful admission returns durable execution and Job/Task identity promptly without waiting
-      for OrganizerExecutor completion. Repeated/concurrent submission consumes authority once,
-      creates at most one execution/Task, and survives API/Worker restart without duplicate mutation.
-- [ ] The Processing Worker alone claims admitted manual execution through the durable lease/fence
-      boundary and reconstructs the exact persisted Preview plan. It rechecks source, snapshot,
-      policy, conflict, capability, locks, limits and authority before each pending mutation; only
-      OrganizerExecutor reaches mutating Storage methods.
-- [ ] Execution detail distinguishes admitted/running/terminal aggregate state and every selected,
-      unselected or blocked item, including Task/TaskItem/Result links, known effects, effect
-      certainty, failure category and next action. Successful siblings remain terminal; partial/
-      uncertain effects are never presented or submitted as safe automatic retry.
-- [ ] Stale, authority, conflict/capability, permission, limit/queue/Worker, concurrency, malformed,
-      not-found, 401/403 and unavailable failures retain durable truth and offer only an applicable
-      refresh, edit, fresh Preview, reauthorization, readiness/configuration handoff or Slice 34/V1
-      recovery destination.
-- [ ] Typed normalization fails closed on unknown/contradictory authority, version, selection,
-      destructive, execution, item/effect or action data. Components perform no raw fetch, hold no
-      domain authority and never automatically retry admission/execution after ambiguity/rejection.
-- [ ] API/model/URL/DOM/console/audit/test artifacts contain no Bearer credential, raw execution
-      token/secret, authorization digest, fingerprint/occurrence identity, raw plan/provider payload
-      or exception, private endpoint, absolute host/adapter root or arbitrary path.
-- [ ] Safety tests cover zero-mutation intent/edit/Preview reads, exact one-shot/expiry/principal/
-      version/item/effect binding, concurrent consumption, pre-mutation rejection, all four
-      operations, attachments, overwrite/delete/cleanup authority, no link fallback, no uncertain
-      replay and RecognitionType C preservation.
-- [ ] V1 `/ui`, legacy manual intent/Preview/execution and remote-token clients, existing API,
-      Task 33.1/33.2 routes and Python-only deployment remain compatible. No API background thread,
+- [ ] `/ui-v2/operations/automation` is a real list/entry surface linked from Operations and the
+      actionable Dashboard; supported list, definition, editor, Preview and occurrence routes are
+      refresh-safe, preserve bounded context and use the shared memory-only authentication return.
+- [ ] The list/detail projection shows the exact immutable Active revision consumed by runtime and,
+      when applicable, a distinct editable Draft with its optimistic version and validation state.
+      Missing Active/Draft/runtime, read-only/forbidden and unavailable states offer only a valid
+      successor-Draft or V1 Configuration handoff; no Draft is presented as Active.
+- [ ] An authorized operator can create, copy and edit a definition and enable/disable its schedule
+      through the bounded form. ResourceLibrary and source sub-scope, run mode, item limit, interval
+      or Cron/timezone are validated server-side; the request cannot inject arbitrary Storage paths,
+      per-file Provider/policy/destination/operation, grant authority or unknown fields.
+- [ ] Every definition mutation is bound to the exact Draft revision and expected version. Stale or
+      concurrent create/edit/copy/enable/disable is rejected atomically, preserves the winning
+      revision and refreshes the operator to durable truth without automatic mutation replay.
+- [ ] Validation is explicit and zero-mutation. Checked activation is a separate meaningful action,
+      publishes only an eligible revision whose changes are confined to the owned Automation object
+      boundary, reports the new exact Active identity, starts no Scan/Job/Task/occurrence, and never
+      silently activates unrelated general-configuration changes.
+- [ ] The operator can create and inspect a complete exact Automation Preview and page its items.
+      Definition/revision/scope identity, selected and independently blocked findings, targets,
+      conflicts, capabilities and next actions are visible and bounded; Preview performs zero
+      Storage mutation and grants no execution authority.
+- [ ] Editing/copying/enabling/disabling the definition or changing its configuration identity makes
+      incompatible Preview evidence visibly historical/stale. A stale, incomplete, truncated,
+      blocked or wrong-definition Preview cannot become grant eligibility.
+- [ ] For an `automatic-organization` Active definition, an authorized operator can explicitly grant
+      persistent unattended authority only after an eligible exact Preview and separately revoke it.
+      Grant state is definition/scope/mode/snapshot/preview/principal/item-limit bound, audited and
+      rechecked; no raw grant secret/identifier is an operator input, and enable/activation/Preview
+      alone never authorizes mutation.
+- [ ] Grant/revoke is optimistic and exact-object scoped. Stale revision/Preview, changed scope,
+      insufficient permission, disabled/missing references, invalid mode, excessive limits or
+      concurrent/repeated action fails closed before authority or media mutation; revocation prevents
+      future mutation without rewriting completed effects.
+- [ ] Definition detail shows truthful schedule type, timezone, enabled/due/next-run state and bounded
+      occurrence history. Each occurrence preserves its pinned definition/configuration identity and
+      links exact Job/Task/TaskItem/Result evidence already owned by Operations; list/detail reads do
+      not emit work, probe adapters or call mutating Storage methods.
+- [ ] Occurrence failures distinguish schedule/grant/snapshot/resource/Worker/queue/capability/
+      conflict/item outcomes, retain successful siblings and give only a repair, fresh Preview,
+      regrant, revoke, exact Operations follow-up, V1 Configuration handoff or Slice 34 recovery
+      destination that is valid for the durable state. Uncertain effects are never advertised or
+      submitted as safe automatic retry.
+- [ ] Typed normalization fails closed on unknown/contradictory revision, status, permission,
+      schedule, Preview, grant, occurrence, link or action transport data. Action paths use strict
+      URI-safe object identities and exact owned routes/methods; components expose no executable
+      control for malformed or mismatched documents.
+- [ ] API/model/URL/DOM/console/audit/test artifacts contain no Bearer credential, grant secret,
+      configuration digest, source fingerprint/occurrence identity, raw plan/provider payload,
+      exception, secret value/reference resolution, private endpoint, adapter root or arbitrary
+      absolute path.
+- [ ] Backend regressions preserve Scheduler-only due detection, idempotent occurrence emission,
+      immutable snapshot pinning, Worker claim/fencing, per-item outcomes, current permission and
+      grant rechecks at every mutation boundary, OrganizerExecutor-only Storage mutation, no
+      overwrite/delete implication, no link fallback, no uncertain replay and RecognitionType C.
+- [ ] V1 `/ui`, existing Automation/configuration/API/CLI clients, Tasks 33.1–33.3 routes and
+      Python-only production serving remain compatible; no browser scheduler, API background thread,
       second execution model or Node runtime service is introduced.
-- [ ] Component/router and built-artifact evidence covers Library/Operations/Preview entry,
-      authenticated/unauthenticated refresh, intent/choice editing, fresh Preview, exact selection,
-      destructive confirmation, one Web-native admission, Worker/outcome follow-up, failure states,
+- [ ] Component/router and built-artifact evidence covers Active/Draft distinction, create/copy/edit,
+      interval and Cron/timezone, validate, checked activate, exact Preview, grant/revoke, occurrence
+      and linked-work navigation, permissions, stale/concurrent/malformed/401/403/unavailable states,
       exact methods/bodies, no replay and keyboard-usable narrow/wide layouts.
 - [ ] All T4 commands below pass with actual totals/skips/unavailable gates reported. The checkpoint
       contains only this Task plus its Developer report; tests/assertions are not deleted or
@@ -205,10 +179,10 @@ npm --prefix web run typecheck
 npm --prefix web run lint
 npm --prefix web run test -- --run
 npm --prefix web run build
-npm --prefix web run test:e2e -- manual-organize.spec.ts manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts deep-link.spec.ts
+npm --prefix web run test:e2e -- automation.spec.ts operations.spec.ts deep-link.spec.ts
 npm --prefix web run test:e2e
-.venv/bin/python -m unittest tests.test_v2_manual_organize
-.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_execution_authorization tests.test_queued_job_execution_boundary tests.test_organizer_mutation_authority tests.test_manual_operations tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
+.venv/bin/python -m unittest tests.test_v2_automation_operations
+.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_automation_task_definition_preview tests.test_automation_unattended_grant tests.test_automation_preview_grant_gate tests.test_automation_definition_occurrence tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_api tests.test_cron_scheduler tests.test_configuration_objects tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
@@ -220,95 +194,130 @@ git diff --check
 python3 scripts/docker_release_security_smoke_test.py
 ```
 
-Create `tests/test_v2_manual_organize.py` and built-artifact browser file
-`web/tests/e2e/manual-organize.spec.ts`; run any additional focused modules as well. Docker may be
-`UNAVAILABLE` only with the observed environmental reason and must not be inferred as passing.
+Create `tests/test_v2_automation_operations.py` and built-artifact browser file
+`web/tests/e2e/automation.spec.ts`; add focused typed-entity and router/component tests under the
+existing Web boundaries. Docker may be `UNAVAILABLE` only with the observed environmental reason
+and must not be inferred as passing.
 
-Focused tests must prove server-resolved selection/options; optimistic intent/item concurrency;
-Preview invalidation and exact selection; prompt durable queued admission; one-shot principal/
-permission/version/item/effect/expiry binding; concurrent submission; Worker claim/fence and
-restart; no API-thread OrganizerExecutor call; pre-mutation source/snapshot/conflict/capability
-rejection; explicit destructive authority; all operation types with no link fallback; independent
-sibling outcomes; uncertain-effect no-replay; redaction and V1 compatibility. Use temporary SQLite
-and fake/in-memory Storage/Provider/Worker state only.
+Focused evidence must prove Draft/Active separation; exact optimistic definition mutations; bounded
+interval and Cron/timezone validation; explicit zero-mutation validation/Preview; Preview staleness;
+object-scoped checked activation; grant eligibility, binding, revoke and audit; schedule enablement
+without authority; idempotent occurrence emission/restart/concurrency; immutable pins and exact
+Job/Task/Result links; current-permission and authority recheck; per-item failure isolation;
+OrganizerExecutor-only mutation; redaction; exact request methods/bodies; malformed response
+fail-closed behavior; no automatic mutation replay; RecognitionType C and V1 compatibility. Use only
+temporary SQLite, fake/in-memory Storage/Provider/Worker/Scheduler state and local browser fakes.
 
-If schema changes, add forward-migration, newer-schema rejection, atomic failure and API/Worker
-restart tests against temporary copied fixtures. Before checkpointing, inspect and report
-`git status --short`, complete Task Base..Head diff, changed-file manifest, test deletion/rename/
+If schema changes, add forward-migration, newer-schema rejection, atomic failure and API/Worker/
+Scheduler restart tests against temporary copied fixtures. Before checkpointing, inspect and report
+`git status --short`, the complete Task Base..Head diff, changed-file manifest, test deletion/rename/
 skip/assertion changes and tracked/private configuration. `config/alist.json`, `node_modules`, build
 reports, credentials and unrelated files must not enter the checkpoint.
 
 ## Non-goals
 
-- Automation definition/revision/Preview/grant/schedule/occurrence operation or Notification
-  definition/test/delivery operation; these are later Slice 33 units.
-- Recognition/Metadata/Classification review decisions, conflict resolution, Reprocess,
-  checkpoint continuation, failed-item retry, execution reconciliation or uncertain-effect recovery
-  owned by Slice 34.
-- General Configuration/Settings administration or activation outside a truthful V1 handoff; these
-  are owned by Slice 35.
-- Changing provider/Storage/pipeline/planning/conflict semantics, adding providers, arbitrary paths
-  or bulk execution, file edit/delete/upload/download, rollback/undo or automatic uncertain replay.
-- Replacing API-principal Bearer authentication, persisting browser credentials, adding built-in
-  users/sessions/OIDC, redesigning legacy remote-token support, SSR/BFF/Node serving, V1 retirement
-  or unrelated refactoring.
-- Optional analytics/export, unnecessary polling, copy polish, P2/P3 cleanup or extra proof not
-  required by these Acceptance Criteria.
+- Notification/Webhook definition, exact-revision test, activation, delivery inspection or delivery
+  recovery; that is the next independent Slice 33 Task.
+- General Configuration/Settings administration, arbitrary managed-object editing, revision
+  comparison/evidence, import/export or activation outside the Automation object-scoped checked
+  flow; these are owned by Slice 35.
+- Media review decisions, conflict resolution, Reprocess, checkpoint continuation, failed-item retry,
+  reconciliation or uncertain-effect recovery owned by Slice 34.
+- New scheduler semantics, manual occurrence emission/run-now, a workflow designer, distributed
+  scheduling, new Providers, policy/destination/operation selection, arbitrary paths/bulk execution,
+  rollback/undo or automatic uncertain replay.
+- Replacing API-principal Bearer authentication, browser credential persistence, built-in identity,
+  SSR/BFF/Node serving, V1 retirement, optional analytics/export, copy polish, P2/P3 cleanup or
+  unrelated refactoring.
 
 ## Developer Completion Report
 
-> Correction loop (B Decision: FIX REQUIRED, Next: SAME TASK FIX LOOP). This report replaces the
-> third correction's report. Every blocker B listed is implemented here; this is a new correction
-> commit after the reviewed checkpoint — no accepted history was amended.
-
 ### Changed Files
 
-Fourth correction commit on top of the reviewed checkpoint
-`c4b8c2d60153fd20cec97c48e53d37d80e267270`:
-
-- `web/src/entities/operations/organize.ts` — action route validation now enforces the promised
-  URI-safe object identity. `SAFE_ACTION_SEGMENT` is strict (`A-Za-z0-9_.-`, no braces, no angle
-  brackets) and validates every real object identity and every real path segment; the one
-  intentional `{itemId}` route-template segment the backend publishes for the per-item choice
-  route is modelled separately (`ACTION_TEMPLATE_SEGMENT`) and is accepted only in the contract's
-  declared `*` parameter position. `isSafeActionPath()` was rewritten from a whole-path character
-  class to per-segment validation (bounded `/api/v1/` relative route, no empty or traversal
-  segment, every segment strict-safe or exactly the template), so the coarse gate is no looser
-  than the exact-owned binding. A path whose identity is missing, unsafe, or names another object
-  is malformed by construction.
-- `web/src/entities/operations/organize.test.ts` — new focused entity regressions: B's isolated
-  probe (`identity="<preview>"` with
-  `POST /api/v1/operations/organize/previews/<preview>/execute`) now throws; a safe identity with
-  an unsafe path segment throws; an unsafe identity with a safe path throws; braces/angle brackets
-  outside the template segment throw; the template outside its parameter position throws; the
-  still-valid cases are pinned (the `{itemId}` choice template, a real per-item segment, the
-  transport-less recovery handoff) alongside the still-rejected cases (wrong suffix, wrong method,
-  another object's route, transport-less `intent-execute`).
-- `web/src/features/operations/OrganizeRouter.test.tsx` — the wrong-transport Execute regression
-  adds two non-URI-safe path variants (`<preview>` identity segment, `{execute}` suffix segment)
-  and still asserts the malformed-read state with no Execute control. The execution fixture helper
-  now restores the masked durable identities (`taskId` and the Task action route) so every
-  document it renders names the exact real objects the backend emits — the checked-in fixture
-  masks durable identities as `<uuid>`, which strict validation correctly refuses.
-- `TASK.md` — this report plus B's review of the third correction.
+- `mediaflow/application/configuration_snapshot.py` — `ManagedConfigurationService` gains two
+  read-only Draft helpers: `open_draft_revisions()` (newest-first draft/validated revisions, never
+  Active or superseded) and `latest_open_draft_containing(section, object_id)`, so the V2 journey
+  discovers the eligible owned Draft from the existing managed-configuration store.
+- `mediaflow/interfaces/service_api.py` — the smallest backward-compatible projection surface:
+  - new read-only operator routes under `/api/v1/operations/automation/task-definitions…`
+    (definitions page, definition detail, per-definition `draft` document, `occurrences` page,
+    exact `previews/{previewId}` document and paged `items`) plus one new mutation,
+    `POST …/activate-draft`, which composes the existing read-only Storage/strategy/destination
+    checks server-side so the browser never handles a revision digest;
+  - operator documents (`_automation_definition_operator_document`,
+    `_automation_preview_operator_document`, `_automation_occurrence_operator_document`) that are
+    stripped of every `*Fingerprint`/`*Digest`/`plan` key, carry bounded `activeConfiguration`,
+    `draftState`, `grantEligibility` and permission-aware exact `actions` transports
+    (`isSafeActionPath`/exact-owned binding semantics identical to the organize journey);
+  - `_automation_grant_eligibility()` extracted from the existing grant-state route (behavior
+    preserving) and reused by the detail and preview projections;
+  - the raw `/api/v1/automation/*`, `/api/v1/configuration/*` documents and every existing route
+    are untouched for V1 clients (proved by a dedicated compatibility test).
+- `web/src/entities/operations/action-transport.ts` — new shared fail-closed action-transport
+  module (URI-safe segment rule, the one intentional `{itemId}` template segment, exact owned
+  route binding, `objectBound` collection actions, `parameter`-pinned `*` segments, PUT support).
+- `web/src/entities/operations/organize.ts` — refactored onto the shared transport module with
+  identical exports and behavior (organize entity + component suites pass unchanged).
+- `web/src/entities/operations/automation.ts` + `automation.test.ts` — typed fail-closed models
+  and normalizers for definitions, Draft state, grants, eligibility, previews/items, occurrences
+  and the activation result; closed enums, contradiction checks, exact transport binding.
+- `web/src/shared/api/api-client.ts` — Automation reads (bounded `OperationsRead` results, thrown
+  `OperationsApiError` for 401/403/malformed) and mutations (bounded result objects, exact
+  methods, `encodeURIComponent` + `isSafeIdentifier` guards, no automatic retry).
+- `web/src/features/operations/automation-query.ts` + six pages — `AutomationListPage`,
+  `AutomationNewPage`, `AutomationDetailPage`, `AutomationEditorPage`, `AutomationPreviewPage`,
+  `AutomationOccurrencesPage`, all on the shared `AuthorizedReadBoundary`/`StatusBanner`/
+  `RefreshControl` shell contract with backend-authoritative availability only.
+- `web/src/routes/router.tsx`, `web/src/shared/navigation/destination-model.ts(+.test.ts)` — six
+  refresh-safe routes registered centrally; `dynamicInstancePath` now requires exactly the
+  declared number of bounded identity segments (unknown deeper routes stay not-found; traversal,
+  placeholder and unsafe segments never resolve).
+- `web/src/features/operations/OperationsLanding.tsx`, `DashboardView.tsx` — Operations and
+  Dashboard entries to `/operations/automation` as bounded navigation aids.
+- `web/tests/fake-server.mjs` — deterministic session-scoped Automation state, operator-document
+  mirrors, exact routes (including successor/save/validate/activate-draft, grant binding and
+  hostile/misbound preview fixtures), `POST /__test__/reset-automation`, evidence fields.
+- `web/tests/e2e/automation.spec.ts` — nine built-artifact journey regressions.
+- `tests/test_v2_automation_operations.py` — the full-journey Python proof (8 tests).
+- `TASK.md` — this report.
 
 ### Implemented
 
-1. **URI-safe object identity separated from the `{itemId}` template (blocker).** Both
-   `SAFE_ACTION_PATH` and `SAFE_ACTION_SEGMENT` allowed raw `<`, `>`, `{` and `}`, so a document
-   claiming `previewId="<preview>"` with a matching Execute route normalized successfully and the
-   exact-object binding was meaningless. Actual object identities are now validated by one strict
-   URI-safe segment rule, and the single intentional `{itemId}` route-template segment is a
-   separate named constant allowed only where the contract declares a parameter. The rejection is
-   layered: the coarse path gate rejects any non-URI-safe segment, and the exact-owned binding
-   independently rejects any identity that is not one strict segment, so B's probe fails closed at
-   both layers.
-2. **Coverage kept strictly additive.** The now-passing exact-suffix and transport-less recovery
-   coverage from the previous corrections is pinned at entity level in the new
-   `organize.test.ts` and extended (not weakened) in the component suite; no existing test,
-   assertion or fixture was deleted, renamed, skipped or loosened. The only test-helper change
-   adapts the checked-in masked fixture to the real-object form the helper already used for the
-   execution detail route.
+1. **Backend-authoritative Automation projections (RO-5, RO-1/RO-2/RO-7/RO-8 boundary).** The V2
+   journey consumes bounded, digest-free operator documents: the list shows the exact immutable
+   Active identity plus a distinct open successor Draft with its optimistic version and
+   validation state; detail adds schedule/timezone/due state, occurrence summary with attention
+   rows, the unattended grant state and the shared read-only admission eligibility. Missing
+   Active/Draft, read-only and unavailable states render as unavailable-with-reason plus a valid
+   successor-Draft or V1 handoff; a Draft is never labelled Active.
+2. **Draft → Validate → checked Activate.** Successor-Draft creation, optimistic save (PUT bound
+   to the exact revision version), explicit zero-mutation validation and one meaningful checked
+   activation are separate advertised actions. Checked activation composes the existing read-only
+   Storage/strategy/destination checks server-side (the browser supplies only the Draft's
+   optimistic version, never a digest), reports the new exact Active identity and starts no Scan,
+   Job, Task or occurrence (proved by test). Stale/concurrent mutations fail 409 atomically with
+   the winning revision preserved and no replay.
+3. **Exact zero-mutation Preview and staleness.** The Preview page shows definition/revision
+   identity, counts, boundary errors and paged per-item findings (targets, conflicts,
+   capabilities, blockers, RecognitionType evidence — C stays C). Editing/activating the
+   definition makes older Previews visibly historical (`current=false`, stale reason); the grant
+   action disappears and a grant submission for the stale Preview is rejected 409 before any
+   authority is created. Zero mutation is proved with recording Storage doubles.
+4. **Unattended grant/revoke.** Grant is one explicit confirmed operator action for an
+   `automatic-organization` Active definition, bound to the exact eligible Preview
+   (`previewId` is mandatory server-side), principal/permission rechecked, audited and
+   revocable; no raw grant secret or identifier is an operator input, and schedule
+   enablement/validation/activation alone never authorize mutation. Revocation is exact-object
+   and never rewrites completed effects.
+5. **Occurrences.** The occurrence history preserves each occurrence's pinned
+   definition/configuration identity and links the exact Job/Task evidence owned by Operations
+   through backend-advertised transports; reads are GET-only and never emit an occurrence
+   (proved by counting Jobs across reads).
+6. **Shared safety machinery.** The action-transport extraction gives the whole codebase one
+   exact-route/URI-safe implementation; Automation actions reuse it, and the destination model
+   now resolves exactly the declared number of bounded identity segments so deep-link
+   continuation works for the two-segment Preview route while unknown deeper routes stay
+   not-found.
 
 ### Tests and Results
 
@@ -318,16 +327,16 @@ env -u NODE_ENV npm --prefix web ci                                             
 npm --prefix web run format:check                                                  — PASS
 npm --prefix web run typecheck                                                     — PASS
 npm --prefix web run lint                                                          — PASS
-npm --prefix web run test -- --run                                                 — PASS (335/335, 30 files)
+npm --prefix web run test -- --run                                                 — PASS (352/352, 32 files)
 npm --prefix web run build                                                         — PASS
-npm --prefix web run test:e2e -- manual-organize.spec.ts manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts deep-link.spec.ts
-                                                                                   — PASS (60/60)
-npm --prefix web run test:e2e                                                      — PASS (95/95)
-.venv/bin/python -m unittest tests.test_v2_manual_organize                         — PASS (23/23)
-.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_execution_authorization tests.test_queued_job_execution_boundary tests.test_organizer_mutation_authority tests.test_manual_operations tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
-                                                                                   — PASS (153/153)
-.venv/bin/python -m unittest discover -s tests                                     — 1497 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
-.venv/bin/ruff format --check .                                                    — PASS (307 files)
+npm --prefix web run test:e2e -- automation.spec.ts operations.spec.ts deep-link.spec.ts
+                                                                                   — PASS (53/53)
+npm --prefix web run test:e2e                                                      — PASS (104/104)
+.venv/bin/python -m unittest tests.test_v2_automation_operations                   — PASS (8/8)
+.venv/bin/python -m unittest tests.test_automation_task_definition tests.test_automation_task_definition_preview tests.test_automation_unattended_grant tests.test_automation_preview_grant_gate tests.test_automation_definition_occurrence tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix tests.test_automation_admission tests.test_automation_job_fencing tests.test_automation_api tests.test_cron_scheduler tests.test_configuration_objects tests.test_operations_workspace tests.test_api_security tests.test_v2_ui
+                                                                                   — PASS (267/267)
+.venv/bin/python -m unittest discover -s tests                                     — 1505 tests, 6 FAIL / PRE-EXISTING / UNRELATED, 7 SKIP
+.venv/bin/ruff format --check .                                                    — PASS (308 files)
 .venv/bin/ruff check .                                                             — PASS
 .venv/bin/python -m compileall -q mediaflow tests scripts                          — PASS
 .venv/bin/python -m pip check                                                      — PASS
@@ -339,69 +348,73 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ### Decisions
 
-- The separation is implemented as two named validators: `isSafeActionSegment()` (strict; the
-  object identity and every real segment) and `isSafeActionPathSegment()` (strict plus exactly
-  `{itemId}`; path segments and the `*` parameter). The template is therefore confined to the
-  parameter position by construction: a path whose identity segment is `{itemId}` fails the
-  owned-prefix binding, and a fixed suffix can never be a template.
-- `isSafeActionPath()` moved from a whole-path character class to per-segment validation because
-  the template exception is segment-shaped; the previous coarse gate was strictly looser than the
-  exact-owned check, which let B's probe reach the exact check with unsafe characters and pass.
-- No backend change was needed: the real backend publishes strictly URI-safe durable identities,
-  and the only non-URI-safe segment it ever publishes is the `{itemId}` choice-route template.
-  The `<uuid>`/`<hex-id>` values in the checked-in fixture are masking artifacts of
-  `tests/test_manual_operations_contract.py` (`_canonical`), not API values, so the component
-  helper restores real-shaped identities for the documents it renders.
-- The focused no-replay/rejection assertions live at the normalizer boundary because that is where
-  B's probe was made; the component suite additionally renders the hostile transports to prove no
-  executable control appears.
+- **Operator projections instead of reshaping existing documents.** V1 renders
+  `definitionFingerprint`/`configuration.digest` from the raw documents, so the V2 surface gets
+  new read-only routes whose documents are stripped of every fingerprint/digest/plan key by one
+  recursive deny-list filter; the raw surfaces stay byte-compatible for V1 clients and a
+  dedicated test pins both sides.
+- **One new mutation, everything else reused.** Draft edit/validate/activate flow through the
+  existing managed-configuration routes; the single addition (`activate-draft`) exists because
+  the existing checked-activation chain requires `expectedDigest` per Storage check, which would
+  force the browser to handle a revision digest. The new route keeps the digest server-held —
+  the same authority boundary the organize admission uses.
+- **Grant requires the explicit `previewId`.** The grant route refuses to resolve the latest
+  Preview implicitly (409 `unattended_execution_preview_required`); the V2 pages submit the
+  reviewed Preview's identity from the eligibility projection, so stale or wrong-definition
+  Previews can never become authority.
+- **Shared action-transport module.** The 33.3 exact-route machinery moved to
+  `action-transport.ts` and was extended (PUT methods, `objectBound` collection actions,
+  `parameter`-pinned `*` segments); organize.ts keeps its exports and its suites pass unchanged,
+  so Automation cannot drift from the fail-closed binding semantics B required in Task 33.3.
+- **Destination model: exact declared segment count.** `dynamicInstancePath` resolves a concrete
+  instance only when it carries exactly the declared number of bounded URI-safe identity
+  segments — this makes the two-segment Preview deep link work while preserving the pinned
+  "unknown Operations route renders not-found" contract.
+- **Mutation responses are V1 contracts.** Read surfaces are digest-free; mutation responses of
+  reused routes keep their existing shape and the typed normalizers extract only bounded fields
+  (identity + version), so no digest reaches the model or DOM.
 
 ### Remaining In-Slice Work
 
-- Automation definition/occurrence and Notification operation remain later Slice 33 Tasks.
-- Slice 34 owns conflict-resolution UI, checkpoint continuation and uncertain-effect recovery; this
-  Task shows durable state and truthful destinations only.
+- Notification/Webhook definition, exact-revision test, checked activation, delivery inspection
+  and delivery recovery remain the next independent Slice 33 Task.
+- Slice 34 owns media review/recovery actions (checkpoint continuation, Reprocess, uncertain-
+  effect recovery); Automation shows durable state and truthful destinations only.
+- Slice 35 owns general Configuration administration; the Automation surface composes only the
+  narrow successor-Draft flow for its owned object.
 
 ### Risks / Deviations
 
 - 6 full-discovery failures are `FAIL / PRE-EXISTING / UNRELATED`, the identical set reported by
-  every previous round: `test_storage_list_does_not_construct_or_connect`,
+  every previous Task 33 round: `test_storage_list_does_not_construct_or_connect`,
   `test_storage_check_is_read_only_and_isolates_failures`,
   `test_credential_check_is_redacted_config_only_and_reports_missing`,
   `test_legacy_credential_status_is_supported_without_secret_output`,
   `test_runtime_configuration_and_final_analyze_cli`,
   `test_scan_cli_needs_no_path_or_metadata_token`. They are caused by this workspace's ignored
   local `.mediaflow/` runtime state being resolved instead of the tests' temporary bootstrap
-  document, not by this frontend-only correction. The focused suites that bind to the changed code
-  (153 + 23 Python tests, 335 frontend unit tests, 95 built-artifact tests) pass.
+  documents, not by this Task. The focused suites that bind to the changed code (267 + 8 Python
+  tests, 352 frontend unit tests, 104 built-artifact tests) pass.
 - Running the T4 suite touches the ignored local `.mediaflow/` runtime state only. No tracked
   file, media file or credential was touched; `config/alist.json` does not exist in this
   workspace and nothing private entered the checkpoint. `node_modules/` remains untracked and
   outside the checkpoint.
-- The checkpoint contains only this correction plus its report and B's recorded review; the diff
-  is additive (no test deleted, renamed, skipped or weakened).
+- The checkpoint contains only this Task plus its report; the diff is additive (no test deleted,
+  renamed, skipped or weakened; the two modified existing tests — the destination-model contract
+  and its new two-segment assertions — strengthen the pinned safety property).
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 11555c648dbd1b032b03d09fdef39f94dbec5257
+Head SHA: PENDING_COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..c4b8c2d60153fd20cec97c48e53d37d80e267270
-Decision: FIX REQUIRED
+Reviewed: PENDING
+Decision: PENDING
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: PENDING
 ```
-
-- The exact-route correction still does not enforce the promised URI-safe object identity. Both
-  `SAFE_ACTION_PATH` and `SAFE_ACTION_SEGMENT` allow raw `<`, `>`, `{` and `}` in an object's identity;
-  consequently B's isolated Vitest probe passed `identity="<preview>"` with
-  `POST /api/v1/operations/organize/previews/<preview>/execute`, expected the normalizer to reject it,
-  and failed with `AssertionError: expected [Function] to throw an error`. Separate actual object-ID
-  validation from the one intentional `{itemId}` route-template segment, reject non-URI-safe object
-  identities/action segments fail-closed, and add a focused regression without weakening the now-
-  passing exact-suffix and transport-less recovery coverage.

@@ -1953,41 +1953,8 @@ class MediaFlowApi:
                 configuration=active.summary(),
                 grant=persisted,
             )
-            resource = next(
-                (
-                    value
-                    for value in active.document.get("resourceLibraries", [])
-                    if value.get("id") == definition.resource_library_id
-                ),
-                None,
-            )
-            candidate_preview_id = None
-            if persisted is not None and persisted.status.value == "active":
-                candidate_preview_id = persisted.preview_id
-            elif self._automation_previews is not None:
-                try:
-                    candidate_preview_id = self._automation_previews.latest_readonly(
-                        definition.definition_id
-                    ).preview_id
-                except Exception:
-                    candidate_preview_id = None
-            eligibility = self._unattended_grants.project_eligibility(
-                definition,
-                configuration_snapshot_id=active.revision_id,
-                configuration_snapshot_digest=active.digest,
-                configuration_snapshot_version=active.version,
-                preview_id=candidate_preview_id,
-                storage_id=resource.get("storageId") if resource is not None else None,
-                max_items_per_run=(
-                    persisted.max_items_per_run
-                    if persisted is not None and persisted.status.value == "active"
-                    else definition.item_limit
-                ),
-                principal_id=(
-                    persisted.granting_principal
-                    if persisted is not None and persisted.status.value == "active"
-                    else principal.principal_id
-                ),
+            eligibility = self._automation_grant_eligibility(
+                active, definition, principal, persisted=persisted
             )
             return self._response(
                 start_response,
@@ -2566,6 +2533,13 @@ class MediaFlowApi:
                     "total": total,
                     "nextAfter": next_after,
                 },
+            )
+        if (
+            parts[:5] == ["api", "v1", "operations", "automation", "task-definitions"]
+            and method == "GET"
+        ):
+            return self._automation_operations_projection(
+                parts, method, environ, start_response, principal
             )
         if parts == ["api", "v1", "management", "readiness"]:
             if method != "GET":
@@ -9056,6 +9030,1107 @@ class MediaFlowApi:
         if self._automation_previews is None:
             return
         self._automation_previews.invalidate(definition_id, reason)
+
+    _AUTOMATION_OPERATOR_DENIED_KEYS = frozenset(
+        {
+            "plan",
+            "planFingerprint",
+            "sourceFingerprint",
+            "definitionFingerprint",
+            "definitionCurrentFingerprint",
+            "configurationRevisionDigest",
+            "configurationSnapshotDigest",
+            "digest",
+        }
+    )
+
+    @classmethod
+    def _strip_automation_operator_evidence(
+        cls, value: object, *, drop_definition_version: bool = False
+    ) -> object:
+        """Rebuild operator evidence without digests, fingerprints or raw plans.
+
+        The V2 Automation journey consumes bounded operator projections. The
+        revision digests, definition fingerprints, source fingerprints and
+        organize plans that the managed-configuration and automation services
+        publish are server-side binding evidence; they stay on the existing
+        surfaces and never enter these documents.
+        """
+
+        if isinstance(value, dict):
+            return {
+                key: cls._strip_automation_operator_evidence(
+                    item, drop_definition_version=drop_definition_version
+                )
+                for key, item in value.items()
+                if key not in cls._AUTOMATION_OPERATOR_DENIED_KEYS
+                and not (drop_definition_version and key == "definitionVersion")
+            }
+        if isinstance(value, list):
+            return [
+                cls._strip_automation_operator_evidence(
+                    item, drop_definition_version=drop_definition_version
+                )
+                for item in value
+            ]
+        return value
+
+    @staticmethod
+    def _automation_active_configuration(active) -> dict | None:
+        """The exact immutable Active identity, without its digest evidence."""
+
+        if active is None:
+            return None
+        return {
+            "revisionId": active.revision_id,
+            "version": active.version,
+            "revisionSequence": active.revision_sequence,
+            "status": active.status.value,
+        }
+
+    def _automation_draft_state(self, draft, *, empty_reason: str) -> dict:
+        """Bounded open-Draft evidence for one definition or for the list."""
+
+        if draft is None:
+            return {
+                "present": False,
+                "reason": empty_reason,
+                "revisionId": None,
+                "revisionVersion": None,
+                "revisionStatus": None,
+                "baseActiveRevisionId": None,
+                "updatedAt": None,
+                "validatedAt": None,
+                "validationErrors": [],
+            }
+        return {
+            "present": True,
+            "reason": None,
+            "revisionId": draft.revision_id,
+            "revisionVersion": draft.version,
+            "revisionStatus": draft.status.value,
+            "baseActiveRevisionId": draft.base_active_revision_id,
+            "updatedAt": draft.updated_at.isoformat(),
+            "validatedAt": draft.validated_at.isoformat() if draft.validated_at else None,
+            "validationErrors": list(draft.validation_errors),
+        }
+
+    @staticmethod
+    def _automation_resource_library_options(objects: object) -> list[dict]:
+        """Bounded ResourceLibrary options for the definition form."""
+
+        values = objects.get("resourceLibraries") if isinstance(objects, dict) else None
+        options: list[dict] = []
+        for value in values or []:
+            if not isinstance(value, dict) or not isinstance(value.get("id"), str):
+                continue
+            options.append(
+                {
+                    "id": value["id"],
+                    "name": value.get("name") if isinstance(value.get("name"), str) else None,
+                    "enabled": value.get("enabled") is True,
+                }
+            )
+        return options[:100]
+
+    def _automation_definition_actions(
+        self,
+        definition_id: str,
+        principal: ResolvedApiPrincipal,
+        *,
+        active,
+        draft_present: bool,
+    ) -> dict:
+        """Backend-authoritative action metadata for one definition document."""
+
+        permissions = principal.permissions
+        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
+        grant_permitted = ApiPermission.GRANT_UNATTENDED_EXECUTION in permissions
+        dry_run = ApiPermission.SUBMIT_DRY_RUN in permissions
+        active_revision_id = active.revision_id if active is not None else None
+        return {
+            "detail": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": (f"/api/v1/operations/automation/task-definitions/{definition_id}"),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": ("inspect the durable definition, schedule and occurrence state"),
+            },
+            "occurrences": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": (
+                    f"/api/v1/operations/automation/task-definitions/{definition_id}/occurrences"
+                ),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "inspect the bounded occurrence history and its linked work",
+            },
+            "preview": {
+                "available": dry_run,
+                "reason": self._organize_unavailable_reason(
+                    dry_run,
+                    ApiPermission.SUBMIT_DRY_RUN,
+                    "the connected API principal cannot run a zero-mutation Automation Preview",
+                ),
+                "method": "POST",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/preview",
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a durable zero-mutation Preview of the exact Active definition is stored"
+                ),
+                "nextAction": (
+                    "create the exact Preview after reviewing the current schedule and scope"
+                ),
+            },
+            "grantState": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant-state",
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "read the current unattended grant state and its eligibility",
+            },
+            "grant": {
+                "available": grant_permitted,
+                "reason": self._organize_unavailable_reason(
+                    grant_permitted,
+                    ApiPermission.GRANT_UNATTENDED_EXECUTION,
+                    "the connected API principal cannot grant unattended execution authority",
+                ),
+                "method": "POST",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant",
+                "requiresConfirmation": True,
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a persistent scoped unattended execution grant is stored and audited"
+                ),
+                "nextAction": (
+                    "run a fresh exact Preview, review its eligibility and explicitly "
+                    "confirm the unattended grant"
+                ),
+            },
+            "revoke": {
+                "available": grant_permitted,
+                "reason": self._organize_unavailable_reason(
+                    grant_permitted,
+                    ApiPermission.GRANT_UNATTENDED_EXECUTION,
+                    "the connected API principal cannot revoke unattended execution authority",
+                ),
+                "method": "POST",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/revoke",
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "the grant is revoked; future unattended mutation is prevented without "
+                    "rewriting completed effects"
+                ),
+                "nextAction": "revoke the grant when its exact bounds are no longer wanted",
+            },
+            "copy": {
+                "available": manage and draft_present,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        "the connected API principal cannot copy Automation Task Definitions",
+                    )
+                    if not manage
+                    else (
+                        None
+                        if draft_present
+                        else "an open successor Draft is required to copy this definition"
+                    )
+                ),
+                "method": "POST",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/copy",
+                "sideEffects": "none",
+                "durableOutcome": ("a copied definition is stored inside the open successor Draft"),
+                "nextAction": (
+                    "create or open a successor Draft, then copy the definition inside it"
+                ),
+            },
+            "draftCreate": {
+                "available": manage and active is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        "the connected API principal cannot create a successor Draft",
+                    )
+                    if not manage
+                    else (
+                        None
+                        if active is not None
+                        else "no Active configuration exists; managed "
+                        "configuration setup owns the first Draft"
+                    )
+                ),
+                "method": "POST",
+                "path": (
+                    f"/api/v1/configuration/revisions/{active_revision_id}/successor"
+                    if active_revision_id is not None
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a successor Draft seeded from the immutable Active configuration is stored"
+                ),
+                "nextAction": (
+                    "create or open the successor Draft, edit the definition, then validate "
+                    "and explicitly activate"
+                ),
+            },
+        }
+
+    def _automation_definition_operator_document(
+        self,
+        document: dict,
+        *,
+        principal: ResolvedApiPrincipal,
+        active=None,
+        draft=None,
+        eligibility: dict | None = None,
+    ) -> dict:
+        """Bounded, digest-free V2 operator projection for one definition."""
+
+        definition_id = str(document.get("id", ""))
+        operator = self._strip_automation_operator_evidence(document)
+        operator["activeConfiguration"] = self._automation_active_configuration(active)
+        draft_state = self._automation_draft_state(
+            draft,
+            empty_reason=(
+                "no open successor Draft contains this definition; create one to edit it"
+            ),
+        )
+        operator["draftState"] = draft_state
+        operator["actions"] = self._automation_definition_actions(
+            definition_id,
+            principal,
+            active=active,
+            draft_present=bool(draft_state["present"]),
+        )
+        if eligibility is not None:
+            operator["grantEligibility"] = self._strip_automation_operator_evidence(eligibility)
+        return operator
+
+    def _automation_occurrence_operator_document(self, document: dict) -> dict:
+        """Bounded occurrence projection with exact linked-work transports."""
+
+        operator = self._strip_automation_operator_evidence(document)
+        actions: dict[str, object] = {}
+        task_id = operator.get("taskId")
+        if isinstance(task_id, str) and task_id:
+            actions["task"] = {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": f"/api/v1/operations/tasks/{task_id}",
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "inspect the durable Task and its per-item Results",
+            }
+        job_id = operator.get("jobId")
+        if isinstance(job_id, str) and job_id:
+            actions["job"] = {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": f"/api/v1/operations/jobs/{job_id}",
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "inspect the durable admission Job",
+            }
+        operator["actions"] = actions
+        return operator
+
+    def _automation_preview_operator_document(
+        self,
+        preview,
+        *,
+        principal: ResolvedApiPrincipal,
+        eligibility: dict | None = None,
+    ) -> dict:
+        """Bounded, digest-free V2 operator projection for one exact Preview."""
+
+        document = self._automation_preview_document(preview)
+        operator = self._strip_automation_operator_evidence(document, drop_definition_version=True)
+        definition_id = str(operator.get("definitionId", ""))
+        preview_id = str(operator.get("previewId", ""))
+        grant_permitted = ApiPermission.GRANT_UNATTENDED_EXECUTION in principal.permissions
+        preview_ready = operator.get("current") is True and operator.get("zeroMutation") is True
+        operator["actions"] = {
+            "detail": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": (
+                    f"/api/v1/operations/automation/task-definitions/{definition_id}"
+                    f"/previews/{preview_id}"
+                ),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "inspect the exact Preview evidence and its items",
+            },
+            "items": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": (
+                    f"/api/v1/operations/automation/task-definitions/{definition_id}"
+                    f"/previews/{preview_id}/items"
+                ),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "page the bounded Preview item evidence",
+            },
+            "definition": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": (f"/api/v1/operations/automation/task-definitions/{definition_id}"),
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "reopen the durable definition behind this Preview",
+            },
+            "grantState": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant-state",
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "read the current unattended grant state and its eligibility",
+            },
+            "grant": {
+                "available": grant_permitted and preview_ready,
+                "reason": (
+                    None
+                    if grant_permitted and preview_ready
+                    else (
+                        self._organize_unavailable_reason(
+                            grant_permitted,
+                            ApiPermission.GRANT_UNATTENDED_EXECUTION,
+                            "the connected API principal cannot grant unattended "
+                            "execution authority",
+                        )
+                        if not grant_permitted
+                        else (
+                            "this Preview is historical, truncated or incomplete and "
+                            "cannot support unattended authority; run a fresh exact Preview"
+                        )
+                    )
+                ),
+                "method": "POST",
+                "path": f"/api/v1/automation/task-definitions/{definition_id}/grant",
+                "requiresConfirmation": True,
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a persistent scoped unattended execution grant bound to this exact "
+                    "Preview is stored and audited"
+                ),
+                "nextAction": (
+                    "review the grant eligibility and explicitly confirm the unattended grant"
+                ),
+            },
+        }
+        if eligibility is not None:
+            operator["grantEligibility"] = self._strip_automation_operator_evidence(eligibility)
+        return operator
+
+    def _automation_grant_eligibility(
+        self,
+        active,
+        definition,
+        principal: ResolvedApiPrincipal,
+        *,
+        persisted=None,
+    ) -> dict:
+        """The shared read-only unattended-grant admission decision."""
+
+        resource = next(
+            (
+                value
+                for value in active.document.get("resourceLibraries", [])
+                if value.get("id") == definition.resource_library_id
+            ),
+            None,
+        )
+        candidate_preview_id = None
+        if persisted is not None and persisted.status.value == "active":
+            candidate_preview_id = persisted.preview_id
+        elif self._automation_previews is not None:
+            try:
+                candidate_preview_id = self._automation_previews.latest_readonly(
+                    definition.definition_id
+                ).preview_id
+            except Exception:
+                candidate_preview_id = None
+        return self._unattended_grants.project_eligibility(
+            definition,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            configuration_snapshot_version=active.version,
+            preview_id=candidate_preview_id,
+            storage_id=resource.get("storageId") if resource is not None else None,
+            max_items_per_run=(
+                persisted.max_items_per_run
+                if persisted is not None and persisted.status.value == "active"
+                else definition.item_limit
+            ),
+            principal_id=(
+                persisted.granting_principal
+                if persisted is not None and persisted.status.value == "active"
+                else principal.principal_id
+            ),
+        )
+
+    def _automation_operations_projection(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Dispatch the bounded V2 Automation operator projections.
+
+        The read documents are the exact, digest-free evidence the Web journey
+        consumes. The raw managed-configuration and automation documents stay
+        on the existing /api/v1/automation and /api/v1/configuration surfaces.
+        The one mutation here is the automation-scoped checked activation: it
+        composes the existing read-only Storage/strategy/destination checks
+        server-side so the browser never handles a revision digest.
+        """
+
+        if len(parts) == 7 and parts[6] == "activate-draft" and method == "POST":
+            return self._automation_definition_activate_checked_draft(
+                parts[5], environ, start_response, principal
+            )
+        if method != "GET":
+            return self._error(start_response, 405, "method_not_allowed", "GET required")
+        self._require(principal, ApiPermission.READ)
+        if self._configuration_service is None or self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        if len(parts) == 5:
+            self._require_empty_query(environ, "operations automation definitions")
+            return self._automation_definitions_operator_page(environ, start_response, principal)
+        if len(parts) == 6:
+            self._require_empty_query(environ, "operations automation definition")
+            return self._automation_definition_operator_detail(parts[5], start_response, principal)
+        if len(parts) == 7 and parts[6] == "draft":
+            self._require_empty_query(environ, "operations automation definition draft")
+            return self._automation_definition_operator_draft(parts[5], start_response, principal)
+        if len(parts) == 7 and parts[6] == "occurrences":
+            return self._automation_definition_operator_occurrences(
+                parts[5], environ, start_response, principal
+            )
+        if len(parts) == 8 and parts[6] == "previews":
+            self._require_empty_query(environ, "operations automation Preview")
+            return self._automation_definition_operator_preview(
+                parts[5], parts[7], start_response, principal
+            )
+        if len(parts) == 9 and parts[6] == "previews" and parts[8] == "items":
+            return self._automation_definition_operator_preview_items(
+                parts[5], parts[7], environ, start_response
+            )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _automation_definitions_operator_page(
+        self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        active = self._configuration_service.active()
+        if active is None:
+            manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+            return self._response(
+                start_response,
+                200,
+                {
+                    "activeConfiguration": None,
+                    "items": [],
+                    "total": 0,
+                    "truncated": False,
+                    "draftState": self._automation_draft_state(
+                        None,
+                        empty_reason=(
+                            "no Active configuration exists; managed configuration "
+                            "setup owns the first Draft"
+                        ),
+                    ),
+                    "resourceLibraryOptions": [],
+                    "actions": {
+                        "create": {
+                            "available": False,
+                            "reason": (
+                                self._organize_unavailable_reason(
+                                    manage,
+                                    ApiPermission.MANAGE_CONFIGURATION,
+                                    "the connected API principal cannot create "
+                                    "Automation Task Definitions",
+                                )
+                                if not manage
+                                else "no Active configuration exists; managed "
+                                "configuration setup owns the first Draft"
+                            ),
+                            "method": "POST",
+                            "path": "/api/v1/automation/task-definitions",
+                            "sideEffects": "none",
+                            "durableOutcome": (
+                                "the bounded definition is stored inside the open successor Draft"
+                            ),
+                            "nextAction": (
+                                "complete managed configuration setup, then create "
+                                "definitions inside a successor Draft"
+                            ),
+                        },
+                        "createDraft": {
+                            "available": False,
+                            "reason": (
+                                self._organize_unavailable_reason(
+                                    manage,
+                                    ApiPermission.MANAGE_CONFIGURATION,
+                                    "the connected API principal cannot create a successor Draft",
+                                )
+                                if not manage
+                                else "no Active configuration exists; managed "
+                                "configuration setup owns the first Draft"
+                            ),
+                            "method": "POST",
+                            "path": None,
+                            "sideEffects": "none",
+                            "durableOutcome": (
+                                "a successor Draft seeded from the immutable Active "
+                                "configuration is stored"
+                            ),
+                            "nextAction": (
+                                "complete managed configuration setup before staging "
+                                "a successor Draft"
+                            ),
+                        },
+                    },
+                },
+            )
+        detail = self._configuration_objects.revision_detail(active.revision_id)
+        all_items = detail["objects"].get("automationTaskDefinitions", [])
+        drafts = self._configuration_service.open_draft_revisions()
+        draft_by_id: dict[str, object] = {}
+        for draft in drafts:
+            document = draft.document if isinstance(draft.document, dict) else {}
+            section = document.get("automationTaskDefinitions")
+            if not isinstance(section, list):
+                continue
+            for candidate in section:
+                if (
+                    isinstance(candidate, dict)
+                    and isinstance(candidate.get("id"), str)
+                    and candidate["id"] not in draft_by_id
+                ):
+                    draft_by_id[candidate["id"]] = draft
+        projected = self._automation_occurrences.project_definitions(
+            all_items[:100],
+            configuration=active.summary(),
+        )
+        items = [
+            self._automation_definition_operator_document(
+                value,
+                principal=principal,
+                active=active,
+                draft=draft_by_id.get(str(value.get("id", ""))),
+            )
+            for value in projected
+        ]
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        return self._response(
+            start_response,
+            200,
+            {
+                "activeConfiguration": self._automation_active_configuration(active),
+                "items": items,
+                "total": len(all_items),
+                "truncated": len(all_items) > len(items),
+                "draftState": self._automation_draft_state(
+                    drafts[0] if drafts else None,
+                    empty_reason=(
+                        "no open successor Draft exists; create one to add or edit definitions"
+                    ),
+                ),
+                "resourceLibraryOptions": self._automation_resource_library_options(
+                    detail["objects"]
+                ),
+                "actions": {
+                    "create": {
+                        "available": manage,
+                        "reason": self._organize_unavailable_reason(
+                            manage,
+                            ApiPermission.MANAGE_CONFIGURATION,
+                            "the connected API principal cannot create Automation Task Definitions",
+                        ),
+                        "method": "POST",
+                        "path": "/api/v1/automation/task-definitions",
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the bounded definition is stored inside the open successor Draft"
+                        ),
+                        "nextAction": (
+                            "start or open a successor Draft, then create the definition inside it"
+                        ),
+                    },
+                    "createDraft": {
+                        "available": manage,
+                        "reason": self._organize_unavailable_reason(
+                            manage,
+                            ApiPermission.MANAGE_CONFIGURATION,
+                            "the connected API principal cannot create a successor Draft",
+                        ),
+                        "method": "POST",
+                        "path": (f"/api/v1/configuration/revisions/{active.revision_id}/successor"),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "a successor Draft seeded from the immutable Active "
+                            "configuration is stored"
+                        ),
+                        "nextAction": (
+                            "create or open the successor Draft, then add or edit "
+                            "definitions inside it"
+                        ),
+                    },
+                },
+            },
+        )
+
+    def _automation_definition_operator_detail(
+        self, definition_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        active, _raw, definition = self._automation_definition_context(
+            environ={}, definition_id=definition_id
+        )
+        projected = self._automation_occurrences.project_definition(
+            _raw,
+            configuration=active.summary(),
+        )
+        persisted = self._unattended_grants.get_for_definition(definition.definition_id)
+        eligibility = self._automation_grant_eligibility(
+            active, definition, principal, persisted=persisted
+        )
+        draft = self._configuration_service.latest_open_draft_containing(
+            "automationTaskDefinitions", definition.definition_id
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "definition": self._automation_definition_operator_document(
+                    projected,
+                    principal=principal,
+                    active=active,
+                    draft=draft,
+                    eligibility=eligibility,
+                ),
+                "activeConfiguration": self._automation_active_configuration(active),
+            },
+        )
+
+    def _automation_definition_operator_draft(
+        self, definition_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        active, raw, definition = self._automation_definition_context(
+            environ={}, definition_id=definition_id
+        )
+        draft = self._configuration_service.latest_open_draft_containing(
+            "automationTaskDefinitions", definition.definition_id
+        )
+        draft_definition = None
+        if draft is not None:
+            section = (
+                draft.document.get("automationTaskDefinitions", [])
+                if isinstance(draft.document, dict)
+                else []
+            )
+            draft_definition = next(
+                (
+                    item
+                    for item in section
+                    if isinstance(item, dict) and item.get("id") == definition.definition_id
+                ),
+                None,
+            )
+        detail = self._configuration_objects.revision_detail(active.revision_id)
+        permissions = principal.permissions
+        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
+        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
+        draft_revision_id = draft.revision_id if draft is not None else None
+        return self._response(
+            start_response,
+            200,
+            {
+                "definitionId": definition.definition_id,
+                "activeConfiguration": self._automation_active_configuration(active),
+                "draft": (
+                    None
+                    if draft is None or draft_definition is None
+                    else {
+                        "revisionId": draft.revision_id,
+                        "revisionVersion": draft.version,
+                        "revisionStatus": draft.status.value,
+                        "baseActiveRevisionId": draft.base_active_revision_id,
+                        "updatedAt": draft.updated_at.isoformat(),
+                        "validatedAt": (
+                            draft.validated_at.isoformat() if draft.validated_at else None
+                        ),
+                        "validationErrors": list(draft.validation_errors),
+                        "definition": self._strip_automation_operator_evidence(draft_definition),
+                    }
+                ),
+                "resourceLibraryOptions": self._automation_resource_library_options(
+                    detail["objects"]
+                ),
+                "actions": {
+                    "createDraft": {
+                        "available": manage,
+                        "reason": self._organize_unavailable_reason(
+                            manage,
+                            ApiPermission.MANAGE_CONFIGURATION,
+                            "the connected API principal cannot create a successor Draft",
+                        ),
+                        "method": "POST",
+                        "path": (f"/api/v1/configuration/revisions/{active.revision_id}/successor"),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "a successor Draft seeded from the immutable Active "
+                            "configuration is stored"
+                        ),
+                        "nextAction": (
+                            "create the successor Draft, then edit this definition inside it"
+                        ),
+                    },
+                    "save": {
+                        "available": manage and draft is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                "the connected API principal cannot edit Automation "
+                                "Task Definitions",
+                            )
+                            if not manage
+                            else (
+                                None
+                                if draft is not None
+                                else "an open successor Draft is required to edit this definition"
+                            )
+                        ),
+                        "method": "PUT",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                            f"automationTaskDefinitions/{definition.definition_id}"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the bounded definition form is stored in the open successor "
+                            "Draft at a new optimistic revision version"
+                        ),
+                        "nextAction": (
+                            "save the bounded form, then validate and explicitly activate"
+                        ),
+                    },
+                    "validate": {
+                        "available": manage and draft is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                "the connected API principal cannot validate configuration",
+                            )
+                            if not manage
+                            else (
+                                None
+                                if draft is not None
+                                else "an open successor Draft is required before validation"
+                            )
+                        ),
+                        "method": "POST",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{draft_revision_id}/validate"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the open Draft is validated without any runtime or Storage effect"
+                        ),
+                        "nextAction": "validate the Draft, then review the validation evidence",
+                    },
+                    "activate": {
+                        "available": activate_permitted and draft is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                activate_permitted,
+                                ApiPermission.ACTIVATE_CONFIGURATION,
+                                "the connected API principal cannot activate configuration",
+                            )
+                            if not activate_permitted
+                            else (
+                                None
+                                if draft is not None
+                                else "an open successor Draft is required before activation"
+                            )
+                        ),
+                        "method": "POST",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{draft_revision_id}/activate"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "requiresConfirmation": True,
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the exact Draft becomes the immutable Active configuration; no "
+                            "Scan, Job, Task or occurrence is started"
+                        ),
+                        "nextAction": ("confirm one explicit activation of the validated Draft"),
+                    },
+                },
+            },
+        )
+
+    def _automation_definition_operator_occurrences(
+        self,
+        definition_id: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ) -> None:
+        active, _raw, _definition = self._automation_definition_context(
+            environ={**environ, "QUERY_STRING": ""}, definition_id=definition_id
+        )
+        limit, cursor = self._scoped_page_query(
+            environ,
+            "automation_definition_occurrences",
+            definition_id,
+            "automation occurrence",
+        )
+        values = self._list_page(
+            lambda **kwargs: self._automation_occurrences.list(definition_id, **kwargs),
+            limit,
+            cursor,
+        )
+        page, has_previous, has_next = self._page_window(values, limit, cursor)
+        return self._response(
+            start_response,
+            200,
+            {
+                "definitionId": definition_id,
+                "activeConfiguration": self._automation_active_configuration(active),
+                "items": [
+                    self._automation_occurrence_operator_document(item)
+                    for item in self._automation_occurrences.project_occurrences(page)
+                ],
+                "limit": limit,
+                "truncated": has_next,
+                "previous_cursor": self._page_cursor(
+                    "automation_definition_occurrences",
+                    page,
+                    has_previous,
+                    CursorDirection.PREVIOUS,
+                    scope=definition_id,
+                ),
+                "next_cursor": self._page_cursor(
+                    "automation_definition_occurrences",
+                    page,
+                    has_next,
+                    CursorDirection.NEXT,
+                    scope=definition_id,
+                ),
+            },
+        )
+
+    def _automation_definition_operator_preview(
+        self,
+        definition_id: str,
+        preview_id: str,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ) -> None:
+        if self._automation_previews is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "automation Preview service is unavailable",
+            )
+        preview = self._automation_previews.get_readonly(preview_id)
+        if preview.definition_id != definition_id:
+            raise LookupError(
+                f"automation Preview {preview_id!r} does not belong to definition {definition_id!r}"
+            )
+        eligibility = None
+        if self._configuration_service is not None and self._configuration_objects is not None:
+            active, _raw, definition = self._automation_definition_context(
+                environ={}, definition_id=definition_id
+            )
+            persisted = self._unattended_grants.get_for_definition(definition.definition_id)
+            eligibility = self._automation_grant_eligibility(
+                active, definition, principal, persisted=persisted
+            )
+        return self._response(
+            start_response,
+            200,
+            self._automation_preview_operator_document(
+                preview, principal=principal, eligibility=eligibility
+            ),
+        )
+
+    def _automation_definition_activate_checked_draft(
+        self,
+        definition_id: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ) -> None:
+        """Checked-activate the open successor Draft that owns this definition.
+
+        The browser supplies only the Draft's optimistic version; the existing
+        read-only Storage, strategy and destination checks run server-side so
+        the revision digest never reaches the client. No Scan, Job, Task or
+        occurrence is started by activation.
+        """
+
+        if self._configuration_service is None or self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+        self._require_empty_query(environ, "operations automation draft activation")
+        document = self._document(environ)
+        if set(document) != {"expectedVersion"}:
+            raise ValueError("automation draft activation requires expectedVersion only")
+        expected = document["expectedVersion"]
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            raise ValueError("automation draft activation expectedVersion must be an integer")
+        active, _raw, definition = self._automation_definition_context(
+            environ={**environ, "QUERY_STRING": ""}, definition_id=definition_id
+        )
+        del active
+        draft = self._configuration_service.latest_open_draft_containing(
+            "automationTaskDefinitions", definition.definition_id
+        )
+        if draft is None:
+            raise UnattendedExecutionGrantError(
+                "no open successor Draft contains this definition",
+                code="automation_draft_required",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action="create a successor Draft, edit the definition, then activate",
+            )
+        if draft.version != expected:
+            raise ConfigurationVersionConflict(
+                "the successor Draft changed before activation; reload the Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                current_digest=draft.digest,
+                durable_state="draft_preserved",
+                next_action="reload the Draft, then activate the current version again",
+            )
+        activated = self._configuration_objects.activate_checked(
+            draft.revision_id,
+            expected_version=expected,
+            actor=principal.principal_id,
+        )
+        self._refresh_configuration_binding()
+        active_after = self._configuration_service.active()
+        definition_after = next(
+            (
+                item
+                for item in activated.document.get("automationTaskDefinitions", [])
+                if isinstance(item, dict) and item.get("id") == definition.definition_id
+            ),
+            None,
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "activatedRevisionId": activated.revision_id,
+                "activatedVersion": activated.version,
+                "revisionSequence": activated.revision_sequence,
+                "activeConfiguration": self._automation_active_configuration(active_after),
+                "definition": (
+                    self._strip_automation_operator_evidence(definition_after)
+                    if definition_after is not None
+                    else None
+                ),
+            },
+        )
+
+    def _automation_definition_operator_preview_items(
+        self,
+        definition_id: str,
+        preview_id: str,
+        environ: dict,
+        start_response: Callable,
+    ) -> None:
+        if self._automation_previews is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "automation Preview service is unavailable",
+            )
+        preview = self._automation_previews.get_readonly(preview_id)
+        if preview.definition_id != definition_id:
+            raise LookupError(
+                f"automation Preview {preview_id!r} does not belong to definition {definition_id!r}"
+            )
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(query).difference({"limit", "after"}) or any(
+            len(value) != 1 for value in query.values()
+        ):
+            raise ValueError("automation Preview item query accepts limit and after once")
+        try:
+            limit = int(query.get("limit", ["100"])[0])
+        except ValueError as error:
+            raise ValueError("automation Preview item limit must be an integer") from error
+        if limit < 1 or limit > 500:
+            raise ValueError("automation Preview item limit must be between 1 and 500")
+        after_value = query.get("after", [None])[0]
+        if after_value is not None:
+            try:
+                after = int(after_value)
+            except ValueError as error:
+                raise ValueError("automation Preview item cursor must be an integer") from error
+        else:
+            after = None
+        items, total, next_after = self._automation_previews.items(
+            preview_id, limit=limit, after=after
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "previewId": preview_id,
+                "items": [
+                    self._strip_automation_operator_evidence(
+                        item.document(), drop_definition_version=True
+                    )
+                    for item in items
+                ],
+                "total": total,
+                "nextAfter": next_after,
+            },
+        )
 
     def _file_catalog_detail_value(self, detail) -> dict:
         projection = (

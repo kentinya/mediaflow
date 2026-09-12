@@ -27,6 +27,12 @@ import { OrganizeNewPage } from "../features/operations/OrganizeNewPage";
 import { OrganizeIntentPage } from "../features/operations/OrganizeIntentPage";
 import { OrganizePreviewPage } from "../features/operations/OrganizePreviewPage";
 import { OrganizeExecutionPage } from "../features/operations/OrganizeExecutionPage";
+import { AutomationListPage } from "../features/operations/AutomationListPage";
+import { AutomationNewPage } from "../features/operations/AutomationNewPage";
+import { AutomationDetailPage } from "../features/operations/AutomationDetailPage";
+import { AutomationEditorPage } from "../features/operations/AutomationEditorPage";
+import { AutomationPreviewPage } from "../features/operations/AutomationPreviewPage";
+import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -171,6 +177,42 @@ const organizeExecutionRoute = createRoute({
   component: OrganizeExecutionPage,
 });
 
+const automationListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation",
+  component: AutomationListPage,
+});
+
+const automationNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/new",
+  component: AutomationNewPage,
+});
+
+const automationDefinitionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/definition/$definitionId",
+  component: AutomationDetailPage,
+});
+
+const automationEditorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/editor/$definitionId",
+  component: AutomationEditorPage,
+});
+
+const automationPreviewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/preview/$definitionId/$previewId",
+  component: AutomationPreviewPage,
+});
+
+const automationOccurrencesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/automation/occurrences/$definitionId",
+  component: AutomationOccurrencesPage,
+});
+
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "review",
@@ -203,6 +245,12 @@ const routeTree = rootRoute.addChildren([
   organizeIntentRoute,
   organizePreviewRoute,
   organizeExecutionRoute,
+  automationListRoute,
+  automationNewRoute,
+  automationDefinitionRoute,
+  automationEditorRoute,
+  automationPreviewRoute,
+  automationOccurrencesRoute,
   reviewRoute,
   configurationRoute,
 ]);

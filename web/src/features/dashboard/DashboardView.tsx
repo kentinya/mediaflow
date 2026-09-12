@@ -143,6 +143,9 @@ export function DashboardView({
         <RefreshControl onRefresh={onRefresh} refreshing={refreshing} />
       </header>
       <p className="mf-dashboard-meta">Snapshot as of {model.asOf}</p>
+      <div className="mf-actions">
+        <Link to="/operations/automation">Open Automation workspace</Link>
+      </div>
       <CountGrid
         title="Libraries"
         counts={[

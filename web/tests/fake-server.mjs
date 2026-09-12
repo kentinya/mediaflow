@@ -1673,6 +1673,9 @@ const MANUAL_REQUEST_BODY_FIELDS = [
   "itemCursor",
   "itemLimit",
   "mode",
+  "object",
+  "previewId",
+  "reason",
   "recognitionTypeId",
   "resourceLibraryId",
   "scopeKind",
@@ -2938,6 +2941,744 @@ const CONTENT_TYPES = {
   ".svg": "image/svg+xml",
   ".txt": "text/plain; charset=utf-8",
 };
+
+// ---------------------------------------------------------------------------
+// Automation journey fake state
+//
+// Mirrors the bounded, digest-free operator documents the real Python API
+// publishes under /api/v1/operations/automation/* (proved by
+// tests/test_v2_automation_operations.py). Mutations reuse the existing
+// backend routes and are optimistic-version bound; the browser never sends or
+// receives a revision digest, fingerprint or plan.
+// ---------------------------------------------------------------------------
+
+const AUTOMATION_DEFINITION_ID = "automation-def-e2e-001";
+const AUTOMATION_ACTIVE_REVISION = "automation-active-rev-e2e-001";
+const AUTOMATION_DRAFT_REVISION = "automation-draft-rev-e2e-001";
+const AUTOMATION_PREVIEW_ID = "automation-preview-e2e-001";
+const AUTOMATION_HOSTILE_PREVIEW_ID = "automation-preview-hostile-e2e-001";
+const AUTOMATION_MISBOUND_PREVIEW_ID = "automation-preview-misbound-e2e-001";
+const AUTOMATION_OCCURRENCE_ID = "automation-occurrence-e2e-001";
+const AUTOMATION_JOB_ID = "automation-job-e2e-001";
+const AUTOMATION_TASK_ID = "automation-task-e2e-001";
+const AUTOMATION_GRANT_ID = "automation-grant-e2e-001";
+
+const AUTOMATION_STATES = new Map();
+
+function automationState(session) {
+  const key = session ?? "shared";
+  let value = AUTOMATION_STATES.get(key);
+  if (value === undefined) {
+    value = {
+      draftCreated: false,
+      draftVersion: 2,
+      draftStatus: "draft",
+      previewCreated: false,
+      previewStale: false,
+      granted: false,
+      activated: false,
+    };
+    AUTOMATION_STATES.set(key, value);
+  }
+  return value;
+}
+
+function automationAction(overrides = {}) {
+  return {
+    available: true,
+    reason: null,
+    method: "POST",
+    path: "/api/v1/automation/task-definitions",
+    requiresConfirmation: false,
+    sideEffects: "none",
+    durableOutcome: null,
+    nextAction: null,
+    ...overrides,
+  };
+}
+
+function automationPermissions(token) {
+  const operator = VIEWER_TOKENS.has(token);
+  return {
+    operator,
+    manage: operator,
+    activate: operator,
+    grant: operator,
+    dryRun: operator,
+  };
+}
+
+function automationDefinitionActions(state, token) {
+  const { manage, grant, dryRun } = automationPermissions(token);
+  return {
+    detail: automationAction({
+      available: true,
+      method: "GET",
+      path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`,
+      durableOutcome: null,
+      nextAction:
+        "inspect the durable definition, schedule and occurrence state",
+    }),
+    occurrences: automationAction({
+      available: true,
+      method: "GET",
+      path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/occurrences`,
+      durableOutcome: null,
+      nextAction: "inspect the bounded occurrence history and its linked work",
+    }),
+    preview: automationAction({
+      available: dryRun,
+      reason: dryRun
+        ? null
+        : "the connected API principal cannot run a zero-mutation Automation Preview",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/preview`,
+      durableOutcome:
+        "a durable zero-mutation Preview of the exact Active definition is stored",
+      nextAction:
+        "create the exact Preview after reviewing the schedule and scope",
+    }),
+    grantState: automationAction({
+      available: true,
+      method: "GET",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant-state`,
+      durableOutcome: null,
+      nextAction: "read the current unattended grant state and its eligibility",
+    }),
+    grant: automationAction({
+      available: grant,
+      reason: grant
+        ? null
+        : "the connected API principal cannot grant unattended execution authority",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant`,
+      requiresConfirmation: true,
+      durableOutcome:
+        "a persistent scoped unattended execution grant is stored and audited",
+      nextAction:
+        "run a fresh exact Preview, review its eligibility and explicitly confirm the unattended grant",
+    }),
+    revoke: automationAction({
+      available: grant,
+      reason: grant
+        ? null
+        : "the connected API principal cannot revoke unattended execution authority",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/revoke`,
+      durableOutcome:
+        "the grant is revoked; future unattended mutation is prevented without rewriting completed effects",
+      nextAction: "revoke the grant when its exact bounds are no longer wanted",
+    }),
+    copy: automationAction({
+      available: manage && state.draftCreated,
+      reason: manage
+        ? state.draftCreated
+          ? null
+          : "an open successor Draft is required to copy this definition"
+        : "the connected API principal cannot copy Automation Task Definitions",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/copy`,
+      durableOutcome:
+        "a copied definition is stored inside the open successor Draft",
+      nextAction:
+        "create or open a successor Draft, then copy the definition inside it",
+    }),
+    draftCreate: automationAction({
+      available: manage,
+      reason: manage
+        ? null
+        : "the connected API principal cannot create a successor Draft",
+      path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+      durableOutcome:
+        "a successor Draft seeded from the immutable Active configuration is stored",
+      nextAction:
+        "create or open the successor Draft, edit the definition, then validate and explicitly activate",
+    }),
+  };
+}
+
+function automationDefinitionDocument(state, token) {
+  const eligible =
+    state.previewCreated && !state.previewStale && !state.granted;
+  const draftState = state.draftCreated
+    ? {
+        present: true,
+        reason: null,
+        revisionId: AUTOMATION_DRAFT_REVISION,
+        revisionVersion: state.draftVersion,
+        revisionStatus: state.draftStatus,
+        baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
+        updatedAt: MANUAL_RECORDED_AT,
+        validatedAt:
+          state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+        validationErrors: [],
+      }
+    : {
+        present: false,
+        reason: "no open successor Draft contains this definition",
+        revisionId: null,
+        revisionVersion: null,
+        revisionStatus: null,
+        baseActiveRevisionId: null,
+        updatedAt: null,
+        validatedAt: null,
+        validationErrors: [],
+      };
+  const grant = state.granted
+    ? {
+        status: "active",
+        active: true,
+        grantId: AUTOMATION_GRANT_ID,
+        definitionId: AUTOMATION_DEFINITION_ID,
+        definitionChangedSinceGrant: false,
+        nextAction:
+          "inspect the next occurrence or revoke this grant before changing its exact bounds",
+        maxItemsPerRun: 12,
+        previewId: AUTOMATION_PREVIEW_ID,
+        grantingPrincipal: "e2e-operator",
+        grantedAt: MANUAL_RECORDED_AT,
+        revokedAt: null,
+        reason: null,
+        currentPermission: {
+          principalId: "e2e-operator",
+          status: "valid",
+          allowed: true,
+        },
+      }
+    : {
+        status: "none",
+        active: false,
+        grantId: null,
+        definitionId: AUTOMATION_DEFINITION_ID,
+        definitionChangedSinceGrant: false,
+        nextAction:
+          "review the exact definition bounds and explicitly grant unattended execution",
+      };
+  return {
+    id: AUTOMATION_DEFINITION_ID,
+    name: "Nightly automation",
+    enabled: true,
+    resourceLibraryId: "source",
+    mode: "automatic-organization",
+    itemLimit: 12,
+    sourceScope: null,
+    intervalSeconds: 3600,
+    occurrence: {
+      enabled: true,
+      nextRunAt: "2026-01-02T08:00:00+00:00",
+      lastOccurrenceAt: MANUAL_RECORDED_AT,
+      lastJobId: AUTOMATION_JOB_ID,
+      lastTaskId: AUTOMATION_TASK_ID,
+      lastOutcome: "completed",
+      lastReason: null,
+      nextAction:
+        "inspect the verified per-item Results; no replay is required",
+      lastFailureCategory: null,
+      outcomeSummary: {
+        taskId: AUTOMATION_TASK_ID,
+        totalItems: 2,
+        statusCounts: { completed: 2 },
+        bound: {
+          configuredItemLimit: 12,
+          reached: false,
+          statement:
+            "2 item(s) completed; the configured item bound was not reached.",
+        },
+        attention: [],
+        attentionTruncated: false,
+      },
+    },
+    unattendedExecutionGrant: grant,
+    activeConfiguration: {
+      revisionId: state.activated
+        ? AUTOMATION_DRAFT_REVISION
+        : AUTOMATION_ACTIVE_REVISION,
+      version: state.activated ? 4 : 3,
+      revisionSequence: state.activated ? 3 : 2,
+      status: "active",
+    },
+    draftState,
+    grantEligibility: {
+      eligible,
+      status: eligible ? "eligible" : "ineligible",
+      previewId: AUTOMATION_PREVIEW_ID,
+      previewStatus: "previewed",
+      current: state.previewCreated && !state.previewStale,
+      zeroMutation: true,
+      maxItemsPerRun: 12,
+      currentPermission: {
+        principalId: "e2e-operator",
+        status: "valid",
+        allowed: true,
+      },
+      explanation:
+        state.previewCreated && !state.previewStale
+          ? "the exact current Preview and current permission satisfy the persisted grant bounds"
+          : "no current exact Preview supports unattended authority; run a fresh exact Preview",
+      durableState: "no grant or media mutation has been created",
+      retrySafe: true,
+      nextAction:
+        "review the exact bounds and explicitly confirm the unattended grant",
+      error: eligible
+        ? null
+        : {
+            code: "unattended_execution_preview_required",
+            status: 409,
+            message:
+              "no current exact Preview supports unattended authority; run a fresh exact Preview",
+            durableState: "no grant or media mutation has been created",
+            retrySafe: true,
+            nextAction: "run a fresh exact Preview",
+          },
+    },
+    actions: automationDefinitionActions(state, token),
+  };
+}
+
+function automationListDocument(state, token) {
+  const { manage } = automationPermissions(token);
+  return {
+    activeConfiguration: {
+      revisionId: state.activated
+        ? AUTOMATION_DRAFT_REVISION
+        : AUTOMATION_ACTIVE_REVISION,
+      version: state.activated ? 4 : 3,
+      revisionSequence: state.activated ? 3 : 2,
+      status: "active",
+    },
+    items: [automationDefinitionDocument(state, token)],
+    total: 1,
+    truncated: false,
+    draftState: state.draftCreated
+      ? {
+          present: true,
+          reason: null,
+          revisionId: AUTOMATION_DRAFT_REVISION,
+          revisionVersion: state.draftVersion,
+          revisionStatus: state.draftStatus,
+          baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
+          updatedAt: MANUAL_RECORDED_AT,
+          validatedAt:
+            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+          validationErrors: [],
+        }
+      : {
+          present: false,
+          reason:
+            "no open successor Draft exists; create one to add or edit definitions",
+          revisionId: null,
+          revisionVersion: null,
+          revisionStatus: null,
+          baseActiveRevisionId: null,
+          updatedAt: null,
+          validatedAt: null,
+          validationErrors: [],
+        },
+    resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
+    actions: {
+      create: automationAction({
+        available: manage,
+        reason: manage
+          ? null
+          : "the connected API principal cannot create Automation Task Definitions",
+        path: "/api/v1/automation/task-definitions",
+        durableOutcome:
+          "the bounded definition is stored inside the open successor Draft",
+        nextAction:
+          "start or open a successor Draft, then create the definition inside it",
+      }),
+      createDraft: automationAction({
+        available: manage,
+        reason: manage
+          ? null
+          : "the connected API principal cannot create a successor Draft",
+        path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+        durableOutcome:
+          "a successor Draft seeded from the immutable Active configuration is stored",
+        nextAction:
+          "create or open the successor Draft, then add or edit definitions inside it",
+      }),
+    },
+  };
+}
+
+function automationDraftDocument(state, token) {
+  const { manage, activate } = automationPermissions(token);
+  const draft = state.draftCreated
+    ? {
+        revisionId: AUTOMATION_DRAFT_REVISION,
+        revisionVersion: state.draftVersion,
+        revisionStatus: state.draftStatus,
+        baseActiveRevisionId: AUTOMATION_ACTIVE_REVISION,
+        updatedAt: MANUAL_RECORDED_AT,
+        validatedAt:
+          state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+        validationErrors: [],
+        definition: {
+          id: AUTOMATION_DEFINITION_ID,
+          name: "Nightly automation",
+          enabled: true,
+          resourceLibraryId: "source",
+          mode: "automatic-organization",
+          itemLimit: 12,
+          sourceScope: null,
+          intervalSeconds: 3600,
+          cron: null,
+          timezone: null,
+        },
+      }
+    : null;
+  return {
+    definitionId: AUTOMATION_DEFINITION_ID,
+    activeConfiguration: {
+      revisionId: state.activated
+        ? AUTOMATION_DRAFT_REVISION
+        : AUTOMATION_ACTIVE_REVISION,
+      version: state.activated ? 4 : 3,
+      revisionSequence: state.activated ? 3 : 2,
+      status: "active",
+    },
+    draft,
+    resourceLibraryOptions: [{ id: "source", name: "Source", enabled: true }],
+    actions: {
+      createDraft: automationAction({
+        available: manage,
+        reason: manage
+          ? null
+          : "the connected API principal cannot create a successor Draft",
+        path: `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor`,
+        durableOutcome:
+          "a successor Draft seeded from the immutable Active configuration is stored",
+        nextAction:
+          "create the successor Draft, then edit this definition inside it",
+      }),
+      save: automationAction({
+        available: manage && state.draftCreated,
+        reason: manage
+          ? state.draftCreated
+            ? null
+            : "an open successor Draft is required to edit this definition"
+          : "the connected API principal cannot edit Automation Task Definitions",
+        method: "PUT",
+        path: `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/objects/automationTaskDefinitions/${AUTOMATION_DEFINITION_ID}`,
+        durableOutcome:
+          "the bounded definition form is stored in the open successor Draft at a new optimistic revision version",
+        nextAction:
+          "save the bounded form, then validate and explicitly activate",
+      }),
+      validate: automationAction({
+        available: manage && state.draftCreated,
+        reason: manage
+          ? state.draftCreated
+            ? null
+            : "an open successor Draft is required before validation"
+          : "the connected API principal cannot validate configuration",
+        path: `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/validate`,
+        durableOutcome:
+          "the open Draft is validated without any runtime or Storage effect",
+        nextAction: "validate the Draft, then review the validation evidence",
+      }),
+      activate: automationAction({
+        available: activate && state.draftCreated,
+        reason: activate
+          ? state.draftCreated
+            ? null
+            : "an open successor Draft is required before activation"
+          : "the connected API principal cannot activate configuration",
+        path: `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/activate-draft`,
+        requiresConfirmation: true,
+        durableOutcome:
+          "the exact Draft becomes the immutable Active configuration after the server-side read-only checks; no Scan, Job, Task or occurrence is started",
+        nextAction: "confirm one explicit activation of the validated Draft",
+      }),
+    },
+  };
+}
+
+function automationPreviewItem() {
+  return {
+    previewItemId: "automation-preview-item-e2e-001",
+    previewId: AUTOMATION_PREVIEW_ID,
+    definitionId: AUTOMATION_DEFINITION_ID,
+    position: 0,
+    source: {
+      storageId: "source-storage",
+      resourceLibraryId: "source",
+      path: "Media/电影/One.2001.mkv",
+      filename: "One.2001.mkv",
+      extension: "mkv",
+      size: 32,
+      stability: "stable",
+      scanStatus: "discovered",
+    },
+    status: "previewed",
+    recognition: {
+      status: "matched",
+      ruleId: "movie-library",
+      recognitionTypeId: "A",
+    },
+    recognitionTypePolicy: {
+      recognitionTypePolicyId: "A",
+      metadataPolicyId: "A",
+      namingPolicyId: "A",
+      classificationPolicyId: "A",
+      organizePolicyId: "A",
+    },
+    metadata: {
+      provider: "tmdb",
+      providerId: "129",
+      mediaType: "movie",
+      status: "resolved",
+      title: "One",
+      year: 2001,
+    },
+    naming: {
+      directory: "One (2001) [tmdbid-129]",
+      filename: "One (2001) [tmdbid-129].mkv",
+    },
+    classification: {
+      mediaLibraryId: "movies",
+      relativePath: "One (2001)/One (2001) [tmdbid-129].mkv",
+    },
+    destination: {
+      storageId: "media-target",
+      path: "One (2001)/One (2001) [tmdbid-129].mkv",
+    },
+    operation: null,
+    attachments: [],
+    capabilities: { required: [], declared: [], verdict: "ok" },
+    conflictStrategy: null,
+    conflicts: [],
+    warnings: [],
+    blocker: null,
+    nextAction: null,
+    sideEffects: "none",
+    zeroMutation: true,
+    executionState: "not_available_in_this_task",
+    current: true,
+    createdAt: MANUAL_RECORDED_AT,
+    updatedAt: MANUAL_RECORDED_AT,
+  };
+}
+
+function automationPreviewActions(state, token, previewId) {
+  const { grant } = automationPermissions(token);
+  const current = state.previewCreated && !state.previewStale;
+  const base = `/api/v1/operations/automation/task-definitions/${AUTOMATION_DEFINITION_ID}`;
+  return {
+    detail: automationAction({
+      available: true,
+      method: "GET",
+      path: `${base}/previews/${previewId}`,
+      durableOutcome: null,
+      nextAction: "inspect the exact Preview evidence and its items",
+    }),
+    items: automationAction({
+      available: true,
+      method: "GET",
+      path: `${base}/previews/${previewId}/items`,
+      durableOutcome: null,
+      nextAction: "page the bounded Preview item evidence",
+    }),
+    definition: automationAction({
+      available: true,
+      method: "GET",
+      path: base,
+      durableOutcome: null,
+      nextAction: "reopen the durable definition behind this Preview",
+    }),
+    grantState: automationAction({
+      available: true,
+      method: "GET",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant-state`,
+      durableOutcome: null,
+      nextAction: "read the current unattended grant state and its eligibility",
+    }),
+    grant: automationAction({
+      available: grant && current,
+      reason: grant
+        ? current
+          ? null
+          : "this Preview is historical, truncated or incomplete and cannot support unattended authority; run a fresh exact Preview"
+        : "the connected API principal cannot grant unattended execution authority",
+      path: `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant`,
+      requiresConfirmation: true,
+      durableOutcome:
+        "a persistent scoped unattended execution grant bound to this exact Preview is stored and audited",
+      nextAction:
+        "review the grant eligibility and explicitly confirm the unattended grant",
+    }),
+  };
+}
+
+function automationPreviewDocument(state, token, previewId) {
+  const current = state.previewCreated && !state.previewStale;
+  const eligible = current && !state.granted;
+  return {
+    previewId,
+    definitionId: AUTOMATION_DEFINITION_ID,
+    configurationRevisionId: AUTOMATION_ACTIVE_REVISION,
+    configurationRevisionVersion: 3,
+    configurationStatus: "active",
+    resourceLibraryId: "source",
+    sourceScope: null,
+    runMode: "automatic-organization",
+    effectiveItemLimit: 12,
+    counts: {
+      discovered: 2,
+      selected: 2,
+      permitted: 2,
+      excludedIgnored: 0,
+      unstable: 0,
+      truncatedByLimit: 0,
+    },
+    status: current ? "previewed" : "stale",
+    items:
+      current || previewId !== AUTOMATION_PREVIEW_ID
+        ? [automationPreviewItem()]
+        : [],
+    boundaryErrors: [],
+    nextAction: "review the exact Preview evidence and its items",
+    error: null,
+    sideEffects: "none",
+    zeroMutation: true,
+    executionState: "not_available_in_this_task",
+    current,
+    staleReason: current
+      ? null
+      : "the pinned definition changed after this Preview was created",
+    truncated: false,
+    createdAt: MANUAL_RECORDED_AT,
+    updatedAt: MANUAL_RECORDED_AT,
+    itemTotal: 1,
+    itemsTruncated: false,
+    grantEligibility: {
+      eligible,
+      status: eligible ? "eligible" : "ineligible",
+      previewId,
+      previewStatus: current ? "previewed" : "stale",
+      current,
+      zeroMutation: true,
+      maxItemsPerRun: 12,
+      currentPermission: {
+        principalId: "e2e-operator",
+        status: "valid",
+        allowed: true,
+      },
+      explanation: current
+        ? "the exact current Preview and current granting-principal permission satisfy the persisted grant bounds"
+        : "no current exact Preview supports unattended authority; run a fresh exact Preview",
+      durableState: "no grant or media mutation has been created",
+      retrySafe: true,
+      nextAction: eligible
+        ? "review the exact bounds and explicitly confirm the unattended grant"
+        : "run a fresh exact Preview",
+      error: eligible
+        ? null
+        : {
+            code: "unattended_execution_preview_required",
+            status: 409,
+            message:
+              "no current exact Preview supports unattended authority; run a fresh exact Preview",
+            durableState: "no grant or media mutation has been created",
+            retrySafe: true,
+            nextAction: "run a fresh exact Preview",
+          },
+    },
+    actions: automationPreviewActions(state, token, previewId),
+  };
+}
+
+function automationOccurrenceDocument() {
+  return {
+    occurrenceId: AUTOMATION_OCCURRENCE_ID,
+    definitionId: AUTOMATION_DEFINITION_ID,
+    occurrenceAt: MANUAL_RECORDED_AT,
+    emittedAt: MANUAL_RECORDED_AT,
+    jobId: AUTOMATION_JOB_ID,
+    definitionVersion: 3,
+    configurationRevisionId: AUTOMATION_ACTIVE_REVISION,
+    configurationRevisionVersion: 3,
+    runMode: "automatic-organization",
+    resourceLibraryId: "source",
+    sourceScope: null,
+    itemLimit: 12,
+    outcome: "completed",
+    reason: null,
+    nextAction: "inspect the verified per-item Results; no replay is required",
+    taskId: AUTOMATION_TASK_ID,
+    failureCategory: null,
+    outcomeSummary: {
+      taskId: AUTOMATION_TASK_ID,
+      totalItems: 2,
+      statusCounts: { completed: 2 },
+      bound: {
+        configuredItemLimit: 12,
+        reached: false,
+        statement:
+          "2 item(s) completed; the configured item bound was not reached.",
+      },
+      attention: [],
+      attentionTruncated: false,
+    },
+    actions: {
+      job: automationAction({
+        available: true,
+        method: "GET",
+        path: `/api/v1/operations/jobs/${AUTOMATION_JOB_ID}`,
+        durableOutcome: null,
+        nextAction: "inspect the durable admission Job",
+      }),
+      task: automationAction({
+        available: true,
+        method: "GET",
+        path: `/api/v1/operations/tasks/${AUTOMATION_TASK_ID}`,
+        durableOutcome: null,
+        nextAction: "inspect the durable Task and its per-item Results",
+      }),
+    },
+  };
+}
+
+function automationActivationDocument(state) {
+  return {
+    activatedRevisionId: AUTOMATION_DRAFT_REVISION,
+    activatedVersion: state.draftVersion,
+    revisionSequence: 3,
+    activeConfiguration: {
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      version: 4,
+      revisionSequence: 3,
+      status: "active",
+    },
+    definition: null,
+  };
+}
+
+const AUTOMATION_MUTATION_BODY_FIELDS = [
+  "confirmation",
+  "expectedVersion",
+  "previewId",
+  "reason",
+];
+
+function boundedAutomationBody(fields) {
+  const body = {};
+  for (const key of AUTOMATION_MUTATION_BODY_FIELDS) {
+    const value = fields[key];
+    if (value === null || value === undefined || value === "") {
+      continue;
+    }
+    body[key] = value;
+  }
+  if (fields.object !== null && fields.object !== undefined) {
+    const object = fields.object;
+    body.object = {
+      enabled: object.enabled === true,
+      id: typeof object.id === "string" ? object.id : null,
+      itemLimit: typeof object.itemLimit === "number" ? object.itemLimit : null,
+      mode: typeof object.mode === "string" ? object.mode : null,
+      name: typeof object.name === "string" ? object.name : null,
+    };
+  }
+  return body;
+}
 
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
@@ -4299,6 +5040,538 @@ const server = createServer(async (req, res) => {
   // the bounded scope this fake binds from the explicit identifiers, and no
   // digest value is ever echoed back into a response document.
 
+  // --- Automation operator projections (read) and existing-route mutations ---
+  if (
+    url.pathname === "/api/v1/automation/task-definitions" &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = automationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: null,
+      objectType: "automation_definitions",
+      path: "/api/v1/automation/task-definitions",
+      body: null,
+    });
+    sendJson(res, 200, automationListDocument(state, token));
+    return;
+  }
+  if (
+    url.pathname === "/api/v1/automation/task-definitions" &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const state = automationState(session);
+    if (!state.draftCreated) {
+      sendJson(res, 409, { error: { code: "configuration_conflict" } });
+      return;
+    }
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: state.draftCreated ? AUTOMATION_DRAFT_REVISION : null,
+      objectType: "automation_definition_create",
+      path: "/api/v1/automation/task-definitions",
+      body: boundedAutomationBody(parsed.document),
+    });
+    sendJson(res, 200, {
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      status: "draft",
+      revisionSequence: 3,
+      schemaVersion: 1,
+      digest: "stored",
+      createdAt: MANUAL_RECORDED_AT,
+      updatedAt: MANUAL_RECORDED_AT,
+      validatedAt: null,
+      activatedAt: null,
+      validationErrors: [],
+      configurationRevisionId: AUTOMATION_DRAFT_REVISION,
+      automationTaskDefinition: {
+        id: "automation-def-e2e-copy",
+        name: "Copied automation",
+        enabled: false,
+        resourceLibraryId: "source",
+        mode: "scan-only",
+        itemLimit: 100,
+        intervalSeconds: 3600,
+      },
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = automationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_definition",
+      path: "/api/v1/automation/task-definitions/:definitionId",
+      body: null,
+    });
+    sendJson(res, 200, {
+      definition: automationDefinitionDocument(state, token),
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/draft` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = automationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_draft",
+      path: "/api/v1/automation/task-definitions/:definitionId/draft",
+      body: null,
+    });
+    sendJson(res, 200, automationDraftDocument(state, token));
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/occurrences` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = automationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_occurrences",
+      path: "/api/v1/automation/task-definitions/:definitionId/occurrences",
+      body: null,
+    });
+    sendJson(res, 200, {
+      definitionId: AUTOMATION_DEFINITION_ID,
+      activeConfiguration: {
+        revisionId: state.activated
+          ? AUTOMATION_DRAFT_REVISION
+          : AUTOMATION_ACTIVE_REVISION,
+        version: state.activated ? 4 : 3,
+        revisionSequence: state.activated ? 3 : 2,
+        status: "active",
+      },
+      items: [automationOccurrenceDocument()],
+      limit: 20,
+      truncated: false,
+      next_cursor: null,
+      previous_cursor: null,
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_HOSTILE_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    // The hostile fixture advertises a grant transport whose identity segment
+    // is not URI-safe, so the frontend must render the bounded malformed
+    // state and never a control.
+    const state = automationState(session);
+    const document = automationPreviewDocument(
+      state,
+      token,
+      AUTOMATION_HOSTILE_PREVIEW_ID,
+    );
+    document.actions.grant = automationAction({
+      path: "/api/v1/automation/task-definitions/<task>/grant",
+      requiresConfirmation: true,
+      durableOutcome:
+        "a persistent scoped unattended execution grant is stored",
+      nextAction: "review the grant eligibility",
+    });
+    sendJson(res, 200, document);
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_MISBOUND_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    sendJson(res, 404, { error: { code: "not_found" } });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = automationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: AUTOMATION_PREVIEW_ID,
+      objectType: "automation_preview",
+      path: "/api/v1/automation/task-definitions/:definitionId/previews/:previewId",
+      body: null,
+    });
+    sendJson(
+      res,
+      200,
+      automationPreviewDocument(state, token, AUTOMATION_PREVIEW_ID),
+    );
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/previews/${AUTOMATION_PREVIEW_ID}/items` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = automationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: AUTOMATION_PREVIEW_ID,
+      objectType: "automation_preview_items",
+      path: "/api/v1/automation/task-definitions/:definitionId/previews/:previewId/items",
+      body: null,
+    });
+    const items =
+      state.previewCreated && !state.previewStale
+        ? [automationPreviewItem()]
+        : [];
+    sendJson(res, 200, {
+      previewId: AUTOMATION_PREVIEW_ID,
+      items,
+      total: items.length,
+      nextAfter: null,
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/preview` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const state = automationState(session);
+    state.previewCreated = true;
+    state.previewStale = false;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_preview_create",
+      path: "/api/v1/automation/task-definitions/:definitionId/preview",
+      body: {},
+    });
+    sendJson(res, 201, {
+      previewId: AUTOMATION_PREVIEW_ID,
+      definitionId: AUTOMATION_DEFINITION_ID,
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/grant` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    const state = automationState(session);
+    if (fields.confirmation !== true) {
+      sendJson(res, 400, {
+        error: { code: "unattended_execution_grant_invalid" },
+      });
+      return;
+    }
+    if (
+      fields.previewId !== AUTOMATION_PREVIEW_ID ||
+      !state.previewCreated ||
+      state.previewStale
+    ) {
+      sendJson(res, 409, {
+        error: { code: "unattended_execution_preview_required" },
+      });
+      return;
+    }
+    state.granted = true;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_grant",
+      path: "/api/v1/automation/task-definitions/:definitionId/grant",
+      body: boundedAutomationBody(fields),
+    });
+    sendJson(res, 201, {
+      grant: {
+        status: "active",
+        active: true,
+        grantId: AUTOMATION_GRANT_ID,
+        definitionId: AUTOMATION_DEFINITION_ID,
+        definitionChangedSinceGrant: false,
+        nextAction:
+          "inspect the next occurrence or revoke this grant before changing its exact bounds",
+        maxItemsPerRun: 12,
+        previewId: AUTOMATION_PREVIEW_ID,
+        grantingPrincipal: "e2e-operator",
+        grantedAt: MANUAL_RECORDED_AT,
+        revokedAt: null,
+        reason: null,
+        currentPermission: {
+          principalId: "e2e-operator",
+          status: "valid",
+          allowed: true,
+        },
+      },
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/revoke` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const state = automationState(session);
+    state.granted = false;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_revoke",
+      path: "/api/v1/automation/task-definitions/:definitionId/revoke",
+      body: boundedAutomationBody(parsed.document),
+    });
+    sendJson(res, 200, {
+      grant: {
+        status: "revoked",
+        active: false,
+        grantId: AUTOMATION_GRANT_ID,
+        definitionId: AUTOMATION_DEFINITION_ID,
+        definitionChangedSinceGrant: false,
+        nextAction:
+          "review the exact definition bounds and explicitly grant unattended execution again",
+        maxItemsPerRun: 12,
+        previewId: AUTOMATION_PREVIEW_ID,
+        grantingPrincipal: "e2e-operator",
+        grantedAt: MANUAL_RECORDED_AT,
+        revokedAt: MANUAL_RECORDED_AT,
+        reason: null,
+        currentPermission: {
+          principalId: "e2e-operator",
+          status: "valid",
+          allowed: true,
+        },
+      },
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/copy` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const state = automationState(session);
+    if (!state.draftCreated) {
+      sendJson(res, 409, { error: { code: "configuration_conflict" } });
+      return;
+    }
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_copy",
+      path: "/api/v1/automation/task-definitions/:definitionId/copy",
+      body: boundedAutomationBody(parsed.document),
+    });
+    sendJson(res, 200, {
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      automationTaskDefinition: {
+        id: "automation-def-e2e-copy",
+        name: "Nightly automation copy",
+      },
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/automation/task-definitions/${AUTOMATION_DEFINITION_ID}/activate-draft` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    const state = automationState(session);
+    if (
+      !state.draftCreated ||
+      state.draftStatus !== "validated" ||
+      fields.expectedVersion !== state.draftVersion
+    ) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    state.activated = true;
+    state.draftCreated = false;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_activate_draft",
+      path: "/api/v1/operations/automation/task-definitions/:definitionId/activate-draft",
+      body: boundedAutomationBody(fields),
+    });
+    sendJson(res, 200, automationActivationDocument(state));
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/configuration/revisions/${AUTOMATION_ACTIVE_REVISION}/successor` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    await readBoundedJsonBody(req, res);
+    const state = automationState(session);
+    state.draftCreated = true;
+    state.draftVersion = 2;
+    state.draftStatus = "draft";
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_ACTIVE_REVISION,
+      objectType: "automation_successor_draft",
+      path: "/api/v1/configuration/revisions/:revisionId/successor",
+      body: {},
+    });
+    sendJson(res, 201, {
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      version: 2,
+      status: "draft",
+      revisionSequence: 3,
+      schemaVersion: 1,
+      createdAt: MANUAL_RECORDED_AT,
+      updatedAt: MANUAL_RECORDED_AT,
+      validatedAt: null,
+      activatedAt: null,
+      validationErrors: [],
+      created: true,
+      nextAction:
+        "open the successor Draft, edit configuration objects, validate, and activate",
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/validate` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    await readBoundedJsonBody(req, res);
+    const state = automationState(session);
+    state.draftStatus = "validated";
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: AUTOMATION_DRAFT_REVISION,
+      objectType: "automation_draft_validate",
+      path: "/api/v1/configuration/revisions/:revisionId/validate",
+      body: {},
+    });
+    sendJson(res, 200, {
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      status: "validated",
+      validationErrors: [],
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/configuration/revisions/${AUTOMATION_DRAFT_REVISION}/objects/automationTaskDefinitions/${AUTOMATION_DEFINITION_ID}` &&
+    req.method === "PUT"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const fields = parsed.document;
+    const state = automationState(session);
+    if (!state.draftCreated || fields.expectedVersion !== state.draftVersion) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    state.draftVersion += 1;
+    state.draftStatus = "draft";
+    recordManualRequestForSession({
+      method: "PUT",
+      objectId: AUTOMATION_DEFINITION_ID,
+      objectType: "automation_draft_save",
+      path: "/api/v1/configuration/revisions/:revisionId/objects/automationTaskDefinitions/:definitionId",
+      body: boundedAutomationBody(fields),
+    });
+    sendJson(res, 200, {
+      revisionId: AUTOMATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      automationTaskDefinition: { id: AUTOMATION_DEFINITION_ID },
+    });
+    return;
+  }
+  // --- End Automation operator projections ---
+
   if (url.pathname === "/api/v1/manual-actions" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
@@ -4758,6 +6031,27 @@ const server = createServer(async (req, res) => {
       executed: false,
       intentVersion: 1,
       itemVersion: 1,
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  if (url.pathname === "/__test__/reset-automation" && req.method === "POST") {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    RECORDED_MANUAL_REQUESTS_BY_SESSION.set(sessionId, []);
+    AUTOMATION_STATES.set(sessionId, {
+      draftCreated: false,
+      draftVersion: 2,
+      draftStatus: "draft",
+      previewCreated: false,
+      previewStale: false,
+      granted: false,
+      activated: false,
     });
     res.setHeader(
       "Set-Cookie",
