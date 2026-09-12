@@ -205,6 +205,12 @@ export function OperationsLanding() {
                 >
                   Automation
                 </Link>
+                <Link
+                  className="mf-button mf-button-primary"
+                  to="/operations/notifications"
+                >
+                  Notifications
+                </Link>
               </nav>
             </section>
             {matrixQuery.data?.ok === true ? (

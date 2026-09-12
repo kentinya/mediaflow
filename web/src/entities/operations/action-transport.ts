@@ -23,7 +23,12 @@ import {
 export const ACTION_METHODS = ["GET", "POST", "PUT"] as const;
 
 /** The side-effect statements an operator-facing action may ever advertise. */
-export const ACTION_SIDE_EFFECTS = ["none", "reported_per_item"] as const;
+export const ACTION_SIDE_EFFECTS = [
+  "none",
+  "reported_per_item",
+  "one_signed_test_request",
+  "delivery_queue_state_only",
+] as const;
 
 /**
  * The exact transport contract one action kind may advertise. The Execute

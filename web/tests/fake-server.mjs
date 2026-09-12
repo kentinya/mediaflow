@@ -1680,6 +1680,11 @@ const MANUAL_REQUEST_BODY_FIELDS = [
   "recognitionTypeId",
   "resourceLibraryId",
   "scopeKind",
+  "action",
+  "deliveryId",
+  "expectedStatus",
+  "expectedUpdatedAt",
+  "webhookId",
 ];
 
 const MANUAL_RESOURCE_LIBRARY_CHOICES = [
@@ -3008,6 +3013,507 @@ function automationPermissions(token) {
     activate: operator,
     grant: operator,
     dryRun: operator,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Deterministic Notification fake state (V2 Webhook / delivery journey).
+
+const NOTIFICATION_WEBHOOK_ID = "ops-webhook";
+const NOTIFICATION_ACTIVE_REVISION = "notification-active-rev-e2e-001";
+const NOTIFICATION_DRAFT_REVISION = "notification-draft-rev-e2e-001";
+const NOTIFICATION_DELIVERY_ID = "delivery-e2e-001";
+const NOTIFICATION_DELIVERY_ID_2 = "delivery-e2e-002";
+
+const NOTIFICATION_STATES = new Map();
+
+function notificationState(session) {
+  const key = session ?? "shared";
+  let value = NOTIFICATION_STATES.get(key);
+  if (value === undefined) {
+    value = {
+      draftCreated: false,
+      draftVersion: 4,
+      draftStatus: "validated",
+      tested: false,
+      activated: false,
+      createdWebhook: null,
+      copiedWebhook: null,
+      requeued: false,
+    };
+    NOTIFICATION_STATES.set(key, value);
+  }
+  return value;
+}
+
+function notificationAction(overrides = {}) {
+  return {
+    available: true,
+    reason: null,
+    method: "POST",
+    path: `/api/v1/operations/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/test`,
+    requiresConfirmation: false,
+    sideEffects: "none",
+    durableOutcome: null,
+    nextAction: null,
+    ...overrides,
+  };
+}
+
+function notificationPermissions(token) {
+  const operator = VIEWER_TOKENS.has(token);
+  return {
+    operator,
+    manage: operator,
+    activate: operator,
+  };
+}
+
+function webhookDocument(state, token, overrides = {}) {
+  const id = overrides.id ?? NOTIFICATION_WEBHOOK_ID;
+  const document = {
+    id,
+    url: "https://example.invalid/hooks/mediaflow",
+    secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+    events: ["job.completed", "job.failed"],
+    enabled: true,
+    timeoutSeconds: 10,
+    maxAttempts: 5,
+    baseRetrySeconds: 5,
+    maxRetrySeconds: 300,
+    secretReadiness: [
+      { field: "secretEnv", env: "MEDIAFLOW_WEBHOOK_SECRET", state: "SET" },
+    ],
+    structuralValid: true,
+    validationError: null,
+    definitionState: "active",
+    activeConfiguration: {
+      revisionId: NOTIFICATION_ACTIVE_REVISION,
+      version: state.activated ? 5 : 3,
+      revisionSequence: state.activated ? 4 : 2,
+      status: "active",
+    },
+    draftState: state.draftCreated
+      ? {
+          present: true,
+          reason: null,
+          revisionId: NOTIFICATION_DRAFT_REVISION,
+          revisionVersion: state.draftVersion,
+          revisionStatus: state.draftStatus,
+          baseActiveRevisionId: NOTIFICATION_ACTIVE_REVISION,
+          updatedAt: MANUAL_RECORDED_AT,
+          validatedAt:
+            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+          validationErrors: [],
+        }
+      : {
+          present: false,
+          reason:
+            "no open successor Draft contains this Webhook definition; create one to edit it",
+          revisionId: null,
+          revisionVersion: null,
+          revisionStatus: null,
+          baseActiveRevisionId: null,
+          updatedAt: null,
+          validatedAt: null,
+          validationErrors: [],
+        },
+    actions: webhookActions(state, token, id),
+  };
+  if (overrides.definitionState !== undefined) {
+    document.definitionState = overrides.definitionState;
+  }
+  if (overrides.enabled !== undefined) {
+    document.enabled = overrides.enabled;
+  }
+  return document;
+}
+
+function webhookActions(state, token, webhookId = NOTIFICATION_WEBHOOK_ID) {
+  const { manage, activate } = notificationPermissions(token);
+  const operationsRoute = `/api/v1/operations/notifications/webhooks/${webhookId}`;
+  const editPath = state.draftCreated
+    ? `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks/${webhookId}`
+    : null;
+  const noDraft =
+    "an open successor Draft is required to edit this Webhook definition";
+  return {
+    detail: notificationAction({
+      available: true,
+      method: "GET",
+      path: operationsRoute,
+      durableOutcome: null,
+      nextAction: "inspect the exact bounded Webhook definition state",
+    }),
+    test: notificationAction({
+      available: manage,
+      reason: manage
+        ? null
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: `${operationsRoute}/test`,
+      sideEffects: "one_signed_test_request",
+      durableOutcome:
+        "no durable change; only the bounded test outcome category is returned",
+      nextAction:
+        "test the exact displayed revision after reviewing its endpoint and secret readiness",
+    }),
+    edit: notificationAction({
+      available: manage && state.draftCreated,
+      reason: manage
+        ? state.draftCreated
+          ? null
+          : noDraft
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      method: "PUT",
+      path: editPath,
+      durableOutcome:
+        "the bounded definition form is stored in the open successor Draft at a new optimistic revision version",
+      nextAction:
+        "save the bounded form, then validate and explicitly activate",
+    }),
+    copy: notificationAction({
+      available: manage && state.draftCreated,
+      reason: manage
+        ? state.draftCreated
+          ? null
+          : noDraft
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: editPath === null ? null : `${editPath}/copy`,
+      durableOutcome:
+        "a copied, disabled Webhook definition is stored inside the open successor Draft",
+      nextAction:
+        "open the copied definition, edit it, then validate and activate",
+    }),
+    enable: notificationAction({
+      available: manage && state.draftCreated,
+      reason: manage
+        ? state.draftCreated
+          ? null
+          : noDraft
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: editPath === null ? null : `${editPath}/enable`,
+      durableOutcome:
+        "the definition is enabled inside the open successor Draft only",
+      nextAction: "review the Draft, validate it, then explicitly activate",
+    }),
+    disable: notificationAction({
+      available: manage && state.draftCreated,
+      reason: manage
+        ? state.draftCreated
+          ? null
+          : noDraft
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: editPath === null ? null : `${editPath}/disable`,
+      durableOutcome:
+        "the definition is disabled inside the open successor Draft only",
+      nextAction: "review the Draft, validate it, then explicitly activate",
+    }),
+    draftCreate: notificationAction({
+      available: manage,
+      reason: manage
+        ? null
+        : "the connected API principal cannot manage Webhook Definitions (required permission: manage_configuration)",
+      path: `/api/v1/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
+      durableOutcome:
+        "a successor Draft seeded from the immutable Active configuration is stored",
+      nextAction:
+        "create or open the successor Draft, then add or edit Webhook definitions inside it",
+    }),
+    activate: notificationAction({
+      available: activate && state.draftCreated,
+      reason: activate
+        ? state.draftCreated
+          ? null
+          : noDraft
+        : "the connected API principal cannot activate configuration (required permission: activate_configuration)",
+      path: `${operationsRoute}/activate-draft`,
+      requiresConfirmation: true,
+      durableOutcome:
+        "the exact reviewed Webhook-only Draft change becomes the immutable Active configuration; no delivery is created",
+      nextAction:
+        "activate the reviewed Draft after validating it; the resulting Active identity is reported without a digest",
+    }),
+  };
+}
+
+function notificationDraftActions(state, token) {
+  const definitionActions = webhookActions(state, token);
+  return {
+    createDraft: definitionActions.draftCreate,
+    save: definitionActions.edit,
+    validate: notificationAction({
+      available: notificationPermissions(token).manage && state.draftCreated,
+      reason: notificationPermissions(token).manage
+        ? null
+        : "the connected API principal cannot validate configuration (required permission: manage_configuration)",
+      path: `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate`,
+      durableOutcome:
+        "the open Draft is validated without any runtime or Storage effect",
+      nextAction: "validate the Draft, then review the validation evidence",
+    }),
+    activate: definitionActions.activate,
+    test: definitionActions.test,
+  };
+}
+
+function notificationListDocument(state, token) {
+  return {
+    activeConfiguration: {
+      revisionId: NOTIFICATION_ACTIVE_REVISION,
+      version: state.activated ? 5 : 3,
+      revisionSequence: state.activated ? 4 : 2,
+      status: "active",
+    },
+    items: [
+      webhookDocument(state, token),
+      ...(state.createdWebhook
+        ? [
+            webhookDocument(state, token, {
+              id: state.createdWebhook,
+              enabled: false,
+              definitionState: "draft-only",
+            }),
+          ]
+        : []),
+      ...(state.copiedWebhook
+        ? [
+            webhookDocument(state, token, {
+              id: state.copiedWebhook,
+              enabled: false,
+              definitionState: "draft-only",
+            }),
+          ]
+        : []),
+    ],
+    total: 1 + (state.createdWebhook ? 1 : 0) + (state.copiedWebhook ? 1 : 0),
+    truncated: false,
+    draftState: state.draftCreated
+      ? {
+          present: true,
+          reason: null,
+          revisionId: NOTIFICATION_DRAFT_REVISION,
+          revisionVersion: state.draftVersion,
+          revisionStatus: state.draftStatus,
+          baseActiveRevisionId: NOTIFICATION_ACTIVE_REVISION,
+          updatedAt: MANUAL_RECORDED_AT,
+          validatedAt:
+            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+          validationErrors: [],
+        }
+      : {
+          present: false,
+          reason:
+            "no open successor Draft exists; create one to add or edit Webhook definitions",
+          revisionId: null,
+          revisionVersion: null,
+          revisionStatus: null,
+          baseActiveRevisionId: null,
+          updatedAt: null,
+          validatedAt: null,
+          validationErrors: [],
+        },
+    supportedEvents: [
+      "job.completed",
+      "job.failed",
+      "job.cancelled",
+      "schedule.emitted",
+    ],
+    actions: {
+      create: notificationAction({
+        available: notificationPermissions(token).manage && state.draftCreated,
+        reason:
+          notificationPermissions(token).manage && state.draftCreated
+            ? null
+            : "an open successor Draft is required to add a Webhook definition",
+        method: "POST",
+        path: state.draftCreated
+          ? `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/objects/webhooks`
+          : null,
+        durableOutcome:
+          "the bounded Webhook definition is stored inside the open successor Draft",
+        nextAction:
+          "start or open a successor Draft, then create the definition inside it",
+      }),
+      createDraft: notificationAction({
+        available: notificationPermissions(token).manage,
+        reason: notificationPermissions(token).manage
+          ? null
+          : "the connected API principal cannot create a successor Draft (required permission: manage_configuration)",
+        path: `/api/v1/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor`,
+        durableOutcome:
+          "a successor Draft seeded from the immutable Active configuration is stored",
+        nextAction:
+          "create or open the successor Draft, then add or edit Webhook definitions inside it",
+      }),
+    },
+  };
+}
+
+function notificationDetailDocument(state, token) {
+  return {
+    webhook: webhookDocument(state, token),
+    activeConfiguration: {
+      revisionId: NOTIFICATION_ACTIVE_REVISION,
+      version: state.activated ? 5 : 3,
+      revisionSequence: state.activated ? 4 : 2,
+      status: "active",
+    },
+  };
+}
+
+function notificationDraftDocument(state, token) {
+  return {
+    webhookId: NOTIFICATION_WEBHOOK_ID,
+    activeConfiguration: {
+      revisionId: NOTIFICATION_ACTIVE_REVISION,
+      version: state.activated ? 5 : 3,
+      revisionSequence: state.activated ? 4 : 2,
+      status: "active",
+    },
+    webhook: webhookDocument(state, token),
+    draft: state.draftCreated
+      ? {
+          revisionId: NOTIFICATION_DRAFT_REVISION,
+          revisionVersion: state.draftVersion,
+          revisionStatus: state.draftStatus,
+          baseActiveRevisionId: NOTIFICATION_ACTIVE_REVISION,
+          updatedAt: MANUAL_RECORDED_AT,
+          validatedAt:
+            state.draftStatus === "validated" ? MANUAL_RECORDED_AT : null,
+          validationErrors: [],
+          webhook: webhookDocument(state, token),
+        }
+      : null,
+    supportedEvents: [
+      "job.completed",
+      "job.failed",
+      "job.cancelled",
+      "schedule.emitted",
+    ],
+    actions: notificationDraftActions(state, token),
+  };
+}
+
+function notificationDeliveryItem(state, deliveryId) {
+  const requeued = state.requeued && deliveryId === NOTIFICATION_DELIVERY_ID;
+  return {
+    deliveryId,
+    webhookId: NOTIFICATION_WEBHOOK_ID,
+    eventId: `event-${deliveryId}`,
+    eventType: "job.completed",
+    status: requeued ? "pending" : "dead-letter",
+    attempts: requeued ? 0 : 3,
+    nextAttemptAt: MANUAL_RECORDED_AT,
+    createdAt: MANUAL_RECORDED_AT,
+    updatedAt: MANUAL_RECORDED_AT,
+    deliveredAt: null,
+    failureCategory: requeued ? null : "http_400",
+    responseStatus: requeued ? null : 400,
+  };
+}
+
+function notificationDeliveryDetailDocument(state, token, deliveryId) {
+  const item = notificationDeliveryItem(state, deliveryId);
+  const { manage } = notificationPermissions(token);
+  const expiredLease =
+    deliveryId === NOTIFICATION_DELIVERY_ID_2 && !state.requeued;
+  return {
+    ...item,
+    lease: expiredLease
+      ? {
+          state: "expired",
+          leaseSeconds: 300,
+          claimedAt: MANUAL_RECORDED_AT,
+          expiresAt: MANUAL_RECORDED_AT,
+        }
+      : { state: "not_leased" },
+    knownEffects: expiredLease
+      ? "the delivery lease expired without a durable terminal outcome; the receiver may have processed the original request before the worker stopped (at-least-once)"
+      : "the receiver never confirmed success after the configured attempts (last failure: http_400); whether an earlier request was processed is unknown",
+    retrySafe: true,
+    nextAction: expiredLease
+      ? "resolve the stale delivery to return it to the pending queue, or refresh if the worker is only slow"
+      : "confirm the endpoint is reachable and healthy, then explicitly requeue this delivery",
+    recovery: expiredLease
+      ? {
+          availableActions: ["resolve-stale"],
+          reason: "The delivery lease expired without a terminal outcome.",
+          actions: [
+            {
+              name: "resolve-stale",
+              durableState:
+                "the delivery stays one row with the same identity and attempts; the queue state returns to pending",
+              sideEffects:
+                "no new delivery and no media, Task, Job, schedule or Storage change; the notification worker will send the event again",
+              retrySafe: true,
+              duplicateImplication:
+                "the receiver may process the event more than once (at-least-once)",
+              nextAction:
+                "explicitly resolve the stale delivery, then refresh; the worker reclaims it automatically",
+            },
+          ],
+        }
+      : {
+          availableActions:
+            item.status === "dead-letter" ? ["requeue-dead-letter"] : [],
+          reason:
+            item.status === "dead-letter"
+              ? "The delivery reached the terminal dead-letter state."
+              : "This delivery is pending automatic delivery.",
+          actions:
+            item.status === "dead-letter"
+              ? [
+                  {
+                    name: "requeue-dead-letter",
+                    durableState:
+                      "the delivery stays one row with the same identity; attempts are reset and the queue state returns to pending",
+                    sideEffects:
+                      "no new delivery and no media, Task, Job, schedule or Storage change; the notification worker will send the event again",
+                    retrySafe: true,
+                    duplicateImplication:
+                      "under at-least-once semantics a receiver that processed an unconfirmed request may still see the event again",
+                    nextAction:
+                      "explicitly requeue this delivery, then refresh; the worker delivers it automatically",
+                  },
+                ]
+              : [],
+        },
+    actions:
+      item.status === "dead-letter" && !expiredLease
+        ? {
+            requeue: notificationAction({
+              available: manage,
+              reason: manage
+                ? null
+                : "the connected API principal cannot recover notification deliveries (required permission: manage_configuration)",
+              method: "POST",
+              path: `/api/v1/notifications/${deliveryId}/requeue`,
+              requiresConfirmation: true,
+              sideEffects: "delivery_queue_state_only",
+              durableOutcome:
+                "the dead-letter delivery returns to pending with the same identity; attempts are reset",
+              nextAction:
+                "confirm the requeue, then refresh this delivery to watch the worker reclaim it",
+            }),
+          }
+        : expiredLease
+          ? {
+              resolveStale: notificationAction({
+                available: manage,
+                reason: manage
+                  ? null
+                  : "the connected API principal cannot recover notification deliveries (required permission: manage_configuration)",
+                method: "POST",
+                path: `/api/v1/notifications/${deliveryId}/resolve-stale`,
+                requiresConfirmation: true,
+                sideEffects: "delivery_queue_state_only",
+                durableOutcome:
+                  "the expired-lease delivery returns to pending with the same identity and attempts",
+                nextAction:
+                  "confirm the stale resolution, then refresh this delivery to watch the worker reclaim it",
+              }),
+            }
+          : {},
   };
 }
 
@@ -6273,6 +6779,500 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // -------------------------------------------------------------------------
+  // V2 Notification journey (bounded Webhook definitions, tests, deliveries).
+
+  if (
+    url.pathname === "/api/v1/notifications/webhooks" &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = notificationState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: null,
+      objectType: "notification_definitions",
+      path: "/api/v1/operations/notifications/webhooks",
+      body: null,
+    });
+    sendJson(res, 200, notificationListDocument(state, token));
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = notificationState(session);
+    sendJson(res, 200, notificationDetailDocument(state, token));
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/draft` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = notificationState(session);
+    sendJson(res, 200, notificationDraftDocument(state, token));
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/test` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const state = notificationState(session);
+    const document = parsed.document ?? {};
+    const expectedRevisionId = document.expectedRevisionId;
+    const expectedVersion = document.expectedVersion;
+    if (typeof expectedRevisionId !== "string" || !expectedRevisionId) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    if (!Number.isInteger(expectedVersion)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    if (
+      expectedRevisionId !== NOTIFICATION_DRAFT_REVISION &&
+      expectedRevisionId !== NOTIFICATION_ACTIVE_REVISION
+    ) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const currentVersion =
+      expectedRevisionId === NOTIFICATION_DRAFT_REVISION
+        ? state.draftVersion
+        : state.activated
+          ? 5
+          : 3;
+    if (expectedVersion !== currentVersion) {
+      sendJson(res, 409, {
+        error: {
+          code: "configuration_version_conflict",
+          details: { durableState: "no test request was sent" },
+        },
+      });
+      return;
+    }
+    state.tested += 1;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: NOTIFICATION_WEBHOOK_ID,
+      objectType: "notification_webhook_test",
+      path: "/api/v1/operations/notifications/webhooks/:webhookId/test",
+      body: {
+        expectedRevisionId: expectedRevisionId,
+        expectedVersion: expectedVersion,
+      },
+    });
+    sendJson(res, 200, {
+      testId: `webhook-test-e2e-${state.tested}`,
+      webhook: {
+        id: NOTIFICATION_WEBHOOK_ID,
+        url: "https://example.invalid/hooks/mediaflow",
+        events: ["job.completed", "job.failed"],
+        enabled: true,
+        secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+      },
+      revision: {
+        revisionId: expectedRevisionId,
+        version: currentVersion,
+        status:
+          expectedRevisionId === NOTIFICATION_DRAFT_REVISION
+            ? state.draftStatus
+            : "active",
+      },
+      outcome: "success",
+      category: "http_204",
+      responseStatus: 204,
+      message: "the Webhook endpoint returned HTTP 204",
+      durableState: "no_delivery_created_no_configuration_change",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction:
+        "no further action required; the endpoint accepted the signed test",
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}/activate-draft` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const state = notificationState(session);
+    const document = parsed.document ?? {};
+    if (
+      document.expectedRevisionId !== NOTIFICATION_DRAFT_REVISION ||
+      document.expectedVersion !== state.draftVersion
+    ) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    if (!state.draftCreated) {
+      sendJson(res, 409, { error: { code: "notification_draft_required" } });
+      return;
+    }
+    state.activated = true;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: NOTIFICATION_WEBHOOK_ID,
+      objectType: "notification_webhook_activation",
+      path: "/api/v1/operations/notifications/webhooks/:webhookId/activate-draft",
+      body: {
+        expectedRevisionId: document.expectedRevisionId,
+        expectedVersion: document.expectedVersion,
+      },
+    });
+    sendJson(res, 200, {
+      activatedRevisionId: NOTIFICATION_DRAFT_REVISION,
+      activatedVersion: state.draftVersion,
+      revisionSequence: 4,
+      activeConfiguration: {
+        revisionId: NOTIFICATION_DRAFT_REVISION,
+        version: state.draftVersion,
+        revisionSequence: 4,
+        status: "active",
+      },
+      webhook: webhookDocument(state, token),
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/configuration/revisions/${NOTIFICATION_ACTIVE_REVISION}/successor` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    await readBoundedJsonBody(req, res);
+    const state = notificationState(session);
+    state.draftCreated = true;
+    state.draftVersion = 4;
+    state.draftStatus = "draft";
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: NOTIFICATION_ACTIVE_REVISION,
+      objectType: "notification_successor_draft",
+      path: "/api/v1/configuration/revisions/:revisionId/successor",
+      body: {},
+    });
+    sendJson(res, 201, {
+      revisionId: NOTIFICATION_DRAFT_REVISION,
+      version: 4,
+      status: "draft",
+      revisionSequence: 3,
+      schemaVersion: 1,
+      createdAt: MANUAL_RECORDED_AT,
+      updatedAt: MANUAL_RECORDED_AT,
+      validatedAt: null,
+      activatedAt: null,
+      validationErrors: [],
+      created: true,
+      nextAction:
+        "open the successor Draft, edit configuration objects, validate, and activate",
+    });
+    return;
+  }
+  if (
+    url.pathname ===
+      `/api/v1/configuration/revisions/${NOTIFICATION_DRAFT_REVISION}/validate` &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    await readBoundedJsonBody(req, res);
+    const state = notificationState(session);
+    state.draftStatus = "validated";
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: NOTIFICATION_DRAFT_REVISION,
+      objectType: "notification_draft_validate",
+      path: "/api/v1/configuration/revisions/:revisionId/validate",
+      body: {},
+    });
+    sendJson(res, 200, {
+      revisionId: NOTIFICATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      status: "validated",
+      validationErrors: [],
+    });
+    return;
+  }
+  const notificationCreateMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/webhooks$/,
+  );
+  if (
+    notificationCreateMatch &&
+    notificationCreateMatch[1] === NOTIFICATION_DRAFT_REVISION &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const document = parsed.document ?? {};
+    const state = notificationState(session);
+    if (document.expectedVersion !== state.draftVersion) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    const object = document.object ?? {};
+    const createdId =
+      typeof object.id === "string" && object.id
+        ? object.id
+        : "created-webhook";
+    if (createdId === NOTIFICATION_WEBHOOK_ID) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    state.createdWebhook = createdId;
+    state.draftVersion += 1;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: createdId,
+      objectType: "notification_webhook_create",
+      path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks",
+      body: { id: createdId, expectedVersion: document.expectedVersion },
+    });
+    sendJson(res, 200, {
+      revisionId: NOTIFICATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      status: state.draftStatus,
+      webhook: { id: createdId, enabled: false },
+    });
+    return;
+  }
+  const notificationEditMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)$/,
+  );
+  if (
+    notificationEditMatch &&
+    notificationEditMatch[1] === NOTIFICATION_DRAFT_REVISION &&
+    req.method === "PUT"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const document = parsed.document ?? {};
+    const state = notificationState(session);
+    if (document.expectedVersion !== state.draftVersion) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    state.draftVersion += 1;
+    recordManualRequestForSession({
+      method: "PUT",
+      objectId: notificationEditMatch[2],
+      objectType: "notification_webhook_save",
+      path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks/:webhookId",
+      body: {
+        webhookId: notificationEditMatch[2],
+        expectedVersion: document.expectedVersion,
+      },
+    });
+    sendJson(res, 200, {
+      revisionId: NOTIFICATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      status: state.draftStatus,
+      webhook: { id: notificationEditMatch[2] },
+    });
+    return;
+  }
+  const notificationObjectActionMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/objects\/webhooks\/([^/]+)\/(copy|enable|disable)$/,
+  );
+  if (
+    notificationObjectActionMatch &&
+    notificationObjectActionMatch[1] === NOTIFICATION_DRAFT_REVISION &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const document = parsed.document ?? {};
+    const state = notificationState(session);
+    const action = notificationObjectActionMatch[3];
+    if (document.expectedVersion !== state.draftVersion) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    state.draftVersion += 1;
+    let objectId = notificationObjectActionMatch[2];
+    if (action === "copy") {
+      objectId = `${notificationObjectActionMatch[2]}-copy`;
+      state.copiedWebhook = objectId;
+    }
+    recordManualRequestForSession({
+      method: "POST",
+      objectId,
+      objectType: `notification_webhook_${action}`,
+      path: "/api/v1/configuration/revisions/:revisionId/objects/webhooks/:webhookId/:action",
+      body: {
+        webhookId: notificationObjectActionMatch[2],
+        action,
+        expectedVersion: document.expectedVersion,
+      },
+    });
+    sendJson(res, 200, {
+      revisionId: NOTIFICATION_DRAFT_REVISION,
+      version: state.draftVersion,
+      status: state.draftStatus,
+      object: { id: objectId, enabled: action !== "enable" },
+    });
+    return;
+  }
+  if (url.pathname === "/api/v1/notifications" && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = notificationState(session);
+    const status = url.searchParams.get("status");
+    if (status !== null && !/^[a-z][a-z0-9-]{0,31}$/.test(status)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const all = [
+      notificationDeliveryItem(state, NOTIFICATION_DELIVERY_ID),
+      notificationDeliveryItem(state, NOTIFICATION_DELIVERY_ID_2),
+    ];
+    const items =
+      status === null || status === "all"
+        ? all
+        : all.filter((item) => item.status === status);
+    sendJson(res, 200, {
+      limit: 20,
+      status: status === "all" ? null : status,
+      previous_cursor: null,
+      next_cursor: null,
+      items,
+    });
+    return;
+  }
+  const notificationDeliveryMatch = url.pathname.match(
+    /^\/api\/v1\/notifications\/deliveries\/([^/]+)$/,
+  );
+  if (notificationDeliveryMatch && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const deliveryId = notificationDeliveryMatch[1];
+    if (
+      deliveryId !== NOTIFICATION_DELIVERY_ID &&
+      deliveryId !== NOTIFICATION_DELIVERY_ID_2
+    ) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const state = notificationState(session);
+    sendJson(
+      res,
+      200,
+      notificationDeliveryDetailDocument(state, token, deliveryId),
+    );
+    return;
+  }
+  const notificationRecoveryMatch = url.pathname.match(
+    /^\/api\/v1\/notifications\/([^/]+)\/(requeue|resolve-stale)$/,
+  );
+  if (notificationRecoveryMatch && req.method === "POST") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const document = parsed.document ?? {};
+    const state = notificationState(session);
+    const deliveryId = notificationRecoveryMatch[1];
+    const action = notificationRecoveryMatch[2];
+    if (
+      deliveryId !== NOTIFICATION_DELIVERY_ID &&
+      deliveryId !== NOTIFICATION_DELIVERY_ID_2
+    ) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const item = notificationDeliveryItem(state, deliveryId);
+    if (
+      document.expectedStatus !== item.status ||
+      document.expectedUpdatedAt !== item.updatedAt
+    ) {
+      sendJson(res, 409, { error: { code: "notification_delivery_conflict" } });
+      return;
+    }
+    state.requeued = true;
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: deliveryId,
+      objectType: "notification_delivery_recovery",
+      path: "/api/v1/notifications/:deliveryId/:action",
+      body: {
+        deliveryId,
+        action,
+        expectedStatus: document.expectedStatus,
+        expectedUpdatedAt: document.expectedUpdatedAt,
+      },
+    });
+    sendJson(res, 200, {
+      action: action === "requeue" ? "requeue-dead-letter" : "resolve-stale",
+      outcome: "success",
+      deliveryId,
+      previousStatus: item.status,
+      status: "pending",
+      attempts: action === "requeue" ? 0 : item.attempts,
+      durableState:
+        action === "requeue"
+          ? "dead_letter_requeued_same_identity"
+          : "stale_delivery_returned_to_queue_same_identity",
+      sideEffects: "delivery_queue_state_only_no_new_row_no_media_change",
+      retrySafe: true,
+      atLeastOnce:
+        "recovery preserves the stable delivery identity; the worker sends the event again, so receivers must tolerate duplicates",
+      duplicateImplication:
+        "receivers must tolerate duplicates (at-least-once)",
+      nextAction: "the delivery is pending again; refresh this delivery",
+      delivery: notificationDeliveryDetailDocument(state, token, deliveryId),
+    });
+    return;
+  }
+
   if (url.pathname === "/__test__/manual-operations" && req.method === "GET") {
     // Session-scoped evidence keeps each test's assertions independent even
     // while two workers drive the same fake server.
@@ -6322,6 +7322,31 @@ const server = createServer(async (req, res) => {
       activated: false,
       createdDefinition: null,
       copiedDefinition: null,
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  if (
+    url.pathname === "/__test__/reset-notifications" &&
+    req.method === "POST"
+  ) {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    RECORDED_MANUAL_REQUESTS_BY_SESSION.set(sessionId, []);
+    NOTIFICATION_STATES.set(sessionId, {
+      draftCreated: false,
+      draftVersion: 4,
+      draftStatus: "validated",
+      tested: false,
+      activated: false,
+      createdWebhook: null,
+      copiedWebhook: null,
+      requeued: false,
     });
     res.setHeader(
       "Set-Cookie",

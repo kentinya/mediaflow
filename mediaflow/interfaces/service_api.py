@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hmac
 import json
 import re
@@ -84,7 +85,7 @@ from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
 )
-from mediaflow.application.webhook_test import WebhookTestService
+from mediaflow.application.webhook_test import WebhookTestService, webhook_events_supported
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJobControlConflict,
@@ -256,6 +257,12 @@ class MediaFlowApi:
     #: Active and Draft-only definitions share one bounded page that matches
     #: the frontend normalizer contract (more than 100 items fails closed).
     AUTOMATION_DEFINITIONS_PAGE_LIMIT = 100
+
+    #: Deterministic combined page limit for the Operations Notification list:
+    #: Active and Draft-only Webhook definitions share one bounded page that
+    #: matches the frontend normalizer contract (more than 100 items fails
+    #: closed).
+    NOTIFICATION_DEFINITIONS_PAGE_LIMIT = 100
 
     def __init__(
         self,
@@ -2547,6 +2554,13 @@ class MediaFlowApi:
             "task-definitions",
         ] and method in {"GET", "POST"}:
             return self._automation_operations_projection(
+                parts, method, environ, start_response, principal
+            )
+        if parts[:4] == ["api", "v1", "operations", "notifications"] and method in {
+            "GET",
+            "POST",
+        }:
+            return self._notification_operations_projection(
                 parts, method, environ, start_response, principal
             )
         if parts == ["api", "v1", "management", "readiness"]:
@@ -6893,6 +6907,23 @@ class MediaFlowApi:
             and parts[5] in {"copy", "enable", "disable"}
         ):
             return f"/api/v1/automation/task-definitions/{{id}}/{parts[5]}"
+        if len(parts) >= 5 and parts[:4] == ["api", "v1", "operations", "notifications"]:
+            # The V2 Notification projections name their own bounded operator
+            # surface without publishing Webhook identifiers, delivery
+            # identifiers, endpoints or secret references in audit evidence.
+            if len(parts) == 5 and parts[4] == "webhooks":
+                return "/api/v1/operations/notifications/webhooks"
+            if parts[4] == "webhooks" and len(parts) == 6:
+                return "/api/v1/operations/notifications/webhooks/{id}"
+            if (
+                parts[4] == "webhooks"
+                and len(parts) == 7
+                and parts[6] in {"draft", "test", "activate-draft"}
+            ):
+                return f"/api/v1/operations/notifications/webhooks/{{id}}/{parts[6]}"
+            if parts[4] == "deliveries" and len(parts) == 6:
+                return "/api/v1/operations/notifications/deliveries/{id}"
+            return "/api/v1/<unmatched>"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
         if (
@@ -10460,6 +10491,1196 @@ class MediaFlowApi:
                 "nextAfter": next_after,
             },
         )
+
+    # ------------------------------------------------------------------
+    # V2 Notification operations projections (bounded, digest-free)
+
+    def _notification_operations_projection(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Dispatch the bounded V2 Notification operator projections.
+
+        The read documents are the exact, digest-free Webhook evidence the Web
+        journey consumes; the raw managed-configuration documents stay on the
+        existing /api/v1/configuration surfaces. The two mutations here are
+        the digest-free exact-revision Webhook test and the Webhook-object-
+        scoped checked activation: the browser submits only the advertised
+        revision identity and optimistic version, while the configuration
+        digest and the resolved secret remain server-side. Delivery reads
+        compose the existing NotificationDeliveryService authority and add
+        only permission-aware recovery action metadata.
+        """
+
+        if parts[4] == "deliveries":
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            if len(parts) != 6:
+                return self._error(start_response, 404, "not_found", "route was not found")
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "operations notification delivery detail")
+            return self._notification_delivery_operator_detail(parts[5], start_response, principal)
+        if parts[4] != "webhooks" or len(parts) > 7:
+            return self._error(start_response, 404, "not_found", "route was not found")
+        if len(parts) == 7 and method == "POST" and parts[6] == "test":
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            return self._notification_webhook_operator_test(
+                parts[5], environ, start_response, principal
+            )
+        if len(parts) == 7 and method == "POST" and parts[6] == "activate-draft":
+            return self._notification_webhook_activate_checked_draft(
+                parts[5], environ, start_response, principal
+            )
+        if method != "GET":
+            return self._error(start_response, 405, "method_not_allowed", "GET required")
+        self._require(principal, ApiPermission.READ)
+        if self._configuration_service is None or self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        if len(parts) == 5:
+            self._require_empty_query(environ, "operations notification definitions")
+            return self._notification_webhooks_operator_page(environ, start_response, principal)
+        if len(parts) == 6:
+            self._require_empty_query(environ, "operations notification definition")
+            return self._notification_webhook_operator_detail(parts[5], start_response, principal)
+        if len(parts) == 7 and parts[6] == "draft":
+            self._require_empty_query(environ, "operations notification definition draft")
+            return self._notification_webhook_operator_draft(parts[5], start_response, principal)
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _notification_webhook_resolution(self, webhook_id: str, start_response: Callable):
+        """Resolve a Webhook definition from the Active revision, then the open Draft.
+
+        Returns ``(active, draft, raw, in_active)`` where ``raw`` is the
+        bounded projected definition (secret-readiness metadata, redacted
+        endpoint) from the exact revision that contains it. Newly created or
+        copied definitions exist only inside an open successor Draft until
+        activation, so Draft-only resolution keeps them reachable and editable
+        without presenting them as Active. Returns the bounded 503 response
+        when the configuration or Draft read fails (callers must return it
+        unchanged); a definition found in neither source raises ``LookupError``
+        exactly as the Automation resolution does.
+        """
+
+        if self._configuration_service is None or self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        try:
+            active = self._configuration_service.active()
+            draft = self._configuration_service.latest_open_draft_containing("webhooks", webhook_id)
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        raw = None
+        in_active = False
+        if active is not None:
+            projected = self._configuration_objects.revision_detail(active.revision_id)[
+                "objects"
+            ].get("webhooks", [])
+            raw = next(
+                (
+                    item
+                    for item in projected
+                    if isinstance(item, dict) and item.get("id") == webhook_id
+                ),
+                None,
+            )
+            in_active = raw is not None
+        if raw is None and draft is not None:
+            projected = self._configuration_objects.revision_detail(draft.revision_id)[
+                "objects"
+            ].get("webhooks", [])
+            raw = next(
+                (
+                    item
+                    for item in projected
+                    if isinstance(item, dict) and item.get("id") == webhook_id
+                ),
+                None,
+            )
+        if raw is None:
+            raise LookupError(f"webhooks {webhook_id!r} was not found")
+        return active, draft, raw, in_active
+
+    def _notification_webhook_actions(
+        self,
+        webhook_id: str,
+        principal: ResolvedApiPrincipal,
+        *,
+        active,
+        draft,
+    ) -> dict:
+        """Backend-authoritative action metadata for one Webhook document.
+
+        Draft-bound definition mutations compose the existing managed
+        configuration object routes; the test and checked activation are the
+        bounded operations transports owned by this projection. A Draft-only
+        definition is editable and activatable exactly like an edited Active
+        definition, but it is never presented as runtime truth.
+        """
+
+        permissions = principal.permissions
+        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
+        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
+        active_revision_id = active.revision_id if active is not None else None
+        draft_revision_id = draft.revision_id if draft is not None else None
+        no_draft_reason = "an open successor Draft is required to edit this Webhook definition"
+        manage_reason = "the connected API principal cannot manage Webhook Definitions"
+        return {
+            "detail": {
+                "available": True,
+                "reason": None,
+                "method": "GET",
+                "path": f"/api/v1/operations/notifications/webhooks/{webhook_id}",
+                "sideEffects": "none",
+                "durableOutcome": None,
+                "nextAction": "inspect the exact bounded Webhook definition state",
+            },
+            "test": {
+                "available": manage,
+                "reason": self._organize_unavailable_reason(
+                    manage,
+                    ApiPermission.MANAGE_CONFIGURATION,
+                    manage_reason,
+                ),
+                "method": "POST",
+                "path": f"/api/v1/operations/notifications/webhooks/{webhook_id}/test",
+                "sideEffects": "one_signed_test_request",
+                "durableOutcome": (
+                    "no durable change; only the bounded test outcome category is returned"
+                ),
+                "nextAction": (
+                    "test the exact displayed revision after reviewing its endpoint and "
+                    "secret readiness"
+                ),
+            },
+            "edit": {
+                "available": manage and draft is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        manage_reason,
+                    )
+                    if not manage
+                    else (None if draft is not None else no_draft_reason)
+                ),
+                "method": "PUT",
+                "path": (
+                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"webhooks/{webhook_id}"
+                    if draft_revision_id is not None
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "the bounded definition form is stored in the open successor Draft at "
+                    "a new optimistic revision version"
+                ),
+                "nextAction": "save the bounded form, then validate and explicitly activate",
+            },
+            "copy": {
+                "available": manage and draft is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        manage_reason,
+                    )
+                    if not manage
+                    else (None if draft is not None else no_draft_reason)
+                ),
+                "method": "POST",
+                "path": (
+                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"webhooks/{webhook_id}/copy"
+                    if draft_revision_id is not None
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a copied, disabled Webhook definition is stored inside the open "
+                    "successor Draft"
+                ),
+                "nextAction": "open the copied definition, edit it, then validate and activate",
+            },
+            "enable": {
+                "available": manage and draft is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        manage_reason,
+                    )
+                    if not manage
+                    else (None if draft is not None else no_draft_reason)
+                ),
+                "method": "POST",
+                "path": (
+                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"webhooks/{webhook_id}/enable"
+                    if draft_revision_id is not None
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "the definition is enabled inside the open successor Draft only"
+                ),
+                "nextAction": "review the Draft, validate it, then explicitly activate",
+            },
+            "disable": {
+                "available": manage and draft is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        manage_reason,
+                    )
+                    if not manage
+                    else (None if draft is not None else no_draft_reason)
+                ),
+                "method": "POST",
+                "path": (
+                    f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                    f"webhooks/{webhook_id}/disable"
+                    if draft_revision_id is not None
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "the definition is disabled inside the open successor Draft only"
+                ),
+                "nextAction": "review the Draft, validate it, then explicitly activate",
+            },
+            "draftCreate": {
+                "available": manage and active is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        manage_reason,
+                    )
+                    if not manage
+                    else (
+                        None
+                        if active is not None
+                        else "no Active configuration exists; managed "
+                        "configuration setup owns the first Draft"
+                    )
+                ),
+                "method": "POST",
+                "path": (
+                    f"/api/v1/configuration/revisions/{active_revision_id}/successor"
+                    if active_revision_id is not None
+                    else None
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "a successor Draft seeded from the immutable Active configuration is stored"
+                ),
+                "nextAction": (
+                    "create or open the successor Draft, then add or edit Webhook "
+                    "definitions inside it"
+                ),
+            },
+            "activate": {
+                "available": activate_permitted and draft is not None,
+                "reason": (
+                    self._organize_unavailable_reason(
+                        activate_permitted,
+                        ApiPermission.ACTIVATE_CONFIGURATION,
+                        "the connected API principal cannot activate configuration",
+                    )
+                    if not activate_permitted
+                    else (None if draft is not None else no_draft_reason)
+                ),
+                "method": "POST",
+                "path": (
+                    f"/api/v1/operations/notifications/webhooks/{webhook_id}/activate-draft"
+                    if draft_revision_id is not None
+                    else None
+                ),
+                "requiresConfirmation": True,
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "the exact reviewed Webhook-only Draft change becomes the immutable "
+                    "Active configuration; no delivery is created"
+                ),
+                "nextAction": (
+                    "activate the reviewed Draft after validating it; the resulting Active "
+                    "identity is reported without a digest"
+                ),
+            },
+        }
+
+    def _notification_webhook_operator_document(
+        self,
+        raw: dict,
+        *,
+        principal: ResolvedApiPrincipal,
+        active,
+        draft,
+        in_active: bool = True,
+    ) -> dict:
+        """Bounded, digest-free V2 operator projection for one Webhook definition."""
+
+        webhook_id = str(raw.get("id", ""))
+        operator = dict(raw)
+        operator["definitionState"] = "active" if in_active else "draft-only"
+        operator["activeConfiguration"] = self._automation_active_configuration(active)
+        operator["draftState"] = self._automation_draft_state(
+            draft,
+            empty_reason=(
+                "no open successor Draft contains this Webhook definition; create one to edit it"
+            ),
+        )
+        operator["actions"] = self._notification_webhook_actions(
+            webhook_id, principal, active=active, draft=draft
+        )
+        return operator
+
+    def _notification_webhooks_operator_page(
+        self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        active = self._configuration_service.active()
+        if active is None:
+            manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+            return self._response(
+                start_response,
+                200,
+                {
+                    "activeConfiguration": None,
+                    "items": [],
+                    "total": 0,
+                    "truncated": False,
+                    "draftState": self._automation_draft_state(
+                        None,
+                        empty_reason=(
+                            "no Active configuration exists; managed configuration "
+                            "setup owns the first Draft"
+                        ),
+                    ),
+                    "supportedEvents": list(webhook_events_supported()),
+                    "actions": {
+                        "create": {
+                            "available": False,
+                            "reason": (
+                                self._organize_unavailable_reason(
+                                    manage,
+                                    ApiPermission.MANAGE_CONFIGURATION,
+                                    "the connected API principal cannot create Webhook Definitions",
+                                )
+                                if not manage
+                                else "no Active configuration exists; managed "
+                                "configuration setup owns the first Draft"
+                            ),
+                            "method": "POST",
+                            "path": None,
+                            "sideEffects": "none",
+                            "durableOutcome": (
+                                "the bounded Webhook definition is stored inside the open "
+                                "successor Draft"
+                            ),
+                            "nextAction": (
+                                "complete managed configuration setup, then create Webhook "
+                                "definitions inside a successor Draft"
+                            ),
+                        },
+                        "createDraft": {
+                            "available": False,
+                            "reason": (
+                                self._organize_unavailable_reason(
+                                    manage,
+                                    ApiPermission.MANAGE_CONFIGURATION,
+                                    "the connected API principal cannot create a successor Draft",
+                                )
+                                if not manage
+                                else "no Active configuration exists; managed "
+                                "configuration setup owns the first Draft"
+                            ),
+                            "method": "POST",
+                            "path": None,
+                            "sideEffects": "none",
+                            "durableOutcome": (
+                                "a successor Draft seeded from the immutable Active "
+                                "configuration is stored"
+                            ),
+                            "nextAction": (
+                                "complete managed configuration setup before staging "
+                                "a successor Draft"
+                            ),
+                        },
+                    },
+                },
+            )
+        detail = self._configuration_objects.revision_detail(active.revision_id)
+        all_items = detail["objects"].get("webhooks", [])
+        try:
+            drafts = self._configuration_service.open_draft_revisions()
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        active_ids = {
+            str(candidate.get("id"))
+            for candidate in all_items
+            if isinstance(candidate, dict) and isinstance(candidate.get("id"), str)
+        }
+        draft_by_id: dict[str, object] = {}
+        draft_only: list[tuple[object, dict]] = []
+        seen_draft_only: set[str] = set()
+        draft_only_total = 0
+        # One deterministic combined page limit for Active and Draft-only
+        # definitions: the Active document order fills the page first and
+        # draft-only definitions take the remaining capacity. The frontend
+        # normalizer fails closed on any page above this limit, so the merged
+        # response must never exceed it; dropped definitions stay counted in
+        # the truthful total and the truncated flag.
+        active_page = all_items[: self.NOTIFICATION_DEFINITIONS_PAGE_LIMIT]
+        draft_capacity = self.NOTIFICATION_DEFINITIONS_PAGE_LIMIT - len(active_page)
+        for draft in drafts:
+            for candidate in ConfigurationObjectService._webhooks_projection(draft.document):
+                if not (isinstance(candidate, dict) and isinstance(candidate.get("id"), str)):
+                    continue
+                if candidate["id"] not in draft_by_id:
+                    draft_by_id[candidate["id"]] = draft
+                if candidate["id"] in active_ids or candidate["id"] in seen_draft_only:
+                    continue
+                seen_draft_only.add(candidate["id"])
+                draft_only_total += 1
+                if len(draft_only) >= draft_capacity:
+                    continue
+                draft_only.append((draft, candidate))
+        items = [
+            self._notification_webhook_operator_document(
+                value,
+                principal=principal,
+                active=active,
+                draft=draft_by_id.get(str(value.get("id", ""))),
+            )
+            for value in active_page
+            if isinstance(value, dict)
+        ]
+        # Newly created or copied definitions live only inside an open Draft
+        # until activation; listing them as draft-only keeps the create/copy
+        # journey reachable without presenting a Draft as Active.
+        for draft, candidate in draft_only:
+            items.append(
+                self._notification_webhook_operator_document(
+                    candidate,
+                    principal=principal,
+                    active=active,
+                    draft=draft,
+                    in_active=False,
+                )
+            )
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        draft_revision_id = drafts[0].revision_id if drafts else None
+        return self._response(
+            start_response,
+            200,
+            {
+                "activeConfiguration": self._automation_active_configuration(active),
+                "items": items,
+                "total": len(all_items) + draft_only_total,
+                "truncated": (
+                    len(all_items) > len(active_page) or draft_only_total > len(draft_only)
+                ),
+                "draftState": self._automation_draft_state(
+                    drafts[0] if drafts else None,
+                    empty_reason=(
+                        "no open successor Draft exists; create one to add or edit "
+                        "Webhook definitions"
+                    ),
+                ),
+                "supportedEvents": list(webhook_events_supported()),
+                "actions": {
+                    "create": {
+                        "available": manage and draft_revision_id is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                "the connected API principal cannot create Webhook Definitions",
+                            )
+                            if not manage
+                            else (
+                                None
+                                if draft_revision_id is not None
+                                else "an open successor Draft is required to add a "
+                                "Webhook definition"
+                            )
+                        ),
+                        "method": "POST",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{draft_revision_id}/objects/webhooks"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the bounded Webhook definition is stored inside the open "
+                            "successor Draft"
+                        ),
+                        "nextAction": (
+                            "start or open a successor Draft, then create the definition inside it"
+                        ),
+                    },
+                    "createDraft": {
+                        "available": manage,
+                        "reason": self._organize_unavailable_reason(
+                            manage,
+                            ApiPermission.MANAGE_CONFIGURATION,
+                            "the connected API principal cannot create a successor Draft",
+                        ),
+                        "method": "POST",
+                        "path": f"/api/v1/configuration/revisions/{active.revision_id}/successor",
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "a successor Draft seeded from the immutable Active "
+                            "configuration is stored"
+                        ),
+                        "nextAction": (
+                            "create or open the successor Draft, then add or edit "
+                            "Webhook definitions inside it"
+                        ),
+                    },
+                },
+            },
+        )
+
+    def _notification_webhook_operator_detail(
+        self, webhook_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        resolution = self._notification_webhook_resolution(webhook_id, start_response)
+        if not isinstance(resolution, tuple):
+            return resolution
+        active, draft, raw, in_active = resolution
+        return self._response(
+            start_response,
+            200,
+            {
+                "webhook": self._notification_webhook_operator_document(
+                    raw,
+                    principal=principal,
+                    active=active,
+                    draft=draft,
+                    in_active=in_active,
+                ),
+                "activeConfiguration": self._automation_active_configuration(active),
+            },
+        )
+
+    def _notification_webhook_operator_draft(
+        self, webhook_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        resolution = self._notification_webhook_resolution(webhook_id, start_response)
+        if not isinstance(resolution, tuple):
+            return resolution
+        active, draft, raw, in_active = resolution
+        draft_webhook = None
+        if draft is not None:
+            projected = ConfigurationObjectService._webhooks_projection(draft.document)
+            draft_webhook = next(
+                (
+                    item
+                    for item in projected
+                    if isinstance(item, dict) and item.get("id") == webhook_id
+                ),
+                None,
+            )
+        permissions = principal.permissions
+        manage = ApiPermission.MANAGE_CONFIGURATION in permissions
+        activate_permitted = ApiPermission.ACTIVATE_CONFIGURATION in permissions
+        draft_revision_id = draft.revision_id if draft is not None else None
+        active_revision_id = active.revision_id if active is not None else None
+        no_draft_reason = "an open successor Draft is required to edit this Webhook definition"
+        manage_reason = "the connected API principal cannot manage Webhook Definitions"
+        return self._response(
+            start_response,
+            200,
+            {
+                "webhookId": webhook_id,
+                "activeConfiguration": self._automation_active_configuration(active),
+                "webhook": raw if in_active else None,
+                "draft": (
+                    None
+                    if draft is None or draft_webhook is None
+                    else {
+                        "revisionId": draft.revision_id,
+                        "revisionVersion": draft.version,
+                        "revisionStatus": draft.status.value,
+                        "baseActiveRevisionId": draft.base_active_revision_id,
+                        "updatedAt": draft.updated_at.isoformat(),
+                        "validatedAt": (
+                            draft.validated_at.isoformat() if draft.validated_at else None
+                        ),
+                        "validationErrors": list(draft.validation_errors),
+                        "webhook": draft_webhook,
+                    }
+                ),
+                "supportedEvents": list(webhook_events_supported()),
+                "actions": {
+                    "createDraft": {
+                        "available": manage and active is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                manage_reason,
+                            )
+                            if not manage
+                            else (
+                                None
+                                if active is not None
+                                else "no Active configuration exists; managed "
+                                "configuration setup owns the first Draft"
+                            )
+                        ),
+                        "method": "POST",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{active_revision_id}/successor"
+                            if active_revision_id is not None
+                            else None
+                        ),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "a successor Draft seeded from the immutable Active "
+                            "configuration is stored"
+                        ),
+                        "nextAction": (
+                            "create the successor Draft, then edit this Webhook definition "
+                            "inside it"
+                        ),
+                    },
+                    "save": {
+                        "available": manage and draft is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                manage_reason,
+                            )
+                            if not manage
+                            else (None if draft is not None else no_draft_reason)
+                        ),
+                        "method": "PUT",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{draft_revision_id}/objects/"
+                            f"webhooks/{webhook_id}"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the bounded definition form is stored in the open successor "
+                            "Draft at a new optimistic revision version"
+                        ),
+                        "nextAction": (
+                            "save the bounded form, then validate and explicitly activate"
+                        ),
+                    },
+                    "validate": {
+                        "available": manage and draft is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                "the connected API principal cannot validate configuration",
+                            )
+                            if not manage
+                            else (None if draft is not None else no_draft_reason)
+                        ),
+                        "method": "POST",
+                        "path": (
+                            f"/api/v1/configuration/revisions/{draft_revision_id}/validate"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the open Draft is validated without any runtime or Storage effect"
+                        ),
+                        "nextAction": "validate the Draft, then review the validation evidence",
+                    },
+                    "activate": {
+                        "available": activate_permitted and draft is not None,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                activate_permitted,
+                                ApiPermission.ACTIVATE_CONFIGURATION,
+                                "the connected API principal cannot activate configuration",
+                            )
+                            if not activate_permitted
+                            else (None if draft is not None else no_draft_reason)
+                        ),
+                        "method": "POST",
+                        "path": (
+                            f"/api/v1/operations/notifications/webhooks/{webhook_id}/activate-draft"
+                            if draft_revision_id is not None
+                            else None
+                        ),
+                        "requiresConfirmation": True,
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "the exact reviewed Webhook-only Draft change becomes the "
+                            "immutable Active configuration; no delivery is created"
+                        ),
+                        "nextAction": (
+                            "activate the reviewed Draft after validating it; the resulting "
+                            "Active identity is reported without a digest"
+                        ),
+                    },
+                    "test": {
+                        "available": manage,
+                        "reason": (
+                            self._organize_unavailable_reason(
+                                manage,
+                                ApiPermission.MANAGE_CONFIGURATION,
+                                manage_reason,
+                            )
+                        ),
+                        "method": "POST",
+                        "path": f"/api/v1/operations/notifications/webhooks/{webhook_id}/test",
+                        "sideEffects": "one_signed_test_request",
+                        "durableOutcome": (
+                            "no durable change; only the bounded test outcome category is returned"
+                        ),
+                        "nextAction": (
+                            "test the exact displayed revision after reviewing its endpoint "
+                            "and secret readiness"
+                        ),
+                    },
+                },
+            },
+        )
+
+    def _notification_webhook_operator_test(
+        self,
+        webhook_id: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ) -> None:
+        """Run the explicit signed Webhook test bound to one exact revision.
+
+        The browser submits only the advertised revision identity and
+        optimistic version. The configuration digest is resolved server-side
+        from the exact revision and handed to the existing signed-test
+        service, so the browser neither receives nor submits a digest, and
+        the resolved secret never leaves the process.
+        """
+
+        if self._webhook_tests is None or self._configuration_service is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed Webhook test service is unavailable",
+            )
+        self._require_empty_query(environ, "operations notification Webhook test")
+        document = self._document(environ)
+        if set(document) != {"expectedRevisionId", "expectedVersion"}:
+            raise ValueError("Webhook test requires expectedRevisionId and expectedVersion only")
+        expected_revision_id = document["expectedRevisionId"]
+        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
+            raise ValueError("Webhook test expectedRevisionId must be a non-empty string")
+        expected = document["expectedVersion"]
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            raise ValueError("Webhook test expectedVersion must be an integer")
+        revision = self._configuration_service.require(expected_revision_id)
+        if revision.version != expected:
+            return self._error(
+                start_response,
+                409,
+                "configuration_version_conflict",
+                "the selected Webhook revision is stale; reload before testing",
+                details={
+                    "revisionId": revision.revision_id,
+                    "currentVersion": revision.version,
+                    "durableState": "no test request was sent",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "reload the Webhook definition, then test the exact current revision again"
+                    ),
+                },
+            )
+        result = self._webhook_tests.test(
+            expected_revision_id,
+            webhook_id,
+            expected_version=expected,
+            expected_digest=revision.digest,
+            actor=principal.principal_id,
+        )
+        # The digest is server-side binding evidence for the existing managed
+        # surfaces; the bounded operator outcome never carries it.
+        revision_evidence = dict(result.get("revision") or {})
+        revision_evidence.pop("digest", None)
+        result["revision"] = revision_evidence
+        return self._response(start_response, 200, result)
+
+    def _notification_delivery_operator_detail(
+        self, delivery_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        """Bounded delivery detail with permission-aware recovery actions.
+
+        The durable document comes from the shared NotificationDeliveryService
+        authority; this projection only adds backend-authoritative action
+        metadata so the Web journey can hide recovery controls with a truthful
+        reason when the connected principal lacks the recovery permission.
+        """
+
+        detail = self._notification_deliveries.detail(
+            delivery_id,
+            lease_seconds=self._notification_delivery_lease_seconds(),
+        )
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        available = set(detail.get("recovery", {}).get("availableActions") or [])
+        actions: dict[str, object] = {}
+        if "requeue-dead-letter" in available:
+            actions["requeue"] = {
+                "available": manage,
+                "reason": (
+                    None
+                    if manage
+                    else self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        "the connected API principal cannot recover notification deliveries",
+                    )
+                ),
+                "method": "POST",
+                "path": f"/api/v1/notifications/{delivery_id}/requeue",
+                "requiresConfirmation": True,
+                "sideEffects": "delivery_queue_state_only",
+                "durableOutcome": (
+                    "the dead-letter delivery returns to pending with the same identity; "
+                    "attempts are reset"
+                ),
+                "nextAction": (
+                    "confirm the requeue, then refresh this delivery to watch the worker reclaim it"
+                ),
+            }
+        if "resolve-stale" in available:
+            actions["resolveStale"] = {
+                "available": manage,
+                "reason": (
+                    None
+                    if manage
+                    else self._organize_unavailable_reason(
+                        manage,
+                        ApiPermission.MANAGE_CONFIGURATION,
+                        "the connected API principal cannot recover notification deliveries",
+                    )
+                ),
+                "method": "POST",
+                "path": f"/api/v1/notifications/{delivery_id}/resolve-stale",
+                "requiresConfirmation": True,
+                "sideEffects": "delivery_queue_state_only",
+                "durableOutcome": (
+                    "the expired-lease delivery returns to pending with the same identity "
+                    "and attempts"
+                ),
+                "nextAction": (
+                    "confirm the stale resolution, then refresh this delivery to watch the "
+                    "worker reclaim it"
+                ),
+            }
+        detail["actions"] = actions
+        return self._response(start_response, 200, detail)
+
+    def _notification_webhook_activate_checked_draft(
+        self,
+        webhook_id: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ) -> None:
+        """Checked-activate the exact open successor Draft that owns this Webhook.
+
+        The browser supplies the Draft's exact advertised revision identity and
+        optimistic version — never a digest. The action is bound to that exact
+        Draft revision, the Active base is pinned, and the Draft's changes are
+        compared with the Active document so a revision that touches anything
+        outside the Webhook Definition boundary is rejected before any
+        activation, and so the ``webhooks`` section changes only at the
+        reviewed definition's exact identity — a sibling definition can never
+        be added, removed or modified while riding along. Because the
+        confinement comparison proves every other section and every other
+        definition is identical to the live Active configuration, the published
+        configuration carries no new Storage, strategy or destination
+        semantics. No delivery is created by activation, and a Draft-only
+        definition (newly created or copied) is activatable exactly like an
+        edited Active definition.
+        """
+
+        if self._configuration_service is None or self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+        self._require_empty_query(environ, "operations notification draft activation")
+        document = self._document(environ)
+        if set(document) != {"expectedRevisionId", "expectedVersion"}:
+            raise ValueError(
+                "notification draft activation requires expectedRevisionId and expectedVersion only"
+            )
+        expected_revision_id = document["expectedRevisionId"]
+        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
+            raise ValueError(
+                "notification draft activation expectedRevisionId must be a non-empty string"
+            )
+        expected = document["expectedVersion"]
+        if isinstance(expected, bool) or not isinstance(expected, int):
+            raise ValueError("notification draft activation expectedVersion must be an integer")
+        active = self._configuration_service.active()
+        try:
+            draft = self._configuration_service.latest_open_draft_containing("webhooks", webhook_id)
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        if active is None:
+            raise UnattendedExecutionGrantError(
+                "no Active configuration exists; managed configuration setup owns the first Draft",
+                code="notification_active_missing",
+                status=409,
+                durable_state="no configuration was activated",
+                next_action="complete managed configuration setup, then stage a successor Draft",
+            )
+        if draft is None:
+            raise UnattendedExecutionGrantError(
+                "no open successor Draft contains this Webhook definition",
+                code="notification_draft_required",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action="create a successor Draft, edit the definition, then activate",
+            )
+        if draft.revision_id != expected_revision_id:
+            raise ConfigurationVersionConflict(
+                "the submitted Draft identity does not match the current open successor "
+                "Draft; reload the Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                durable_state="draft_preserved",
+                next_action=(
+                    "reload the Draft document, then activate the exact advertised "
+                    "Draft revision again"
+                ),
+            )
+        if draft.version != expected:
+            raise ConfigurationVersionConflict(
+                "the successor Draft changed before activation; reload the Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                durable_state="draft_preserved",
+                next_action="reload the Draft, then activate the current version again",
+            )
+        if draft.base_active_revision_id != active.revision_id:
+            raise ConfigurationVersionConflict(
+                "the Active configuration changed after this Draft was created; "
+                "stage a fresh successor Draft",
+                revision_id=draft.revision_id,
+                current_version=draft.version,
+                durable_state="draft_preserved",
+                next_action=(
+                    "create a fresh successor Draft from the current Active "
+                    "configuration, then edit, validate and activate it"
+                ),
+            )
+        changed = self._notification_draft_changed_sections(draft.document, active.document)
+        if changed - {"webhooks"}:
+            raise UnattendedExecutionGrantError(
+                "this Draft changes configuration outside the Webhook Definition boundary",
+                code="notification_activation_out_of_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "remove the unrelated configuration changes from the Draft, or use the "
+                    "managed configuration activation journey with explicit review"
+                ),
+            )
+        self._require_webhook_only_change(active.document, draft.document, webhook_id)
+        # The exact-revision binding, Active-base pin and Webhook-only
+        # confinement above prove every non-Webhook section and every other
+        # Webhook definition is identical to the live Active configuration, so
+        # no new Storage, strategy or destination semantics are published by
+        # this activation. The managed activation revalidates the exact
+        # revision digest, optimistic version and document loader atomically
+        # before publishing.
+        activated = self._configuration_service.activate(
+            draft.revision_id,
+            expected_version=draft.version,
+            actor=principal.principal_id,
+        )
+        self._refresh_configuration_binding()
+        active_after = self._configuration_service.active()
+        webhook_after = next(
+            (
+                item
+                for item in ConfigurationObjectService._webhooks_projection(activated.document)
+                if isinstance(item, dict) and item.get("id") == webhook_id
+            ),
+            None,
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "activatedRevisionId": activated.revision_id,
+                "activatedVersion": activated.version,
+                "revisionSequence": activated.revision_sequence,
+                "activeConfiguration": self._automation_active_configuration(active_after),
+                "webhook": webhook_after,
+            },
+        )
+
+    @staticmethod
+    def _notification_webhook_canonical_document(document: object) -> dict:
+        """Copy of one document with the legacy nested Webhook spelling normalized.
+
+        The managed Webhook edit path moves ``notifications.webhooks`` to the
+        root ``webhooks`` section, so the confinement comparison must treat
+        that spelling migration as the same boundary, not as an unrelated
+        configuration change.
+        """
+
+        value = copy.deepcopy(document) if isinstance(document, dict) else {}
+        if "webhooks" not in value:
+            notifications = value.get("notifications")
+            if isinstance(notifications, dict) and isinstance(notifications.get("webhooks"), list):
+                value["webhooks"] = copy.deepcopy(notifications["webhooks"])
+                nested = dict(notifications)
+                nested.pop("webhooks", None)
+                value["notifications"] = nested
+        return value
+
+    @classmethod
+    def _notification_draft_changed_sections(
+        cls, draft_document: object, active_document: object
+    ) -> set[str]:
+        """Top-level configuration sections the Draft changes versus Active.
+
+        Both documents are first normalized to the canonical root ``webhooks``
+        spelling so a managed Webhook edit inside a legacy-spelled Active
+        document is confined to the Webhook boundary instead of being read as
+        an unrelated configuration change.
+        """
+
+        return MediaFlowApi._automation_draft_changed_sections(
+            cls._notification_webhook_canonical_document(draft_document),
+            cls._notification_webhook_canonical_document(active_document),
+        )
+
+    @staticmethod
+    def _webhook_identity_map(document: object) -> dict[str, object] | None:
+        """Effective Webhook id → entry map for either section spelling.
+
+        Returns ``None`` when the effective section is malformed (not a list,
+        an entry that is not an object, a non-string id, or a duplicated id),
+        so the caller can fail closed instead of activating an unverifiable
+        boundary.
+        """
+
+        if not isinstance(document, dict):
+            return None
+        section = document.get("webhooks")
+        if not isinstance(section, list):
+            notifications = document.get("notifications")
+            if isinstance(notifications, dict) and isinstance(notifications.get("webhooks"), list):
+                section = notifications["webhooks"]
+            else:
+                section = []
+        definitions: dict[str, object] = {}
+        for entry in section:
+            if not (isinstance(entry, dict) and isinstance(entry.get("id"), str)):
+                return None
+            entry_id = entry["id"]
+            if entry_id in definitions:
+                return None
+            definitions[entry_id] = entry
+        return definitions
+
+    def _require_webhook_only_change(
+        self,
+        active_document: object,
+        draft_document: object,
+        webhook_id: str,
+    ) -> None:
+        """Fail closed unless the Draft's only Webhook change is this definition.
+
+        The section-level confinement proves no other configuration section
+        changed; this comparison proves the effective ``webhooks`` section
+        changed only at the reviewed definition's exact identity. Every other
+        definition must be present in both documents and identical, so a
+        sibling definition cannot be added, removed or modified while riding
+        along with the reviewed activation — including the create/copy case,
+        where the new or copied definition must be the sole Webhook change.
+        Malformed sections fail closed: an unverifiable boundary is never
+        activated.
+        """
+
+        active_definitions = self._webhook_identity_map(active_document)
+        draft_definitions = self._webhook_identity_map(draft_document)
+        if active_definitions is None or draft_definitions is None:
+            raise UnattendedExecutionGrantError(
+                "the Webhook definition section is malformed; activation "
+                "cannot verify its exact boundary",
+                code="notification_activation_out_of_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "create a fresh successor Draft from the current Active "
+                    "configuration, then edit, validate and activate it"
+                ),
+            )
+        unexpected = sorted(
+            candidate_id
+            for candidate_id in set(active_definitions) | set(draft_definitions)
+            if candidate_id != webhook_id
+            and (
+                candidate_id not in active_definitions
+                or candidate_id not in draft_definitions
+                or draft_definitions[candidate_id] != active_definitions[candidate_id]
+            )
+        )
+        if unexpected:
+            raise UnattendedExecutionGrantError(
+                "this Draft changes other Webhook Definitions beyond the reviewed definition",
+                code="notification_activation_definition_scope",
+                status=409,
+                durable_state="active configuration preserved",
+                next_action=(
+                    "remove the other definition changes from this Draft, then edit, "
+                    "validate and activate one definition per Draft"
+                ),
+            )
 
     def _file_catalog_detail_value(self, detail) -> dict:
         projection = (

@@ -33,6 +33,12 @@ import { AutomationDetailPage } from "../features/operations/AutomationDetailPag
 import { AutomationEditorPage } from "../features/operations/AutomationEditorPage";
 import { AutomationPreviewPage } from "../features/operations/AutomationPreviewPage";
 import { AutomationOccurrencesPage } from "../features/operations/AutomationOccurrencesPage";
+import { NotificationListPage } from "../features/operations/NotificationListPage";
+import { NotificationNewPage } from "../features/operations/NotificationNewPage";
+import { NotificationDetailPage } from "../features/operations/NotificationDetailPage";
+import { NotificationEditorPage } from "../features/operations/NotificationEditorPage";
+import { DeliveryListPage } from "../features/operations/DeliveryListPage";
+import { DeliveryDetailPage } from "../features/operations/DeliveryDetailPage";
 import { AppShell } from "../shared/ui/AppShell";
 import { AuthBoundary } from "../shared/auth/AuthBoundary";
 import { StatusBanner } from "../shared/ui/StatusBanner";
@@ -213,6 +219,42 @@ const automationOccurrencesRoute = createRoute({
   component: AutomationOccurrencesPage,
 });
 
+const notificationListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/notifications",
+  component: NotificationListPage,
+});
+
+const notificationNewRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/notifications/webhooks/new",
+  component: NotificationNewPage,
+});
+
+const notificationDefinitionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/notifications/webhooks/$webhookId",
+  component: NotificationDetailPage,
+});
+
+const notificationEditorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/notifications/editor/$webhookId",
+  component: NotificationEditorPage,
+});
+
+const deliveryListRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/notifications/deliveries",
+  component: DeliveryListPage,
+});
+
+const deliveryDetailRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "operations/notifications/deliveries/$deliveryId",
+  component: DeliveryDetailPage,
+});
+
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "review",
@@ -251,6 +293,12 @@ const routeTree = rootRoute.addChildren([
   automationEditorRoute,
   automationPreviewRoute,
   automationOccurrencesRoute,
+  notificationListRoute,
+  notificationNewRoute,
+  notificationDefinitionRoute,
+  notificationEditorRoute,
+  deliveryListRoute,
+  deliveryDetailRoute,
   reviewRoute,
   configurationRoute,
 ]);
