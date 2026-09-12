@@ -11325,6 +11325,40 @@ class MediaFlowApi:
                     ),
                 },
             )
+        # A valid historical revision with a matching version is still not the
+        # displayed revision: only the exact currently advertised Active
+        # revision (for a definition it contains) or the eligible open
+        # successor Draft may be tested, and the rejection happens before any
+        # transport invocation.
+        resolution = self._notification_webhook_resolution(webhook_id, start_response)
+        if not isinstance(resolution, tuple):
+            return resolution
+        active, draft, _raw, in_active = resolution
+        advertised = set()
+        if active is not None and in_active:
+            advertised.add(active.revision_id)
+        if draft is not None:
+            advertised.add(draft.revision_id)
+        if expected_revision_id not in advertised:
+            return self._error(
+                start_response,
+                409,
+                "configuration_version_conflict",
+                (
+                    "the selected revision is not the currently advertised Active revision "
+                    "or the open successor Draft for this Webhook definition; no test "
+                    "request was sent"
+                ),
+                details={
+                    "durableState": "no test request was sent",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "reload the Webhook definition, then test the exact advertised "
+                        "revision again"
+                    ),
+                },
+            )
         result = self._webhook_tests.test(
             expected_revision_id,
             webhook_id,
@@ -11556,6 +11590,11 @@ class MediaFlowApi:
                 "activatedRevisionId": activated.revision_id,
                 "activatedVersion": activated.version,
                 "revisionSequence": activated.revision_sequence,
+                # Echo of the exact reviewed Draft identity the activation was
+                # bound to, so the Web client can verify the success document
+                # against the submitted mutation.
+                "publishedFromRevisionId": draft.revision_id,
+                "publishedFromVersion": draft.version,
                 "activeConfiguration": self._automation_active_configuration(active_after),
                 "webhook": webhook_after,
             },

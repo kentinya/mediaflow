@@ -526,9 +526,9 @@ describe("NotificationDetailPage signed test", () => {
           testId: "test-1",
           webhook: { id: WEBHOOK_ID },
           revision: {
-            revisionId: DRAFT_REVISION,
-            version: 4,
-            status: "validated",
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
           },
           outcome: "success",
           category: "http_204",
@@ -644,7 +644,14 @@ describe("NotificationEditorPage checked activation", () => {
           activatedRevisionId: DRAFT_REVISION,
           activatedVersion: 5,
           revisionSequence: 3,
-          activeConfiguration: activeConfiguration(),
+          publishedFromRevisionId: DRAFT_REVISION,
+          publishedFromVersion: 4,
+          activeConfiguration: {
+            revisionId: DRAFT_REVISION,
+            version: 5,
+            revisionSequence: 3,
+            status: "active",
+          },
           webhook: webhookDocument(),
         });
       }
@@ -725,6 +732,238 @@ describe("NotificationEditorPage checked activation", () => {
     expect(
       calls.filter((call) => call.url.endsWith("/activate-draft")),
     ).toHaveLength(1);
+  });
+});
+
+describe("NotificationNewPage create journey", () => {
+  it("submits the canonical create body bound to the exact Draft version", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/notifications/webhooks") {
+        return jsonResponse(listPayload());
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`
+      ) {
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 5,
+          status: "draft",
+          webhook: { id: "created-webhook" },
+        });
+      }
+      if (
+        call.url === "/api/v1/operations/notifications/webhooks/created-webhook"
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload({
+            id: "created-webhook",
+            definitionState: "draft-only",
+            secretReadiness: [],
+          }),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/webhooks/new");
+    // The canonical deployment-owned secret reference is accepted by the
+    // form; the server-side canonical validator remains the authority.
+    await userEvent.type(
+      await screen.findByLabelText("Identifier"),
+      "created-webhook",
+    );
+    await userEvent.type(
+      screen.getByLabelText("HTTPS endpoint"),
+      "https://example.invalid/hooks/created",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Secret environment reference"),
+      "MEDIAFLOW_WEBHOOK_SECRET",
+    );
+    await userEvent.click(screen.getByLabelText("Event job.completed"));
+    const create = screen.getByRole("button", {
+      name: "Create definition in Draft",
+    });
+    expect(create).toBeEnabled();
+    await userEvent.click(create);
+    await waitFor(() => {
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "POST" &&
+            call.url ===
+              `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+        ),
+      ).toBe(true);
+    });
+    const createCall = calls.find(
+      (call) =>
+        call.method === "POST" &&
+        call.url ===
+          `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks`,
+    );
+    expect(createCall?.body).toMatchObject({
+      expectedVersion: 4,
+      object: {
+        id: "created-webhook",
+        url: "https://example.invalid/hooks/created",
+        secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+        events: ["job.completed"],
+        enabled: true,
+        timeoutSeconds: 10,
+        maxAttempts: 5,
+        baseRetrySeconds: 5,
+        maxRetrySeconds: 300,
+      },
+    });
+    expect(JSON.stringify(createCall?.body)).not.toMatch(
+      /secretValue|Bearer |password/i,
+    );
+    // The created Draft-only definition is opened as the exact successor.
+    expect(
+      await screen.findByRole("heading", { name: "Webhook created-webhook" }),
+    ).toBeVisible();
+  });
+});
+
+describe("NotificationDetailPage draft actions", () => {
+  it("submits copy, enable and disable with the exact optimistic version", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload(),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/${WEBHOOK_ID}/copy`
+      ) {
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 5,
+          status: "draft",
+          object: { id: "ops-webhook-copy", enabled: false },
+        });
+      }
+      if (
+        call.url ===
+        "/api/v1/operations/notifications/webhooks/ops-webhook-copy"
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload({
+            id: "ops-webhook-copy",
+            definitionState: "draft-only",
+            secretReadiness: [],
+          }),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/enable`
+      ) {
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 6,
+          status: "draft",
+          object: { id: "ops-webhook-copy", enabled: true },
+        });
+      }
+      if (
+        call.url ===
+        `/api/v1/configuration/revisions/${DRAFT_REVISION}/objects/webhooks/ops-webhook-copy/disable`
+      ) {
+        return jsonResponse({
+          revisionId: DRAFT_REVISION,
+          version: 7,
+          status: "draft",
+          object: { id: "ops-webhook-copy", enabled: false },
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Copy into Draft" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Webhook ops-webhook-copy" }),
+    ).toBeVisible();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Enable in Draft" }),
+    );
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.url.endsWith("/ops-webhook-copy/enable")),
+      ).toBe(true);
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Disable in Draft" }),
+    );
+    await waitFor(() => {
+      expect(
+        calls.some((call) => call.url.endsWith("/ops-webhook-copy/disable")),
+      ).toBe(true);
+    });
+    const enableCall = calls.find((call) =>
+      call.url.endsWith("/ops-webhook-copy/enable"),
+    );
+    const disableCall = calls.find((call) =>
+      call.url.endsWith("/ops-webhook-copy/disable"),
+    );
+    expect(enableCall?.method).toBe("POST");
+    expect(enableCall?.body).toMatchObject({ expectedVersion: 4 });
+    expect(disableCall?.body).toMatchObject({ expectedVersion: 4 });
+    expect(JSON.stringify([enableCall?.body, disableCall?.body])).not.toMatch(
+      /digest|Bearer /i,
+    );
+  });
+
+  it("does not render a misbound test outcome as success", async () => {
+    recordingFetch((call) => {
+      if (
+        call.url === `/api/v1/operations/notifications/webhooks/${WEBHOOK_ID}`
+      ) {
+        return jsonResponse({
+          webhook: definitionPayload(),
+          activeConfiguration: activeConfiguration(),
+        });
+      }
+      if (call.url.endsWith(`/webhooks/${WEBHOOK_ID}/test`)) {
+        // A success document about another Webhook: never rendered.
+        return jsonResponse({
+          testId: "test-9",
+          webhook: { id: "another-webhook" },
+          revision: {
+            revisionId: ACTIVE_REVISION,
+            version: 3,
+            status: "active",
+          },
+          outcome: "success",
+          category: "http_204",
+          responseStatus: 204,
+          message: "the Webhook endpoint returned HTTP 204",
+          durableState: "no_delivery_created_no_configuration_change",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "no further action required",
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp(`/ui-v2/operations/notifications/webhooks/${WEBHOOK_ID}`);
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Test this exact revision" }),
+    );
+    expect(await screen.findByText(/The test was rejected/)).toBeVisible();
+    expect(screen.queryByText(/Test succeeded/)).toBeNull();
   });
 });
 
@@ -870,6 +1109,57 @@ describe("DeliveryDetailPage recovery", () => {
         return jsonResponse(
           deliveryDetailPayload({
             status: "exploded",
+          }),
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    expect(await screen.findByText(/could not be understood/)).toBeVisible();
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+  });
+
+  it("fails closed when a requeue transport contradicts a delivered status", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
+      ) {
+        return jsonResponse(
+          deliveryDetailPayload({
+            status: "delivered",
+            deliveredAt: "2026-09-12T00:04:00+00:00",
+          }),
+        );
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/ui-v2/operations/notifications/deliveries/delivery-1");
+    expect(await screen.findByText(/could not be understood/)).toBeVisible();
+    expect(calls.filter((call) => call.method !== "GET")).toHaveLength(0);
+    expect(screen.queryByRole("button", { name: /Requeue/ })).toBeNull();
+  });
+
+  it("fails closed when a recovery transport names another delivery", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/notifications/deliveries/delivery-1"
+      ) {
+        return jsonResponse(
+          deliveryDetailPayload({
+            actions: {
+              requeue: {
+                available: true,
+                reason: null,
+                method: "POST",
+                path: "/api/v1/notifications/delivery-2/requeue",
+                requiresConfirmation: true,
+                sideEffects: "delivery_queue_state_only",
+                durableOutcome: "the delivery returns to pending",
+                nextAction: "confirm the requeue",
+              },
+            },
           }),
         );
       }

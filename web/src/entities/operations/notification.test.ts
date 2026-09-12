@@ -5,6 +5,8 @@ import {
   normalizeNotificationDefinitionsPage,
   normalizeNotificationDeliveryDetail,
   normalizeNotificationDraftState,
+  normalizeNotificationActivation,
+  normalizeNotificationRecoveryResult,
   normalizeWebhookDefinition,
   normalizeWebhookTestResult,
   NotificationNormalizationError,
@@ -347,8 +349,12 @@ describe("notification definitions page", () => {
 });
 
 describe("webhook test result", () => {
-  it("normalizes a bounded success outcome", () => {
-    const result = normalizeWebhookTestResult({
+  const REQUESTED = { webhookId: "ops", revisionId: "rev-draft", version: 4 };
+
+  function testResultPayload(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
       testId: "test-1",
       webhook: { id: "ops" },
       revision: { revisionId: "rev-draft", version: 4, status: "draft" },
@@ -360,46 +366,80 @@ describe("webhook test result", () => {
       sideEffects: "none",
       retrySafe: true,
       nextAction: "no further action required",
-    });
+      ...overrides,
+    };
+  }
+
+  it("normalizes a bounded success outcome bound to the requested mutation", () => {
+    const result = normalizeWebhookTestResult(testResultPayload(), REQUESTED);
     expect(result.outcome).toBe("success");
     expect(result.category).toBe("http_204");
     expect(result.webhookId).toBe("ops");
   });
 
+  it("fails closed when the outcome names another webhook", () => {
+    expect(() =>
+      normalizeWebhookTestResult(
+        testResultPayload({ webhook: { id: "other" } }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the outcome names another revision or version", () => {
+    expect(() =>
+      normalizeWebhookTestResult(
+        testResultPayload({
+          revision: { revisionId: "rev-other", version: 4, status: "draft" },
+        }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeWebhookTestResult(
+        testResultPayload({
+          revision: { revisionId: "rev-draft", version: 5, status: "draft" },
+        }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
   it("fails closed when the outcome carries a revision digest", () => {
     expect(() =>
-      normalizeWebhookTestResult({
-        webhook: { id: "ops" },
-        revision: {
-          revisionId: "rev-draft",
-          version: 4,
-          status: "draft",
-          digest: "sha256:deadbeef",
-        },
-        outcome: "success",
-        category: "http_204",
-        responseStatus: 204,
-        message: "ok",
-        durableState: "no_delivery_created_no_configuration_change",
-        retrySafe: true,
-        nextAction: "none",
-      }),
+      normalizeWebhookTestResult(
+        testResultPayload({
+          revision: {
+            revisionId: "rev-draft",
+            version: 4,
+            status: "draft",
+            digest: "sha256:deadbeef",
+          },
+        }),
+        REQUESTED,
+      ),
     ).toThrow(NotificationNormalizationError);
   });
 
   it("fails closed on an unknown outcome category", () => {
     expect(() =>
-      normalizeWebhookTestResult({
-        webhook: { id: "ops" },
-        revision: { revisionId: "rev-draft", version: 4, status: "draft" },
-        outcome: "failure",
-        category: "stack_trace",
-        responseStatus: null,
-        message: "boom",
-        durableState: "no_delivery_created_no_configuration_change",
-        retrySafe: true,
-        nextAction: "none",
-      }),
+      normalizeWebhookTestResult(
+        testResultPayload({
+          category: "stack_trace",
+          responseStatus: null,
+          message: "boom",
+        }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed on an unsafe webhook identity", () => {
+    expect(() =>
+      normalizeWebhookTestResult(
+        testResultPayload({ webhook: { id: "../escape" } }),
+        REQUESTED,
+      ),
     ).toThrow(NotificationNormalizationError);
   });
 });
@@ -527,6 +567,120 @@ describe("notification delivery detail", () => {
   it("fails closed on an unknown delivery status", () => {
     expect(() =>
       normalizeNotificationDeliveryDetail(deliveryPayload({ status: "lost" })),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when requeue is advertised for a non dead-letter delivery", () => {
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({
+          status: "delivering",
+          lease: {
+            state: "active",
+            leaseSeconds: 300,
+            claimedAt: "2026-09-12T00:00:00+00:00",
+            expiresAt: "2026-09-12T00:05:00+00:00",
+          },
+        }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when stale resolution is advertised without an expired lease", () => {
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({
+          status: "delivering",
+          lease: {
+            state: "active",
+            leaseSeconds: 300,
+            claimedAt: "2026-09-12T00:00:00+00:00",
+            expiresAt: "2026-09-12T00:05:00+00:00",
+          },
+          recovery: {
+            availableActions: ["resolve-stale"],
+            reason: "contradictory",
+            actions: [],
+          },
+          actions: {},
+        }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({
+          status: "dead-letter",
+          recovery: {
+            availableActions: ["resolve-stale"],
+            reason: "contradictory",
+            actions: [],
+          },
+          actions: {},
+        }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when a lease window contradicts a non-delivering status", () => {
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({
+          lease: {
+            state: "active",
+            leaseSeconds: 300,
+            claimedAt: "2026-09-12T00:00:00+00:00",
+            expiresAt: "2026-09-12T00:05:00+00:00",
+          },
+        }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when recovery evidence is not advertised as available", () => {
+    const payload = deliveryPayload();
+    payload.recovery = {
+      availableActions: [],
+      reason: "no action",
+      actions: [
+        {
+          name: "requeue-dead-letter",
+          durableState: "the delivery stays one row",
+          sideEffects: "no new delivery and no media change",
+          retrySafe: true,
+          duplicateImplication: "receivers must tolerate duplicates",
+          nextAction: "explicitly requeue this delivery",
+        },
+      ],
+    };
+    payload.actions = {};
+    expect(() => normalizeNotificationDeliveryDetail(payload)).toThrow(
+      NotificationNormalizationError,
+    );
+  });
+
+  it("fails closed on an unsafe delivery identity", () => {
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({ deliveryId: "delivery/1" }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({ deliveryId: "delivery 1" }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({ webhookId: "ops%2Fwebhook" }),
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed on an unsafe event identity", () => {
+    expect(() =>
+      normalizeNotificationDeliveryDetail(
+        deliveryPayload({ eventId: "event|1" }),
+      ),
     ).toThrow(NotificationNormalizationError);
   });
 });
@@ -683,5 +837,203 @@ describe("draft-only list item", () => {
     );
     expect(model.definitionState).toBe("draft-only");
     expect(model.document.id).toBe("draft-only-webhook");
+  });
+});
+
+describe("notification activation result", () => {
+  const REQUESTED = { webhookId: "ops", revisionId: "rev-draft", version: 4 };
+
+  function activationPayload(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      activatedRevisionId: "rev-active-2",
+      activatedVersion: 5,
+      revisionSequence: 4,
+      publishedFromRevisionId: "rev-draft",
+      publishedFromVersion: 4,
+      activeConfiguration: {
+        revisionId: "rev-active-2",
+        version: 5,
+        revisionSequence: 4,
+        status: "active",
+      },
+      webhook: webhookDocumentPayload("ops"),
+      ...overrides,
+    };
+  }
+
+  it("normalizes a success bound to the requested mutation", () => {
+    const model = normalizeNotificationActivation(
+      activationPayload(),
+      REQUESTED,
+    );
+    expect(model.activatedRevisionId).toBe("rev-active-2");
+    expect(model.webhook?.id).toBe("ops");
+  });
+
+  it("fails closed when the response names another webhook", () => {
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({ webhook: webhookDocumentPayload("other") }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the response answers another reviewed revision", () => {
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({ publishedFromRevisionId: "rev-older" }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({ publishedFromVersion: 3 }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the reported Active identity is inconsistent", () => {
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({
+          activeConfiguration: {
+            revisionId: "rev-active-2",
+            version: 6,
+            revisionSequence: 4,
+            status: "active",
+          },
+        }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({ activeConfiguration: null }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the activated definition is missing", () => {
+    expect(() =>
+      normalizeNotificationActivation(
+        activationPayload({ webhook: null }),
+        REQUESTED,
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+});
+
+describe("notification recovery result", () => {
+  function recoveryPayload(
+    overrides: Record<string, unknown> = {},
+  ): Record<string, unknown> {
+    return {
+      action: "requeue-dead-letter",
+      outcome: "success",
+      deliveryId: "delivery-1",
+      previousStatus: "dead-letter",
+      status: "pending",
+      attempts: 0,
+      durableState: "dead_letter_requeued_same_identity",
+      sideEffects: "delivery_queue_state_only_no_new_row_no_media_change",
+      retrySafe: true,
+      atLeastOnce: "receivers must tolerate duplicates",
+      nextAction: "refresh this delivery",
+      ...overrides,
+    };
+  }
+
+  it("normalizes a requeue bound to the exact delivery and fence", () => {
+    const model = normalizeNotificationRecoveryResult(recoveryPayload(), {
+      deliveryId: "delivery-1",
+      action: "requeue-dead-letter",
+      previousStatus: "dead-letter",
+    });
+    expect(model.status).toBe("pending");
+    expect(model.deliveryId).toBe("delivery-1");
+  });
+
+  it("normalizes a stale resolution bound to the exact delivery and fence", () => {
+    const model = normalizeNotificationRecoveryResult(
+      recoveryPayload({
+        action: "resolve-stale",
+        previousStatus: "delivering",
+        durableState: "stale_delivery_returned_to_queue_same_identity",
+      }),
+      {
+        deliveryId: "delivery-1",
+        action: "resolve-stale",
+        previousStatus: "delivering",
+      },
+    );
+    expect(model.action).toBe("resolve-stale");
+  });
+
+  it("fails closed when the result names another delivery", () => {
+    expect(() =>
+      normalizeNotificationRecoveryResult(
+        recoveryPayload({ deliveryId: "delivery-2" }),
+        {
+          deliveryId: "delivery-1",
+          action: "requeue-dead-letter",
+          previousStatus: "dead-letter",
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed when the result names another action", () => {
+    expect(() =>
+      normalizeNotificationRecoveryResult(
+        recoveryPayload({ action: "resolve-stale" }),
+        {
+          deliveryId: "delivery-1",
+          action: "requeue-dead-letter",
+          previousStatus: "dead-letter",
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+  });
+
+  it("fails closed on a transition inconsistent with the action", () => {
+    expect(() =>
+      normalizeNotificationRecoveryResult(
+        recoveryPayload({ previousStatus: "delivering" }),
+        {
+          deliveryId: "delivery-1",
+          action: "requeue-dead-letter",
+          previousStatus: "dead-letter",
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationRecoveryResult(
+        recoveryPayload({
+          action: "resolve-stale",
+          previousStatus: "dead-letter",
+          durableState: "stale_delivery_returned_to_queue_same_identity",
+        }),
+        {
+          deliveryId: "delivery-1",
+          action: "resolve-stale",
+          previousStatus: "delivering",
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
+    expect(() =>
+      normalizeNotificationRecoveryResult(
+        recoveryPayload({ status: "retry" }),
+        {
+          deliveryId: "delivery-1",
+          action: "requeue-dead-letter",
+          previousStatus: "dead-letter",
+        },
+      ),
+    ).toThrow(NotificationNormalizationError);
   });
 });

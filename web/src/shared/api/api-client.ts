@@ -3369,7 +3369,12 @@ export async function testWebhookDefinition(
       expectedRevisionId: options.expectedRevisionId,
       expectedVersion: options.expectedVersion,
     },
-    (payload) => normalizeWebhookTestResult(payload),
+    (payload) =>
+      normalizeWebhookTestResult(payload, {
+        webhookId: options.webhookId,
+        revisionId: options.expectedRevisionId,
+        version: options.expectedVersion,
+      }),
     fetchImpl,
   );
 }
@@ -3399,7 +3404,12 @@ export async function activateWebhookDraft(
       expectedRevisionId: options.expectedRevisionId,
       expectedVersion: options.expectedVersion,
     },
-    (payload) => normalizeNotificationActivation(payload),
+    (payload) =>
+      normalizeNotificationActivation(payload, {
+        webhookId: options.webhookId,
+        revisionId: options.expectedRevisionId,
+        version: options.expectedVersion,
+      }),
     fetchImpl,
   );
 }
@@ -3426,7 +3436,12 @@ export async function requeueDeadLetterDelivery(
       expectedStatus: options.expectedStatus,
       expectedUpdatedAt: options.expectedUpdatedAt,
     },
-    (payload) => normalizeNotificationRecoveryResult(payload),
+    (payload) =>
+      normalizeNotificationRecoveryResult(payload, {
+        deliveryId: options.deliveryId,
+        action: "requeue-dead-letter",
+        previousStatus: "dead-letter",
+      }),
     fetchImpl,
   );
 }
@@ -3447,7 +3462,12 @@ export async function resolveStaleDelivery(
       expectedStatus: options.expectedStatus,
       expectedUpdatedAt: options.expectedUpdatedAt,
     },
-    (payload) => normalizeNotificationRecoveryResult(payload),
+    (payload) =>
+      normalizeNotificationRecoveryResult(payload, {
+        deliveryId: options.deliveryId,
+        action: "resolve-stale",
+        previousStatus: "delivering",
+      }),
     fetchImpl,
   );
 }

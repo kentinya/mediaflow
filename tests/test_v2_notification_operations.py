@@ -651,6 +651,84 @@ class WebhookTestJourneyTests(unittest.TestCase):
             finally:
                 harness.close()
 
+    def test_superseded_revision_is_rejected_before_any_request(self) -> None:
+        """A valid historical revision never tests, even at its exact version.
+
+        The regression from review: after a successor activation, the
+        superseded predecessor revision still exists with its exact
+        pre-activation version and passes the optimistic version check, so the
+        advertised-revision binding must reject it before the transport runs.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            harness = NotificationHarness(directory)
+            try:
+                first_revision, first_version = harness.open_webhook_draft()
+                status, _ = _request(
+                    harness.api,
+                    f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/activate-draft",
+                    method="POST",
+                    body={
+                        "expectedRevisionId": first_revision,
+                        "expectedVersion": first_version,
+                    },
+                    token=ADMIN_TOKEN,
+                )
+                self.assertEqual(status, 200)
+                second_revision, second_version = harness.open_webhook_draft()
+                status, _ = _request(
+                    harness.api,
+                    f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/activate-draft",
+                    method="POST",
+                    body={
+                        "expectedRevisionId": second_revision,
+                        "expectedVersion": second_version,
+                    },
+                    token=ADMIN_TOKEN,
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(harness.configuration.active().revision_id, second_revision)
+
+                # The first revision is now a superseded historical revision.
+                # Testing it at its exact pre-activation version fails closed
+                # without any transport invocation.
+                with patch.dict(os.environ, {SECRET_ENV: SECRET_VALUE}):
+                    status, error = _request(
+                        harness.api,
+                        f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/test",
+                        method="POST",
+                        body={
+                            "expectedRevisionId": first_revision,
+                            "expectedVersion": first_version,
+                        },
+                    )
+                self.assertEqual(status, 409)
+                self.assertEqual(
+                    error["error"]["details"]["durableState"],
+                    "no test request was sent",
+                )
+                self.assertNotIn("digest", json.dumps(error))
+                self.assertEqual(len(harness.transport.requests), 0)
+
+                # The exact currently advertised Active revision still tests.
+                active = harness.configuration.active()
+                with patch.dict(os.environ, {SECRET_ENV: SECRET_VALUE}):
+                    status, result = _request(
+                        harness.api,
+                        f"{OPERATIONS_ROUTE}/{WEBHOOK_ID}/test",
+                        method="POST",
+                        body={
+                            "expectedRevisionId": active.revision_id,
+                            "expectedVersion": active.version,
+                        },
+                    )
+                self.assertEqual(status, 200)
+                _assert_operator_document_clean(result)
+                self.assertEqual(result["revision"]["revisionId"], active.revision_id)
+                self.assertEqual(len(harness.transport.requests), 1)
+            finally:
+                harness.close()
+
     def test_transport_and_server_failures_return_bounded_categories(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             for index, (transport, expected_category, expected_outcome) in enumerate(
@@ -708,6 +786,10 @@ class WebhookCheckedActivationTests(unittest.TestCase):
                 _assert_operator_document_clean(activated)
                 self.assertEqual(activated["activatedRevisionId"], revision_id)
                 self.assertEqual(activated["activatedVersion"], version)
+                # The success document echoes the exact reviewed Draft identity
+                # so the Web client can bind it to the submitted mutation.
+                self.assertEqual(activated["publishedFromRevisionId"], revision_id)
+                self.assertEqual(activated["publishedFromVersion"], version)
                 self.assertEqual(activated["activeConfiguration"]["revisionId"], revision_id)
                 self.assertEqual(activated["webhook"]["maxAttempts"], 9)
                 # The legacy nested spelling was migrated to the canonical root

@@ -3040,6 +3040,7 @@ function notificationState(session) {
       createdWebhook: null,
       copiedWebhook: null,
       requeued: false,
+      hostile: false,
     };
     NOTIFICATION_STATES.set(key, value);
   }
@@ -3349,9 +3350,16 @@ function notificationListDocument(state, token) {
   };
 }
 
-function notificationDetailDocument(state, token) {
+function notificationDetailDocument(state, token, webhookId) {
+  const id = webhookId ?? NOTIFICATION_WEBHOOK_ID;
   return {
-    webhook: webhookDocument(state, token),
+    webhook: webhookDocument(
+      state,
+      token,
+      id === NOTIFICATION_WEBHOOK_ID
+        ? {}
+        : { id, enabled: false, definitionState: "draft-only" },
+    ),
     activeConfiguration: {
       revisionId: NOTIFICATION_ACTIVE_REVISION,
       version: state.activated ? 5 : 3,
@@ -6800,16 +6808,24 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, notificationListDocument(state, token));
     return;
   }
-  if (
-    url.pathname ===
-      `/api/v1/notifications/webhooks/${NOTIFICATION_WEBHOOK_ID}` &&
-    req.method === "GET"
-  ) {
+  const notificationWebhookMatch = url.pathname.match(
+    /^\/api\/v1\/notifications\/webhooks\/([^/]+)$/,
+  );
+  if (notificationWebhookMatch && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
     }
+    const webhookId = notificationWebhookMatch[1];
     const state = notificationState(session);
-    sendJson(res, 200, notificationDetailDocument(state, token));
+    if (
+      webhookId !== NOTIFICATION_WEBHOOK_ID &&
+      webhookId !== state.createdWebhook &&
+      webhookId !== state.copiedWebhook
+    ) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, notificationDetailDocument(state, token, webhookId));
     return;
   }
   if (
@@ -6881,6 +6897,38 @@ const server = createServer(async (req, res) => {
         expectedVersion: expectedVersion,
       },
     });
+    if (state.hostile) {
+      // Wrong-object contract probe: a success document about another
+      // Webhook must never render as this test's outcome.
+      sendJson(res, 200, {
+        testId: `webhook-test-hostile-${state.tested}`,
+        webhook: {
+          id: "another-webhook",
+          url: "https://example.invalid/hooks/other",
+          events: ["job.completed"],
+          enabled: true,
+          secretEnv: "MEDIAFLOW_WEBHOOK_SECRET",
+        },
+        revision: {
+          revisionId: expectedRevisionId,
+          version: currentVersion,
+          status:
+            expectedRevisionId === NOTIFICATION_DRAFT_REVISION
+              ? state.draftStatus
+              : "active",
+        },
+        outcome: "success",
+        category: "http_204",
+        responseStatus: 204,
+        message: "the Webhook endpoint returned HTTP 204",
+        durableState: "no_delivery_created_no_configuration_change",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction:
+          "no further action required; the endpoint accepted the signed test",
+      });
+      return;
+    }
     sendJson(res, 200, {
       testId: `webhook-test-e2e-${state.tested}`,
       webhook: {
@@ -6950,6 +6998,8 @@ const server = createServer(async (req, res) => {
       activatedRevisionId: NOTIFICATION_DRAFT_REVISION,
       activatedVersion: state.draftVersion,
       revisionSequence: 4,
+      publishedFromRevisionId: NOTIFICATION_DRAFT_REVISION,
+      publishedFromVersion: state.draftVersion,
       activeConfiguration: {
         revisionId: NOTIFICATION_DRAFT_REVISION,
         version: state.draftVersion,
@@ -7250,6 +7300,33 @@ const server = createServer(async (req, res) => {
         expectedUpdatedAt: document.expectedUpdatedAt,
       },
     });
+    if (state.hostile) {
+      // Wrong-object contract probe: a success result about another delivery
+      // must never render as this recovery's outcome.
+      sendJson(res, 200, {
+        action: action === "requeue" ? "requeue-dead-letter" : "resolve-stale",
+        outcome: "success",
+        deliveryId:
+          deliveryId === NOTIFICATION_DELIVERY_ID
+            ? NOTIFICATION_DELIVERY_ID_2
+            : NOTIFICATION_DELIVERY_ID,
+        previousStatus: item.status,
+        status: "pending",
+        attempts: action === "requeue" ? 0 : item.attempts,
+        durableState:
+          action === "requeue"
+            ? "dead_letter_requeued_same_identity"
+            : "stale_delivery_returned_to_queue_same_identity",
+        sideEffects: "delivery_queue_state_only_no_new_row_no_media_change",
+        retrySafe: true,
+        atLeastOnce:
+          "recovery preserves the stable delivery identity; the worker sends the event again, so receivers must tolerate duplicates",
+        duplicateImplication:
+          "receivers must tolerate duplicates (at-least-once)",
+        nextAction: "the delivery is pending again; refresh this delivery",
+      });
+      return;
+    }
     sendJson(res, 200, {
       action: action === "requeue" ? "requeue-dead-letter" : "resolve-stale",
       outcome: "success",
@@ -7347,6 +7424,10 @@ const server = createServer(async (req, res) => {
       createdWebhook: null,
       copiedWebhook: null,
       requeued: false,
+      // `?hostile=1` turns the fake into a wrong-object contract probe: the
+      // truthful mutations still happen, but the success documents answer for
+      // another Webhook/delivery, so the V2 client must refuse to render them.
+      hostile: url.searchParams.get("hostile") === "1",
     });
     res.setHeader(
       "Set-Cookie",
