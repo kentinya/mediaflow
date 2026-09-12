@@ -1445,6 +1445,25 @@ import {
   type OrganizeIntentModel,
   type OrganizePreviewModel,
 } from "../../entities/operations/organize";
+import {
+  normalizeAutomationActivation,
+  normalizeAutomationDefinition,
+  normalizeAutomationDefinitionsPage,
+  normalizeAutomationDraftDocument,
+  normalizeAutomationGrantState,
+  normalizeAutomationOccurrencesPage,
+  normalizeAutomationPreview,
+  normalizeAutomationPreviewItemsPage,
+  type AutomationActivationModel,
+  type AutomationDefinitionModel,
+  type AutomationDefinitionsPage,
+  type AutomationDraftDocumentModel,
+  type AutomationGrantStateModel,
+  type AutomationOccurrencesPage,
+  type AutomationPreviewItemsPage,
+  type AutomationPreviewModel,
+} from "../../entities/operations/automation";
+import { readRecord } from "../../entities/shared/normalize";
 
 // --- Manual action matrix ---
 
@@ -2270,4 +2289,638 @@ export async function fetchOrganizeExecutions(
   } catch {
     throw new OperationsApiError("malformed");
   }
+}
+
+// ---------------------------------------------------------------------------
+// Operations Automation: bounded operator projections over the managed
+// configuration and automation services. Reads are the digest-free operator
+// documents; mutations reuse the existing backend routes and never retry
+// automatically.
+// ---------------------------------------------------------------------------
+
+export type AutomationMutationResult<T> =
+  | { readonly ok: true; readonly status: number; readonly model: T }
+  | { readonly ok: false; readonly status: number; readonly code: string };
+
+async function submitAutomationMutation<T>(
+  token: string | null,
+  method: "POST" | "PUT",
+  url: string,
+  body: Record<string, unknown>,
+  normalize: (payload: unknown) => T,
+  fetchImpl: FetchLike,
+): Promise<AutomationMutationResult<T>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method,
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      code: await readErrorCode(response),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, status: response.status, model: normalize(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export type AutomationDefinitionsRead =
+  | { readonly ok: true; readonly model: AutomationDefinitionsPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationDefinitions(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationDefinitionsRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      "/api/v1/operations/automation/task-definitions",
+      {
+        method: "GET",
+        headers: operationsHeaders(token),
+      },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationDefinitionsPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type AutomationDefinitionRead =
+  | { readonly ok: true; readonly model: AutomationDefinitionModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationDefinition(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationDefinitionRead> {
+  if (!isSafeIdentifier(definitionId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    const source = payload as { definition?: unknown };
+    return {
+      ok: true,
+      model: normalizeAutomationDefinition(source?.definition, "definition", {
+        withEligibility: true,
+      }),
+    };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type AutomationDraftRead =
+  | { readonly ok: true; readonly model: AutomationDraftDocumentModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationDefinitionDraft(
+  token: string | null,
+  definitionId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationDraftRead> {
+  if (!isSafeIdentifier(definitionId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/draft`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationDraftDocument(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type AutomationPreviewRead =
+  | { readonly ok: true; readonly model: AutomationPreviewModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationPreview(
+  token: string | null,
+  definitionId: string,
+  previewId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationPreviewRead> {
+  if (!isSafeIdentifier(definitionId) || !isSafeIdentifier(previewId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationPreview(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type AutomationPreviewItemsRead =
+  | { readonly ok: true; readonly model: AutomationPreviewItemsPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationPreviewItems(
+  token: string | null,
+  definitionId: string,
+  previewId: string,
+  options: { readonly limit?: number; readonly after?: number | null } = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationPreviewItemsRead> {
+  if (!isSafeIdentifier(definitionId) || !isSafeIdentifier(previewId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 100));
+  if (options.after !== null && options.after !== undefined) {
+    params.set("after", String(options.after));
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/previews/${encodeURIComponent(previewId)}/items?${params.toString()}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationPreviewItemsPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type AutomationOccurrencesRead =
+  | { readonly ok: true; readonly model: AutomationOccurrencesPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchAutomationOccurrences(
+  token: string | null,
+  definitionId: string,
+  options: {
+    readonly limit?: number;
+    readonly cursor?: string | null;
+    readonly direction?: "previous" | "next";
+  } = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationOccurrencesRead> {
+  if (!isSafeIdentifier(definitionId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  const params = new URLSearchParams();
+  params.set("limit", String(options.limit ?? 20));
+  const cursor = options.cursor ?? null;
+  if (cursor !== null) {
+    if (options.direction === "previous") {
+      params.set("before", cursor);
+    } else {
+      params.set("after", cursor);
+    }
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/automation/task-definitions/${encodeURIComponent(definitionId)}/occurrences?${params.toString()}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeAutomationOccurrencesPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export interface CreateAutomationSuccessorDraftOptions {
+  readonly activeRevisionId: string;
+}
+
+export async function createAutomationSuccessorDraft(
+  token: string | null,
+  options: CreateAutomationSuccessorDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly revisionId: string }>> {
+  if (!isSafeIdentifier(options.activeRevisionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.activeRevisionId)}/successor`,
+    { expectedActiveRevisionId: options.activeRevisionId },
+    (payload) => {
+      const source = readRecord(payload, "successor_draft");
+      return { revisionId: String(source["revisionId"] ?? "") };
+    },
+    fetchImpl,
+  );
+}
+
+export interface CreateAutomationDefinitionOptions {
+  readonly revisionId: string;
+  readonly expectedVersion: number;
+  readonly object: Record<string, unknown>;
+}
+
+export async function createAutomationDefinition(
+  token: string | null,
+  options: CreateAutomationDefinitionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+  if (!isSafeIdentifier(options.revisionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    "/api/v1/automation/task-definitions",
+    {
+      revisionId: options.revisionId,
+      expectedVersion: options.expectedVersion,
+      object: options.object,
+    },
+    (payload) => {
+      const source = readRecord(payload, "automation_definition_mutation");
+      const value = source["automationTaskDefinition"];
+      const id =
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)["id"]
+          : null;
+      return { id: typeof id === "string" ? id : null };
+    },
+    fetchImpl,
+  );
+}
+
+export interface SaveAutomationDefinitionDraftOptions {
+  readonly revisionId: string;
+  readonly definitionId: string;
+  readonly expectedVersion: number;
+  readonly object: Record<string, unknown>;
+}
+
+export async function saveAutomationDefinitionDraft(
+  token: string | null,
+  options: SaveAutomationDefinitionDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly version: number }>> {
+  if (
+    !isSafeIdentifier(options.revisionId) ||
+    !isSafeIdentifier(options.definitionId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "PUT",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/objects/automationTaskDefinitions/${encodeURIComponent(options.definitionId)}`,
+    { object: options.object, expectedVersion: options.expectedVersion },
+    (payload) => {
+      const source = readRecord(payload, "automation_definition_mutation");
+      const version = source["version"];
+      return { version: typeof version === "number" ? version : 0 };
+    },
+    fetchImpl,
+  );
+}
+
+export interface CopyAutomationDefinitionOptions {
+  readonly definitionId: string;
+  readonly revisionId: string;
+  readonly expectedVersion: number;
+  readonly newName?: string | null;
+}
+
+export async function copyAutomationDefinition(
+  token: string | null,
+  options: CopyAutomationDefinitionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly id: string | null }>> {
+  if (
+    !isSafeIdentifier(options.definitionId) ||
+    !isSafeIdentifier(options.revisionId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = {
+    revisionId: options.revisionId,
+    expectedVersion: options.expectedVersion,
+  };
+  if (options.newName) {
+    body.newName = options.newName;
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/copy`,
+    body,
+    (payload) => {
+      const source = readRecord(payload, "automation_definition_mutation");
+      const value = source["automationTaskDefinition"];
+      const id =
+        value !== null && typeof value === "object" && !Array.isArray(value)
+          ? (value as Record<string, unknown>)["id"]
+          : null;
+      return { id: typeof id === "string" ? id : null };
+    },
+    fetchImpl,
+  );
+}
+
+export interface ValidateAutomationDraftOptions {
+  readonly revisionId: string;
+}
+
+export async function validateAutomationDraft(
+  token: string | null,
+  options: ValidateAutomationDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  AutomationMutationResult<{ readonly validationErrors: readonly string[] }>
+> {
+  if (!isSafeIdentifier(options.revisionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/configuration/revisions/${encodeURIComponent(options.revisionId)}/validate`,
+    {},
+    (payload) => {
+      const source = readRecord(payload, "automation_draft_validation");
+      const errors = source["validationErrors"];
+      const list = Array.isArray(errors)
+        ? errors.filter((item): item is string => typeof item === "string")
+        : [];
+      return { validationErrors: list };
+    },
+    fetchImpl,
+  );
+}
+
+export interface ActivateAutomationDraftOptions {
+  readonly definitionId: string;
+  readonly expectedVersion: number;
+}
+
+export async function activateAutomationDraft(
+  token: string | null,
+  options: ActivateAutomationDraftOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationActivationModel>> {
+  if (!isSafeIdentifier(options.definitionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/operations/automation/task-definitions/${encodeURIComponent(options.definitionId)}/activate-draft`,
+    { expectedVersion: options.expectedVersion },
+    normalizeAutomationActivation,
+    fetchImpl,
+  );
+}
+
+export interface CreateAutomationPreviewOptions {
+  readonly definitionId: string;
+}
+
+export async function createAutomationPreview(
+  token: string | null,
+  options: CreateAutomationPreviewOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<{ readonly previewId: string }>> {
+  if (!isSafeIdentifier(options.definitionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/preview`,
+    {},
+    (payload) => {
+      const source = readRecord(payload, "automation_preview_created");
+      return { previewId: String(source["previewId"] ?? "") };
+    },
+    fetchImpl,
+  );
+}
+
+export interface GrantAutomationAuthorityOptions {
+  readonly definitionId: string;
+  readonly previewId: string;
+  readonly reason?: string | null;
+}
+
+export async function grantAutomationAuthority(
+  token: string | null,
+  options: GrantAutomationAuthorityOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationGrantStateModel>> {
+  if (
+    !isSafeIdentifier(options.definitionId) ||
+    !isSafeIdentifier(options.previewId)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = {
+    confirmation: true,
+    previewId: options.previewId,
+  };
+  if (options.reason) {
+    body.reason = options.reason;
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/grant`,
+    body,
+    (value) =>
+      normalizeAutomationGrantState(
+        readRecord(value, "grant_result")["grant"],
+        "grant",
+      ),
+    fetchImpl,
+  );
+}
+
+export interface RevokeAutomationAuthorityOptions {
+  readonly definitionId: string;
+  readonly reason?: string | null;
+}
+
+export async function revokeAutomationAuthority(
+  token: string | null,
+  options: RevokeAutomationAuthorityOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<AutomationGrantStateModel>> {
+  if (!isSafeIdentifier(options.definitionId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = {};
+  if (options.reason) {
+    body.reason = options.reason;
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/automation/task-definitions/${encodeURIComponent(options.definitionId)}/revoke`,
+    body,
+    (value) =>
+      normalizeAutomationGrantState(
+        readRecord(value, "revoke_result")["grant"],
+        "grant",
+      ),
+    fetchImpl,
+  );
 }

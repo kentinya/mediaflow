@@ -37,6 +37,12 @@ describe("destination model", () => {
       "Manual intent",
       "Exact organize Preview",
       "Organize execution",
+      "Automation",
+      "Create Automation definition",
+      "Automation definition",
+      "Automation Draft editor",
+      "Automation Preview",
+      "Automation occurrences",
     ]);
   });
 
@@ -50,22 +56,34 @@ describe("destination model", () => {
     expect(destinationForPath("/unknown")).toBeUndefined();
   });
 
-  it("resolves one-segment concrete instances of the detail route", () => {
+  it("resolves bounded concrete instances of dynamic detail routes", () => {
     expect(destinationForPath("/library/file-index/file-123")?.id).toBe(
       "library-file-index-detail",
     );
     expect(destinationForPath("/library/file-index/file-123")?.title).toBe(
       "FileIndex detail | MediaFlow",
     );
-    // The catalog route keeps its own identity; only one extra segment is a
-    // detail instance. Deeper or empty paths never resolve.
+    // The catalog route keeps its own identity. Exactly the declared number
+    // of bounded identity segments resolves to the detail destination;
+    // deeper, traversal, placeholder, empty or unsafe paths never resolve
+    // and stay the shell's not-found responsibility.
     expect(destinationForPath("/library/file-index")?.id).toBe(
       "library-file-index",
     );
     expect(destinationForPath("/library/file-index/a/b")).toBeUndefined();
+    expect(destinationForPath("/library/file-index/a/..")).toBeUndefined();
+    expect(destinationForPath("/library/file-index/a/$fileId")).toBeUndefined();
+    expect(destinationForPath("/library/file-index//b")).toBeUndefined();
     expect(destinationForPath("/library/file-index/")?.id).toBe(
       "library-file-index",
     );
+    // Two-segment declared routes resolve their exact concrete instance.
+    expect(
+      destinationForPath("/operations/automation/preview/def-1/preview-1")?.id,
+    ).toBe("operations-automation-preview");
+    expect(
+      destinationForPath("/operations/automation/preview/def-1"),
+    ).toBeUndefined();
     // The declared template path resolves to the same destination contract;
     // it is never a navigable route (the router only registers the
     // parameterized path), but it must not invent a second identity.

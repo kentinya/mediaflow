@@ -199,6 +199,12 @@ export function OperationsLanding() {
                 >
                   Jobs
                 </Link>
+                <Link
+                  className="mf-button mf-button-primary"
+                  to="/operations/automation"
+                >
+                  Automation
+                </Link>
               </nav>
             </section>
             {matrixQuery.data?.ok === true ? (

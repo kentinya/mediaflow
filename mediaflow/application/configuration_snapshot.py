@@ -554,6 +554,39 @@ class ManagedConfigurationService:
             raise LookupError(f"configuration revision {revision_id!r} was not found")
         return revision
 
+    def open_draft_revisions(self, *, limit: int = 100) -> tuple[ManagedConfigurationRevision, ...]:
+        """Return newest-first open Draft revisions that an operator may resume.
+
+        Only ``draft`` and ``validated`` revisions are open editing authority.
+        The immutable Active revision and superseded history are excluded, so
+        an eligible Draft is always one that can still be edited, validated
+        and explicitly activated.
+        """
+
+        try:
+            values = self._repository.list_revisions(limit=limit)
+        except Exception:
+            return ()
+        return tuple(
+            revision
+            for revision in values
+            if revision.status
+            in (ManagedConfigurationStatus.DRAFT, ManagedConfigurationStatus.VALIDATED)
+        )
+
+    def latest_open_draft_containing(
+        self, section: str, object_id: str
+    ) -> ManagedConfigurationRevision | None:
+        """Return the newest open Draft revision whose document contains the object."""
+
+        for revision in self.open_draft_revisions():
+            section_items = revision.document.get(section)
+            if isinstance(section_items, list) and any(
+                isinstance(item, dict) and item.get("id") == object_id for item in section_items
+            ):
+                return revision
+        return None
+
     def validate(self, revision_id: str, *, actor: str) -> ManagedConfigurationRevision:
         revision = self.require(revision_id)
         now = self._clock()

@@ -197,6 +197,64 @@ const childDestinationData = [
       "Durable admitted execution, Worker outcome and independent item results.",
     dynamicPrefix: "/operations/organize/execution/" as const,
   },
+  {
+    id: "operations-automation",
+    label: "Automation",
+    path: "/operations/automation",
+    title: "Automation | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Scheduled Automation Task Definitions, unattended authority and occurrences.",
+  },
+  {
+    id: "operations-automation-new",
+    label: "Create Automation definition",
+    path: "/operations/automation/new",
+    title: "Create Automation definition | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Bounded successor-Draft form for one scheduled Automation definition.",
+  },
+  {
+    id: "operations-automation-definition",
+    label: "Automation definition",
+    path: "/operations/automation/definition/$definitionId",
+    title: "Automation definition | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Active and Draft identity, schedule state, grant authority and actions.",
+    dynamicPrefix: "/operations/automation/definition/" as const,
+  },
+  {
+    id: "operations-automation-editor",
+    label: "Automation Draft editor",
+    path: "/operations/automation/editor/$definitionId",
+    title: "Automation Draft editor | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Bounded Draft form, explicit validation and checked activation.",
+    dynamicPrefix: "/operations/automation/editor/" as const,
+  },
+  {
+    id: "operations-automation-preview",
+    label: "Automation Preview",
+    path: "/operations/automation/preview/$definitionId/$previewId",
+    title: "Automation Preview | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Exact zero-mutation Preview evidence, paged items and grant eligibility.",
+    dynamicPrefix: "/operations/automation/preview/" as const,
+  },
+  {
+    id: "operations-automation-occurrences",
+    label: "Automation occurrences",
+    path: "/operations/automation/occurrences/$definitionId",
+    title: "Automation occurrences | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Bounded occurrence history with pinned snapshots and linked work.",
+    dynamicPrefix: "/operations/automation/occurrences/" as const,
+  },
 ] as const;
 
 export type DestinationAvailability = "implemented" | "migration";
@@ -245,14 +303,38 @@ export const allDestinationPaths: readonly DestinationPath[] = [
 const destinationPathSet: ReadonlySet<string> = new Set(allDestinationPaths);
 
 /** True only for a concrete one-segment instance of a dynamic destination. */
+/**
+ * One bounded, URI-safe concrete identity segment of a dynamic destination
+ * instance. The journey identifiers are server-shaped durable identities;
+ * anything else (empty, traversal, placeholder or oversized) never resolves
+ * to a supported destination.
+ */
+const INSTANCE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
 function dynamicInstancePath(value: string): Destination | undefined {
   for (const destination of childDestinations) {
     const prefix = destination.dynamicPrefix;
     if (prefix === undefined || !value.startsWith(prefix)) {
       continue;
     }
+    // The concrete instance must carry exactly the declared number of bounded
+    // identity segments, so an unknown deeper route stays the shell's
+    // not-found responsibility instead of borrowing a nearby destination.
+    const declared = destination.path
+      .split("/")
+      .filter((segment) => segment.startsWith("$")).length;
     const rest = value.slice(prefix.length);
-    if (rest.length === 0 || rest.includes("/") || rest.startsWith("$")) {
+    if (rest.length === 0 || rest.startsWith("$")) {
+      continue;
+    }
+    const segments = rest.split("/");
+    if (
+      segments.length !== declared ||
+      segments.some(
+        (segment) =>
+          segment === "" || segment === ".." || !INSTANCE_SEGMENT.test(segment),
+      )
+    ) {
       continue;
     }
     return destination;
@@ -446,7 +528,12 @@ export function allowlistedDestinationSearch(
     path === "/operations/preview/$previewId" ||
     path === "/operations/organize/intent/$intentId" ||
     path === "/operations/organize/preview/$previewId" ||
-    path === "/operations/organize/execution/$executionId"
+    path === "/operations/organize/execution/$executionId" ||
+    path === "/operations/automation/new" ||
+    path === "/operations/automation/definition/$definitionId" ||
+    path === "/operations/automation/editor/$definitionId" ||
+    path === "/operations/automation/preview/$definitionId/$previewId" ||
+    path === "/operations/automation/occurrences/$definitionId"
   ) {
     // Detail routes carry no search state.
     return null;
