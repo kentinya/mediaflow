@@ -1935,7 +1935,9 @@ const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
 const ORGANIZE_HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const ORGANIZE_MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
+const ORGANIZE_SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
 const ORGANIZE_EXECUTION_ID = "organize-execution-e2e-001";
+const ORGANIZE_FAILED_EXECUTION_ID = "organize-execution-failed-e2e-001";
 const ORGANIZE_TASK_ID = "organize-task-e2e-001";
 // One mutable organize state per browser session: every Playwright test owns
 // exactly one context, so two parallel workers can never observe or advance
@@ -2230,6 +2232,107 @@ function organizeExecutionDocument(status, state) {
     selectedItemCount: 1,
     selectedItemIds: [ORGANIZE_ITEM_ID],
     status,
+    taskId: ORGANIZE_TASK_ID,
+    unselectedItemCount: 0,
+    unselectedItemIds: [],
+    updatedAt: MANUAL_RECORDED_AT,
+  };
+}
+
+// The exact failed-execution document the real backend publishes for a
+// terminal failure: aggregate and per-item bounded evidence, and the recovery
+// handoff offered without any transport (available, no method, no route, no
+// reason) — never an API mutation of its own.
+function organizeFailedExecutionDocument() {
+  const failure = {
+    category: "destination_collision",
+    durableState: "TaskItem and Result are durable with a failed outcome",
+    message: "destination collision: the configured destination already exists",
+    nextAction:
+      "inspect the destination and resolve the collision before explicitly retrying this item",
+    retrySafe: false,
+    sideEffects: "none",
+  };
+  const nextAction =
+    "inspect each failed item, repair the cause and request a fresh Preview; " +
+    "uncertain effects are never replayed automatically";
+  return {
+    actions: {
+      detail: {
+        available: true,
+        durableOutcome: null,
+        method: "GET",
+        nextAction,
+        path: `/api/v1/operations/organize/executions/${ORGANIZE_FAILED_EXECUTION_ID}`,
+        reason: null,
+        sideEffects: "none",
+      },
+      recovery: {
+        available: true,
+        durableOutcome: null,
+        method: null,
+        nextAction:
+          "open Review & Recovery to inspect the failed item; MediaFlow never " +
+          "replays an uncertain mutation automatically",
+        path: null,
+        reason: null,
+        sideEffects: "none",
+      },
+      task: {
+        available: true,
+        durableOutcome: null,
+        method: "GET",
+        nextAction: "inspect the durable Task and its per-item Results",
+        path: `/api/v1/operations/tasks/${ORGANIZE_TASK_ID}`,
+        reason: null,
+        sideEffects: "none",
+      },
+    },
+    actor: "e2e-operator",
+    allowOverwrite: false,
+    allowSourceCleanup: false,
+    completedAt: MANUAL_RECORDED_AT,
+    completedItemCount: 0,
+    createdAt: MANUAL_RECORDED_AT,
+    durableState: "terminal_failure",
+    executionId: ORGANIZE_FAILED_EXECUTION_ID,
+    failedItemCount: 1,
+    failure,
+    intentId: ORGANIZE_INTENT_ID,
+    intentVersion: 1,
+    itemCount: 1,
+    items: [
+      {
+        completedOperations: [],
+        effectCertainty: "none",
+        effects: [],
+        failure,
+        itemId: ORGANIZE_ITEM_ID,
+        nextAction:
+          "inspect the pre-mutation failure, repair it, then request a fresh Preview",
+        position: 0,
+        resultId: "result-e2e-failed-001",
+        stage: "failed",
+        status: "failed",
+        taskId: ORGANIZE_TASK_ID,
+        taskItemId: "organize-task-item-e2e-001",
+        uncertainEffects: [],
+      },
+    ],
+    journey: "organize",
+    knownEffects: {
+      failedWithoutEffectCount: 1,
+      statement:
+        "one or more items require investigation; MediaFlow never replays an " +
+        "uncertain mutation automatically",
+      uncertainItemCount: 0,
+      verifiedItemCount: 0,
+    },
+    nextAction,
+    previewId: ORGANIZE_PREVIEW_ID,
+    selectedItemCount: 1,
+    selectedItemIds: [ORGANIZE_ITEM_ID],
+    status: "failed",
     taskId: ORGANIZE_TASK_ID,
     unselectedItemCount: 0,
     unselectedItemIds: [],
@@ -4065,6 +4168,35 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // A contract-shaped document whose Execute action carries the mutating POST
+  // method and the Preview's own *read* route — the same path, without the
+  // exact `/execute` suffix. The route is not this action's transport, so the
+  // built artifact must fail closed instead of rendering the Execute control.
+  if (
+    url.pathname ===
+      `/api/v1/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_SUFFIX_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    const suffix = organizePreviewDocument(state);
+    suffix["previewId"] = ORGANIZE_SUFFIX_PREVIEW_ID;
+    suffix["actions"]["execute"]["available"] = true;
+    suffix["actions"]["execute"]["reason"] = null;
+    suffix["actions"]["execute"]["path"] =
+      `/api/v1/operations/organize/previews/${ORGANIZE_SUFFIX_PREVIEW_ID}`;
+    sendJson(res, 200, suffix);
+    return;
+  }
+
   if (
     url.pathname ===
       `/api/v1/organize/previews/${ORGANIZE_PREVIEW_ID}/execute` &&
@@ -4133,6 +4265,26 @@ const server = createServer(async (req, res) => {
         state,
       ),
     );
+    return;
+  }
+
+  // The durable failed outcome of a real terminal execution: per-item bounded
+  // evidence plus the recovery handoff the backend offers without transport.
+  if (
+    url.pathname ===
+      `/api/v1/organize/executions/${ORGANIZE_FAILED_EXECUTION_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_FAILED_EXECUTION_ID,
+      objectType: "organize_execution",
+      path: "/api/v1/organize/executions/:executionId",
+    });
+    sendJson(res, 200, organizeFailedExecutionDocument());
     return;
   }
 

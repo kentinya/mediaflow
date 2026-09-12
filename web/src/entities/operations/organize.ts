@@ -154,14 +154,27 @@ export type OrganizeActionKind =
 interface OrganizeActionContract {
   /** The one method this action may ever advertise (null = methodless). */
   readonly method: "GET" | "POST" | null;
-  /** The bounded route prefix this action's path must live under. */
-  readonly pathPrefix: string | null;
+  /** The bounded collection route this action's object lives under. */
+  readonly routePrefix: string | null;
+  /**
+   * The exact suffix the action's path must carry after the owned object's
+   * identity segment. `""` means exactly the owned object's read route; a
+   * fixed segment must match literally; `*` matches exactly one URI-safe
+   * segment (the choice route's per-item parameter). `null` = methodless.
+   */
+  readonly suffix: string | null;
   /** Whether this action's confirmation flag must be true. */
   readonly requiresConfirmation: boolean;
+  /**
+   * Whether the backend may offer this action as a non-transport handoff: an
+   * available action that names no method and no route because the next step
+   * is a product destination (Review & Recovery), never an API mutation.
+   */
+  readonly offeredWithoutTransport: boolean;
 }
 
 const INTENT_ROUTE = "/api/v1/operations/organize/intents/";
-const PREVIEW_EXECUTE_ROUTE = "/api/v1/operations/organize/previews/";
+const PREVIEW_ROUTE = "/api/v1/operations/organize/previews/";
 const EXECUTION_ROUTE = "/api/v1/operations/organize/executions/";
 const TASK_ROUTE = "/api/v1/operations/tasks/";
 
@@ -169,20 +182,27 @@ const TASK_ROUTE = "/api/v1/operations/tasks/";
  * The exact transport contract the backend publishes per action kind.
  * The Execute family always carries its mutating POST route and its explicit
  * confirmation, even while it is withheld, so the frontend can never infer a
- * broader authority than the backend advertised.
+ * broader authority than the backend advertised. A path is this action's
+ * transport only when it is exactly the owned object's route plus this kind's
+ * exact suffix — the Preview read route, an arbitrary descendant, or another
+ * object's route is never accepted.
  */
 export const ORGANIZE_ACTION_CONTRACTS: Readonly<
   Record<OrganizeActionKind, OrganizeActionContract>
 > = {
   "intent-choice": {
     method: "POST",
-    pathPrefix: `${INTENT_ROUTE}`,
+    routePrefix: INTENT_ROUTE,
+    suffix: "items/*/choice",
     requiresConfirmation: false,
+    offeredWithoutTransport: false,
   },
   "intent-preview": {
     method: "POST",
-    pathPrefix: `${INTENT_ROUTE}`,
+    routePrefix: INTENT_ROUTE,
+    suffix: "previews",
     requiresConfirmation: false,
+    offeredWithoutTransport: false,
   },
   "intent-execute": {
     // Execution is never offered from an intent document: the backend always
@@ -190,33 +210,48 @@ export const ORGANIZE_ACTION_CONTRACTS: Readonly<
     // complete Preview), so this action carries no transport at all and the
     // page renders no Execute control from an intent.
     method: null,
-    pathPrefix: null,
+    routePrefix: null,
+    suffix: null,
     requiresConfirmation: false,
+    offeredWithoutTransport: false,
   },
   "preview-execute": {
     method: "POST",
-    pathPrefix: `${PREVIEW_EXECUTE_ROUTE}`,
+    routePrefix: PREVIEW_ROUTE,
+    suffix: "execute",
     requiresConfirmation: true,
+    offeredWithoutTransport: false,
   },
   "preview-intent": {
     method: "GET",
-    pathPrefix: `${INTENT_ROUTE}`,
+    routePrefix: INTENT_ROUTE,
+    suffix: "",
     requiresConfirmation: false,
+    offeredWithoutTransport: false,
   },
   "execution-detail": {
     method: "GET",
-    pathPrefix: `${EXECUTION_ROUTE}`,
+    routePrefix: EXECUTION_ROUTE,
+    suffix: "",
     requiresConfirmation: false,
+    offeredWithoutTransport: false,
   },
   "execution-task": {
     method: "GET",
-    pathPrefix: `${TASK_ROUTE}`,
+    routePrefix: TASK_ROUTE,
+    suffix: "",
     requiresConfirmation: false,
+    offeredWithoutTransport: false,
   },
   "execution-recovery": {
+    // Recovery is the one action the backend offers without a transport: for
+    // a failed or partial execution it is a durable handoff to the Review &
+    // Recovery destination, never an API mutation of its own.
     method: null,
-    pathPrefix: null,
+    routePrefix: null,
+    suffix: null,
     requiresConfirmation: false,
+    offeredWithoutTransport: true,
   },
 };
 
@@ -230,6 +265,60 @@ function isSafeActionPath(value: string): boolean {
   }
   const segments = value.replace(/^\/api\/v1\//, "").split("/");
   return !segments.some((segment) => segment === "" || segment === "..");
+}
+
+/** One URI-safe route segment: an object identity or a route parameter. */
+const SAFE_ACTION_SEGMENT = /^[A-Za-z0-9_.{}<>-]{1,128}$/;
+
+function isSafeActionSegment(value: string): boolean {
+  return (
+    value !== "." &&
+    value !== ".." &&
+    !value.includes("/") &&
+    SAFE_ACTION_SEGMENT.test(value)
+  );
+}
+
+/**
+ * Whether `path` is exactly the owned object's route plus the contract's exact
+ * suffix. The Preview read route, an arbitrary descendant or a shorter prefix
+ * is never this action's transport, so a malformed route can never be promoted
+ * into an executable control.
+ */
+function isExactOwnedActionPath(
+  path: string,
+  identity: string,
+  routePrefix: string,
+  suffix: string,
+): boolean {
+  if (!isSafeActionSegment(identity)) {
+    // An identity that is not one URI-safe segment cannot bind a route to its
+    // object, so no path can be verified as this object's transport.
+    return false;
+  }
+  const owned = `${routePrefix}${identity}`;
+  if (!path.startsWith(owned)) {
+    return false;
+  }
+  const rest = path.slice(owned.length);
+  if (suffix === "") {
+    return rest === "";
+  }
+  if (!rest.startsWith("/")) {
+    return false;
+  }
+  const expected = suffix.split("/");
+  const actual = rest.slice(1).split("/");
+  if (expected.length !== actual.length) {
+    return false;
+  }
+  return expected.every((segment, index) => {
+    const value = actual[index];
+    if (value === undefined) {
+      return false;
+    }
+    return segment === "*" ? isSafeActionSegment(value) : value === segment;
+  });
 }
 
 export interface OrganizeFailureModel {
@@ -534,24 +623,30 @@ export function normalizeOrganizeAction(
     }
     // The transport is bound to the exact action being normalized, so an
     // Execute control can only ever be rendered from an action that names the
-    // mutating POST route for that exact object, and a read-only action can
-    // never advertise a mutation or a confirmation.
+    // mutating POST route for that exact object plus that kind's exact suffix,
+    // and a read-only action can never advertise a mutation or a confirmation.
     const contract = ORGANIZE_ACTION_CONTRACTS[kind];
     if (method !== contract.method) {
       fail(`${field}.method`);
     }
-    if (contract.pathPrefix === null) {
+    if (contract.suffix === null) {
       // A methodless action never carries an executable route.
       if (path !== null) {
         fail(`${field}.path`);
       }
-    } else if (path !== null && !path.startsWith(contract.pathPrefix)) {
-      fail(`${field}.path`);
-    } else if (path !== null && identity !== null) {
-      const owned = `${contract.pathPrefix}${identity}`;
-      // A route naming another object is never this action's transport, so a
-      // malformed read can never be promoted into an executable control.
-      if (!(path === owned || path.startsWith(`${owned}/`))) {
+    } else if (path !== null) {
+      // A route can only be verified against the object it belongs to, so a
+      // path without its own object identity is malformed evidence.
+      if (
+        identity === null ||
+        contract.routePrefix === null ||
+        !isExactOwnedActionPath(
+          path,
+          identity,
+          contract.routePrefix,
+          contract.suffix,
+        )
+      ) {
         fail(`${field}.path`);
       }
     }
@@ -559,9 +654,16 @@ export function normalizeOrganizeAction(
       fail(`${field}.requiresConfirmation`);
     }
     if (available) {
-      // An offered action must name its exact method and its bounded relative
-      // route and never carry a contradictory reason.
-      if (method === null || path === null || reason !== null) {
+      if (contract.offeredWithoutTransport) {
+        // A non-transport handoff is offered as a durable destination, never
+        // as a request: it must carry no method, no route and no contradictory
+        // reason, and the UI renders it as a destination link only.
+        if (method !== null || path !== null || reason !== null) {
+          fail(`${field}.available`);
+        }
+      } else if (method === null || path === null || reason !== null) {
+        // An offered action must name its exact method and its bounded relative
+        // route and never carry a contradictory reason.
         fail(`${field}.available`);
       }
     } else if (reason === null) {

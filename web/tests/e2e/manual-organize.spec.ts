@@ -27,7 +27,9 @@ const INTENT_ID = "organize-intent-e2e-001";
 const PREVIEW_ID = "organize-preview-e2e-001";
 const HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
+const SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
 const EXECUTION_ID = "organize-execution-e2e-001";
+const FAILED_EXECUTION_ID = "organize-execution-failed-e2e-001";
 
 test.beforeEach(async ({ page }) => {
   // One deterministic fake state and one evidence bucket per test: the fake
@@ -245,6 +247,73 @@ test.describe("manual organize journey", () => {
     const evidence = await manualEvidence(page);
     expect(
       evidence.filter((entry) => entry.objectType === "organize_execute"),
+    ).toHaveLength(0);
+  });
+
+  test("renders no Execute control when the execute action names the Preview's own read route", async ({
+    page,
+  }) => {
+    // The fake serves a contract-shaped document whose Execute action carries
+    // the mutating POST method and this exact Preview's *read* route — the
+    // same path without the `/execute` suffix. That route is not the action's
+    // transport, so the built artifact must fail closed: no Execute control,
+    // no submission, no hostile promotion of a read route into a mutation.
+    await page.goto(`/ui-v2/operations/organize/preview/${SUFFIX_PREVIEW_ID}`);
+    await connect(page, VIEWER_TOKEN);
+
+    await expect(
+      page.getByText(/could not be understood as the expected contract/i),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Execute selected exact items" }),
+    ).toHaveCount(0);
+    const evidence = await manualEvidence(page);
+    expect(
+      evidence.filter((entry) => entry.objectType === "organize_execute"),
+    ).toHaveLength(0);
+  });
+
+  test("renders a real failed execution with its evidence and the Review & Recovery handoff", async ({
+    page,
+  }) => {
+    // A terminal failure is durable, truthful evidence, never a malformed
+    // read: the failed item and its bounded finding render, the recovery
+    // handoff the backend offers without any transport renders as the safe
+    // Review & Recovery destination, and nothing replays or submits the work.
+    await page.goto(
+      `/ui-v2/operations/organize/execution/${FAILED_EXECUTION_ID}`,
+    );
+    await connect(page, VIEWER_TOKEN);
+
+    await expect(
+      page.getByRole("heading", { name: "Manual organize execution" }),
+    ).toBeVisible();
+    // The bounded finding renders on the execution and on the failed item.
+    await expect(
+      page
+        .getByText(/destination collision: the configured destination/)
+        .first(),
+    ).toBeVisible();
+    await expect(
+      page.getByText(
+        /inspect the pre-mutation failure, repair it, then request a fresh Preview/,
+      ),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "Open Review & Recovery" }),
+    ).toBeVisible();
+    // The recovery handoff is a destination, not a mutation: this journey only
+    // ever read the execution, never submitted anything. (The evidence merges
+    // the shared serial Scan/Preview bucket, so only organize-journey entries
+    // are asserted here.)
+    const evidence = await manualEvidence(page);
+    expect(
+      evidence.filter((entry) => entry.objectType === "organize_execute"),
+    ).toHaveLength(0);
+    expect(
+      evidence.filter(
+        (entry) => entry.method !== "GET" && entry.path.includes("organize"),
+      ),
     ).toHaveLength(0);
   });
 });
