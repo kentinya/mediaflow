@@ -7,9 +7,9 @@ This is the A-owned Slice Contract for the next independently reviewed V2 capabi
 Slice ID: 33
 Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
-Implementation Head: NOT SET
+Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
 ~~~
 
 The Base is the actual committed `main` checkpoint immediately before Slice 33 activation and
@@ -322,15 +322,163 @@ simulated inside Operations.
 
 ## Closure Packet
 
-Pending implementation and B Slice Final validation.
+~~~
+Slice: 33 — Operations Workspace
+Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
+Head SHA: 8a0048008057beabada1a36c53d5fdc3153e8e7b
+
+Required Outcomes:
+- RO-1 — COMPLETE: `/ui-v2/operations` is a typed, refresh-safe command center, and actionable
+  Dashboard and Library links lead to bounded Operations routes with truthful readiness and
+  permission state.
+- RO-2 — COMPLETE: operators can filter/page durable Tasks and Jobs, inspect linked item/result and
+  Worker evidence, and invoke only exact backend-advertised cooperative lifecycle controls.
+- RO-3 — COMPLETE: V2 admits bounded current-file or ResourceLibrary-relative Scan and complete
+  zero-mutation Preview journeys with durable per-item findings, failures and eligible cancellation.
+- RO-4 — COMPLETE: V2 provides the complete durable intent, exact Preview/item selection,
+  server-bound one-shot authorization, admission and per-item outcome journey without exposing a
+  raw execution token or accepting request-supplied plans and paths.
+- RO-5 — COMPLETE: Automation definitions have bounded create/copy/edit/validation/Preview,
+  Draft-versus-Active, object-scoped checked activation, grant/revoke, schedule, occurrence and
+  linked-work journeys.
+- RO-6 — COMPLETE: Webhook definitions have secret-reference-only create/copy/edit/test and checked
+  activation, while delivery list/detail and exact eligible recovery remain concurrency-fenced and
+  isolated from media execution.
+- RO-7 — COMPLETE: operation-specific missing/readiness, stale/concurrent, malformed, permission,
+  unavailable, partial and uncertain states preserve durable truth and offer only safe recovery or
+  truthful Slice 34/Slice 35 handoff.
+- RO-8 — COMPLETE: central typed entity/query/action boundaries compose existing Python
+  Application and `/api/v1/*` authority, preserve V1 `/ui`, and prove RBAC, audit, redaction,
+  persistence, bounded requests and mutation invariants.
+
+Required Surfaces:
+- Operations route and Dashboard surface — COMPLETE.
+- Task, Job and Worker surface — COMPLETE.
+- Manual Scan/Preview surface — COMPLETE.
+- Manual Organize surface — COMPLETE.
+- Automation and schedule surface — COMPLETE.
+- Notification surface — COMPLETE.
+- State, auth and cross-surface surface — COMPLETE.
+- Application/API authority and test surface — COMPLETE for implementation and proof; A-owned
+  factual documentation reconciliation is listed below.
+
+Implemented:
+- A real V2 Operations landing, Dashboard/Library cross-links, strict dynamic route metadata and
+  memory-only-auth continuation across Task, Job, Scan, Preview, Organize, Automation and
+  Notification routes.
+- Bounded Task/Job/Worker projections, filters, paging, linked durable state and exact cooperative
+  pause/resume/cancel behavior with backend-authoritative permissions and optimistic fences.
+- Manual Scan and zero-mutation full-pipeline Preview admissions plus a complete Web-native manual
+  Organize flow using durable intents, immutable evidence, exact selections and one-shot
+  server-retained execution authority.
+- Automation definition, Preview, checked activation, unattended grant, schedule, occurrence and
+  linked-work surfaces composed over the existing managed configuration authority.
+- Webhook definition, exact signed test, checked activation and durable delivery/recovery surfaces
+  with strict identity/revision binding, redaction and no uncertain mutation replay.
+- Backward-compatible Python application/API projections, persistence fences and deterministic
+  unit, integration and built-artifact browser fakes proving the complete journey.
+
+Tasks completed:
+- Task 33.1 — Operations command center and durable work control — PASS at
+  `461b11e0957da40cdd3461e0d8bccfc486c462c3`.
+- Task 33.2 — Bounded manual Scan and zero-mutation Preview — PASS at
+  `ee58054c67e60186e3dc8d84ac15f618cc25d8eb`.
+- Task 33.3 — Web-native exact manual Organize admission and outcome journey — PASS at
+  `11555c648dbd1b032b03d09fdef39f94dbec5257`.
+- Task 33.4 — V2 scheduled Automation definition and occurrence journey — PASS at
+  `e7f29164dcfe7eb286952af17b2bf30bedcd6e9a`.
+- Task 33.5 — V2 Notification definition, test, activation and delivery recovery journey — PASS at
+  `8a0048008057beabada1a36c53d5fdc3153e8e7b`.
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- `env -u NODE_ENV npm --prefix web ci` — PASS; 254 packages installed, 255 audited, 0
+  vulnerabilities.
+- Frontend format/type/lint — PASS; Vitest/React Testing Library 440/440 in 34 files; production
+  Vite build — PASS.
+- Task 33.5 focused evidence — PASS: Python Notification integration 25/25, typed/component
+  Notification evidence 81/81 and built-artifact Notification/Operations/deep-link evidence 56/56.
+- Slice-focused Python Operations/Scan/Preview/Organize/Automation/Notification modules — PASS,
+  119/119.
+- Full Playwright Chromium built-artifact regression — PASS, 118/118.
+- Ruff format/check — PASS; 309 files already formatted; compileall and `pip check` — PASS.
+- Both example configuration validations — PASS.
+- Root-CWD full unittest discovery — FAIL, 1539 run, 6 failures and 7 skips. The six failures read
+  ignored local `.mediaflow` runtime/configuration state instead of fixture defaults; that private
+  state was preserved and no private value is reproduced in this packet.
+- Full unittest discovery from a clean detached worktree at the exact Implementation Head — PASS,
+  1539 tests with 7 environment-gated skips. This proves the root-CWD failures are unrelated local
+  runtime-state effects rather than Slice regressions.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available: clean
+  candidate image, four-service topology, non-root runtime, V1/V2 coexistence, safe headers,
+  authentication/RBAC, exact Active snapshot, restart, durable projections and zero-side-effect
+  denial.
+- `git diff --check` — PASS for Base..Implementation Head and the B closure edits.
+
+Safety Evidence:
+- Base..Implementation Head inspection found no deleted tests, hidden skips, assertion weakening,
+  tracked private configuration, credentials, binary/build artifacts or unrelated feature scope.
+- Backend tests prove bounded request bodies, RBAC, audit, queue/item limits, exact source/snapshot/
+  item/version binding, one-shot/expiry/concurrency fences, restart persistence and rejection before
+  mutation when evidence is stale.
+- Preview/DryRun and all analysis stages remain zero-mutation; only OrganizerExecutor performs
+  reviewed Storage effects. Explicit overwrite/delete/source-cleanup authority, link capability
+  failure without fallback, RecognitionType C preservation and no uncertain replay remain covered.
+- Automation Drafts never become Active or gain unattended authority implicitly; grants remain
+  separate and revocable. Webhook tests are explicit and read-only, and exact delivery recovery
+  changes no definition, sibling delivery or completed media work.
+- Browser request capture and hostile fakes prove exact authenticated methods/bodies, no automatic
+  mutation replay, memory-only Bearer handling and exclusion of raw execution authority, secret
+  values, private paths and provider payloads from URLs, persistent stores, DOM and artifacts.
+- Tests use local fakes, local servers, temporary state and an isolated clean worktree.
+  `config/alist.json`, ignored private runtime configuration, production credentials, private
+  endpoints and operator media are absent from Base..Implementation Head.
+
+Known Non-blocking Issues:
+- P2: pre-existing root-CWD test isolation permits six Python tests to consume ignored local
+  runtime/configuration state. The exact Implementation Head passes all 1539 tests in a clean Git
+  worktree; Slice 33 neither changes nor conceals that unrelated environment behavior.
+- P3: existing sqlite `ResourceWarning` diagnostics, 7 environment-gated unittest skips and
+  non-failing jsdom `Window.scrollTo()` diagnostics remain. Vite also reports the existing
+  non-blocking large-chunk advisory for the production bundle.
+
+Explicitly Deferred:
+- Slice 34 Review & Recovery Workspace: recognition/metadata/classification review, conflicts,
+  Reprocess, checkpoint continuation, failed-stage retry and per-item/bounded-batch media recovery.
+- Slice 35 Configuration Administration: general managed configuration/settings navigation,
+  lifecycle, revision evidence, import/export and activation outside the two object-scoped flows.
+- Slice 36 final V1/V2 parity, global Logs/security/configuration-audit migration, comprehensive
+  cross-feature accessibility proof, supported `/ui` cutover and V1 UI retirement.
+- Automatic replay of uncertain media effects, rollback/undo, history deletion, arbitrary bulk
+  execution, generic workflow design and distributed scheduling/Workers.
+- New Storage/Metadata/Notification providers, provider switching, new notification channels,
+  general Secret Store integration, mutation-based probes and processing-policy semantic changes.
+- File upload/download/content preview/edit/rename/delete, streaming/artwork and arbitrary Storage
+  or host-filesystem mutation/browsing.
+- Built-in identity/session/OIDC/reverse-proxy identity, credential persistence/refresh/rotation and
+  redesign of the current API-principal authentication model.
+- SSR, React Server Components, Node production serving, micro-frontends, CDN runtime dependencies,
+  native clients, global search, localization and complete visual-theme work.
+
+Documentation Reconciliation Needed:
+- If A's final review returns PASS, reconcile `README.md`, `docs/v2-requirements.md`,
+  `docs/progress.md` and `docs/roadmap.md`; they still identify Slice 32 as the latest closed Slice,
+  no active large Slice, or Slice 33 as ACTIVE.
+- Reconcile CURRENT Operations facts in `docs/product-experience.md` and `docs/architecture.md` to
+  describe the delivered V2 command center and preserve the Slice 34–36 deferrals. A should verify
+  whether the canonical Chinese specification needs the same factual program-status update without
+  changing stable product requirements.
+
+Decision: SLICE READY FOR A REVIEW
+~~~
 
 ## Review State
 
 ~~~
-Slice Status: ACTIVE
-Implementation Head: Pending
-P0/P1 Defects: Unknown until implementation review
-Next Action: B PLANS FIRST TASK
+Slice Status: READY FOR A REVIEW
+Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
+P0/P1 Defects: None found by B in Base..Implementation Head or Slice-final validation
+Next Action: A FINAL REVIEW
 ~~~
 
 ## A Final Review
