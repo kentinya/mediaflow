@@ -106,11 +106,14 @@ function previewDocument(): Json {
 function executionDocument(): Json {
   const value = document("organizeExecutionDetail");
   value["executionId"] = "execution-1";
-  // The transport must name the exact object it belongs to, exactly as the
-  // real backend emits it for the durable execution identity.
+  // The checked-in fixture masks every durable identity, so the exact objects
+  // this document belongs to are restored here: the transports must name the
+  // exact execution and its exact Task, exactly as the real backend emits them.
+  value["taskId"] = "task-1";
   const actions = value["actions"] as Json;
   (actions["detail"] as Json)["path"] =
     "/api/v1/operations/organize/executions/execution-1";
+  (actions["task"] as Json)["path"] = "/api/v1/operations/tasks/task-1";
   return value;
 }
 
@@ -582,8 +585,8 @@ describe("V2 manual Organize journey", () => {
     // this exact Preview. A contradictory transport — a safe method, a route
     // belonging to another object, or a same-object route that is not exactly
     // this Preview's POST /execute route (the read route itself, an arbitrary
-    // descendant or a wrong fixed suffix) — is malformed, never an executable
-    // control.
+    // descendant, a wrong fixed suffix or any non-URI-safe segment) — is
+    // malformed, never an executable control.
     const wrongTransports: readonly Json[] = [
       { ...previewExecuteAction(), method: "GET" },
       {
@@ -610,6 +613,16 @@ describe("V2 manual Organize journey", () => {
         // A same-object route with a wrong fixed suffix is malformed too.
         ...previewExecuteAction(),
         path: "/api/v1/operations/organize/previews/preview-1/executes",
+      },
+      {
+        // A non-URI-safe identity is never this object's transport: raw
+        // angle brackets and braces are rejected fail-closed.
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/organize/previews/<preview>/execute",
+      },
+      {
+        ...previewExecuteAction(),
+        path: "/api/v1/operations/organize/previews/preview-1/{execute}",
       },
     ];
     for (const transport of wrongTransports) {

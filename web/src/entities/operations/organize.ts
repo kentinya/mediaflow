@@ -160,7 +160,9 @@ interface OrganizeActionContract {
    * The exact suffix the action's path must carry after the owned object's
    * identity segment. `""` means exactly the owned object's read route; a
    * fixed segment must match literally; `*` matches exactly one URI-safe
-   * segment (the choice route's per-item parameter). `null` = methodless.
+   * segment (the choice route's per-item parameter, which the backend emits
+   * as the one intentional `{itemId}` route-template segment). `null` =
+   * methodless.
    */
   readonly suffix: string | null;
   /** Whether this action's confirmation flag must be true. */
@@ -255,20 +257,13 @@ export const ORGANIZE_ACTION_CONTRACTS: Readonly<
   },
 };
 
-/** Operator actions are bounded, relative V2 API routes and nothing else. */
-const SAFE_ACTION_PATH = /^\/api\/v1\/[A-Za-z0-9_./{}<>-]{1,256}$/;
-
-/** A bounded relative route can never traverse outside the V2 API root. */
-function isSafeActionPath(value: string): boolean {
-  if (!SAFE_ACTION_PATH.test(value)) {
-    return false;
-  }
-  const segments = value.replace(/^\/api\/v1\//, "").split("/");
-  return !segments.some((segment) => segment === "" || segment === "..");
-}
-
-/** One URI-safe route segment: an object identity or a route parameter. */
-const SAFE_ACTION_SEGMENT = /^[A-Za-z0-9_.{}<>-]{1,128}$/;
+/**
+ * One URI-safe route segment: a real object identity or a real path segment.
+ * Braces, angle brackets and every other non-URI-safe character are rejected,
+ * so a hostile or masked placeholder value can never be promoted into an
+ * object's identity or one of its route segments.
+ */
+const SAFE_ACTION_SEGMENT = /^[A-Za-z0-9_.-]{1,128}$/;
 
 function isSafeActionSegment(value: string): boolean {
   return (
@@ -277,6 +272,46 @@ function isSafeActionSegment(value: string): boolean {
     !value.includes("/") &&
     SAFE_ACTION_SEGMENT.test(value)
   );
+}
+
+/**
+ * The one intentional route-template segment the backend publishes: the
+ * per-item choice route is emitted with a literal `{itemId}` placeholder that
+ * the journey substitutes per item. It is a template parameter, never an
+ * object identity, and it is the only non-URI-safe segment any action path
+ * may carry.
+ */
+const ACTION_TEMPLATE_SEGMENT = "{itemId}";
+
+/** A real URI-safe segment, or the one intentional route-template segment. */
+function isSafeActionPathSegment(value: string): boolean {
+  return isSafeActionSegment(value) || value === ACTION_TEMPLATE_SEGMENT;
+}
+
+/** Operator actions are bounded, relative V2 API routes and nothing else. */
+const SAFE_ACTION_PREFIX = "/api/v1/";
+const SAFE_ACTION_MAX_LENGTH = 256;
+
+/**
+ * A bounded relative route can never traverse outside the V2 API root, and
+ * every one of its segments must be one URI-safe segment — the only exception
+ * is the one intentional `{itemId}` route-template segment in its declared
+ * parameter position.
+ */
+function isSafeActionPath(value: string): boolean {
+  if (!value.startsWith(SAFE_ACTION_PREFIX)) {
+    return false;
+  }
+  const rest = value.slice(SAFE_ACTION_PREFIX.length);
+  if (rest.length < 1 || rest.length > SAFE_ACTION_MAX_LENGTH) {
+    return false;
+  }
+  return rest
+    .split("/")
+    .every(
+      (segment) =>
+        segment !== "" && segment !== ".." && isSafeActionPathSegment(segment),
+    );
 }
 
 /**
@@ -293,7 +328,9 @@ function isExactOwnedActionPath(
 ): boolean {
   if (!isSafeActionSegment(identity)) {
     // An identity that is not one URI-safe segment cannot bind a route to its
-    // object, so no path can be verified as this object's transport.
+    // object, so no path can be verified as this object's transport. This is
+    // separate from the one intentional `{itemId}` route-template segment,
+    // which is a placeholder in a parameter position, never an identity.
     return false;
   }
   const owned = `${routePrefix}${identity}`;
@@ -317,7 +354,7 @@ function isExactOwnedActionPath(
     if (value === undefined) {
       return false;
     }
-    return segment === "*" ? isSafeActionSegment(value) : value === segment;
+    return segment === "*" ? isSafeActionPathSegment(value) : value === segment;
   });
 }
 

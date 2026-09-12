@@ -258,59 +258,57 @@ reports, credentials and unrelated files must not enter the checkpoint.
 ## Developer Completion Report
 
 > Correction loop (B Decision: FIX REQUIRED, Next: SAME TASK FIX LOOP). This report replaces the
-> second correction's report. Every blocker B listed is implemented here; this is a new correction
+> third correction's report. Every blocker B listed is implemented here; this is a new correction
 > commit after the reviewed checkpoint — no accepted history was amended.
 
 ### Changed Files
 
-Third correction commit on top of the reviewed checkpoint
-`0ab9dd9c097c81476e7750f6469cf3cc9d7652ff`:
+Fourth correction commit on top of the reviewed checkpoint
+`c4b8c2d60153fd20cec97c48e53d37d80e267270`:
 
-- `web/src/entities/operations/organize.ts` — `normalizeOrganizeAction()` now binds every action
-  kind to its exact route shape (an exact suffix after the owned object's identity, with a single
-  `*` URI-safe parameter segment for the choice route's per-item template) and its exact URI-safe
-  object identity (one bounded segment; a path whose object identity is missing or unsafe is
-  malformed). The contract also models the one available non-transport action: `execution-recovery`
-  may be offered with no method, no route and no reason, while every transport-required kind and
-  the always-withheld `intent-execute` still fail closed on a transport-less offer.
-- `web/src/features/operations/OrganizeRouter.test.tsx` — new failed-execution rendering regression
-  using an actual failed execution document (per-item evidence, bounded finding, recovery handoff,
-  GET-only journey); the wrong-transport Execute regression now also covers same-object wrong
-  suffixes (the Preview read route without `/execute`, an arbitrary `/execute/extra` descendant and
-  a wrong fixed suffix) in addition to wrong method and another-object routes.
-- `web/tests/fake-server.mjs` — new deterministic failed-execution document and route mirroring
-  `_organize_execution_document()`/`manual_execution_operator_document()` (recovery available with
-  null method/path/reason), plus a new Preview fixture whose Execute action carries the mutating
-  POST method and the Preview's own read route.
-- `web/tests/e2e/manual-organize.spec.ts` — new built-artifact regressions: the failed execution
-  renders its durable evidence and the safe Review & Recovery destination without any submission,
-  and the read-route Execute transport renders no Execute control and submits nothing.
-- `TASK.md` — this report plus B's review of the second correction.
+- `web/src/entities/operations/organize.ts` — action route validation now enforces the promised
+  URI-safe object identity. `SAFE_ACTION_SEGMENT` is strict (`A-Za-z0-9_.-`, no braces, no angle
+  brackets) and validates every real object identity and every real path segment; the one
+  intentional `{itemId}` route-template segment the backend publishes for the per-item choice
+  route is modelled separately (`ACTION_TEMPLATE_SEGMENT`) and is accepted only in the contract's
+  declared `*` parameter position. `isSafeActionPath()` was rewritten from a whole-path character
+  class to per-segment validation (bounded `/api/v1/` relative route, no empty or traversal
+  segment, every segment strict-safe or exactly the template), so the coarse gate is no looser
+  than the exact-owned binding. A path whose identity is missing, unsafe, or names another object
+  is malformed by construction.
+- `web/src/entities/operations/organize.test.ts` — new focused entity regressions: B's isolated
+  probe (`identity="<preview>"` with
+  `POST /api/v1/operations/organize/previews/<preview>/execute`) now throws; a safe identity with
+  an unsafe path segment throws; an unsafe identity with a safe path throws; braces/angle brackets
+  outside the template segment throw; the template outside its parameter position throws; the
+  still-valid cases are pinned (the `{itemId}` choice template, a real per-item segment, the
+  transport-less recovery handoff) alongside the still-rejected cases (wrong suffix, wrong method,
+  another object's route, transport-less `intent-execute`).
+- `web/src/features/operations/OrganizeRouter.test.tsx` — the wrong-transport Execute regression
+  adds two non-URI-safe path variants (`<preview>` identity segment, `{execute}` suffix segment)
+  and still asserts the malformed-read state with no Execute control. The execution fixture helper
+  now restores the masked durable identities (`taskId` and the Task action route) so every
+  document it renders names the exact real objects the backend emits — the checked-in fixture
+  masks durable identities as `<uuid>`, which strict validation correctly refuses.
+- `TASK.md` — this report plus B's review of the third correction.
 
 ### Implemented
 
-1. **Available non-transport recovery handoff (blocker 1).** A real failed or partial execution
-   published `recovery.available=true, reason=null, method=null, path=null`, which the normalizer
-   refused, so the durable item/effect truth and the Review & Recovery handoff disappeared behind
-   the generic malformed-response state. The action contract now declares, per kind, whether the
-   backend may offer the action without a transport; only `execution-recovery` may, and an offered
-   transport-less action must carry no method, no route and no reason — the intent-level
-   `intent-execute` stays fail-closed. The component and built-artifact coverage uses an actual
-   failed execution document (status `failed`, durable state `terminal_failure`, per-item bounded
-   finding, aggregate finding, truthful known-effects statement) and proves the per-item evidence
-   renders, the safe Slice 34 destination renders exactly as the handoff the backend advertised,
-   and the journey submits nothing (GET-only reads, no replay).
-2. **Exact per-action route contracts (blocker 2).** Action validation was prefix-based, so a POST
-   path equal to the Preview read route (no `/execute`) or any owned-route descendant was accepted
-   as an Execute transport. Each action kind now names its exact suffix — `execute` for
-   `preview-execute`, `previews` for `intent-preview`, `items/*/choice` for the per-item choice
-   template, and exactly the owned object's route for the read actions — and the route is accepted
-   only when it is exactly the owned collection route plus a single URI-safe identity segment plus
-   that suffix. A route naming another object, a wrong method, a missing or unsafe object identity,
-   the read route itself, a descendant or a wrong fixed suffix all fail closed. B's isolated probe
-   (`POST /api/v1/operations/organize/previews/<same-preview-id>`) is now rejected, with component
-   and built-artifact regressions for same-object wrong suffixes as well as wrong method and
-   another-object routes.
+1. **URI-safe object identity separated from the `{itemId}` template (blocker).** Both
+   `SAFE_ACTION_PATH` and `SAFE_ACTION_SEGMENT` allowed raw `<`, `>`, `{` and `}`, so a document
+   claiming `previewId="<preview>"` with a matching Execute route normalized successfully and the
+   exact-object binding was meaningless. Actual object identities are now validated by one strict
+   URI-safe segment rule, and the single intentional `{itemId}` route-template segment is a
+   separate named constant allowed only where the contract declares a parameter. The rejection is
+   layered: the coarse path gate rejects any non-URI-safe segment, and the exact-owned binding
+   independently rejects any identity that is not one strict segment, so B's probe fails closed at
+   both layers.
+2. **Coverage kept strictly additive.** The now-passing exact-suffix and transport-less recovery
+   coverage from the previous corrections is pinned at entity level in the new
+   `organize.test.ts` and extended (not weakened) in the component suite; no existing test,
+   assertion or fixture was deleted, renamed, skipped or loosened. The only test-helper change
+   adapts the checked-in masked fixture to the real-object form the helper already used for the
+   execution detail route.
 
 ### Tests and Results
 
@@ -320,7 +318,7 @@ env -u NODE_ENV npm --prefix web ci                                             
 npm --prefix web run format:check                                                  — PASS
 npm --prefix web run typecheck                                                     — PASS
 npm --prefix web run lint                                                          — PASS
-npm --prefix web run test -- --run                                                 — PASS (326/326, 29 files)
+npm --prefix web run test -- --run                                                 — PASS (335/335, 30 files)
 npm --prefix web run build                                                         — PASS
 npm --prefix web run test:e2e -- manual-organize.spec.ts manual-operations.spec.ts operations.spec.ts library-file-detail.spec.ts deep-link.spec.ts
                                                                                    — PASS (60/60)
@@ -341,23 +339,22 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ### Decisions
 
-- The transport-less offer is modelled as a per-kind contract flag
-  (`offeredWithoutTransport`) rather than a global rule: only `execution-recovery` may be offered
-  without a method/route, so the always-withheld `intent-execute` still fails closed if a hostile
-  or future document ever claims an availability the backend does not advertise.
-- Route contracts now carry an exact suffix (fixed segments plus a one-segment `*` parameter for
-  the choice route's `{itemId}` template) instead of a prefix/descendant rule, and the object
-  identity must itself be one URI-safe segment: that is the smallest binding under which the read
-  route, a descendant, another object's route and an identity-less path are all malformed by
-  construction.
-- No backend change was needed: the failed/partial recovery publication
-  (`available=true, reason=null, method=null, path=null`) is the correct bounded non-transport
-  handoff; the frontend now models it. The failed-execution fixtures mirror
-  `_organize_execution_document()`, `manual_execution_operator_document()` and
-  `FailureExplanation.document()` field for field, including the six-key failure envelope.
-- The built-artifact no-replay assertion filters to organize-journey evidence because
-  `/__test__/manual-operations` merges the shared serial Scan/Preview bucket into every read; the
-  filter keeps the assertion meaningful under parallel workers.
+- The separation is implemented as two named validators: `isSafeActionSegment()` (strict; the
+  object identity and every real segment) and `isSafeActionPathSegment()` (strict plus exactly
+  `{itemId}`; path segments and the `*` parameter). The template is therefore confined to the
+  parameter position by construction: a path whose identity segment is `{itemId}` fails the
+  owned-prefix binding, and a fixed suffix can never be a template.
+- `isSafeActionPath()` moved from a whole-path character class to per-segment validation because
+  the template exception is segment-shaped; the previous coarse gate was strictly looser than the
+  exact-owned check, which let B's probe reach the exact check with unsafe characters and pass.
+- No backend change was needed: the real backend publishes strictly URI-safe durable identities,
+  and the only non-URI-safe segment it ever publishes is the `{itemId}` choice-route template.
+  The `<uuid>`/`<hex-id>` values in the checked-in fixture are masking artifacts of
+  `tests/test_manual_operations_contract.py` (`_canonical`), not API values, so the component
+  helper restores real-shaped identities for the documents it renders.
+- The focused no-replay/rejection assertions live at the normalizer boundary because that is where
+  B's probe was made; the component suite additionally renders the hostile transports to prove no
+  executable control appears.
 
 ### Remaining In-Slice Work
 
@@ -368,17 +365,15 @@ python3 scripts/docker_release_security_smoke_test.py                           
 ### Risks / Deviations
 
 - 6 full-discovery failures are `FAIL / PRE-EXISTING / UNRELATED`, the identical set reported by
-  the previous corrections: `test_storage_list_does_not_construct_or_connect`,
+  every previous round: `test_storage_list_does_not_construct_or_connect`,
   `test_storage_check_is_read_only_and_isolates_failures`,
   `test_credential_check_is_redacted_config_only_and_reports_missing`,
   `test_legacy_credential_status_is_supported_without_secret_output`,
   `test_runtime_configuration_and_final_analyze_cli`,
   `test_scan_cli_needs_no_path_or_metadata_token`. They are caused by this workspace's ignored
   local `.mediaflow/` runtime state being resolved instead of the tests' temporary bootstrap
-  document, not by this correction. The focused suites that bind to the changed code (153 + 23
-  Python tests, 326 frontend unit tests, 95 built-artifact tests) pass.
-- `python3 scripts/docker_release_security_smoke_test.py` PASSED in this round; the previous
-  round's bind-mount environment failure did not reproduce.
+  document, not by this frontend-only correction. The focused suites that bind to the changed code
+  (153 + 23 Python tests, 335 frontend unit tests, 95 built-artifact tests) pass.
 - Running the T4 suite touches the ignored local `.mediaflow/` runtime state only. No tracked
   file, media file or credential was touched; `config/alist.json` does not exist in this
   workspace and nothing private entered the checkpoint. `node_modules/` remains untracked and
@@ -390,33 +385,23 @@ python3 scripts/docker_release_security_smoke_test.py                           
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: c4b8c2d60153fd20cec97c48e53d37d80e267270
+Head SHA: PENDING_COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..0ab9dd9c097c81476e7750f6469cf3cc9d7652ff
+Reviewed: e1dba1f87bb32cdcd573f565b6772e3da21823bf..c4b8c2d60153fd20cec97c48e53d37d80e267270
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- A real failed or partial execution cannot pass the V2 normalizer, so its durable item/effect truth
-  and required Review & Recovery handoff disappear behind the generic malformed-response state.
-  `_organize_execution_document()` publishes the intentionally local handoff as
-  `recovery.available=true`, `reason=null`, `method=null`, `path=null`, while
-  `normalizeOrganizeAction()` rejects every available action whose method or path is null. B's
-  isolated backend-shaped Vitest probe failed with
-  `OrganizeNormalizationError ... (actions.recovery)`. Model an available non-transport recovery
-  handoff consistently (without inventing an API mutation), and add component plus built-artifact
-  coverage using an actual failed/partial execution document that proves the per-item evidence and
-  safe Slice 34 destination render without replay.
-- Action route validation is still prefix-based rather than the required exact per-action contract.
-  For `preview-execute`, a POST path equal to the Preview read route (with no `/execute`) is accepted;
-  the same code also accepts arbitrary descendants of the owned object and does not distinguish the
-  exact choice, Preview, Execute, detail and Task suffixes. B's isolated Vitest probe expected
-  `/api/v1/operations/organize/previews/<same-preview-id>` to be rejected but normalization did not
-  throw. Bind each action kind to its exact route shape and exact URI-safe object identity, then add
-  component and built-artifact regressions for same-object wrong suffixes as well as wrong method and
-  another-object routes.
+- The exact-route correction still does not enforce the promised URI-safe object identity. Both
+  `SAFE_ACTION_PATH` and `SAFE_ACTION_SEGMENT` allow raw `<`, `>`, `{` and `}` in an object's identity;
+  consequently B's isolated Vitest probe passed `identity="<preview>"` with
+  `POST /api/v1/operations/organize/previews/<preview>/execute`, expected the normalizer to reject it,
+  and failed with `AssertionError: expected [Function] to throw an error`. Separate actual object-ID
+  validation from the one intentional `{itemId}` route-template segment, reject non-URI-safe object
+  identities/action segments fail-closed, and add a focused regression without weakening the now-
+  passing exact-suffix and transport-less recovery coverage.
