@@ -17,4 +17,4 @@ Next: SLICE READY FOR A REVIEW
 The full Task evidence and implementation history remain in Git; the current Slice Closure Packet
 is recorded in [`SLICE.md`](SLICE.md).
 
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE
