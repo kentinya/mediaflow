@@ -300,7 +300,7 @@ outside the Developer role.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: pending checkpoint commit
+Head SHA: 1403ec37f7f08f371cf65599b6a816e69f3996f4
 ```
 
 ## B Review Result
