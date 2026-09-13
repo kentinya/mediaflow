@@ -83,18 +83,18 @@ Primary program: Operator Web Architecture & UX Modernization
 Package version on main: 2.0.0.dev0
 ```
 
-V2 is organized as independently reviewable large Slices. Slices 30, 31 and 32 are `PASS / CLOSED`
-under their A-owned Contracts. Slice 33's accepted Operations implementation remains in place, but A
-has reactivated Slice 33 for one focused post-closure P1 correction in Worker pre-mutation
-revalidation. Slice 30 delivered the `web/` frontend boundary, typed read-only Dashboard
+V2 is organized as independently reviewable large Slices. Slices 30, 31, 32 and 33 are `PASS / CLOSED`
+under their A-owned Contracts. Slice 30 delivered the `web/` frontend boundary, typed read-only
+Dashboard
 proving route, Python `/ui-v2/` static coexistence and production Docker artifact. Slice 31 delivered
 the centralized product-area information architecture, responsive shell, safe memory-only deep-link
 continuation and actionable route/authentication recovery described below. Slice 32 delivered the
 read-only Library journey across bounded Active Storage browsing, FileIndex catalog/detail and safe
 physical/indexed context. Slice 33 delivered the Operations command center across actionable
 Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
-scheduled Automation and Notification delivery operation. Slice 34 remains planned until the Slice 33
-correction is accepted. The V1 API, authentication and Storage authority remain
+scheduled Automation and Notification delivery operation, including the accepted Worker
+pre-mutation revalidation correction. Slice 34 remains planned as the next independent capability.
+The V1 API, authentication and Storage authority remain
 available, while the shared Python `/api/v1/*` behavior remains authoritative for both UIs.
 
 ## V2 frontend (web/)
