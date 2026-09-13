@@ -281,6 +281,16 @@ def prepare_deployment_files(
         ],
         "remoteExecution": {"enabled": True, "maximumTtlSeconds": 900},
     }
+    # The source bind is intentionally read-only in this security harness.
+    # Use an explicit non-destructive policy for the temporary manual flow.
+    for policy in document.get("organizePolicies", []):
+        if policy.get("id") == "A":
+            policy["operation"] = "COPY"
+            break
+    for policy in document.get("metadataPolicies", []):
+        if policy.get("id") == "A":
+            policy["mediaQueryType"] = "none"
+            break
     document["storages"].append(
         {
             "id": "release-openlist",
@@ -800,6 +810,182 @@ def assert_projection_exports(
         raise RuntimeError(f"cookie-bearing jobs request returned HTTP {status}")
 
 
+def assert_v2_manual_organize(
+    base: str,
+    admin: str,
+    source_root: Path,
+    target_root: Path,
+    command: list[str],
+    environment: dict[str, str],
+) -> None:
+    """Exercise API admission and the resident Worker's exact mutation once."""
+
+    source = source_root / "Release Manual Organize.2001.mkv"
+    source.write_bytes(b"release-security-manual-organize" * 8)
+    status, scan = json_request(
+        base,
+        "/api/v1/operations/scans",
+        admin,
+        method="POST",
+        body={
+            "scopeKind": "resourceLibrary",
+            "resourceLibraryId": "source",
+            "mode": "full",
+        },
+    )
+    if status != 202:
+        raise RuntimeError(f"manual Organize scan admission returned HTTP {status}")
+
+    def scan_complete() -> bool:
+        current_status, detail = json_request(
+            base, f"/api/v1/operations/scans/{scan['taskId']}", admin
+        )
+        return current_status == 200 and detail.get("status") in {
+            "completed",
+            "partial_success",
+            "failed",
+        }
+
+    wait_until(scan_complete, timeout=90.0, description="manual Organize source scan")
+    status, files = json_request(base, "/api/v1/files?resourceLibrary=source&limit=100", admin)
+    if status != 200:
+        raise RuntimeError(f"manual Organize FileIndex listing returned HTTP {status}")
+    item = next(
+        (value for value in files.get("items", []) if value.get("filename") == source.name),
+        None,
+    )
+    if item is None:
+        raise RuntimeError("manual Organize scan did not index its temporary source")
+    # The isolated release harness has no live Provider. Seed only a bounded,
+    # source-linked dry-run Result so the normal API intent authority can use
+    # an already reviewed identity without contacting an external service.
+    seed = r"""
+from datetime import UTC, datetime
+from dataclasses import replace
+from mediaflow.domain.file_lifecycle import ProcessingDisposition
+from mediaflow.domain.task_persistence import PersistentResultRecord
+from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
+from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+
+with SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository:
+    repository.append_result(PersistentResultRecord(
+        "release-manual-result", "release-manual-task", "release-manual-item",
+        "source-storage", "Release Manual Organize.2001.mkv", "media-target",
+        "Movies/Release Manual Organize/Release Manual Organize (2001).mkv",
+        "A", "tmdb", "603", "A", "A", "A", "A", "MOVE", "dry_run",
+        datetime.now(UTC), title="Release Manual Organize",
+    ))
+with (
+    SQLiteFileIndexRepository("/data/mediaflow.sqlite3") as file_index,
+    SQLiteTaskRepository("/data/mediaflow.sqlite3") as repository,
+):
+    record = file_index.find_by_path(
+        "source-storage", "source", "Release Manual Organize.2001.mkv"
+    )
+    if record is None:
+        raise RuntimeError("manual source disappeared before metadata fixture linkage")
+    file_index.batch_upsert((
+        replace(
+            record,
+            processing_result_id="release-manual-result",
+            processing_disposition=ProcessingDisposition.ORGANIZED,
+        ),
+    ))
+"""
+    seeded = subprocess.run(
+        [*command, "exec", "-T", "api", "python", "-"],
+        cwd=ROOT,
+        env=environment,
+        input=seed,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if seeded.returncode != 0:
+        raise RuntimeError(f"manual Organize source-linked fixture failed: {seeded.stderr[:500]}")
+
+    status, intent = json_request(
+        base,
+        "/api/v1/operations/organize/intents",
+        admin,
+        method="POST",
+        body={
+            "scopeKind": "file",
+            "fileId": item["fileId"],
+            "resourceLibraryId": "source",
+        },
+    )
+    if status != 201:
+        raise RuntimeError(f"manual Organize intent returned HTTP {status}")
+    intent_item = intent["items"][0]
+    status, intent = json_request(
+        base,
+        f"/api/v1/operations/organize/intents/{intent['intentId']}"
+        f"/items/{intent_item['itemId']}/choice",
+        admin,
+        method="POST",
+        body={
+            "expectedVersion": intent["version"],
+            "expectedItemVersion": intent_item["version"],
+            "recognitionTypeId": "A",
+            "metadata": {
+                "provider": "tmdb",
+                "providerId": "603",
+                "mediaType": "movie",
+                "title": "Release Manual Organize",
+            },
+            "namingPolicyId": "A",
+            "classificationPolicyId": "A",
+            "organizePolicyId": "A",
+        },
+    )
+    if status != 200:
+        raise RuntimeError(f"manual Organize choice returned HTTP {status}")
+    status, preview = json_request(
+        base,
+        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        admin,
+        method="POST",
+        body={"expectedVersion": intent["version"]},
+    )
+    if status != 201 or not preview.get("zeroMutation"):
+        raise RuntimeError("manual Organize Preview was not exact zero-mutation evidence")
+    status, execution = json_request(
+        base,
+        f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+        admin,
+        method="POST",
+        body={
+            "confirmation": True,
+            "itemIds": [intent_item["itemId"]],
+            "expectedIntentVersion": intent["version"],
+        },
+    )
+    if status != 202:
+        raise RuntimeError(
+            f"manual Organize execution admission returned HTTP {status}: {execution}"
+        )
+
+    def execution_complete() -> bool:
+        current_status, detail = json_request(
+            base,
+            f"/api/v1/operations/organize/executions/{execution['executionId']}",
+            admin,
+        )
+        return current_status == 200 and detail.get("status") in {
+            "completed",
+            "partial_success",
+            "failed",
+        }
+
+    wait_until(execution_complete, timeout=120.0, description="manual Organize Worker completion")
+    if not source.exists():
+        raise RuntimeError("manual Organize COPY unexpectedly removed the source")
+    moved = list(target_root.rglob("Release Manual Organize*.mkv"))
+    if len(moved) != 1:
+        raise RuntimeError(f"manual Organize expected one target effect, found {len(moved)}")
+
+
 def seed_release_state(command: list[str], environment: dict[str, str], canaries) -> None:
     authorization = canary_by_env(canaries, "MEDIAFLOW_AUTHORIZATION_CANARY")
     cookie = canary_by_env(canaries, "MEDIAFLOW_COOKIE_CANARY")
@@ -1086,6 +1272,16 @@ def release_security_smoke(project: str, image: str, keep: bool, canaries) -> No
                     expected=EXPECTED_SERVICES,
                 )
                 wait_for_api(base, token_values["admin"])
+
+                print("Admitting V2 manual Organize and observing resident Worker completion...")
+                assert_v2_manual_organize(
+                    base,
+                    token_values["admin"],
+                    source_root,
+                    target_root,
+                    command,
+                    environment,
+                )
 
                 print("Seeding durable Task/Result and scanning projections/exports...")
                 seed_release_state(command, environment, canaries)
