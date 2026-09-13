@@ -115,10 +115,6 @@ export function AppShell({ children }: AppShellProps) {
     document.title = pageTitle;
   }, [pageTitle]);
 
-  useEffect(() => {
-    setMenuOpen(false);
-  }, [pathname]);
-
   return (
     <div className="mf-shell">
       <a className="mf-skip-link" href="#main-content">
@@ -129,7 +125,11 @@ export function AppShell({ children }: AppShellProps) {
         className={`mf-sidebar${menuOpen ? " mf-sidebar-open" : ""}`}
         aria-label="MediaFlow navigation"
       >
-        <Link className="mf-sidebar-brand" to="/dashboard">
+        <Link
+          className="mf-sidebar-brand"
+          to="/dashboard"
+          onClick={() => setMenuOpen(false)}
+        >
           <span className="mf-brand-mark" aria-hidden="true">
             ▷
           </span>
@@ -148,6 +148,7 @@ export function AppShell({ children }: AppShellProps) {
                 aria-label={item.accessibleName}
                 aria-current={active ? "page" : undefined}
                 className="mf-nav-link"
+                onClick={() => setMenuOpen(false)}
               >
                 <span className="mf-nav-icon" aria-hidden="true" />
                 <span className="mf-nav-copy">{item.label}</span>
