@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,7 +22,7 @@ from mediaflow.application.strategy_test import (
 )
 from mediaflow.cli import main, render_strategy_result
 from mediaflow.domain.library import ResourceLibrary
-from mediaflow.domain.metadata import MediaCandidate, MediaType
+from mediaflow.domain.metadata import MediaCandidate, MediaIdentity, MediaQueryType, MediaType
 from mediaflow.domain.storage import StorageCapabilities
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 
@@ -56,6 +57,19 @@ class StrategyCLITests(unittest.TestCase):
             tuple(policy for policy in configuration.metadata_policies if policy.policy_id != "A"),
         )
         return strategy_runner_from_configuration(incomplete)
+
+    @staticmethod
+    def offline_metadata_identity_runner():
+        configuration = development_strategy_configuration()
+        return strategy_runner_from_configuration(
+            replace(
+                configuration,
+                metadata_policies=tuple(
+                    replace(policy, media_query_type=MediaQueryType.NONE)
+                    for policy in configuration.metadata_policies
+                ),
+            )
+        )
 
     def test_offline_pipeline_displays_all_stages_and_c_mapping(self) -> None:
         output, errors = io.StringIO(), io.StringIO()
@@ -132,6 +146,69 @@ class StrategyCLITests(unittest.TestCase):
                 )
                 self.assertEqual(result.recognition.recognition_type_id, recognition_type)
         self.assertTrue(runner.run_path("/C/Title.2024.mkv").recognition_type_preserved)
+
+    def test_pinned_metadata_identity_is_allowed_only_for_matching_offline_policy(self) -> None:
+        runner = self.offline_metadata_identity_runner()
+        identity = MediaIdentity(
+            "tmdb",
+            "129",
+            MediaType.MOVIE,
+            "Movie",
+            year=2024,
+            recognition_type_id="A",
+        )
+
+        result = runner.run_path(
+            "/movies/Movie.2024.mkv",
+            resource_library_id="movies",
+            metadata_identity=identity,
+        )
+
+        self.assertEqual(result.recognition.recognition_type_id, "A")
+        self.assertIs(result.metadata.identity, identity)
+        self.assertEqual(result.metadata.recognition_type_id, "A")
+        self.assertTrue(result.recognition_type_preserved)
+
+    def test_pinned_metadata_identity_rejects_live_query_policy(self) -> None:
+        runner = strategy_runner_from_configuration(development_strategy_configuration())
+        identity = MediaIdentity(
+            "tmdb",
+            "129",
+            MediaType.MOVIE,
+            "Movie",
+            year=2024,
+            recognition_type_id="A",
+        )
+
+        with self.assertRaisesRegex(
+            StrategyConfigurationError, "requires an offline MetadataPolicy"
+        ):
+            runner.run_path(
+                "/movies/Movie.2024.mkv",
+                resource_library_id="movies",
+                metadata_identity=identity,
+            )
+
+    def test_pinned_metadata_identity_rejects_mismatched_recognition_type(self) -> None:
+        runner = self.offline_metadata_identity_runner()
+        identity = MediaIdentity(
+            "tmdb",
+            "129",
+            MediaType.MOVIE,
+            "Movie",
+            year=2024,
+            recognition_type_id="C",
+        )
+
+        with self.assertRaisesRegex(
+            StrategyConfigurationError, "RecognitionType no longer matches"
+        ):
+            runner.run_path(
+                "/movies/Movie.2024.mkv",
+                resource_library_id="movies",
+                forced_recognition_type_id="A",
+                metadata_identity=identity,
+            )
 
     def test_missing_metadata_policy_is_a_clear_configuration_error(self) -> None:
         runner = self.missing_a_policy_runner()
