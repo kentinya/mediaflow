@@ -152,88 +152,85 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
 
 ### Changed Files
 
-- `mediaflow/application/manual_organize_execution.py`
-- `mediaflow/application/manual_organize_preview.py`
-- `mediaflow/application/strategy_test.py`
-- `mediaflow/final_cli.py`
-- `mediaflow/interfaces/service_api.py`
-- `scripts/docker_release_security_smoke_test.py`
 - `tests/test_manual_organize_execution.py`
-- `tests/test_strategy_cli.py`
+- `TASK.md`
 
 ### Implemented
 
-- Added a pinned-runtime catalog factory to the manual execution service so the resident Worker rebuilds FileIndex source authority from the admitted execution's exact managed runtime snapshot.
-- Bound intent and Preview source lookup to the reconstructed catalog before source revalidation; no direct-path or permissive fallback was added.
-- Extended the four-service Docker release harness through API Scan, durable intent, source-linked metadata identity choice, exact zero-mutation Preview, Execute admission, and resident Worker completion with one harmless COPY effect.
-- Tightened `StrategyTestRunner.run_path` so a supplied pinned `metadata_identity` is accepted only when the effective `MetadataPolicy.query_type` is `NONE` and `metadata_identity.recognition_type_id` equals the resolved RecognitionType.
-- Added focused pinned-identity tests for the allowed offline path, live-query-policy rejection, and mismatched RecognitionType rejection.
+- Added an independently reopened real Worker regression using the strict minimal
+  management-only bootstrap and the persisted pinned snapshot.
+- Corrupted the durable FileIndex source Storage authority after admission and verified the Worker
+  fails closed before OrganizerExecutor, preserving the source and producing a bounded fresh-Preview
+  recovery outcome with effect certainty `none`.
+- Preserved the existing valid management-bootstrap success regressions.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/python -m unittest tests.test_strategy_cli` — PASS, 23 tests.
-- `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_manual_operations_contract tests.test_queued_job_execution_boundary tests.test_processing_worker_readiness` — PASS, 87 tests.
-- `env -u NODE_ENV npm --prefix web ci` — PASS, 254 packages installed, 0 vulnerabilities.
-- `npm --prefix web run format:check` — PASS.
-- `npm --prefix web run typecheck` — PASS.
-- `npm --prefix web run lint` — PASS.
-- `npm --prefix web test -- --run` — PASS, 452 tests.
-- `npm --prefix web run build` — PASS.
-- `npm --prefix web run test:e2e` — PASS, 119 tests.
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution.ManualOrganizeExecutionTests.test_real_management_worker_rejects_cross_authority_source_before_mutation tests.test_manual_organize_execution.ManualOrganizeExecutionTests.test_real_management_worker_uses_persisted_pinned_snapshot_after_active_changes tests.test_manual_organize_execution.ManualOrganizeExecutionTests.test_worker_rebuilds_management_bootstrap_catalog_from_pinned_runtime` — PASS, 3 tests.
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_manual_operations_contract tests.test_queued_job_execution_boundary tests.test_processing_worker_readiness` — PASS, 88 tests.
+- `.venv/bin/ruff format tests/test_manual_organize_execution.py` — PASS.
 - `.venv/bin/ruff format --check .` — PASS.
 - `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m pip check` — PASS.
-- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
-- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
-- `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — PASS; isolated four-service topology built from clean checkout, managed activation, Worker restart, API Scan, source-linked `metadataIdentity` choice, exact Preview, execution admission, terminal execution/item success, source preservation, one COPY destination effect, canary/log checks and durable SQLite scan all passed.
-- `.venv/bin/python -m unittest discover -s tests -t .` from root worktree — FAIL, 1544 tests, 8 failures, 7 skips; the extra root-only failures reference local runtime/config state such as `HDD_2` and are not used as clean checkpoint evidence.
-- `.venv/bin/python -m unittest discover -s tests -t .` in isolated Task Base worktree `54f16d5f0e2b921307403e11e7895dffe7018b35` — FAIL / PRE-EXISTING / UNRELATED, 1539 tests, 2 failures, 7 skips: `tests.test_notifications.NotificationTests.test_configuration_validation_and_secret_resolution` and `tests.test_webhook_management.WebhookManagementTests.test_typed_lifecycle_create_edit_copy_enable_disable_delete`.
-- `.venv/bin/python -m unittest discover -s tests -t .` in isolated pre-fix HEAD worktree `1008c6255f101ad54286ae54def48b87a5903b5f` — FAIL / PRE-EXISTING / UNRELATED to this correction, 1541 tests, 2 failures, 7 skips with the same two failure identities/assertions as Task Base.
 - `git diff --check` — PASS.
+- Task Base reproduction using the strict minimal bootstrap regression in isolated worktree
+  `54f16d5f0e2b921307403e11e7895dffe7018b35` — PASS, contrary to B's described
+  `source_missing` reproduction; the original failure could not be reproduced with the checked
+  command and is recorded as an evidence discrepancy for B review.
 
 ### Decisions
 
-- Pinned `metadata_identity` is treated as already-reviewed offline evidence, not as a generic bypass for live Provider-backed metadata policies.
-- RecognitionType authority remains the resolved RecognitionType from recognition/manual selection; a pinned identity must carry the same `recognition_type_id` and cannot change A/B/C semantics.
-- Existing source-linked metadata evidence validation in the manual-intent boundary was preserved; this correction only closes the downstream StrategyTestRunner acceptance hole identified by B.
-- The release harness continues using generated credentials, temporary Local Storage, COPY, and isolated runtime/media state; no production service, credential or user media is used.
+- The negative case uses a strict minimal management bootstrap to exercise the same independent
+  Worker boundary as the deployed CLI, then reopens the durable SQLite state before execution.
+- The test asserts the bounded public error text rather than exposing the internal authority code;
+  the durable item/result still records pre-mutation failure with certainty `none` and fresh Preview
+  recovery.
 
 ### Remaining In-Slice Work
 
-- No additional work was identified inside this Task. Other Slice 33 work remains owned by B/A and is not planned here.
+- No additional work was identified inside this Task. Other Slice 33 work remains owned by B/A and
+  is not planned here.
 
 ### Risks / Deviations
 
-- The repository had an uncommitted `TASK.md` B-review update and untracked root `node_modules/` at start; the B-review content was preserved, the report was updated, and root `node_modules/` is not staged.
-- Full unittest remains FAIL in clean isolated comparisons because of two pre-existing webhook/secret-readiness failures present at Task Base and pre-fix HEAD; this correction did not add new clean-worktree Python failures.
-- The initial `python3 -m pytest tests/test_strategy_cli.py -q` and `.venv/bin/python -m pytest tests/test_strategy_cli.py -q` commands were UNAVAILABLE because pytest is not installed; equivalent focused tests were run with `unittest`.
+- The repository had an uncommitted B-review update in `TASK.md` and untracked root `node_modules/`
+  at start; both were preserved, and `node_modules/` is not staged.
+- The required Task-Base `source_missing` reproduction remains unresolved because the exact isolated
+  regression command passed at Task Base; B should decide whether a different historical harness or
+  boundary fixture is required.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 0a7fcb2adee0ef3e1f4b4beb8e4c9f2c7fffc875
+Head SHA: a60f8f4fd35f2c28d29796411ba279bcf402b6db
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 54f16d5f0e2b921307403e11e7895dffe7018b35..8de912bc18e4c88ef223565393ab0cff31be10f7
+Reviewed: 54f16d5f0e2b921307403e11e7895dffe7018b35..b952335b09b97b0ca322fc75fe0c9e8d710fe0fb
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The new pinned `metadata_identity` production boundary is not fail-closed to the semantics stated
-  in the Completion Report. Inspection of `StrategyTestRunner.run_path` shows that it validates only
-  provider/media type: it does not require the effective `MetadataPolicy.query_type` to be `NONE`
-  and does not require `metadata_identity.recognition_type_id` to equal the resolved RecognitionType.
-  B ran a read-only probe with the existing development strategy, forced RecognitionType A and a
-  TMDB/movie identity carrying RecognitionType C; the call succeeded and returned
-  `recognition=A, identity=C`. Constrain this input to the exact offline-policy and RecognitionType
-  authority promised by the Task (or remove the generic bypass), and add focused success plus
-  live-query-policy/mismatched-RecognitionType rejection tests. Preserve source-linked evidence
-  validation at the manual-intent boundary and rerun the affected T4 gates.
+- The Completion Report names `0a7fcb2adee0ef3e1f4b4beb8e4c9f2c7fffc875`, but the actual branch
+  Head is `b952335b09b97b0ca322fc75fe0c9e8d710fe0fb`; both commits have parent
+  `1008c6255f101ad54286ae54def48b87a5903b5f` and are sibling commits, so the reported checkpoint is
+  not an ancestor of the repository state being handed to B (`git rev-list --left-right --count
+  0a7fcb2...HEAD` returned `1 1`). Create an append-only descendant report checkpoint that names the
+  reachable implementation commit actually being submitted; do not amend or rewrite either
+  implementation history.
+- The Task requires source-missing/source-stale/**cross-authority** negative coverage at the real
+  management-bootstrap/pinned-snapshot Worker boundary, but the added Worker regressions are both
+  success cases and `rg -n 'source_cross_authority|cross_authority' tests` finds no such assertion.
+  Existing source missing/stale tests exercise other admission/execution compositions and do not
+  prove that reconstructed ResourceLibrary/Storage authority fails closed before mutation. Add a
+  focused independently reopened Worker negative test that corrupts or mismatches the persisted
+  source's ResourceLibrary/Storage authority relative to the pinned snapshot, then assert a durable
+  per-item pre-mutation failure, effect certainty `none`, no Storage effect and a fresh-Preview
+  recovery action. Also record the required Task-Base reproduction showing the original valid
+  management-bootstrap case fails with `source_missing` / `the reviewed source file is unavailable`.
