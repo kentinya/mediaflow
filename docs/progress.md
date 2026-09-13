@@ -22,6 +22,16 @@ CLI, Web UI and `/api/v1`, while retaining review resolution, metadata continuat
 Task retry/recovery paths. This maintenance does not reopen Slice 33 or create an active Task.
 The next legal action remains for A to select the next large Slice.
 
+A follow-up current-source execution alignment imports the `/opt/mediaflow` manual Organize
+correction while preserving the retired retry-surface cleanup on `main`: exact Previews persist the
+reviewed Storage ID, source path and Storage-derived source fingerprint, and the Worker executes by
+opening that Storage and calling `stat(source_path)` directly. If the source is missing or the live
+fingerprint differs from the Preview fingerprint, execution fails closed before mutation; routine
+FileIndex rescans no longer cause execution to re-resolve `file_id -> FileIndex -> path`. Conflicting
+legacy tests that asserted FileIndex-driven staleness were removed or converted to scanner-backed
+current-source fixtures. This maintenance does not reopen Slice 33 or create an active Task. The next
+legal action remains for A to select the next large Slice.
+
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.

@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
-from mediaflow.domain.file_lifecycle import OccurrenceState, occurrence_id_for, source_fingerprint
+from mediaflow.domain.file_lifecycle import OccurrenceState, source_fingerprint
 from mediaflow.domain.manual_execution import (
     MANUAL_EXECUTION_PERMISSION,
     MAX_MANUAL_EXECUTION_ITEMS,
@@ -116,7 +116,6 @@ class ManualOrganizeExecutionService:
         configuration_service=None,
         runtime_resolver=None,
         configuration=None,
-        runtime_catalog_factory=None,
         storages: Mapping[str, object] | None = None,
         storage_factory=None,
         executor: OrganizerExecutor | None = None,
@@ -143,7 +142,6 @@ class ManualOrganizeExecutionService:
             preview_service, "_runtime_resolver", None
         )
         self._configuration = configuration or getattr(preview_service, "_configuration", None)
-        self._runtime_catalog_factory = runtime_catalog_factory
         self._storages = dict(storages or getattr(preview_service, "_storages", {}) or {})
         self._storage_factory = storage_factory or getattr(
             preview_service, "_storage_factory", None
@@ -264,7 +262,6 @@ class ManualOrganizeExecutionService:
             allow_source_cleanup=allow_source_cleanup,
         )
         for item in selected:
-            self._current_source(intent, item)
             plan = self._plan_from_document(item.plan, item, runtime)
             self._validate_runtime_policy(plan, item, runtime)
             self._validate_current_storage(plan, item, preflight_authority, storages)
@@ -629,7 +626,6 @@ class ManualOrganizeExecutionService:
         ] = {}
         for item in selected:
             try:
-                record = self._current_source(intent, item)
                 self._validate_plan_authority(
                     item.plan,
                     authority.allow_overwrite,
@@ -644,7 +640,6 @@ class ManualOrganizeExecutionService:
             locks = self._plan_locks(plan)
             execution_item = self._execution_item(authority, item)
             prepared[item.item_id] = (execution_item, plan, locks)
-            del record
         plan_by_item = {item_id: value[1] for item_id, value in prepared.items()}
         execution_id = str(uuid4())
         task_id = str(uuid4())
@@ -924,14 +919,13 @@ class ManualOrganizeExecutionService:
         self._repository.update_manual_execution(execution)
         authority = self._load_execution_authority(execution)
         try:
-            selected, storages, intent, runtime = self._reconstruct_reviewed_scope(authority)
+            selected, storages, runtime = self._reconstruct_reviewed_scope(authority)
         except ManualExecutionError as error:
             return self._fail_pending_before_mutation(execution, error)
         return self._run_worker_items(
             execution,
             selected,
             storages=storages,
-            intent=intent,
             runtime=runtime,
             authority=authority,
             heartbeat=heartbeat,
@@ -990,47 +984,15 @@ class ManualOrganizeExecutionService:
         self._validate_preview_parent(
             preview, authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
-        intent = self._intent(authority.intent_id)
         selected = self._selected_authorized_items(preview, authority)
         runtime = self._load_runtime(
             authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
-        self._bind_runtime_catalog(runtime)
         storage_ids: set[str] = set()
         for item in selected:
             storage_ids.update(self._plan_storage_ids(item.plan))
         storages = self._create_storages(runtime, storage_ids)
-        return selected, storages, intent, runtime
-
-    def _bind_runtime_catalog(self, runtime) -> None:
-        """Bind source lookup to the exact runtime snapshot used by this execution.
-
-        A resident Worker may start from a management-only bootstrap, which intentionally
-        contains no workflow catalogs.  The catalog therefore has to be reconstructed only
-        after the admitted execution's pinned snapshot has been loaded and verified.
-        """
-
-        factory = self._runtime_catalog_factory
-        if not callable(factory):
-            return
-        try:
-            catalog = factory(runtime)
-        except Exception as error:
-            raise ManualExecutionError(
-                "the pinned source catalog is unavailable",
-                code="source_unavailable",
-                status=503,
-                next_action="inspect the pinned configuration and request a fresh Preview",
-            ) from error
-        if catalog is None:
-            raise ManualExecutionError(
-                "the pinned source catalog is unavailable",
-                code="source_unavailable",
-                status=503,
-                next_action="inspect the pinned configuration and request a fresh Preview",
-            )
-        self._intent_service._file_catalog = catalog
-        self._preview_service._file_catalog = catalog
+        return selected, storages, runtime
 
     def _fail_pending_before_mutation(
         self, execution: ManualExecution, error: ManualExecutionError
@@ -1088,7 +1050,6 @@ class ManualOrganizeExecutionService:
         selected: Sequence,
         *,
         storages,
-        intent,
         runtime,
         authority: ManualExecutionAuthorization,
         heartbeat: Callable[[], bool] | None,
@@ -1108,7 +1069,6 @@ class ManualOrganizeExecutionService:
                     next_action="inspect the durable execution; automatic replay is refused",
                 )
             try:
-                self._current_source(intent, preview_item)
                 self._validate_plan_authority(
                     preview_item.plan, authority.allow_overwrite, authority.allow_source_cleanup
                 )
@@ -1935,35 +1895,6 @@ class ManualOrganizeExecutionService:
             next_action="reload the authorization and inspect its durable state",
         ) from validation_error
 
-    def _current_source(self, intent, item):
-        resolver = getattr(self._intent_service, "_resolve_file", None)
-        if not callable(resolver):
-            raise ManualExecutionError(
-                "File catalog is unavailable", code="source_unavailable", status=503
-            )
-        try:
-            record = resolver(item.source.file_id)
-        except Exception as error:
-            raise ManualExecutionError(
-                "the reviewed source file is unavailable",
-                code="source_missing",
-                next_action="refresh Files and request a new manual intent",
-            ) from error
-        validator = getattr(self._intent_service, "_assert_source_unchanged", None)
-        try:
-            if callable(validator):
-                validator(item.source, record)
-            elif item.source.document() != type(item.source).from_file_record(record).document():
-                raise ValueError("source identity changed")
-        except Exception as error:
-            raise ManualExecutionError(
-                "the indexed source identity changed after Preview",
-                code="source_stale",
-                next_action="reload Files and request a fresh intent and Preview",
-                details={"itemId": item.item_id},
-            ) from error
-        return record
-
     def _load_runtime(self, snapshot_id, snapshot_digest):
         loader = getattr(self._preview_service, "_load_runtime", None)
         if callable(loader):
@@ -2324,7 +2255,7 @@ class ManualOrganizeExecutionService:
 
     def _validate_current_storage(self, plan, item, authority, storages):
         try:
-            source_storage = storages[plan.source_storage_id]
+            source_storage = storages[item.source.storage_id]
             target_storage = storages[plan.target_storage_id]
         except KeyError as error:
             raise ManualExecutionError(
@@ -2333,18 +2264,7 @@ class ManualOrganizeExecutionService:
         if plan.operation in {PlanOperation.NOOP, PlanOperation.SKIP}:
             return
         try:
-            if plan.operation not in {
-                PlanOperation.NOOP,
-                PlanOperation.SKIP,
-            } and not source_storage.exists(
-                plan.source_location.path if plan.source_location else plan.source
-            ):
-                raise ManualExecutionError(
-                    "reviewed source no longer exists",
-                    code="source_missing",
-                    next_action="refresh Files and request a fresh Preview",
-                )
-            self._assert_reviewed_source_unchanged(item, plan, source_storage)
+            self._assert_reviewed_source_unchanged(item, source_storage)
             required = _required_capabilities(plan)
             missing = []
             for capability in required:
@@ -2418,23 +2338,28 @@ class ManualOrganizeExecutionService:
             ) from error
 
     @staticmethod
-    def _assert_reviewed_source_unchanged(item, plan, source_storage) -> None:
-        """Fail closed when the live source no longer matches the reviewed file.
+    def _assert_reviewed_source_unchanged(item, source_storage) -> None:
+        """Validate the exact Preview source directly against live Storage.
 
-        A current-source Preview pins the exact Storage occurrence and fingerprint
-        observed when it was created.  The FileIndex record can still match even
-        after the underlying file is replaced before the next Scan, so execution
-        admission must re-derive the fingerprint from the live Storage entry and
-        compare it with the reviewed evidence.  Legacy reviewed intents that carry
-        no occurrence/fingerprint evidence are not promoted by this check.
+        The reviewed Storage ID, relative source path and Storage-derived
+        fingerprint are persisted in the Preview. Execution must not resolve the
+        source through FileIndex because routine rescans update that catalog
+        independently of the actual source occurrence.
         """
 
         source = item.source
-        reviewed_fingerprint = getattr(source, "fingerprint", None)
-        reviewed_occurrence = getattr(source, "occurrence_id", None)
-        if reviewed_fingerprint is None or reviewed_occurrence is None:
-            return
-        path = plan.source_location.path if plan.source_location else plan.source
+        reviewed_fingerprint = getattr(item, "source_fingerprint", None)
+        if (
+            not isinstance(reviewed_fingerprint, str)
+            or not reviewed_fingerprint
+            or source.fingerprint != reviewed_fingerprint
+        ):
+            raise ManualExecutionError(
+                "the reviewed source fingerprint evidence is unavailable or inconsistent",
+                code="source_unverified",
+                next_action="request a fresh Preview for the current source",
+            )
+        path = source.path
         try:
             entry = source_storage.stat(path)
         except StorageError as error:
@@ -2460,25 +2385,19 @@ class ManualOrganizeExecutionService:
             raise ManualExecutionError(
                 "reviewed source is no longer a file in Storage",
                 code="source_stale",
-                next_action="refresh FileIndex and request a fresh Preview",
+                next_action="request a fresh Preview for the current source",
                 details={"fileId": getattr(source, "file_id", None)},
             )
         observed = source_fingerprint(source.storage_id, source.resource_library_id, entry)
-        observed_occurrence = occurrence_id_for(
-            source.storage_id,
-            source.resource_library_id,
-            entry.path,
-            observed.value,
-        )
         if (
-            observed.state is not OccurrenceState.VERIFIED
+            entry.path != path
+            or observed.state is not OccurrenceState.VERIFIED
             or observed.value != reviewed_fingerprint
-            or observed_occurrence != reviewed_occurrence
         ):
             raise ManualExecutionError(
                 "reviewed source occurrence changed or was replaced after Preview",
                 code="source_stale",
-                next_action="refresh Files/FileIndex and request a fresh Preview",
+                next_action="request a fresh Preview for the current source",
                 details={"fileId": getattr(source, "file_id", None)},
             )
 

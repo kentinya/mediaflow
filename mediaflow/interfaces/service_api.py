@@ -1342,7 +1342,24 @@ class MediaFlowApi:
                     "service_unavailable",
                     "manual Scan service is unavailable",
                 )
-            limit, cursor = self._manual_scan_detail_page(environ)
+            try:
+                limit, cursor = self._manual_scan_detail_page(environ)
+            except ValueError:
+                # A Scan detail cursor is read-only continuation state. If a
+                # browser resumes with an expired or malformed cursor, safely
+                # restart this collection at page one while continuing to
+                # reject unsupported query fields and invalid page limits.
+                values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+                if (
+                    set(values).issubset({"itemLimit", "itemCursor"})
+                    and len(values.get("itemCursor", [])) == 1
+                ):
+                    limit = self._parse_bounded_limit(
+                        values.get("itemLimit", ["100"])[0], "manual Scan item"
+                    )
+                    cursor = None
+                else:
+                    raise
             after = cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None
             before = (
                 cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
@@ -1643,7 +1660,6 @@ class MediaFlowApi:
                 "expectedItemVersion",
                 "recognitionTypeId",
                 "metadata",
-                "metadataIdentity",
                 "namingPolicyId",
                 "classificationPolicyId",
                 "organizePolicyId",
@@ -1681,12 +1697,6 @@ class MediaFlowApi:
                 )
                 if name in document
             }
-            if "metadataIdentity" in document:
-                if "metadata" in document:
-                    raise ValueError(
-                        "operations organize choice accepts metadata or metadataIdentity, not both"
-                    )
-                patch["metadata"] = document["metadataIdentity"]
             if not patch:
                 raise ValueError("operations organize choice requires at least one choice field")
             try:

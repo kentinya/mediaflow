@@ -5,6 +5,7 @@ import json
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 
 from mediaflow.application.file_catalog import FileCatalogService
@@ -140,6 +141,36 @@ class ManualOrganizeIntentTests(unittest.TestCase):
                 with self.assertRaises(ManualIntentError) as raised:
                     service.create([f"file-{index}" for index in range(101)], actor="operator")
                 self.assertEqual(raised.exception.code, "selection_over_limit")
+
+    def test_rescan_observation_updates_do_not_stale_the_same_source_occurrence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                service = self._service(repository)
+                intent = service.create(["one"], actor="operator")
+                item = intent.items[0]
+                original = self.index.find_by_file_id("one")
+                self.assertIsNotNone(original)
+                refreshed = replace(
+                    original,
+                    last_seen_at=NOW + timedelta(minutes=5),
+                    updated_at=NOW + timedelta(minutes=5),
+                    stable_since=NOW + timedelta(minutes=1),
+                    last_scan_id="scan-after-intent",
+                )
+                self.index.batch_upsert((refreshed,))
+
+                updated = service.update_choice(
+                    intent.intent_id,
+                    item.item_id,
+                    {"recognitionTypeId": "A"},
+                    expected_version=1,
+                    expected_item_version=1,
+                    actor="operator",
+                )
+
+                self.assertEqual(updated.version, 2)
+                self.assertEqual(updated.items[0].version, 2)
+                self.assertEqual(updated.items[0].status, ManualIntentItemStatus.READY)
 
     def test_choice_validation_and_concurrency_preserve_prior_and_siblings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

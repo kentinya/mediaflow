@@ -33,6 +33,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from shutil import copyfile
 from types import SimpleNamespace
+from unittest.mock import patch
 from uuid import uuid4
 
 from mediaflow.application.automation import ProcessingWorkerService
@@ -826,6 +827,32 @@ class V2ManualOrganizeJourneyTests(_JourneyFixtureMixin, unittest.TestCase):
             self.assertIsNone(value.worker.run_next())
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+
+    def test_worker_uses_preview_storage_identity_without_file_index_relookup(self) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+
+            with (
+                patch.object(
+                    value.index,
+                    "find_by_file_id",
+                    side_effect=AssertionError("execution must not resolve through FileIndex"),
+                ),
+                patch.object(
+                    value.index,
+                    "list_by_resource_library",
+                    side_effect=AssertionError("execution must not list FileIndex"),
+                ),
+            ):
+                status, execution = self._execute(value, preview, intent)
+                self.assertEqual(202, status, execution)
+                completed = value.worker.run_next()
+
+            self.assertIsNotNone(completed)
+            self.assertEqual(ManualExecutionStatus.COMPLETED, completed.status)
+            self.assertIn("delete", value.source.mutations)
+            self.assertIn("write", value.target.mutations)
 
     def test_pre_mutation_source_change_fails_the_item_without_mutation(self) -> None:
         with self.journey() as value:
