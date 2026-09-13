@@ -133,10 +133,11 @@ The production artifact flow is one image, two stages, one Python runtime:
   exact directory in the image configuration. No Node executable, npm,
   `node_modules`, frontend source, Vite/dev server, SSR process, CDN runtime
   or second HTTP service exists in, or is required by, the runtime image.
-- The existing API service serves `/ui-v2/`, the `/ui-v2/dashboard` deep route
-  (unknown client routes fall back to the entry document) and the referenced
-  hashed assets from that directory through the Python static-serving boundary,
-  with deterministic bytes/content types and the existing
+- The existing API service serves `/ui-v2/`, the current Dashboard, Library and
+  Operations route families, the Review & Recovery and Configuration migration
+  landings (unknown client routes fall back to the entry document), and the
+  referenced hashed assets from that directory through the Python static-serving
+  boundary, with deterministic bytes/content types and the existing
   `Cache-Control: no-store`, CSP, `X-Content-Type-Options: nosniff`,
   `Referrer-Policy` and `Permissions-Policy` headers. Requests are GET-only;
   unknown, traversal-like or missing assets fail closed with 404 without
@@ -288,7 +289,7 @@ must be empty and sidecar-free and the command requires
 until the restored authority is independently verified.
 
 The isolated acceptance harness builds a local old-schema image (runtime marker
-32) and the current candidate image (runtime marker 33), seeds representative
+32) and the current candidate image (runtime marker 34), seeds representative
 durable state, verifies a backup, exercises preflight/rehearsal, injects a
 migration failure, probes restore rejection and performs a successful candidate
 upgrade:

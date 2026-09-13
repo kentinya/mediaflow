@@ -7,7 +7,9 @@ release explicitly.
 
 `v1.0.0` is the released V1 baseline at `9562b0c9b09b9b2ac9f34b2187c86469a9ab1782`, maintained on
 `release/v1`. The `main` branch is the V2 development trunk and carries package version
-`2.0.0.dev0`; V2 work is not a V1 release or a frontend implementation claim.
+`2.0.0.dev0`. Its V2 frontend implementation is active and substantial across the current
+Dashboard, Library and Operations journeys, but this development line is not a V1 release and has
+not been released as V2.
 
 ## V1 Docker release
 
@@ -64,10 +66,12 @@ test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"
 git diff --check
 ```
 
-The current runtime and configuration-management compatibility markers are implementation facts,
-not release labels: runtime SQLite schema `33`, configuration-management schema `10`, and managed
-configuration document schema `1`. A release claim must be tied to the actual migration and upgrade
-evidence for the target revision, not to an old migration number.
+Compatibility markers must be tied to the release line rather than presented as one ambiguous
+current value. The released V1 `v1.0.0` / `release/v1` line retains runtime SQLite schema `33`. The
+unreleased `main` / V2 development line currently uses runtime SQLite schema `34`,
+configuration-management schema `10`, and managed configuration document schema `1`. A release
+claim must be tied to the actual migration and upgrade evidence for the target revision, not to an
+old migration number.
 
 Build and validate the exact installable artifact in a new isolated environment:
 
