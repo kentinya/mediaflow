@@ -41,6 +41,7 @@ from mediaflow.domain.metadata import (
     MediaQueryType,
     MediaType,
     MetadataIdentificationResult,
+    MetadataIdentificationStatus,
     MetadataPolicy,
     ProviderCapabilities,
 )
@@ -391,6 +392,7 @@ class StrategyTestRunner:
         storage_id: str = "strategy-test",
         metadata_selection: MetadataSelection | None = None,
         metadata_correction: MetadataCorrectionSelection | None = None,
+        metadata_identity: MediaIdentity | None = None,
         classification_selection: ClassificationSelection | None = None,
         recognition_selection: RecognitionSelection | None = None,
         forced_recognition_type_id: str | None = None,
@@ -481,6 +483,27 @@ class StrategyTestRunner:
             raise StrategyConfigurationError("metadata selection requires live metadata mode")
         if metadata_selection is not None and metadata_correction is not None:
             raise StrategyConfigurationError("metadata selection and correction cannot be combined")
+        if metadata_identity is not None:
+            if live_metadata:
+                raise StrategyConfigurationError(
+                    "pinned metadata identity cannot be combined with live metadata mode"
+                )
+            if resolved is None or metadata_policy is None:
+                raise StrategyConfigurationError(
+                    "pinned metadata identity requires a resolved MetadataPolicy"
+                )
+            if (
+                metadata_identity.provider != metadata_policy.provider_id
+                or metadata_identity.media_type is not metadata_policy.media_type
+            ):
+                raise StrategyConfigurationError(
+                    "pinned metadata identity does not match the effective MetadataPolicy"
+                )
+            metadata = MetadataIdentificationResult(
+                MetadataIdentificationStatus.MATCHED,
+                recognition.recognition_type,
+                identity=metadata_identity,
+            )
         if live_metadata and resolved is not None:
             if self._providers is None:
                 raise StrategyConfigurationError(

@@ -1648,6 +1648,7 @@ class MediaFlowApi:
                 "expectedItemVersion",
                 "recognitionTypeId",
                 "metadata",
+                "metadataIdentity",
                 "namingPolicyId",
                 "classificationPolicyId",
                 "organizePolicyId",
@@ -1685,6 +1686,12 @@ class MediaFlowApi:
                 )
                 if name in document
             }
+            if "metadataIdentity" in document:
+                if "metadata" in document:
+                    raise ValueError(
+                        "operations organize choice accepts metadata or metadataIdentity, not both"
+                    )
+                patch["metadata"] = document["metadataIdentity"]
             if not patch:
                 raise ValueError("operations organize choice requires at least one choice field")
             try:
