@@ -36,6 +36,14 @@ describe("normalizeManualPreview", () => {
     expect(model.scope?.scopeKind).toBe("file");
     expect(model.items).toHaveLength(1);
     expect(model.items[0]?.title).toBe("One");
+    expect(model.items[0]?.recognitionType).toBe("A");
+    expect(model.items[0]?.operation).toBe("MOVE");
+    expect(model.items[0]?.destructiveImplications).toEqual({
+      overwriteRequired: false,
+      sourceCleanupRequired: false,
+      statement:
+        "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+    });
     expect(model.items[0]?.targetPath).toBe("Anime/One (2001)/One (2001).mkv");
     expect(model.items[0]?.policies).toEqual({
       recognitionTypePolicyId: "type-A",
@@ -99,6 +107,21 @@ describe("normalizeManualPreview", () => {
         previewPayload({ executionState: "organization_authorized" }),
       ),
     ).toThrow();
+  });
+
+  it("rejects an unknown operation instead of carrying an open string", () => {
+    const payload = previewPayload();
+    (firstItem(payload)["plan"] as Json)["operation"] = "DELETE_ALL";
+    expect(() => normalizeManualPreview(payload)).toThrow();
+  });
+
+  it("rejects coerced destructive implication flags", () => {
+    const payload = previewPayload();
+    const implications = (firstItem(payload)["plan"] as Json)[
+      "destructiveImplications"
+    ] as Json;
+    implications["overwriteRequired"] = "true";
+    expect(() => normalizeManualPreview(payload)).toThrow();
   });
 
   it("keeps a legacy preview without a source scope visible", () => {
@@ -198,11 +221,30 @@ describe("normalizeManualPreviewItem", () => {
   it("normalizes one real API preview item", () => {
     const item = normalizeManualPreviewItem(firstItem(previewPayload()));
     expect(item.recognitionType).toBe("A");
+    expect(item.operation).toBe("MOVE");
+    expect(item.destructiveImplications?.overwriteRequired).toBe(false);
+    expect(item.destructiveImplications?.sourceCleanupRequired).toBe(false);
     expect(item.title).toBe("One");
     expect(item.provider).toBe("tmdb");
     expect(item.providerId).toBe("129");
     expect(item.organizePolicy).toBe("A");
     expect(item.failure).toBeNull();
+  });
+
+  it("keeps RecognitionType C separate from A naming and classification policies", () => {
+    const item = firstItem(previewPayload());
+    const plan = item["plan"] as Json;
+    const policies = plan["policies"] as Json;
+    plan["recognitionType"] = "C";
+    policies["recognitionTypePolicyId"] = "type-C";
+    policies["namingPolicyId"] = "A";
+    policies["classificationPolicyId"] = "A";
+
+    const model = normalizeManualPreviewItem(item);
+    expect(model.recognitionType).toBe("C");
+    expect(model.policies?.recognitionTypePolicyId).toBe("type-C");
+    expect(model.policies?.namingPolicyId).toBe("A");
+    expect(model.policies?.classificationPolicyId).toBe("A");
   });
 
   it("keeps an item without a plan visible without inventing findings", () => {

@@ -742,6 +742,48 @@ export function normalizeOrganizePreview(
     // contradictory candidate list is malformed evidence, never a selection.
     return fail("executionCandidateItemIds");
   }
+  const itemsById = new Map<string, (typeof preview.items)[number]>();
+  for (const item of preview.items) {
+    if (itemsById.has(item.itemId)) {
+      // An item identity may resolve to one and only one bounded finding. A
+      // duplicate would make the backend's candidate list ambiguous.
+      return fail("items.itemId");
+    }
+    itemsById.set(item.itemId, item);
+  }
+  for (const itemId of executionCandidateItemIds) {
+    const item = itemsById.get(itemId);
+    if (
+      item === undefined ||
+      !preview.selection.selectedItemIds.includes(itemId) ||
+      !item.current ||
+      item.truncated ||
+      item.status !== "previewed" ||
+      item.zeroMutation !== true ||
+      item.executionState !== "ready_for_explicit_authorization" ||
+      item.recognitionType === null ||
+      item.operation === null ||
+      item.destructiveImplications === null
+    ) {
+      // The aggregate must never advertise an executable item whose current
+      // bounded plan is missing identity or destructive safety facts. A
+      // blocked/historical no-plan item remains valid evidence only when it is
+      // not present in this execution candidate list.
+      return fail("executionCandidateItemIds");
+    }
+  }
+  const executeAction = normalizeOrganizeAction(
+    actions["execute"],
+    "actions.execute",
+    "preview-execute",
+    // The Execute route must name this exact Preview, never another object.
+    preview.previewId,
+  );
+  if (executionCandidateItemIds.length === 0 && executeAction.available) {
+    // An offered mutating control without an exact item set is contradictory
+    // evidence, not an empty selection the UI may guess around.
+    return fail("actions.execute");
+  }
   return {
     ...preview,
     executionCandidateItemIds,
@@ -752,13 +794,7 @@ export function normalizeOrganizePreview(
       durableState: optionalText(workerSource, "durableState"),
       nextAction: optionalText(workerSource, "nextAction"),
     },
-    executeAction: normalizeOrganizeAction(
-      actions["execute"],
-      "actions.execute",
-      "preview-execute",
-      // The Execute route must name this exact Preview, never another object.
-      preview.previewId,
-    ),
+    executeAction,
   };
 }
 

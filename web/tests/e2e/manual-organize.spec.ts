@@ -25,6 +25,7 @@ const VIEWER_TOKEN = "e2e-viewer-token";
 const READ_ONLY_TOKEN = "e2e-readonly-token";
 const INTENT_ID = "organize-intent-e2e-001";
 const PREVIEW_ID = "organize-preview-e2e-001";
+const DESTRUCTIVE_PREVIEW_ID = "organize-preview-destructive-e2e-001";
 const HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
 const SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
@@ -150,10 +151,63 @@ test.describe("manual organize journey", () => {
       confirmation: true,
       expectedIntentVersion: 1,
       itemIds: ["organize-item-e2e-001"],
+      allowOverwrite: false,
+      allowSourceCleanup: false,
     });
     expect(JSON.stringify(admissions)).not.toMatch(
       /authorization|token|digest|fingerprint|snapshot/i,
     );
+  });
+
+  test("requires separate destructive confirmations for the exact Preview selection", async ({
+    page,
+  }) => {
+    await page.goto(
+      `/ui-v2/operations/organize/preview/${DESTRUCTIVE_PREVIEW_ID}`,
+    );
+    await connect(page, VIEWER_TOKEN);
+
+    await expect(
+      page.getByRole("heading", { name: "Exact manual organize Preview" }),
+    ).toBeVisible();
+    await expect(page.getByText("COPY")).toBeVisible();
+    await expect(
+      page.getByText(
+        /this exact plan would replace an existing destination file and delete the emptied source directories/,
+      ),
+    ).toHaveCount(2);
+    const execute = page.getByRole("button", {
+      name: "Execute selected exact items",
+    });
+    await expect(execute).toBeDisabled();
+
+    const overwrite = page.getByRole("checkbox", {
+      name: /replace an existing destination file/,
+    });
+    const cleanup = page.getByRole("checkbox", {
+      name: /delete emptied source directories/,
+    });
+    await overwrite.check();
+    await expect(execute).toBeDisabled();
+    await cleanup.check();
+    await expect(execute).toBeEnabled();
+    await execute.click();
+    await expect(
+      page.getByRole("heading", { name: "Manual organize execution" }),
+    ).toBeVisible();
+
+    const evidence = await manualEvidence(page);
+    const admissions = evidence.filter(
+      (entry) => entry.objectType === "organize_execute",
+    );
+    expect(admissions).toHaveLength(1);
+    expect(admissions[0]?.body).toMatchObject({
+      confirmation: true,
+      expectedIntentVersion: 1,
+      itemIds: ["organize-item-e2e-001"],
+      allowOverwrite: true,
+      allowSourceCleanup: true,
+    });
   });
 
   test("keeps the durable outcome refresh-safe with no authority in the URL", async ({

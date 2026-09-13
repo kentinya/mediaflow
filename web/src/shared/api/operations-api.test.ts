@@ -5,6 +5,7 @@ import {
   fetchTaskList,
   jobListUrl,
   mutateLifecycle,
+  executeOrganizePreview,
   taskDetailUrl,
   taskListUrl,
 } from "./api-client";
@@ -255,5 +256,37 @@ describe("operations reads", () => {
       failure: expect.objectContaining({ kind: "not_found" }),
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("manual Organize execution request", () => {
+  it("submits explicit, selection-scoped destructive booleans exactly once", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({ error: { code: "authorization_required" } }, 409),
+    );
+
+    const result = await executeOrganizePreview("token", {
+      previewId: "preview-1",
+      itemIds: ["item-1"],
+      expectedIntentVersion: 4,
+      allowOverwrite: false,
+      allowSourceCleanup: true,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: "authorization_required",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/v1/operations/organize/previews/preview-1/execute");
+    expect(JSON.parse(String(init.body))).toEqual({
+      confirmation: true,
+      itemIds: ["item-1"],
+      expectedIntentVersion: 4,
+      allowOverwrite: false,
+      allowSourceCleanup: true,
+    });
   });
 });

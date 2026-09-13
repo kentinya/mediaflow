@@ -141,6 +141,13 @@ describe("real API Preview documents", () => {
       expect(item?.sourcePath).toBe("One.2001.mkv");
       expect(item?.sourceFilename).toBe("One.2001.mkv");
       expect(item?.recognitionType).toBe("A");
+      expect(item?.operation).toBe("MOVE");
+      expect(item?.destructiveImplications).toEqual({
+        overwriteRequired: false,
+        sourceCleanupRequired: false,
+        statement:
+          "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+      });
       expect(item?.title).toBe("One");
       expect(item?.provider).toBe("tmdb");
       expect(item?.providerId).toBe("129");
