@@ -7,9 +7,9 @@ This is the A-owned Slice Contract for the next independently reviewed V2 capabi
 Slice ID: 33
 Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PASS / CLOSED
 Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
-Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
+Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
 Historical Closure Checkpoint: dcc2f34c38975662ddbc78e160bbbc2d423ae702
 ~~~
 
@@ -499,17 +499,158 @@ Documentation Reconciliation Needed:
 Decision: SLICE READY FOR A REVIEW
 ~~~
 
+## Closure Packet — 2026-09-13 Post-closure P1 correction
+
+~~~
+Slice: 33 — Operations Workspace
+Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
+Head SHA: 437135dbe36e63d733eb994cda8edb23fcf671bc
+
+Required Outcomes:
+- RO-1 — COMPLETE.
+- RO-2 — COMPLETE.
+- RO-3 — COMPLETE.
+- RO-4 — COMPLETE: the typed V2 Manual Organize Preview now preserves and renders
+  RecognitionType, operation and destructive implications, validates exact executable candidates,
+  and gates overwrite/source-cleanup intent on the exact current selection.
+- RO-5 — COMPLETE.
+- RO-6 — COMPLETE.
+- RO-7 — COMPLETE.
+- RO-8 — COMPLETE.
+
+Required Surfaces:
+- Operations route and Dashboard surface — COMPLETE.
+- Task, Job and Worker surface — COMPLETE.
+- Manual Scan/Preview surface — COMPLETE.
+- Manual Organize surface — COMPLETE, including the corrected exact Preview safety projection and
+  separate destructive confirmations.
+- Automation and schedule surface — COMPLETE.
+- Notification surface — COMPLETE.
+- State, auth and cross-surface surface — COMPLETE.
+- Application/API authority and test surface — COMPLETE for implementation and proof.
+
+Implemented:
+- Restored the bounded frontend Preview model for operation and structured destructive implications
+  beside RecognitionType, with strict closed-vocabulary/boolean/text normalization.
+- Made malformed, missing, duplicated or contradictory execution-candidate safety evidence fail
+  closed before the Web surface can offer Execute, while preserving legitimate blocked/no-plan
+  evidence as visible non-executable state.
+- Removed the production raw-plan type escape, rendered exact plan facts from the typed model,
+  bound destructive confirmations to the exact selected item set, and submitted both effect
+  booleans explicitly.
+- Corrected component and built-artifact fixtures to bind durable selections to their exact
+  execution candidates.
+
+Tasks completed:
+- Task 33.1 — Operations command center and durable work control — PASS.
+- Task 33.2 — Bounded manual Scan and zero-mutation Preview — PASS.
+- Task 33.3 — Web-native exact manual Organize admission and outcome journey — PASS.
+- Task 33.4 — V2 scheduled Automation definition and occurrence journey — PASS.
+- Task 33.5 — V2 Notification definition, test, activation and delivery recovery journey — PASS.
+- Task 33.6 — Restore the typed Manual Organize Preview safety projection — PASS at
+  `437135dbe36e63d733eb994cda8edb23fcf671bc`.
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS before closure edits.
+- `env -u NODE_ENV npm --prefix web ci` — PASS; 254 packages installed, 255 audited, 0
+  vulnerabilities.
+- Frontend format check, TypeScript typecheck and ESLint — PASS.
+- Focused frontend regression — PASS, 6 files and 75 tests.
+- Full Vitest/React Testing Library regression — PASS, 34 files and 452 tests.
+- Production Vite build — PASS; existing non-blocking large-chunk advisory, largest chunk 706.88 kB.
+- Full Playwright built-artifact regression — PASS, 119/119.
+- Focused Python Operations/Preview/Organize safety suites — PASS, 73/73.
+- `.venv/bin/ruff format --check .` and `.venv/bin/ruff check .` — PASS; 309 files formatted and
+  all checks passed. System `ruff` was unavailable.
+- Python and `.venv` compileall — PASS. `.venv/bin/python -m pip check` — PASS; system `pip` was
+  unavailable.
+- `.venv/bin/mediaflow` example and phase13.2 configuration validation — PASS; system `mediaflow`
+  executable was unavailable.
+- FFprobe/FFmpeg dependency scan — PASS.
+- Full Python unittest discovery — root interpreter: 1539 run, 6 failures, 1 error, 7 skips;
+  `.venv`: 1539 run, 6 failures, 7 skips. The failures are pre-existing ignored private runtime/
+  configuration expectations; the root error is the system environment's missing optional OpenList
+  `httpx`. No backend/Python production code changed in this correction.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available.
+- `git diff --check` — PASS for the implementation and review changes.
+
+Safety Evidence:
+- The correction diff contains only the typed frontend Preview boundary, Manual Organize page/API
+  behavior, related tests and bounded fake-server fixture updates; no backend mutation path,
+  OrganizerExecutor, Storage, persisted schema, credential, `config/alist.json` or A-owned
+  Contract surface was changed.
+- Execution candidates require one exact current selected item with complete typed RecognitionType,
+  operation and destructive safety facts; malformed evidence exposes no Execute control.
+- RecognitionType C remains C independently from NamingPolicy A and ClassificationPolicy A.
+- Preview remains zero-mutation, execution remains server-authoritative and one-shot, overwrite and
+  source cleanup remain separately explicit, and no automatic mutation retry or silent fallback was
+  introduced.
+- Focused Python safety tests, browser request evidence, full E2E and Docker release-security smoke
+  preserve RBAC, redaction, exact binding, OrganizerExecutor-only mutation, V1 coexistence and
+  memory-only authority handling.
+
+Known Non-blocking Issues:
+- P2: existing root-CWD private runtime/configuration state causes six full-unittest failures;
+  those failures are reproduced independently of this frontend correction and were not removed.
+- P2: the system interpreter lacks optional OpenList `httpx`; the equivalent `.venv` gates and all
+  focused safety tests pass.
+- P3: existing sqlite ResourceWarnings, jsdom `window.scrollTo()` diagnostics, 7 environment-gated
+  Python skips and the Vite large-chunk advisory remain.
+
+Explicitly Deferred:
+- Unchanged; maintain the Contract's Explicitly Deferred list above. No deferred capability was
+  pulled into this correction.
+
+Documentation Reconciliation Needed:
+- A should reconcile README, `docs/v2-requirements.md`, `docs/progress.md`, `docs/roadmap.md`,
+  `docs/product-experience.md` and `docs/architecture.md` to record the post-closure correction
+  and current Operations Workspace facts, while preserving the Slice 34–36 boundaries. A should
+  decide whether the canonical Chinese specification needs the same factual program-status update
+  without changing stable product requirements.
+
+Decision: SLICE READY FOR A REVIEW
+~~~
+
 ## Review State
 
 ~~~
-Slice Status: ACTIVE
-Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
+Slice Status: PASS / CLOSED
+Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
 Historical Closure: PASS / CLOSED at dcc2f34c38975662ddbc78e160bbbc2d423ae702
 P0/P1 Defects:
-- P1: V2 Manual Organize Preview drops/does not consume bounded operation and destructive
-  implications and bypasses the typed RecognitionType projection, breaking exact Preview truth and
-  separate Web destructive confirmation. Backend admission remains independently fail-closed.
-Next Action: B MAY PLAN ONE FOCUSED CORRECTION TASK
+- None after Task 33.6 correction.
+Next Action: A SELECTS THE NEXT LARGE SLICE
+~~~
+
+## A Final Review — 2026-09-13 Post-closure correction
+
+~~~
+Reviewed Range: 827c36b410687e41b1da53ba6475d8c03a47dbfd..437135dbe36e63d733eb994cda8edb23fcf671bc
+Decision: PASS
+P0/P1 Blockers:
+- None.
+
+Closure Reconciliation:
+- All RO-1 through RO-8 and all eight Required Surfaces are complete. The post-closure P1
+  correction restores the typed Manual Organize Preview projection, truthful RecognitionType/
+  operation/destructive evidence, exact candidate validation and separate destructive confirmations.
+- The complete daily Operations journey remains Web-native: Dashboard entry, durable Task/Job
+  observation, bounded Scan/Preview, exact manual Organize admission/outcomes, Automation operation
+  and Notification delivery operation all use shared Python `/api/v1/*` authority.
+- The reviewed range preserves zero-mutation analysis, OrganizerExecutor-only Storage mutation,
+  backend RBAC/audit/limits/fencing, immutable snapshot and item binding, RecognitionType C
+  preservation, explicit overwrite/source-cleanup intent, no silent fallback and no uncertain
+  mutation replay.
+- Final validation evidence is recorded in the post-closure Closure Packet. The six private
+  root-CWD unittest failures, one system-interpreter OpenList dependency error, warnings, skips and
+  bundle advisory are non-blocking P2/P3 issues and do not arise from this correction.
+- Documentation facts are reconciled in `docs/roadmap.md`, `docs/progress.md`,
+  `docs/v2-requirements.md`, `docs/architecture.md` and the canonical product specification.
+  `docs/product-experience.md` already described the delivered Operations journey accurately.
+- Slice 34 Review & Recovery, Slice 35 Configuration Administration, Slice 36 parity/accessibility/
+  cutover and all other Contract deferrals remain deferred; no hidden dependency was introduced.
+
+Reviewed: 2026-09-13
 ~~~
 
 ## Historical A Final Review — 2026-09-13
