@@ -79,6 +79,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
     load_management_bootstrap,
+    load_minimal_management_bootstrap,
     load_runtime_configuration,
     with_managed_snapshot,
 )
@@ -1122,6 +1123,166 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 list(fixture.target_root.rglob("One (2001).mkv")),
                 list(fixture.target_root.rglob("*")),
             )
+        finally:
+            if bootstrap_path is not None:
+                bootstrap_path.unlink(missing_ok=True)
+            fixture.cleanup()
+
+    def test_real_management_worker_rejects_cross_authority_source_before_mutation(self):
+        fixture = self._fixture(operation=OrganizeOperationType.COPY)
+        bootstrap_path = None
+        try:
+            document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+            document["persistence"]["databasePath"] = str(fixture.database)
+            document["historyPath"] = str(fixture.database.with_suffix(".history.jsonl"))
+            document["storages"] = [
+                {
+                    "id": "source",
+                    "name": "Source",
+                    "type": "local",
+                    "rootPath": str(fixture.source_root),
+                },
+                {
+                    "id": "target",
+                    "name": "Target",
+                    "type": "local",
+                    "rootPath": str(fixture.target_root),
+                },
+            ]
+            document["resourceLibraries"] = [
+                {
+                    "id": "library",
+                    "name": "Library",
+                    "storageId": "source",
+                    "storagePath": "",
+                    "enabled": True,
+                    "extensions": ["mkv"],
+                }
+            ]
+            document["mediaLibraries"] = [
+                {
+                    "id": "movies",
+                    "name": "Movies",
+                    "storageId": "target",
+                    "rootPath": "Movies",
+                },
+                {
+                    "id": "tv",
+                    "name": "TV Shows",
+                    "storageId": "target",
+                    "rootPath": "TV Shows",
+                },
+            ]
+            bootstrap_document = {
+                "version": 1,
+                "persistence": {"databasePath": str(fixture.database)},
+                "api": {"principals": []},
+            }
+            bootstrap_path = fixture.database.with_suffix(".bootstrap.json")
+            bootstrap_path.write_text(json.dumps(bootstrap_document), encoding="utf-8")
+            runtime = load_runtime_configuration(document)
+
+            with (
+                SQLiteConfigurationRepository(fixture.database) as configuration_repository,
+                SQLiteFileIndexRepository(fixture.database) as file_index,
+                SQLiteTaskRepository(fixture.database) as repository,
+            ):
+                configuration_service = ManagedConfigurationService(configuration_repository)
+                draft = configuration_service.import_draft(document, actor="operator")
+                validated = configuration_service.validate(draft.revision_id, actor="operator")
+                active = configuration_service.activate(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    actor="operator",
+                )
+                runtime = with_managed_snapshot(
+                    runtime,
+                    snapshot_id=active.revision_id,
+                    digest=active.digest,
+                    version=active.version,
+                )
+                source = LocalStorage("source", fixture.source_root)
+                scan = StorageScanner(
+                    {"source": source},
+                    file_index,
+                    clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+                ).scan(runtime.resource_libraries[0])
+                self.assertEqual("completed", scan.status.value)
+                record = file_index.find_by_path("source", "library", "One.2001.mkv")
+                self.assertIsNotNone(record)
+
+                catalog = FileCatalogService(
+                    file_index, ("library",), ("source", "target"), task_repository=repository
+                )
+                intents = ManualOrganizeIntentService(
+                    repository,
+                    catalog,
+                    configuration_service=configuration_service,
+                )
+                storages = {
+                    "source": source,
+                    "target": LocalStorage("target", fixture.target_root),
+                }
+                previews = ManualOrganizePreviewService(
+                    repository,
+                    intents,
+                    catalog,
+                    configuration=runtime,
+                    file_index=file_index,
+                    providers=MetadataProviderRegistry((fixture.provider,)),
+                    storages=storages,
+                )
+                execution = ManualOrganizeExecutionService(
+                    repository,
+                    previews,
+                    intents,
+                    storages=storages,
+                )
+                preview = previews.create_current(
+                    scope_kind="file",
+                    actor="operator",
+                    file_id=record.file_id,
+                    resource_library_id=record.resource_library_id,
+                    occurrence_id=record.occurrence_id,
+                    fingerprint=record.fingerprint,
+                )
+                authority = self._authorize(execution, preview)
+                admitted = execution.admit(
+                    authority.authorization_id,
+                    actor="operator",
+                    confirmation=True,
+                )
+                self.assertEqual("admitted", admitted.status.value)
+
+                # Reopen the Worker against durable state after the reviewed
+                # source is rebound to a Storage outside the pinned authority.
+                file_index._connection.execute(
+                    "UPDATE file_index SET storage_id=? WHERE file_id=?",
+                    ("untrusted-source", record.file_id),
+                )
+                file_index._connection.commit()
+
+            management_bootstrap = load_minimal_management_bootstrap(bootstrap_document)
+            with SQLiteTaskRepository(fixture.database) as repository:
+                with _manual_organize_worker_context(
+                    management_bootstrap, str(bootstrap_path), repository
+                ) as worker:
+                    completed = worker.run_next()
+
+            self.assertIsNotNone(completed)
+            self.assertEqual("failed", completed.status.value)
+            self.assertEqual("failed", completed.items[0].status.value)
+            self.assertEqual(
+                "the indexed source identity changed after Preview", completed.items[0].error
+            )
+            self.assertEqual("none", completed.items[0].effect_certainty)
+            self.assertIn("fresh Preview", completed.items[0].next_action)
+            self.assertTrue(Path(fixture.source_root, "One.2001.mkv").exists())
+            self.assertFalse(list(fixture.target_root.rglob("One (2001).mkv")))
+            with SQLiteTaskRepository(fixture.database) as repository:
+                result = repository.list_results(completed.task_id)[0]
+                self.assertEqual("FAILED", result.status)
+                self.assertEqual("none", result.effect_certainty)
         finally:
             if bootstrap_path is not None:
                 bootstrap_path.unlink(missing_ok=True)
