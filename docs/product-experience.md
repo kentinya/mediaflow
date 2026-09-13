@@ -215,14 +215,14 @@ or mutate Storage.
 - **Visible state:** bounded FileIndex fields, source/library identity, scan and stability state,
   parser/recognition/metadata evidence, policies, target, latest Results, related reviews/conflicts,
   checkpoint and available actions.
-- **Action:** search/filter, open detail, request re-recognition/re-match/re-plan, resolve a review,
-  start manual Preview or enter a recovery action.
+- **Action:** search/filter, open detail, resolve a review, start manual Preview or enter a recovery
+  action. Retired direct re-recognition, re-match and re-plan requests are not exposed.
 - **Success:** the operator can see why the file was classified, what happened and what can be done
   without reading SQLite or internal logs.
 - **Failure:** missing, stale or unavailable evidence is shown as unavailable; the page does not
   invent a decision or silently rebuild a plan.
-- **Recovery:** follow the stated review, replan, Preview or checkpoint action. Reads never mutate
-  Storage or invoke a Provider unless the explicit live action requires it.
+- **Recovery:** follow the stated review, Preview, checkpoint or recovery-continuation action. Reads
+  never mutate Storage or invoke a Provider unless the explicit live action requires it.
 
 ## Manual organize
 

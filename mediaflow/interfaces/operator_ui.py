@@ -2293,30 +2293,6 @@ APP_JS = b"""(() => {
     if (previousCursor) target.append(actionButton(`Previous ${noun}`, previous));
     if (nextCursor) target.append(actionButton(`Next ${noun}`, next));
   }
-  function renderFileReMatchForm(id) {
-    const query = document.createElement('input'); query.setAttribute('aria-label', 'Corrected query');
-    const media = document.createElement('select'); media.setAttribute('aria-label', 'Media type');
-    ['movie', 'tv'].forEach(value => { const option = text('option', value); option.value = value;
-      media.append(option); });
-    const year = document.createElement('input'); year.type = 'number'; year.min = '1870';
-    year.max = '2100'; year.setAttribute('aria-label', 'Corrected year');
-    const providerId = document.createElement('input');
-    providerId.setAttribute('aria-label', 'Direct provider ID');
-    const controls = text('div', '', 'choices'); controls.append(query, media, year, providerId,
-      actionButton('Request re-match', async () => {
-        const payload = {mediaType: media.value};
-        if (query.value.trim()) payload.query = query.value.trim();
-        if (year.value) payload.year = Number(year.value);
-        if (providerId.value.trim()) payload.providerId = providerId.value.trim();
-        try {
-          await api(`/api/v1/files/${encodeURIComponent(id)}/re-match`,
-            {method: 'POST', body: JSON.stringify(payload)});
-          detail.hidden = true; message('Metadata re-match requested. Task was not resumed.');
-          await load();
-        } catch (error) { message(errorText(error), true); }
-      }));
-    detailContent.append(text('h3', 'Metadata re-match'), controls);
-  }
   function renderMetadataContinuation(id, review) {
     const current = review.continuation;
     const section = text('div', '', 'choices');
@@ -4543,19 +4519,6 @@ APP_JS = b"""(() => {
         if (data.latestResult && data.latestResult.taskId) {
           detailContent.append(actionButton('Open linked task',
             () => showTask(data.latestResult.taskId)));
-        }
-        if (data.latestResult && ['failed', 'partial'].includes(data.latestResult.status)) {
-          detailContent.append(actionButton('Request re-plan',
-            () => resolve(`/api/v1/files/${encodeURIComponent(id)}/re-plan`, {})));
-        }
-        if (Array.isArray(data.relatedReviews) && data.relatedReviews.some(item =>
-          item.kind === 'recognition' && item.status === 'pending')) {
-          detailContent.append(actionButton('Request re-recognition',
-            () => resolve(`/api/v1/files/${encodeURIComponent(id)}/re-recognize`, {})));
-        }
-        if (Array.isArray(data.relatedReviews) && data.relatedReviews.some(item =>
-          item.kind === 'metadata_correction' && item.status === 'pending')) {
-          renderFileReMatchForm(id);
         }
         const continuationReview = Array.isArray(data.relatedReviews)
           ? data.relatedReviews.find(item => item.kind === 'metadata_correction' &&

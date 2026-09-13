@@ -150,8 +150,6 @@ from mediaflow.domain.processing_checkpoint import (
 )
 from mediaflow.domain.recognition_review import (
     RecognitionBatchResolveRequest,
-    RecognitionRetryBatchRequest,
-    RecognitionRetryDecision,
     RecognitionReview,
     RecognitionReviewChoice,
     RecognitionReviewDecisionAudit,
@@ -2427,7 +2425,6 @@ class SQLiteTaskRepository:
         }
         item_audit_specs = (
             ("task_retry", "task_retry_audit", "decision_id", "decided_at"),
-            ("recognition_retry", "recognition_retry_audit", "decision_id", "decided_at"),
             ("manual_ignore", "manual_ignore_audit", "decision_id", "decided_at"),
         )
         review_audit_specs = (
@@ -2704,13 +2701,6 @@ class SQLiteTaskRepository:
             audits: list[CheckpointAudit] = []
             audit_queries = (
                 ("task_retry", "task_retry_audit", "decision_id", "decided_at", "actor"),
-                (
-                    "recognition_retry",
-                    "recognition_retry_audit",
-                    "decision_id",
-                    "decided_at",
-                    "actor",
-                ),
                 ("manual_ignore", "manual_ignore_audit", "decision_id", "decided_at", "actor"),
             )
             for kind, table, identifier_column, timestamp_column, actor_column in audit_queries:
@@ -3786,122 +3776,6 @@ class SQLiteTaskRepository:
                 row["audit_id"],
                 row["review_id"],
                 row["recognition_type_id"],
-                datetime.fromisoformat(row["decided_at"]),
-                row["actor"],
-                row["note"],
-            )
-            for row in rows
-        )
-
-    def request_recognition_retry(self, review, decision, item) -> None:
-        with self._lock, self._connection:
-            cursor = self._connection.execute(
-                """UPDATE recognition_reviews SET status=?, updated_at=?, decided_at=?, actor=?
-                WHERE review_id=? AND item_id=? AND status=?""",
-                (
-                    review.status.value,
-                    review.updated_at.isoformat(),
-                    review.decided_at.isoformat(),
-                    review.actor,
-                    review.review_id,
-                    review.item_id,
-                    RecognitionReviewStatus.PENDING.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("recognition review is not pending")
-            cursor = self._connection.execute(
-                """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
-                WHERE item_id=? AND task_id=? AND status=?""",
-                (
-                    item.status.value,
-                    item.stage,
-                    item.updated_at.isoformat(),
-                    item.item_id,
-                    item.task_id,
-                    TaskItemStatus.WAITING_RECOGNITION.value,
-                ),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("recognition retry TaskItem is not waiting")
-            self._connection.execute(
-                "INSERT INTO recognition_retry_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (
-                    decision.decision_id,
-                    decision.review_id,
-                    decision.task_id,
-                    decision.item_id,
-                    decision.decided_at.isoformat(),
-                    decision.actor,
-                    decision.note,
-                ),
-            )
-
-    def request_batch_recognition_retry(
-        self, requests: tuple[RecognitionRetryBatchRequest, ...]
-    ) -> None:
-        if not requests:
-            raise ValueError("recognition retry batch must not be empty")
-        with self._lock, self._connection:
-            for request in requests:
-                review = request.review
-                decision = request.decision
-                item = request.item
-                cursor = self._connection.execute(
-                    """UPDATE recognition_reviews SET status=?, updated_at=?, decided_at=?, actor=?
-                    WHERE review_id=? AND item_id=? AND status=?""",
-                    (
-                        review.status.value,
-                        review.updated_at.isoformat(),
-                        review.decided_at.isoformat(),
-                        review.actor,
-                        review.review_id,
-                        review.item_id,
-                        RecognitionReviewStatus.PENDING.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("recognition review is not pending")
-                cursor = self._connection.execute(
-                    """UPDATE task_items SET status=?, stage=?, updated_at=?, error=NULL
-                    WHERE item_id=? AND task_id=? AND status=?""",
-                    (
-                        item.status.value,
-                        item.stage,
-                        item.updated_at.isoformat(),
-                        item.item_id,
-                        item.task_id,
-                        TaskItemStatus.WAITING_RECOGNITION.value,
-                    ),
-                )
-                if cursor.rowcount != 1:
-                    raise ValueError("recognition retry TaskItem is not waiting")
-                self._connection.execute(
-                    "INSERT INTO recognition_retry_audit VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        decision.decision_id,
-                        decision.review_id,
-                        decision.task_id,
-                        decision.item_id,
-                        decision.decided_at.isoformat(),
-                        decision.actor,
-                        decision.note,
-                    ),
-                )
-
-    def list_recognition_retry_audit(self, review_id):
-        with self._lock:
-            rows = self._connection.execute(
-                """SELECT * FROM recognition_retry_audit WHERE review_id=?
-                ORDER BY decided_at, decision_id""",
-                (review_id,),
-            ).fetchall()
-        return tuple(
-            RecognitionRetryDecision(
-                row["decision_id"],
-                row["review_id"],
-                row["task_id"],
-                row["item_id"],
                 datetime.fromisoformat(row["decided_at"]),
                 row["actor"],
                 row["note"],

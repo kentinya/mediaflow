@@ -1269,8 +1269,8 @@ class FileMediaDetailTests(unittest.TestCase):
                 status, _ = api_request(api, "/api/v1/files/one", token=None)
                 self.assertEqual(status, 401)
                 status, document = api_request(api, "/api/v1/files/one/re-plan", method="POST")
-                self.assertEqual(status, 403)
-                self.assertEqual(document["error"]["code"], "forbidden")
+                self.assertEqual(status, 404)
+                self.assertEqual(document["error"]["code"], "not_found")
 
     def test_by_source_resolves_unique_and_explains_missing_or_ambiguous(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

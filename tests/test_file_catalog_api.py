@@ -112,25 +112,14 @@ class FileCatalogApiTests(unittest.TestCase):
                 status, document = api_request(api, "/api/v1/files/one")
                 self.assertEqual(status, 200)
                 self.assertEqual(document["latestResult"]["providerId"], "101")
-                status, _ = api_request(
-                    api,
-                    "/api/v1/files/one/re-recognize",
-                    method="POST",
-                )
-                self.assertEqual(status, 400)
-                status, _ = api_request(
-                    api,
-                    "/api/v1/files/one/re-plan",
-                    method="POST",
-                )
-                self.assertEqual(status, 400)
-                status, _ = api_request(
-                    api,
-                    "/api/v1/files/one/re-match",
-                    method="POST",
-                    body={},
-                )
-                self.assertEqual(status, 400)
+                for legacy_action in ("re-recognize", "re-plan", "re-match"):
+                    status, _ = api_request(
+                        api,
+                        f"/api/v1/files/one/{legacy_action}",
+                        method="POST",
+                        body={} if legacy_action == "re-match" else None,
+                    )
+                    self.assertEqual(status, 404)
                 status, document = api_request(api, "/api/v1/files/stats")
                 self.assertEqual(status, 200)
                 self.assertEqual(document["total"], 1)

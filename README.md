@@ -199,9 +199,6 @@ mediaflow recognition-reviews list --limit 100
 mediaflow recognition-reviews show REVIEW_ID
 mediaflow recognition-reviews resolve REVIEW_ID --recognition-type C --actor operator
 mediaflow recognition-reviews resolve-pending --recognition-type C --actor operator --limit 100
-mediaflow recognition-reviews retry REVIEW_ID --actor operator --note "rules updated"
-mediaflow recognition-reviews retry-pending --actor operator --note "rules updated" --limit 100
-mediaflow recognition-reviews retry-pending --task-id TASK_ID --actor operator --limit 20
 mediaflow metadata-reviews show REVIEW_ID
 mediaflow metadata-reviews resolve REVIEW_ID --candidate-rank 1
 mediaflow metadata-reviews resolve-pending --candidate-rank 1 --actor operator --limit 100
@@ -254,6 +251,10 @@ mediaflow execution-authorizations revoke AUTHORIZATION_ID
 mediaflow security-audit list --limit 100
 mediaflow api serve --host 127.0.0.1 --port 8787
 ```
+
+The retired direct file re-recognition, metadata re-match, file re-plan and recognition-review retry
+commands are no longer exposed by the current CLI, Web UI or `/api/v1` surface. Use the supported
+review resolution, metadata continuation, and explicit Task retry/recovery flows instead.
 
 `preview` and `organize` without `--execute` produce DryRun results. Only `organize --execute`
 permits Storage mutations. Existing destinations enter the configured Skip/Rename/Manual/Overwrite
