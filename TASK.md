@@ -273,7 +273,8 @@ Run and report each command separately; do not infer success from a related suit
   6 failures, 1 error, 7 skipped after the report documentation was added). The failures are
   ignored private runtime configuration expectations (credential rows, final integration,
   ResourceLibrary and storage IDs) plus the system environment's missing OpenList `httpx`
-  dependency; no backend or fixture code changed in this Task.
+  dependency; no backend or Python fixture code changed in this Task, and the fake-server binding
+  correction does not affect these offline failures.
 - The same full unittest command in an isolated clean worktree at the implementation checkpoint
   — FAIL / PRE-EXISTING / UNRELATED (1539 tests, 1 failure, 1 error, 7 skipped before the report
   documentation was added): only the Task-documentation assertion and missing system `httpx`.
