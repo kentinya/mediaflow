@@ -16,6 +16,12 @@ The current Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLIC
 [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry and does not alter the
 historical 2026-09-13 closure entry below.
 
+A post-closure backend-governance maintenance change retires the obsolete direct file
+re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
+CLI, Web UI and `/api/v1`, while retaining review resolution, metadata continuation and explicit
+Task retry/recovery paths. This maintenance does not reopen Slice 33 or create an active Task.
+The next legal action remains for A to select the next large Slice.
+
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.

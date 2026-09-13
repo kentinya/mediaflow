@@ -7,6 +7,9 @@ export default defineConfig({
     environment: "jsdom",
     setupFiles: "./tests/setup.ts",
     css: false,
+    // The router tests stub process-wide browser APIs and use shared auth state.
+    // Serial file execution keeps the full suite deterministic.
+    fileParallelism: false,
     // The Playwright browser path lives in tests/e2e and runs via `npm run
     // test:e2e`, not inside Vitest.
     exclude: [...configDefaults.exclude, "tests/e2e/**"],

@@ -46,6 +46,27 @@ class FakeUnrecognizedStrategy:
 
 
 class RecognitionReviewTests(unittest.TestCase):
+    def test_retired_retry_status_remains_readable_for_existing_runtime_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                task = coordinator.create("preview", execute_authorized=False)
+                item = coordinator.begin_item(
+                    task.task_id, "source", "unknown", "Unknown.mkv", "Unknown.mkv"
+                )
+                review = RecognitionReviewService(
+                    repository, development_strategy_configuration().recognition_types
+                ).create(item, RecognitionResult(status=RecognitionStatus.UNRECOGNIZED))
+                repository._connection.execute(
+                    "UPDATE recognition_reviews SET status=? WHERE review_id=?",
+                    (RecognitionReviewStatus.RETRY_REQUESTED.value, review.review_id),
+                )
+                repository._connection.commit()
+
+                loaded = repository.get_recognition_review(review.review_id)
+                self.assertIsNotNone(loaded)
+                self.assertEqual(loaded.status, RecognitionReviewStatus.RETRY_REQUESTED)
+
     def test_tracked_unrecognized_waits_with_enabled_choices_and_releases_lock(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             repository = SQLiteTaskRepository(Path(directory, "runtime.sqlite3"))

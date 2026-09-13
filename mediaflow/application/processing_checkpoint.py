@@ -240,7 +240,6 @@ class ProcessingCheckpointService:
         audits: list[CheckpointAudit] = []
         audit_specs = (
             ("task_retry", "list_task_retry_audit"),
-            ("recognition_retry", "list_recognition_retry_audit"),
             ("manual_ignore", "list_manual_ignore_audit"),
         )
         for kind, method_name in audit_specs:

@@ -27,9 +27,6 @@ from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
-from mediaflow.application.file_metadata_correction import FileMetadataCorrectionService
-from mediaflow.application.file_recognition_request import FileRecognitionRequestService
-from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
@@ -37,7 +34,6 @@ from mediaflow.application.manual_recovery_continuation import (
     ManualRecoveryContinuationService,
 )
 from mediaflow.application.manual_scan import ManualScanError, ManualScanService
-from mediaflow.application.metadata_correction import MetadataCorrectionService
 from mediaflow.application.metadata_correction_continuation import (
     FileMetadataCorrectionContinuationService,
     MetadataCorrectionContinuationConflict,
@@ -69,7 +65,6 @@ from mediaflow.application.operations_lifecycle import (
 )
 from mediaflow.application.package_exchange import PackageExchangeService
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
-from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
@@ -4539,7 +4534,7 @@ class MediaFlowApi:
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "files"]
-            and parts[4] in {"re-recognize", "re-plan", "re-match", "continue-dry-run"}
+            and parts[4] == "continue-dry-run"
             and method == "POST"
         ):
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
@@ -4549,92 +4544,53 @@ class MediaFlowApi:
                 )
             self._require_empty_query(environ, "file action")
             document = self._document(environ)
-            if parts[4] == "continue-dry-run":
-                allowed = {"reviewId", "expectedCorrectionVersion"}
-            elif parts[4] == "re-match":
-                allowed = {"query", "year", "mediaType", "providerId", "note"}
-            else:
-                allowed = {"note"}
+            allowed = {"reviewId", "expectedCorrectionVersion"}
             if set(document).difference(allowed):
                 raise ValueError(f"file {parts[4]} request fields are invalid")
-            note = document.get("note")
-            if parts[4] == "continue-dry-run":
-                if set(document) != allowed:
-                    raise ValueError(
-                        "file continuation requires reviewId and expectedCorrectionVersion"
-                    )
-                if self._configuration_service is None:
-                    return self._error(
-                        start_response,
-                        503,
-                        "service_unavailable",
-                        "managed configuration service is unavailable",
-                    )
-                submission = FileMetadataCorrectionContinuationService(
-                    self._file_catalog,
-                    self._repository,
-                    snapshot_validator=(self._configuration_service.validate_runtime_snapshot),
-                ).submit(
-                    parts[3],
-                    document["reviewId"],
-                    expected_correction_version=document["expectedCorrectionVersion"],
-                    actor=principal.principal_id,
-                    maximum_active_jobs=binding.maximum_active_jobs,
+            if set(document) != allowed:
+                raise ValueError(
+                    "file continuation requires reviewId and expectedCorrectionVersion"
                 )
-                continuation = submission.continuation
-                return self._response(
+            if self._configuration_service is None:
+                return self._error(
                     start_response,
-                    202,
-                    {
-                        "continuationId": continuation.continuation_id,
-                        "jobId": continuation.job_id,
-                        "taskId": continuation.new_task_id,
-                        "resultId": continuation.new_result_id,
-                        "status": continuation.status.value,
-                        "executionMode": "dry_run",
-                        "sourceTaskId": continuation.source_task_id,
-                        "sourceItemId": continuation.source_item_id,
-                        "configurationSnapshotId": continuation.configuration_snapshot_id,
-                        "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
-                        "correctionVersion": continuation.correction_version,
-                        "sideEffects": "none",
-                        "nextAction": (
-                            "run or wait for the Worker, then inspect the linked Task/Result"
-                        ),
-                    },
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
                 )
-            if parts[4] == "re-recognize":
-                decision = FileRecognitionRequestService(
-                    self._file_catalog,
-                    RecognitionRetryService(self._repository),
-                ).request(parts[3], actor=principal.principal_id, note=note)
-                value = self._value(decision)
-            elif parts[4] == "re-match":
-                if document.get("mediaType") not in {"movie", "tv"}:
-                    raise ValueError("file re-match mediaType must be movie or tv")
-                review = FileMetadataCorrectionService(
-                    self._file_catalog,
-                    MetadataCorrectionService(
-                        self._repository,
-                        binding.metadata_policies,
+            submission = FileMetadataCorrectionContinuationService(
+                self._file_catalog,
+                self._repository,
+                snapshot_validator=(self._configuration_service.validate_runtime_snapshot),
+            ).submit(
+                parts[3],
+                document["reviewId"],
+                expected_correction_version=document["expectedCorrectionVersion"],
+                actor=principal.principal_id,
+                maximum_active_jobs=binding.maximum_active_jobs,
+            )
+            continuation = submission.continuation
+            return self._response(
+                start_response,
+                202,
+                {
+                    "continuationId": continuation.continuation_id,
+                    "jobId": continuation.job_id,
+                    "taskId": continuation.new_task_id,
+                    "resultId": continuation.new_result_id,
+                    "status": continuation.status.value,
+                    "executionMode": "dry_run",
+                    "sourceTaskId": continuation.source_task_id,
+                    "sourceItemId": continuation.source_item_id,
+                    "configurationSnapshotId": continuation.configuration_snapshot_id,
+                    "configurationSnapshotDigest": continuation.configuration_snapshot_digest,
+                    "correctionVersion": continuation.correction_version,
+                    "sideEffects": "none",
+                    "nextAction": (
+                        "run or wait for the Worker, then inspect the linked Task/Result"
                     ),
-                ).resolve(
-                    parts[3],
-                    query=document.get("query"),
-                    year=document.get("year"),
-                    media_type=document["mediaType"],
-                    provider_id=document.get("providerId"),
-                    actor=principal.principal_id,
-                    note=note,
-                )
-                value = self._value(review)
-            else:
-                decision = FileReplanRequestService(
-                    self._file_catalog,
-                    recovery_admission=self._recovery_admission,
-                ).request(parts[3], actor=principal.principal_id, note=note)
-                value = self._value(decision)
-            return self._response(start_response, 200, value)
+                },
+            )
         if parts == ["api", "v1", "manual-intents"] and method == "POST":
             # Manual intent admission is analysis/selection work, not execution.
             # It uses the existing operator DryRun permission and never creates

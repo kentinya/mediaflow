@@ -38,9 +38,6 @@ from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
-from mediaflow.application.file_metadata_correction import FileMetadataCorrectionService
-from mediaflow.application.file_recognition_request import FileRecognitionRequestService
-from mediaflow.application.file_replan_request import FileReplanRequestService
 from mediaflow.application.library_pipeline import ResourceLibraryScanner
 from mediaflow.application.manual_ignore import ManualIgnoreService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
@@ -56,8 +53,6 @@ from mediaflow.application.metadata_review import MetadataReviewService
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
-from mediaflow.application.recognition_batch_retry import RecognitionBatchRetryService
-from mediaflow.application.recognition_retry import RecognitionRetryService
 from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationWorkerService
@@ -247,22 +242,6 @@ def final_main(
     file_stats = file_commands.add_parser("stats")
     file_stats.add_argument("--resource-library")
     file_stats.add_argument("--storage")
-    file_re_recognize = file_commands.add_parser("re-recognize")
-    file_re_recognize.add_argument("file_id")
-    file_re_recognize.add_argument("--actor", required=True)
-    file_re_recognize.add_argument("--note")
-    file_re_match = file_commands.add_parser("re-match")
-    file_re_match.add_argument("file_id")
-    file_re_match.add_argument("--query")
-    file_re_match.add_argument("--year", type=int)
-    file_re_match.add_argument("--media-type", required=True, choices=("movie", "tv"))
-    file_re_match.add_argument("--provider-id")
-    file_re_match.add_argument("--actor", required=True)
-    file_re_match.add_argument("--note")
-    file_re_plan = file_commands.add_parser("re-plan")
-    file_re_plan.add_argument("file_id")
-    file_re_plan.add_argument("--actor", required=True)
-    file_re_plan.add_argument("--note")
     jobs = commands.add_parser("jobs", help="persistent DryRun background jobs")
     job_commands = jobs.add_subparsers(dest="job_command", required=True)
     job_list = job_commands.add_parser("list")
@@ -441,15 +420,6 @@ def final_main(
     recognition_review_resolve.add_argument("--recognition-type", required=True)
     recognition_review_resolve.add_argument("--actor")
     recognition_review_resolve.add_argument("--note")
-    recognition_review_retry = recognition_review_commands.add_parser("retry")
-    recognition_review_retry.add_argument("review_id")
-    recognition_review_retry.add_argument("--actor", required=True)
-    recognition_review_retry.add_argument("--note")
-    recognition_review_batch_retry = recognition_review_commands.add_parser("retry-pending")
-    recognition_review_batch_retry.add_argument("--actor", required=True)
-    recognition_review_batch_retry.add_argument("--note")
-    recognition_review_batch_retry.add_argument("--limit", type=int, default=100)
-    recognition_review_batch_retry.add_argument("--task-id")
     recognition_review_batch_resolve = recognition_review_commands.add_parser("resolve-pending")
     recognition_review_batch_resolve.add_argument("--recognition-type", required=True)
     recognition_review_batch_resolve.add_argument("--actor", required=True)
@@ -812,25 +782,11 @@ def final_main(
                         task_id=arguments.task_id,
                     )
                     stdout.write(render_recognition_batch_resolve(reviews))
-                elif arguments.recognition_review_command == "retry-pending":
-                    decisions = RecognitionBatchRetryService(repository).request_pending(
-                        actor=arguments.actor,
-                        note=arguments.note,
-                        limit=arguments.limit,
-                        task_id=arguments.task_id,
-                    )
-                    stdout.write(render_recognition_batch_retry(decisions))
                 else:
                     if arguments.recognition_review_command == "resolve":
                         service.resolve(
                             arguments.review_id,
                             arguments.recognition_type,
-                            actor=arguments.actor,
-                            note=arguments.note,
-                        )
-                    elif arguments.recognition_review_command == "retry":
-                        RecognitionRetryService(repository).request(
-                            arguments.review_id,
                             actor=arguments.actor,
                             note=arguments.note,
                         )
@@ -844,7 +800,6 @@ def final_main(
                             review,
                             repository.list_recognition_review_choices(review.review_id),
                             repository.list_recognition_review_audit(review.review_id),
-                            repository.list_recognition_retry_audit(review.review_id),
                         )
                     )
             return 0
@@ -1116,21 +1071,6 @@ def final_main(
                 task_repository = stack.enter_context(
                     SQLiteTaskRepository(configuration.database_path)
                 )
-                recovery_admission = None
-                if arguments.file_command == "re-plan":
-                    recovery_configuration_repository = stack.enter_context(
-                        SQLiteConfigurationRepository(configuration.database_path)
-                    )
-                    recovery_configuration_service = ManagedConfigurationService(
-                        recovery_configuration_repository,
-                        bootstrap_database_path=configuration.database_path,
-                    )
-                    recovery_admission = RecoveryAdmissionService(
-                        task_repository,
-                        snapshot_validator=(
-                            recovery_configuration_service.validate_runtime_snapshot
-                        ),
-                    )
                 service = FileCatalogService(
                     file_index,
                     library_ids,
@@ -1175,43 +1115,6 @@ def final_main(
                         storage_id=arguments.storage,
                     )
                     stdout.write(render_file_catalog_stats(stats))
-                elif arguments.file_command == "re-recognize":
-                    decision = FileRecognitionRequestService(
-                        service,
-                        RecognitionRetryService(task_repository),
-                    ).request(
-                        arguments.file_id,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(render_file_recognition_request(decision))
-                elif arguments.file_command == "re-match":
-                    review = FileMetadataCorrectionService(
-                        service,
-                        MetadataCorrectionService(
-                            task_repository,
-                            configuration.strategy.metadata_policies,
-                        ),
-                    ).resolve(
-                        arguments.file_id,
-                        query=arguments.query,
-                        year=arguments.year,
-                        media_type=arguments.media_type,
-                        provider_id=arguments.provider_id,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(render_file_metadata_re_match(review))
-                elif arguments.file_command == "re-plan":
-                    decision = FileReplanRequestService(
-                        service,
-                        recovery_admission=recovery_admission,
-                    ).request(
-                        arguments.file_id,
-                        actor=arguments.actor,
-                        note=arguments.note,
-                    )
-                    stdout.write(render_file_replan_request(decision))
                 else:
                     detail = service.detail(
                         arguments.file_id,
@@ -1964,58 +1867,6 @@ def render_file_catalog_stats(stats) -> str:
     return "\n".join(lines)
 
 
-def render_file_recognition_request(decision) -> str:
-    return "\n".join(
-        (
-            "",
-            "FILE RE-RECOGNITION REQUEST",
-            "",
-            f"Decision: {decision.decision_id}",
-            f"Review: {decision.review_id}",
-            f"Task: {decision.task_id}",
-            f"Item: {decision.item_id}",
-            f"Actor: {decision.actor}",
-            "Media mutation: 0",
-            "",
-        )
-    )
-
-
-def render_file_metadata_re_match(review) -> str:
-    return "\n".join(
-        (
-            "",
-            "FILE METADATA RE-MATCH",
-            "",
-            f"Review: {review.review_id}",
-            f"Status: {review.status.value}",
-            f"Corrected query: {review.corrected_query or '-'}",
-            f"Corrected year: {review.corrected_year or '-'}",
-            f"Corrected media type: {review.corrected_media_type or '-'}",
-            f"Direct provider ID: {review.direct_provider_id or '-'}",
-            f"Actor: {review.actor or '-'}",
-            "Media mutation: 0",
-            "",
-        )
-    )
-
-
-def render_file_replan_request(decision) -> str:
-    return "\n".join(
-        (
-            "",
-            "FILE RE-PLAN REQUEST",
-            "",
-            f"Decision: {decision.decision_id}",
-            f"Task: {decision.task_id}",
-            f"Item: {decision.item_id}",
-            f"Actor: {decision.actor}",
-            "Media mutation: 0",
-            "",
-        )
-    )
-
-
 def render_file_catalog_record(record) -> str:
     return "\n".join(
         (
@@ -2629,25 +2480,6 @@ def render_recognition_reviews(values) -> str:
     return "\n".join(lines)
 
 
-def render_recognition_batch_retry(decisions) -> str:
-    lines = [
-        "",
-        "BATCH RECOGNITION RETRY",
-        "",
-        f"Requested: {len(decisions)}",
-        "Media mutation: 0",
-        "",
-        "DECISIONS",
-        "",
-    ]
-    lines.extend(
-        f"{item.decision_id} | {item.review_id} | {item.item_id} | {item.actor}"
-        for item in decisions
-    )
-    lines.extend(("", f"Total: {len(decisions)}", ""))
-    return "\n".join(lines)
-
-
 def render_recognition_batch_resolve(reviews) -> str:
     lines = [
         "",
@@ -2667,7 +2499,7 @@ def render_recognition_batch_resolve(reviews) -> str:
     return "\n".join(lines)
 
 
-def render_recognition_review(review, choices, audit=(), retry_audit=()) -> str:
+def render_recognition_review(review, choices, audit=()) -> str:
     lines = [
         "",
         "RECOGNITION REVIEW",
@@ -2689,12 +2521,6 @@ def render_recognition_review(review, choices, audit=(), retry_audit=()) -> str:
         for item in audit
     )
     if not audit:
-        lines.append("None")
-    lines.extend(("", "RETRY AUDIT", ""))
-    lines.extend(
-        f"{item.decided_at.isoformat()} | retry_requested | {item.actor}" for item in retry_audit
-    )
-    if not retry_audit:
         lines.append("None")
     lines.append("")
     return "\n".join(lines)

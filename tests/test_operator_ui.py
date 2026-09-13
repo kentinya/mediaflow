@@ -111,7 +111,9 @@ class OperatorUiTests(unittest.TestCase):
         self.assertIn("recognitionType", script)
         self.assertIn("providerId", script)
         self.assertIn("scanStatus", script)
-        self.assertIn("renderFileReMatchForm", script)
+        self.assertNotIn("renderFileReMatchForm", script)
+        for retired_action in ("/re-recognize", "/re-match", "/re-plan"):
+            self.assertNotIn(retired_action, script)
         self.assertIn("metadata-reviews", script)
         self.assertIn("classification-reviews", script)
         self.assertIn("encodeURIComponent(id)", script)

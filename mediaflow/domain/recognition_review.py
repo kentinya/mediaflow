@@ -12,6 +12,7 @@ class RecognitionReviewStatus(StrEnum):
     PENDING = "pending"
     RESOLVED = "resolved"
     IGNORED = "ignored"
+    # Decode rows written before the retry surface was retired; new code never writes this state.
     RETRY_REQUESTED = "retry_requested"
 
 
@@ -46,24 +47,6 @@ class RecognitionReviewDecisionAudit:
     decided_at: datetime
     actor: str | None = None
     note: str | None = None
-
-
-@dataclass(frozen=True)
-class RecognitionRetryDecision:
-    decision_id: str
-    review_id: str
-    task_id: str
-    item_id: str
-    decided_at: datetime
-    actor: str
-    note: str | None = None
-
-
-@dataclass(frozen=True)
-class RecognitionRetryBatchRequest:
-    review: RecognitionReview
-    decision: RecognitionRetryDecision
-    item: PersistentTaskItem
 
 
 @dataclass(frozen=True)
@@ -107,15 +90,3 @@ class RecognitionReviewRepository(Protocol):
     def list_recognition_review_audit(
         self, review_id: str
     ) -> tuple[RecognitionReviewDecisionAudit, ...]: ...
-    def request_recognition_retry(
-        self,
-        review: RecognitionReview,
-        decision: RecognitionRetryDecision,
-        item: PersistentTaskItem,
-    ) -> None: ...
-    def request_batch_recognition_retry(
-        self, requests: tuple[RecognitionRetryBatchRequest, ...]
-    ) -> None: ...
-    def list_recognition_retry_audit(
-        self, review_id: str
-    ) -> tuple[RecognitionRetryDecision, ...]: ...
