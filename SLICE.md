@@ -7,9 +7,10 @@ This is the A-owned Slice Contract for the next independently reviewed V2 capabi
 Slice ID: 33
 Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
+Status: ACTIVE
 Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
 Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
+Historical Closure Checkpoint: dcc2f34c38975662ddbc78e160bbbc2d423ae702
 ~~~
 
 The Base is the actual committed `main` checkpoint immediately before Slice 33 activation and
@@ -24,7 +25,7 @@ V2 remains a sequence of independently accepted user capabilities:
 Slice 30 — V2 Frontend Platform & Architecture — PASS / CLOSED
 Slice 31 — Operator Shell & Information Architecture — PASS / CLOSED
 Slice 32 — Library & Files Experience — PASS / CLOSED
-Slice 33 — Operations Workspace — PASS / CLOSED
+Slice 33 — Operations Workspace — ACTIVE (POST-CLOSURE P1 CORRECTION)
 Slice 34 — Review & Recovery Workspace — PLANNED
 Slice 35 — Configuration Administration — PLANNED
 Slice 36 — V2 Parity, Accessibility & Legacy UI Retirement — PLANNED
@@ -36,6 +37,32 @@ Notification delivery operation. It may reuse the narrow managed-revision/object
 checked-activation lifecycle needed to publish Automation Task Definitions and Webhook Definitions,
 but it does not absorb general Configuration administration or media review/recovery journeys
 assigned to Slices 34 and 35.
+
+## Post-closure correction activation
+
+The 2026-09-13 Closure Packet and A Final Review below remain immutable historical facts for the
+accepted range `827c36b410687e41b1da53ba6475d8c03a47dbfd..8a0048008057beabada1a36c53d5fdc3153e8e7b`.
+After that closure, A confirmed a P1 regression in the V2 Manual Organize Preview journey: the
+bounded backend plan publishes RecognitionType, operation and destructive implications, but the
+typed frontend projection/page boundary does not consistently retain and consume those facts. The
+page can therefore render an exact plan as though those fields were absent and can omit the
+separate overwrite/source-cleanup confirmations. Backend admission independently rejects missing
+destructive authority before mutation, so the inspected defect does not establish unauthorized
+Storage mutation; it still breaks RO-4, the Manual Organize required surface and the explicit
+destructive-intent Safety Invariants.
+
+This correction is confined to restoring the already-promised exact Preview and fail-closed Web
+confirmation journey. Acceptance requires the typed operator model to represent and validate the
+three bounded plan facts, the page to display them without bypassing the type boundary, destructive
+requirements to gate only the exact selected plans and malformed/missing safety projection to offer
+no execution, with focused regression coverage preserving the independent backend admission checks.
+Slice 34 remains limited to review decisions, conflict resolution, Reprocess, checkpoint
+continuation and failed-item/batch recovery; it does not own this Slice 33 regression.
+
+The Slice Base and historical accepted Implementation Head do not move during activation. B owns
+the focused correction Task and its Difficulty/Test Level; because the defect crosses the typed Web
+projection and destructive-confirmation safety boundary, B must assess T4 rather than treat it as a
+cosmetic-only label fix.
 
 ## User goal and vertical journey
 
@@ -320,7 +347,7 @@ simulated inside Operations.
   unrelated files and tracked/private configuration. Final Closure evidence records actual totals,
   skips and unavailable gates without inference.
 
-## Closure Packet
+## Historical Closure Packet — 2026-09-13
 
 ~~~
 Slice: 33 — Operations Workspace
@@ -475,13 +502,17 @@ Decision: SLICE READY FOR A REVIEW
 ## Review State
 
 ~~~
-Slice Status: PASS / CLOSED
+Slice Status: ACTIVE
 Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
-P0/P1 Defects: None
-Next Action: A SELECTS THE NEXT LARGE SLICE IN A LATER TURN
+Historical Closure: PASS / CLOSED at dcc2f34c38975662ddbc78e160bbbc2d423ae702
+P0/P1 Defects:
+- P1: V2 Manual Organize Preview drops/does not consume bounded operation and destructive
+  implications and bypasses the typed RecognitionType projection, breaking exact Preview truth and
+  separate Web destructive confirmation. Backend admission remains independently fail-closed.
+Next Action: B MAY PLAN ONE FOCUSED CORRECTION TASK
 ~~~
 
-## A Final Review
+## Historical A Final Review — 2026-09-13
 
 ~~~
 Reviewed Range: 827c36b410687e41b1da53ba6475d8c03a47dbfd..8a0048008057beabada1a36c53d5fdc3153e8e7b
