@@ -371,13 +371,13 @@ email/chat/media-server notifications remain V1.x/V2 or deployment-specific work
 
 ## V2 Operator Web migration
 
-The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30, 31 and 32 have
-delivered and closed the architecture/platform foundation, bounded Dashboard proving journey,
-operator shell, centralized information architecture, shared route/authentication recovery and
-read-only Library journey. Slice 33's accepted Operations implementation remains delivered, but A
-has reactivated Slice 33 for a focused P1 correction in the Worker pre-mutation revalidation
-boundary before treating the routine Web Organize journey as fully closed again. They do not claim
-the later Review/Recovery, general Configuration or final V1 UI cutover migrations.
+The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30, 31, 32 and 33
+have delivered and closed the architecture/platform foundation, bounded Dashboard proving journey,
+operator shell, centralized information architecture, shared route/authentication recovery,
+read-only Library journey and the complete Operations workspace. Slice 33's accepted Worker
+correction reconstructs the exact pinned source authority across the resident Worker boundary and
+fails closed before mutation when source evidence cannot be proved. The later Review/Recovery,
+general Configuration and final V1 UI cutover migrations remain separate planned work.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 

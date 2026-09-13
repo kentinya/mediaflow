@@ -21,7 +21,7 @@ only in [the development workflow](development-workflow.md).
 | 30 — V2 Frontend Platform & Architecture | Establish the V2 frontend build/runtime boundary and prove it through one typed Dashboard journey without moving production authority out of Python | PASS / CLOSED | V1.0.0 release baseline |
 | 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PASS / CLOSED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PASS / CLOSED | 31 |
-| 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | ACTIVE | 30, 31 |
+| 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
 | 34 — Review & Recovery Workspace | Migrate per-item review, conflict, checkpoint and safe recovery journeys with independent batch state | PLANNED | 32, 33 |
 | 35 — Configuration Administration | Migrate managed Configuration, Settings, revision evidence and activation administration through shared API/Web behavior | PLANNED | 31, 33 |
 | 36 — V2 Parity, Accessibility & Legacy UI Retirement | Complete parity and accessibility evidence, cut over the supported `/ui` surface, and retire the V1 UI only after migration acceptance | PLANNED | 32, 33, 34, 35 |
@@ -68,14 +68,14 @@ recovery. Slice 32 is `PASS / CLOSED` at Base
 `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99`, having delivered the V2 read-oriented Library journey
 across bounded Active Storage browsing, FileIndex discovery/detail and truthful physical/indexed
 context without pulling operational mutation or recovery work forward. Slice 33 — Operations
-Workspace closed on 2026-09-13 at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and final
-Implementation Head `437135dbe36e63d733eb994cda8edb23fcf671bc`, delivering the coherent V2
+Workspace is PASS / CLOSED on 2026-09-13 at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and final
+Implementation Head `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08`, delivering the coherent V2
 daily-operations journey across actionable Dashboard state, Tasks/Jobs, bounded Scan/Preview,
 Web-native exact manual Organize, scheduled Automation and Notification delivery. The accepted Head
-includes the first post-closure P1 correction restoring the typed Manual Organize Preview safety
-projection and separate destructive confirmations. A has reactivated Slice 33 for a second focused
-P1 correction in the Worker pre-mutation revalidation boundary; the accepted Base/Head history
-remains intact, Slices 34–36 remain PLANNED, and this Roadmap does not pre-plan Task details.
+includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
+projection and separate destructive confirmations; the second restores Worker reconstruction of the
+exact pinned source authority and fail-closed pre-mutation revalidation. Slices 34–36 remain PLANNED,
+and this Roadmap does not pre-plan their Task details.
 
 ## Roadmap rules
 

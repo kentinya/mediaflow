@@ -13,14 +13,13 @@ V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 33 — Operations Workspace — PASS / CLOSED
 Slice 33 Base: 827c36b410687e41b1da53ba6475d8c03a47dbfd
-Slice 33 Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
-Active large Slice: Slice 33 — Operations Workspace — POST-CLOSURE P1 CORRECTION
+Slice 33 Implementation Head: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
+Active large Slice: none selected; A selects the next large Slice after Slice 33 closure
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31 and 32 are closed; Slice 33 is reactivated only for its
-already-owned Worker revalidation correction, and the next legal action is B planning one focused
-Task.
+product requirements. Slices 30, 31, 32 and 33 are closed; the next large Slice is selected by A
+after this closure, and later Slice 34–36 capabilities remain independently planned.
 
 ## Stable V2 requirements
 

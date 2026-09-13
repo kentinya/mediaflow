@@ -90,9 +90,10 @@ allowlisted and redacted. All Library requests are GET-only; V1 `/ui`, operation
 OrganizerExecutor ownership remain unchanged.
 
 Slice 33's accepted implementation is at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and final
-accepted Implementation Head `437135dbe36e63d733eb994cda8edb23fcf671bc`. A has reactivated the
-Slice for a focused P1 correction in the Worker pre-mutation revalidation boundary; no accepted
-Operations behavior is removed. It composes the existing Python application,
+Implementation Head `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08`. Its post-closure Worker correction
+reconstructs the exact pinned source authority across the resident Worker boundary and fails closed
+before mutation when source evidence cannot be proved; no accepted Operations behavior is removed.
+It composes the existing Python application,
 persistence and `/api/v1/*` authority into the V2 Operations route family: actionable Dashboard,
 durable Tasks/Jobs, bounded Scan/Preview, exact Web-native manual Organize, Automation definitions,
 schedules, grants and occurrences, and Webhook definitions, tests and delivery recovery. The
@@ -435,10 +436,12 @@ Task/Job state and backend-advertised controls, bounded manual Scan and zero-mut
 Web-native exact manual Organize, Automation definition/schedule/grant/occurrence operation, and
 Webhook definition/test/activation/delivery recovery. Long work returns durable identities and is
 claimed by the resident Worker; independent item/delivery outcomes and bounded failure handoffs stay
-visible. The implementation preserves shared Python authority, exact Active snapshot and revision
-binding, memory-only Bearer/RBAC, explicit mutation intent, no automatic uncertain replay and
-OrganizerExecutor-only Storage mutation. Review/Recovery, general Configuration administration and
-final parity/accessibility/V1 UI retirement remain Slices 34–36.
+visible. The final Worker correction reconstructs the exact pinned ResourceLibrary/Storage authority
+from the admitted execution's immutable runtime snapshot and fails closed before mutation on missing,
+stale or cross-authority evidence. The implementation preserves shared Python authority, exact Active
+snapshot and revision binding, memory-only Bearer/RBAC, explicit mutation intent, no automatic
+uncertain replay and OrganizerExecutor-only Storage mutation. Review/Recovery, general Configuration
+administration and final parity/accessibility/V1 UI retirement remain Slices 34–36.
 
 ## TARGET architecture
 
