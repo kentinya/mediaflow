@@ -549,7 +549,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     });
     authStore.setToken(TOKEN);
     renderApp(
-      "/ui-v2/operations/preview/new?scopeKind=file&fileId=file-1&resourceLibraryId=library",
+      "/ui-v2/operations/preview/new?scopeKind=file&relativePath=Movies%2FOne.mkv&resourceLibraryId=library",
     );
 
     await screen.findByRole("heading", { name: "Run zero-mutation Preview" });
@@ -573,7 +573,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     expect(posted).toHaveLength(1);
     expect(posted[0]?.body).toEqual({
       scopeKind: "file",
-      fileId: "file-1",
+      relativePath: "Movies/One.mkv",
       resourceLibraryId: "library",
     });
   });

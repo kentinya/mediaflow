@@ -457,3 +457,17 @@ administration and final parity/accessibility/V1 UI retirement remain Slices 34â
 Provider switching and additional production providers, built-in users/sessions/OIDC, general Secret
 Store/Docker Secrets integration, automatic uncertain-mutation replay, historical rollback and
 specialized notification channels remain outside the V1 architecture above.
+
+## UI-V2 Files and Manual Organize authority update â€” 2026-09-13
+
+UI-V2 Files now treats ResourceLibrary as the operator-facing authority.  The normal Files path is:
+
+ResourceLibrary -> configured Storage binding -> ResourceLibrary root path -> live Storage list/stat.
+
+The browser supplies only `resourceLibraryId`, ResourceLibrary-relative `path`, and a server-issued cursor.  The server resolves the Active managed runtime, verifies the ResourceLibrary and backing Storage are enabled, joins the ResourceLibrary root with the relative path, and reads through the read-only Storage guard.  The Files projection intentionally excludes FileIndex membership, fileId, occurrence, fingerprint, scan status, and FileIndex detail links.  FileIndex remains a background/indexing and V1 compatibility projection.
+
+UI-V2 manual organize admission now starts from ResourceLibrary source selection.  The normal single-file path is:
+
+ResourceLibrary -> live Storage file -> zero-mutation Preview -> SourceIdentity + server OrganizePlan -> confirmed Task -> Worker -> live Storage revalidation -> OrganizerExecutor.
+
+Preview creates SourceIdentity from `Storage.stat()` using the existing storage-entry fingerprint/occurrence helpers and persists that evidence with the reviewed plan.  Execution validates the reviewed source against live Storage and the persisted Preview identity; it does not re-resolve the source through FileIndex.

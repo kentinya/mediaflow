@@ -70,7 +70,7 @@ describe("AuthBoundary", () => {
       await screen.findByRole("heading", { name: "Library" }),
     ).toBeVisible();
     expect(
-      screen.getByRole("link", { name: "Open Storage files" }),
+      screen.getByRole("link", { name: "Open Files" }),
     ).toBeVisible();
   });
 
@@ -132,14 +132,14 @@ describe("AuthBoundary", () => {
     const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken("expired-token");
     renderApp(
-      "/ui-v2/library/files?storage=local-1&path=movies&cursor=page-2&access_token=cando-not&unknown=x",
+      "/ui-v2/library/files?resourceLibraryId=resources&path=movies&cursor=page-2&access_token=cando-not&unknown=x",
     );
     // The bounded unauthorized state appears after the 401 effect runs.
     await screen.findByRole("heading", { name: "Not authorized" });
     // The 401 effect sanitizes the search string to only allowlisted keys.
     expect(authStore.getIntendedPath()).toBe("/library/files");
     expect(authStore.getIntendedSearch()).toBe(
-      "storage=local-1&path=movies&cursor=page-2",
+      "resourceLibraryId=resources&path=movies&cursor=page-2",
     );
     // The bounded unauthorized state remains on the current route.
     expect(fetchMock).toHaveBeenCalledTimes(1);

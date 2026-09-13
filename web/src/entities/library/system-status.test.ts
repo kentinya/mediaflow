@@ -48,7 +48,7 @@ describe("normalizeSystemStatus", () => {
         },
       ],
       resourceLibraries: [
-        { id: "resources", storageId: "local-1", name: null, enabled: true },
+        { id: "resources", storageId: "local-1", name: null, rootPath: "", enabled: true },
       ],
     });
   });

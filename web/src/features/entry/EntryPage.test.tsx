@@ -67,7 +67,7 @@ describe("EntryPage", () => {
     expect(authStore.getIntendedPath()).toBeNull();
     await screen.findByRole("heading", { name: "Library" });
     expect(
-      screen.getByRole("link", { name: "Open Storage files" }),
+      screen.getByRole("link", { name: "Open Files" }),
     ).toBeVisible();
   });
 

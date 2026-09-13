@@ -519,7 +519,7 @@ const SYSTEM_STATUS = {
   resource_libraries: {
     total: 1,
     truncated: false,
-    items: [{ id: "resources", storage_id: "local-media", enabled: true }],
+    items: [{ id: "resources", name: "Resources", storage_id: "local-media", root_path: "", enabled: true }],
   },
   media_libraries: { total: 1, truncated: false, items: [] },
   recognition_types: { total: 3, truncated: false, items: [] },
@@ -794,7 +794,7 @@ function fileIndexDocument(url) {
   };
 }
 
-function filesDocument(path, cursor, storageId) {
+function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
   const storage =
     storageId === "remote-media"
       ? { id: "remote-media", name: "Remote media", type: "openlist" }
@@ -802,7 +802,7 @@ function filesDocument(path, cursor, storageId) {
   const isRoot = path === "";
   const segments = path === "" ? [] : path.split("/");
   const breadcrumbs = [
-    { name: "Storage root", path: "", isRoot: true },
+    { name: "ResourceLibrary root", path: "", isRoot: true },
     ...segments.map((segment, index) => ({
       name: segment,
       path: segments.slice(0, index + 1).join("/"),
@@ -1029,6 +1029,15 @@ function filesDocument(path, cursor, storageId) {
       version: 1,
       digest: "digest-e2e-1",
     },
+    resourceLibrary: resourceLibraryId
+      ? {
+          id: resourceLibraryId,
+          name: "Resources",
+          enabled: true,
+          rootPath: "",
+          storage: { ...storage, readOnly: false },
+        }
+      : undefined,
     storage,
     storageId: storage.id,
     storageName: storage.name,
@@ -4543,7 +4552,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, document.status, document.payload);
     return;
   }
-  if (url.pathname === "/api/v1/storage/files") {
+  if (url.pathname === "/api/v1/storage/files" || /^\/api\/v1\/resource-libraries\/[^/]+\/files$/.test(url.pathname)) {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("GET required");
@@ -4570,7 +4579,25 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    const storageId = url.searchParams.get("storageId");
+    const resourceMatch = url.pathname.match(/^\/api\/v1\/resource-libraries\/([^/]+)\/files$/);
+    const resourceLibraryId = resourceMatch ? decodeURIComponent(resourceMatch[1]) : null;
+    const storageId = resourceLibraryId ? "local-media" : url.searchParams.get("storageId");
+    if (resourceLibraryId !== null && resourceLibraryId !== "resources") {
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_resource_library_not_found",
+          message: "requested ResourceLibrary not available",
+          details: {
+            category: "resource_library_not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "reload the current Active runtime and choose an enabled ResourceLibrary",
+          },
+        },
+      });
+      return;
+    }
     if (!["local-media", "remote-media"].includes(storageId)) {
       sendJson(res, 404, {
         error: {

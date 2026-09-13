@@ -4,7 +4,7 @@ import {
   type StorageFilesQueryOptions,
 } from "../../shared/api/api-client";
 
-/** Query key for one bounded Storage-relative read. */
+/** Query key for one ResourceLibrary-relative live Storage read. */
 export const STORAGE_FILES_QUERY_KEY = "storage-files" as const;
 
 export function storageFilesQueryOptions(
@@ -15,7 +15,7 @@ export function storageFilesQueryOptions(
   return queryOptions({
     queryKey: [STORAGE_FILES_QUERY_KEY, options] as const,
     queryFn: () => fetchStorageFiles(token, options),
-    enabled: token !== null && options.storageId !== "" && statusReady,
+    enabled: token !== null && options.resourceLibraryId !== "" && statusReady,
     retry: false,
   });
 }

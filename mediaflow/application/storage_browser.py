@@ -776,9 +776,7 @@ class StorageBrowserService:
 
 
 class RuntimeFilesBrowserService:
-    """Read the configured Storage surface from one immutable Active runtime snapshot."""
-
-    MAX_MEMBERSHIP_LIBRARIES = 32
+    """Read live Storage files through enabled ResourceLibrary boundaries."""
 
     def __init__(
         self,
@@ -802,6 +800,10 @@ class RuntimeFilesBrowserService:
             raise ValueError("runtime Files browser snapshot does not match the Active revision")
         self._revision = active_revision
         self._runtime_configuration = runtime_configuration
+        # FileIndex is intentionally not used by the UI-V2 Files projection.
+        # The argument remains accepted so older composition code can pass the
+        # repository for V1/background capabilities without changing this
+        # browser's authority model.
         self._file_index = file_index
         self._browser = StorageBrowserService(
             managed,
@@ -829,6 +831,12 @@ class RuntimeFilesBrowserService:
         cursor: str | None = None,
         resource_library_id: str | None = None,
     ) -> dict[str, object]:
+        """Compatibility Storage-scoped browser.
+
+        V1/setup tools may still use this route.  UI-V2 should call
+        ``browse_resource_library`` so the ResourceLibrary, not browser-supplied
+        Storage/path, is the authority.
+        """
         try:
             normalized_path = _normalize_storage_relative_path(path)
         except StorageBrowserError as error:
@@ -846,17 +854,59 @@ class RuntimeFilesBrowserService:
         except StorageBrowserError as error:
             raise self._runtime_error(error) from error
 
+        document["surface"] = "files"
+        document["surfaceLabel"] = "Files"
+        document["configuration"] = {
+            "authority": "MANAGED",
+            "revisionId": self._revision.revision_id,
+            "version": self._revision.version,
+            "digest": self._revision.digest,
+        }
+        document["nextAction"] = "open a directory or use Next to load the next bounded page"
+        return document
+
+    def browse_resource_library(
+        self,
+        *,
+        resource_library_id: str,
+        path: str = "",
+        limit: int = _DEFAULT_PAGE_SIZE,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        """Browse live Storage files confined to one ResourceLibrary root."""
+
+        library = self._library(resource_library_id)
+        try:
+            relative_path = _normalize_storage_relative_path(path)
+            storage_path = _join_resource_library_path(library.root_path, relative_path)
+            document = self._browser.browse_revision(
+                self._revision,
+                storage_id=library.storage_id,
+                path=storage_path,
+                limit=limit,
+                cursor=cursor,
+                cursor_scope=library.library_id,
+            )
+        except StorageBrowserError as error:
+            raise self._runtime_error(error) from error
         entries = []
         for raw_entry in document["entries"]:
             entry = dict(raw_entry)
-            entry["indexMembership"] = self._membership(
-                entry["path"], libraries, is_file=entry["type"] == StorageEntryType.FILE.value
-            )
+            entry["path"] = _strip_resource_library_path(entry["path"], library.root_path)
             entries.append(entry)
+        document["resourceLibrary"] = {
+            "id": library.library_id,
+            "name": library.name,
+            "enabled": library.enabled,
+            "rootPath": library.root_path,
+            "storage": _storage_summary(self._runtime_configuration, library.storage_id),
+        }
+        document["storageId"] = library.storage_id
+        document["path"] = relative_path
+        document["breadcrumbs"] = _resource_library_breadcrumbs(relative_path)
         document["entries"] = entries
         document["surface"] = "files"
         document["surfaceLabel"] = "Files"
-        document["fileIndexSurface"] = "/api/v1/file-index"
         document["configuration"] = {
             "authority": "MANAGED",
             "revisionId": self._revision.revision_id,
@@ -864,10 +914,63 @@ class RuntimeFilesBrowserService:
             "digest": self._revision.digest,
         }
         document["nextAction"] = (
-            "open a directory, inspect FileIndex membership, or use Next to load the next "
-            "bounded page"
+            "open a ResourceLibrary directory or use Next to load the next bounded page"
         )
         return document
+
+    def list_resource_libraries(self) -> dict[str, object]:
+        """Return enabled ResourceLibraries available to the Files page."""
+
+        storages = {
+            item.storage_id: item
+            for item in getattr(self._runtime_configuration, "storage_definitions", ())
+        }
+        items = []
+        for library in self._libraries:
+            storage = storages.get(library.storage_id)
+            if storage is None or getattr(storage, "enabled", True) is False:
+                continue
+            items.append(
+                {
+                    "id": library.library_id,
+                    "name": library.name,
+                    "enabled": library.enabled,
+                    "rootPath": library.root_path,
+                    "storage": {
+                        "id": library.storage_id,
+                        "name": getattr(storage, "name", library.storage_id),
+                        "type": getattr(storage, "storage_type", "unknown"),
+                        "readOnly": bool(getattr(storage, "read_only", False)),
+                    },
+                }
+            )
+        return {
+            "surface": "resource_libraries",
+            "items": items,
+            "total": len(items),
+            "sideEffects": "none",
+            "configuration": {
+                "authority": "MANAGED",
+                "revisionId": self._revision.revision_id,
+                "version": self._revision.version,
+                "digest": self._revision.digest,
+            },
+        }
+
+    def _library(self, resource_library_id: str):
+        if not isinstance(resource_library_id, str) or not resource_library_id.strip():
+            raise self._runtime_error(
+                StorageBrowserService._browser_failure("resource_library_not_found", None, "")
+            )
+        library = next(
+            (item for item in self._libraries if item.library_id == resource_library_id),
+            None,
+        )
+        if library is None:
+            raise self._runtime_error(
+                StorageBrowserService._browser_failure("resource_library_not_found", None, "")
+            )
+        return library
 
     def _libraries_for(
         self, storage_id: str, resource_library_id: str | None
@@ -887,97 +990,6 @@ class RuntimeFilesBrowserService:
                 StorageBrowserService._browser_failure("resource_library_mismatch", storage_id, "")
             )
         return (library,)
-
-    def _membership(
-        self,
-        path: str,
-        libraries: tuple[object, ...],
-        *,
-        is_file: bool,
-    ) -> dict[str, object]:
-        if not is_file:
-            return {
-                "available": True,
-                "indexed": False,
-                "memberships": [],
-                "total": 0,
-                "truncated": False,
-                "nextAction": "FileIndex membership applies to file entries",
-            }
-        if not libraries:
-            return {
-                "available": False,
-                "indexed": False,
-                "memberships": [],
-                "total": 0,
-                "truncated": False,
-                "nextAction": "configure an enabled ResourceLibrary for this Storage",
-            }
-        if self._file_index is None:
-            return {
-                "available": False,
-                "indexed": False,
-                "memberships": [],
-                "total": 0,
-                "truncated": False,
-                "nextAction": "reload after the runtime FileIndex repository is available",
-            }
-        find = getattr(self._file_index, "find_by_path", None)
-        if not callable(find):
-            return {
-                "available": False,
-                "indexed": False,
-                "memberships": [],
-                "total": 0,
-                "truncated": False,
-                "nextAction": "inspect the FileIndex repository and reload Files",
-            }
-        bounded_libraries = libraries[: self.MAX_MEMBERSHIP_LIBRARIES]
-        memberships: list[dict[str, object]] = []
-        try:
-            for library in bounded_libraries:
-                if not _path_in_resource_library(path, library.root_path):
-                    continue
-                record = find(library.storage_id, library.library_id, path)
-                if record is None:
-                    continue
-                memberships.append(
-                    {
-                        "fileId": record.file_id,
-                        "resourceLibraryId": record.resource_library_id,
-                        "path": record.path,
-                        "scanStatus": record.scan_status.value,
-                        "change": record.change.value,
-                        "size": record.size,
-                        "modifiedAt": record.modified_at.isoformat(),
-                        "updatedAt": record.updated_at.isoformat(),
-                        "occurrenceId": record.occurrence_id,
-                        "fingerprint": record.fingerprint,
-                        "fingerprintState": record.occurrence_state.value,
-                    }
-                )
-        except Exception:
-            return {
-                "available": False,
-                "indexed": False,
-                "memberships": [],
-                "total": 0,
-                "truncated": False,
-                "nextAction": "inspect the FileIndex repository and reload Files",
-            }
-        return {
-            "available": True,
-            "indexed": bool(memberships),
-            "memberships": memberships,
-            "total": len(memberships),
-            "truncated": len(libraries) > len(bounded_libraries),
-            "libraryScope": "requested" if len(libraries) == 1 else "all_enabled",
-            "nextAction": (
-                "open FileIndex for indexed discovery state"
-                if memberships
-                else "run a bounded ResourceLibrary scan to add this file to FileIndex"
-            ),
-        }
 
     @staticmethod
     def _runtime_error(error: StorageBrowserError) -> StorageBrowserError:
@@ -1026,6 +1038,53 @@ def _path_in_resource_library(path: str, root: str) -> bool:
     if not root:
         return True
     return path == root or path.startswith(root + "/")
+
+
+def _join_resource_library_path(root: str, relative_path: str) -> str:
+    root = _normalize_storage_relative_path(root) if root else ""
+    relative_path = _normalize_storage_relative_path(relative_path) if relative_path else ""
+    if not root:
+        return relative_path
+    return f"{root}/{relative_path}" if relative_path else root
+
+
+def _strip_resource_library_path(path: str, root: str) -> str:
+    root = _normalize_storage_relative_path(root) if root else ""
+    path = _normalize_storage_relative_path(path) if path else ""
+    if not root:
+        return path
+    if path == root:
+        return ""
+    if path.startswith(root + "/"):
+        return path[len(root) + 1 :]
+    raise StorageBrowserService._browser_failure("malformed_response", None, "")
+
+
+def _resource_library_breadcrumbs(path: str) -> list[dict[str, object]]:
+    crumbs: list[dict[str, object]] = [{"name": "ResourceLibrary root", "path": "", "isRoot": True}]
+    if not path:
+        return crumbs
+    parts = path.split("/")
+    for index, name in enumerate(parts):
+        crumbs.append({"name": name, "path": "/".join(parts[: index + 1]), "isRoot": False})
+    return crumbs
+
+
+def _storage_summary(runtime_configuration, storage_id: str) -> dict[str, object]:
+    definition = next(
+        (
+            item
+            for item in getattr(runtime_configuration, "storage_definitions", ())
+            if item.storage_id == storage_id
+        ),
+        None,
+    )
+    return {
+        "id": storage_id,
+        "name": getattr(definition, "name", storage_id),
+        "type": getattr(definition, "storage_type", "unknown"),
+        "readOnly": bool(getattr(definition, "read_only", False)),
+    }
 
 
 def _safe_storage_id(value: object) -> str:

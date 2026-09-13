@@ -1233,9 +1233,8 @@ class MediaFlowApi:
             operations_projection = True
             parts = ["api", "v1", *parts[3:]]
         if len(parts) >= 3 and parts[:3] == ["api", "v1", "file-index"]:
-            # ``/file-index`` is the explicit daily catalog contract.  Keep the
-            # older ``/files`` route as a compatibility alias for the same
-            # indexed-discovery surface; real Storage browsing has its own route.
+            # ``/file-index`` remains the explicit V1/background catalog contract.
+            # UI-V2 Files uses ResourceLibrary-scoped live Storage routes instead.
             parts[2] = "files"
         if (
             len(parts) >= 3
@@ -1418,7 +1417,7 @@ class MediaFlowApi:
         if parts == ["api", "v1", "operations", "previews"] and method == "POST":
             self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
             if self._manual_previews is None or not callable(
-                getattr(self._manual_previews, "create_current_from_index", None)
+                getattr(self._manual_previews, "create_current_from_storage", None)
             ):
                 return self._error(
                     start_response,
@@ -1432,28 +1431,36 @@ class MediaFlowApi:
                 "scopeKind",
                 "scope",
                 "resourceLibraryId",
-                "fileId",
+                "relativePath",
+                "path",
                 "snapshotId",
                 "snapshotDigest",
             }
             if set(document).difference(allowed):
                 raise ValueError(
-                    "server-bound Preview accepts only bounded scope identity and snapshot fields"
+                    "server-bound Preview accepts only ResourceLibrary source identity fields"
                 )
             raw_kind = document.get("scopeKind", document.get("scope"))
             if raw_kind == "resourceLibrary":
                 raw_kind = "resource_library"
             if raw_kind not in {"file", "resource_library"}:
                 raise ValueError("server-bound Preview scope must be file or resource_library")
+            relative_path = document.get("relativePath", document.get("path"))
+            if raw_kind == "file" and (
+                not isinstance(relative_path, str) or not relative_path.strip()
+            ):
+                raise ValueError("server-bound file Preview requires relativePath")
+            if raw_kind == "resource_library" and relative_path not in (None, ""):
+                raise ValueError("ResourceLibrary Preview cannot include relativePath")
             for name in ("snapshotId", "snapshotDigest"):
                 if name in document and (
                     not isinstance(document[name], str) or not document[name].strip()
                 ):
                     raise ValueError(f"server-bound Preview {name} must be a non-empty string")
-            preview = self._manual_previews.create_current_from_index(
+            preview = self._manual_previews.create_current_from_storage(
                 scope_kind=raw_kind,
-                file_id=document.get("fileId"),
                 resource_library_id=document.get("resourceLibraryId"),
+                relative_path=relative_path,
                 snapshot_id=document.get("snapshotId"),
                 snapshot_digest=document.get("snapshotDigest"),
                 actor=principal.principal_id,
@@ -4221,27 +4228,37 @@ class MediaFlowApi:
             scan = binding.manual_scans.cancel(parts[3])
             return self._response(start_response, 200, scan.document())
         if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.files_browser is None:
+                return self._files_browser_unavailable(start_response)
+            query = self._resource_library_files_query(environ, parts[3])
+            return self._response(
+                start_response,
+                200,
+                binding.files_browser.browse_resource_library(**query),
+            )
+        if (
+            parts == ["api", "v1", "resource-libraries", "files"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.files_browser is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "ResourceLibrary Files list")
+            return self._response(
+                start_response, 200, binding.files_browser.list_resource_libraries()
+            )
+        if (
             parts == ["api", "v1", "storage", "files"] or parts == ["api", "v1", "files", "browse"]
         ) and method == "GET":
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
-                return self._error(
-                    start_response,
-                    503,
-                    "configuration_unavailable",
-                    "managed Active runtime is unavailable for Files browsing",
-                    details={
-                        "authority": "MANAGED",
-                        "runtimeReady": False,
-                        "durableState": "managed_active_unavailable",
-                        "sideEffects": "none",
-                        "retrySafe": True,
-                        "nextAction": (
-                            "inspect configuration status and restore or activate a valid Active "
-                            "runtime"
-                        ),
-                    },
-                )
+                return self._files_browser_unavailable(start_response)
             query = self._runtime_files_query(environ)
             return self._response(
                 start_response,
@@ -7974,6 +7991,47 @@ class MediaFlowApi:
             "expected_digest": expected_digest,
         }
 
+
+    @staticmethod
+    def _files_browser_unavailable(start_response: Callable):
+        return MediaFlowApi._error(
+            start_response,
+            503,
+            "configuration_unavailable",
+            "managed Active runtime is unavailable for Files browsing",
+            details={
+                "authority": "MANAGED",
+                "runtimeReady": False,
+                "durableState": "managed_active_unavailable",
+                "sideEffects": "none",
+                "retrySafe": True,
+                "nextAction": (
+                    "inspect configuration status and restore or activate a valid Active "
+                    "runtime"
+                ),
+            },
+        )
+
+    @classmethod
+    def _resource_library_files_query(
+        cls, environ: dict, resource_library_id: str
+    ) -> dict[str, object]:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path", "limit", "cursor"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("ResourceLibrary Files query contains unsupported or repeated fields")
+        if not resource_library_id:
+            raise ValueError("ResourceLibrary Files route requires resourceLibraryId")
+        cursor = query.get("cursor", [None])[0]
+        if cursor == "":
+            raise ValueError("ResourceLibrary Files cursor must not be empty")
+        return {
+            "resource_library_id": resource_library_id,
+            "path": query.get("path", [""])[0],
+            "limit": cls._parse_bounded_limit(query.get("limit", ["50"])[0], "Files"),
+            "cursor": cursor,
+        }
+
     @classmethod
     def _runtime_files_query(cls, environ: dict) -> dict[str, object]:
         query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
@@ -8238,7 +8296,11 @@ class MediaFlowApi:
         return (
             parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
             and (len(parts) == 4 or parts == ["api", "v1", parts[2], "by-source"])
-        ) or parts == ["api", "v1", "storage", "files"]
+        ) or parts == ["api", "v1", "storage", "files"] or (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+        )
 
     @staticmethod
     def _document(environ: dict) -> dict:

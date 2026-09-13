@@ -7,8 +7,8 @@ import { systemStatusQueryOptions } from "./system-status-query";
 import { manualActionsQueryOptions } from "../operations/manual-actions-query";
 
 /**
- * Library landing for the two deliberately separate read journeys. Neither
- * choice starts work, reads media content or mutates Storage.
+ * Library landing for the ResourceLibrary Files journey. Browsing starts no
+ * work, reads no media content and mutates no Storage.
  *
  * A bounded Operations cross-link is offered so an operator in the daily
  * operations flow can reach the Task/Job workspace without copying an
@@ -96,9 +96,8 @@ export function LibraryLanding() {
         <div>
           <h2>Library</h2>
           <p className="mf-dashboard-meta">
-            Choose whether to inspect the configured Active Storage directly or
-            the durable FileIndex records MediaFlow keeps about discovered
-            files.
+            Browse live Storage files through ResourceLibrary boundaries.
+            FileIndex remains a background/V1 catalog, not a UI-V2 file source.
           </p>
         </div>
         {showResourceLibraries && (
@@ -110,28 +109,13 @@ export function LibraryLanding() {
       </header>
       <ul className="mf-library-choices">
         <li className="mf-library-choice">
-          <h3>Storage files</h3>
+          <h3>Files</h3>
           <p>
-            Browse the selected Active Storage root and its immediate
-            directories, one bounded page at a time, and see FileIndex
-            membership where it is available.
+            Choose a ResourceLibrary, browse only that library's configured
+            root, select files, and create a zero-mutation organize Preview.
           </p>
           <Link className="mf-button mf-button-primary" to="/library/files">
-            Open Storage files
-          </Link>
-        </li>
-        <li className="mf-library-choice">
-          <h3>FileIndex</h3>
-          <p>
-            Search and filter durable indexed discovery records separately from
-            the live Storage view. Discovery, occurrence and processing facts
-            remain distinct and read-only.
-          </p>
-          <Link
-            className="mf-button mf-button-secondary"
-            to="/library/file-index"
-          >
-            Open FileIndex catalog
+            Open Files
           </Link>
         </li>
       </ul>
@@ -185,8 +169,8 @@ export function LibraryLanding() {
         <h3>Operations</h3>
         <p>
           Library discovery and processing state is produced by Operations
-          Tasks. Follow the exact Task or Job behind a FileIndex record in the
-          Operations workspace; this page reads state only and starts no work.
+          Tasks. Use Files to create a Preview, then follow the resulting Task
+          or Job in the Operations workspace.
         </p>
         <div className="mf-actions">
           <Link

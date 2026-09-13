@@ -476,3 +476,7 @@ general Configuration and final V1 UI cutover migrations remain separate planned
 - **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
   retirement acceptance. Review/Recovery and general Configuration business migrations remain
   owned by later Slices; their current V2 landings do not claim those journeys.
+
+## Files Journey Update — 2026-09-13
+
+The Files journey is now: choose ResourceLibrary, browse its directories, select one or more files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in Operations.  Storage is described only as the ResourceLibrary backing implementation.  FileIndex terminology is not part of the ordinary Files page experience.

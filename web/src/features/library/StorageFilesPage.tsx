@@ -1,56 +1,16 @@
-import { useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import type { StorageFilesModel } from "../../entities/library/storage-files";
 import type {
-  FileIndexMembership,
-  StorageFilesModel,
-} from "../../entities/library/storage-files";
-import type {
-  SystemStatusModel,
+  SystemResourceLibrary,
   SystemStorage,
 } from "../../entities/library/system-status";
 import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
-import type { StorageFilesRead } from "../../shared/api/api-client";
-import type { FileBySourceRead } from "../../shared/api/api-client";
-import { fileBySourceQueryOptions } from "./file-detail-query";
-
-interface SourceResolutionTarget {
-  readonly storageId: string;
-  readonly path: string;
-  readonly resourceLibrary: string | null;
-  readonly contextKey: string;
-}
-
-function sameSourceTarget(
-  left: SourceResolutionTarget | null,
-  right: SourceResolutionTarget,
-): boolean {
-  return (
-    left !== null &&
-    left.storageId === right.storageId &&
-    left.path === right.path &&
-    left.resourceLibrary === right.resourceLibrary &&
-    left.contextKey === right.contextKey
-  );
-}
-
-function membershipLabel(membership: FileIndexMembership): string {
-  switch (membership.kind) {
-    case "indexed":
-      return "Indexed";
-    case "ambiguous":
-      return "Multiple FileIndex matches";
-    case "not-indexed":
-      return "Not indexed";
-    case "truncated":
-      return "Membership truncated";
-    case "unavailable":
-      return "Membership unavailable";
-  }
-}
+import { submitServerBoundPreview } from "../../shared/api/api-client";
 
 function formatBytes(value: number): string {
   if (value === 0) return "0 B";
@@ -60,213 +20,155 @@ function formatBytes(value: number): string {
 }
 
 function failureDetail(kind: string, path: string): string {
-  const where = path === "" ? "the Storage root" : `"${path}"`;
+  const where = path === "" ? "the ResourceLibrary root" : `"${path}"`;
   switch (kind) {
     case "storage_unavailable":
-      return `The Storage provider could not complete the read of ${where}. This is not an API-permission failure: the connected principal remains authorized; the provider read itself failed.`;
-    case "storage_not_found":
-      return "The selected Storage is not part of the current managed Active runtime.";
-    case "storage_disabled":
-      return "The selected Storage is disabled in the current managed Active runtime.";
+      return `The Storage provider could not read ${where}. Try again after the Storage is available.`;
+    case "resource_library_not_found":
+      return "The selected ResourceLibrary is not available in the current Active runtime.";
     case "invalid_path":
-      return "The requested path is not a safe Storage-relative path.";
+      return "The requested path is not a safe ResourceLibrary-relative path.";
     case "not_found":
       return `The requested directory was not found at ${where}.`;
     case "not_directory":
       return "The requested path is not a directory.";
     case "invalid_cursor":
-      return "The page continuation is no longer valid for this Storage and directory.";
-    case "resource_library_not_found":
-      return "The requested ResourceLibrary is not available in the managed Active runtime.";
-    case "resource_library_mismatch":
-      return "The requested ResourceLibrary does not use this Storage.";
+      return "The page continuation no longer matches this ResourceLibrary and directory.";
     case "configuration_unavailable":
       return "The managed Active configuration snapshot is unavailable.";
+    case "storage_disabled":
+      return "The Storage backing this ResourceLibrary is disabled.";
     default:
-      return "The Files request was rejected as invalid. No file was changed and this read remains safe to repeat.";
+      return "The Files request was rejected. No file was changed and this read remains safe to repeat.";
   }
 }
 
-function IndexedFileEntry({
-  storageId,
-  path,
-  membership,
-  contextKey,
-  sourceTarget,
-  sourceRead,
-  onResolve,
-}: {
-  readonly storageId: string;
-  readonly path: string;
-  readonly membership: FileIndexMembership;
-  readonly contextKey: string;
-  readonly sourceTarget: SourceResolutionTarget | null;
-  readonly sourceRead: FileBySourceRead | undefined;
-  readonly onResolve: (target: SourceResolutionTarget) => void;
-}) {
-  const membershipRecord = membership.memberships[0];
-  const target: SourceResolutionTarget = {
-    storageId,
-    path,
-    resourceLibrary: membershipRecord?.resourceLibraryId ?? null,
-    contextKey,
-  };
-  if (!sameSourceTarget(sourceTarget, target)) {
-    return (
-      <button
-        type="button"
-        className="mf-link-button"
-        onClick={() => onResolve(target)}
-      >
-        Check indexed link
-      </button>
-    );
-  }
-  if (sourceRead === undefined) {
-    return <span className="mf-file-membership">Checking indexed link…</span>;
-  }
-  if (!sourceRead.ok) {
-    return <span className="mf-file-membership">Indexed link unavailable</span>;
-  }
-  const model = sourceRead.model;
-  if (!model.available || model.fileId === null) {
-    const reason =
-      model.reason === "ambiguous"
-        ? "Multiple FileIndex matches"
-        : model.reason === "missing"
-          ? "Not indexed"
-          : "Indexed link unavailable";
-    return <span className="mf-file-membership">{reason}</span>;
-  }
-  return (
-    <Link
-      className="mf-link-button"
-      to="/library/file-index/$fileId"
-      params={{ fileId: model.fileId }}
-      search={{
-        q_resourceLibrary:
-          model.resourceLibraryId ?? target.resourceLibrary ?? undefined,
-      }}
-    >
-      Open indexed record
-    </Link>
-  );
+function storageFor(
+  storages: readonly SystemStorage[],
+  library: SystemResourceLibrary,
+): SystemStorage | null {
+  return storages.find((item) => item.id === library.storageId) ?? null;
 }
 
-function SourceResolutionNotice({
-  target,
-  data,
-  pending,
+function ResourceLibraryPicker({
+  libraries,
+  storages,
+  selectedId,
+  onSelect,
 }: {
-  readonly target: SourceResolutionTarget;
-  readonly data: FileBySourceRead | undefined;
-  readonly pending: boolean;
+  readonly libraries: readonly SystemResourceLibrary[];
+  readonly storages: readonly SystemStorage[];
+  readonly selectedId: string;
+  readonly onSelect: (id: string) => void;
 }) {
-  if (pending || data === undefined) {
+  const enabled = libraries.filter((item) => item.enabled);
+  if (enabled.length === 0) {
     return (
-      <p className="mf-dashboard-meta" role="status">
-        Checking the authoritative FileIndex link for this Storage-relative
-        source ({target.path})…
-      </p>
-    );
-  }
-  if (!data.ok) {
-    return (
-      <p className="mf-dashboard-meta" role="status">
-        The indexed link could not be checked. No destination was selected;
-        retry this read if the Active runtime is available.
-      </p>
-    );
-  }
-  if (data.model.available && data.model.fileId !== null) {
-    return (
-      <p className="mf-dashboard-meta" role="status">
-        A unique current FileIndex record was confirmed for this source. Open
-        the explicit link in the row below.
-      </p>
+      <section className="mf-card">
+        <h3>No ResourceLibraries</h3>
+        <p className="mf-dashboard-meta">
+          Files needs an enabled ResourceLibrary in the Active configuration.
+        </p>
+      </section>
     );
   }
   return (
-    <p className="mf-dashboard-meta" role="status">
-      {data.model.reason === "ambiguous"
-        ? "The source has multiple FileIndex matches. Scope the read by ResourceLibrary before opening a record."
-        : data.model.reason === "missing"
-          ? "No current FileIndex record matches this source; the physical file remains available in this read-only view."
-          : "The source-link response did not establish a unique current FileIndex record; no destination was selected."}
-    </p>
+    <aside className="mf-card mf-files-sidebar" aria-label="Resource libraries">
+      <div className="mf-files-head">
+        <div>
+          <h3>ResourceLibraries</h3>
+          <p className="mf-dashboard-meta">Choose the business library to browse.</p>
+        </div>
+      </div>
+      <ul className="mf-file-list">
+        {enabled.map((library) => {
+          const storage = storageFor(storages, library);
+          const active = library.id === selectedId;
+          return (
+            <li key={library.id} className={active ? "mf-file-row is-selected" : "mf-file-row"}>
+              <button
+                type="button"
+                className="mf-link-button"
+                onClick={() => onSelect(library.id)}
+                aria-current={active ? "page" : undefined}
+              >
+                {library.name ?? library.id}
+              </button>
+              <span>{storage?.name ?? library.storageId}</span>
+              <span>{library.rootPath || "Root"}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </aside>
   );
 }
 
 function FileBrowseView({
   model,
-  storage,
-  refreshing,
+  selected,
+  previewing,
+  previewError,
+  onToggle,
+  onPreviewOne,
+  onPreviewSelected,
   onRefresh,
   onOpenPath,
   onNextPage,
   onReturnRoot,
-  sourceTarget,
-  contextKey,
-  sourceRead,
-  sourceResolution,
-  onResolveSource,
 }: {
   readonly model: StorageFilesModel;
-  readonly storage: SystemStorage | null;
-  readonly refreshing: boolean;
+  readonly selected: ReadonlySet<string>;
+  readonly previewing: boolean;
+  readonly previewError: string | null;
+  readonly onToggle: (path: string) => void;
+  readonly onPreviewOne: (path: string) => void;
+  readonly onPreviewSelected: () => void;
   readonly onRefresh: () => void;
   readonly onOpenPath: (path: string) => void;
   readonly onNextPage: (cursor: string) => void;
   readonly onReturnRoot: () => void;
-  readonly sourceTarget: SourceResolutionTarget | null;
-  readonly contextKey: string;
-  readonly sourceRead: FileBySourceRead | undefined;
-  readonly sourceResolution: ReactNode;
-  readonly onResolveSource: (target: SourceResolutionTarget) => void;
 }) {
+  const selectedCount = selected.size;
   return (
     <section className="mf-files">
       <div className="mf-files-head">
         <div>
-          <h3>{storage?.name ?? model.storageName}</h3>
+          <h3>{model.resourceLibrary?.name ?? "ResourceLibrary"}</h3>
           <p className="mf-dashboard-meta">
-            Active snapshot authority: {model.authority} · revision{" "}
-            {model.revisionId}
+            {model.storageName} · ResourceLibrary-relative path {model.path || "root"}
           </p>
         </div>
-        <button
-          className="mf-button mf-button-secondary"
-          type="button"
-          onClick={onRefresh}
-          disabled={refreshing}
-        >
-          {refreshing ? "Refreshing…" : "Refresh"}
-        </button>
+        <div className="mf-actions">
+          <button className="mf-button mf-button-secondary" type="button" onClick={onRefresh}>
+            Refresh
+          </button>
+          <button
+            className="mf-button"
+            type="button"
+            onClick={onPreviewSelected}
+            disabled={selectedCount === 0 || previewing}
+          >
+            {previewing ? "Creating Preview…" : `Preview selected${selectedCount ? ` (${selectedCount})` : ""}`}
+          </button>
+        </div>
       </div>
       <p className="mf-dashboard-meta">
-        This read is bounded and read-only: {model.sideEffects} side effects,
-        retry safe: {model.retrySafe ? "yes" : "no"}.
+        Live Storage read through ResourceLibrary authority · side effects: {model.sideEffects}.
       </p>
-      {sourceResolution}
-      <nav aria-label="Storage breadcrumb" className="mf-breadcrumbs">
+      {previewError !== null && (
+        <p className="mf-error" role="status">{previewError}</p>
+      )}
+      <nav aria-label="ResourceLibrary breadcrumb" className="mf-breadcrumbs">
         {model.breadcrumbs.map((crumb) =>
           crumb.isRoot ? (
-            <button
-              key={crumb.path}
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={onReturnRoot}
-            >
-              Storage root
+            <button key="root" type="button" className="mf-button mf-button-secondary" onClick={onReturnRoot}>
+              ResourceLibrary root
             </button>
           ) : (
             <span key={crumb.path}>
               <span aria-hidden="true">/</span>
-              <button
-                type="button"
-                className="mf-link-button"
-                onClick={() => onOpenPath(crumb.path)}
-              >
+              <button type="button" className="mf-link-button" onClick={() => onOpenPath(crumb.path)}>
                 {crumb.name}
               </button>
             </span>
@@ -279,556 +181,217 @@ function FileBrowseView({
         <ul className="mf-file-list">
           {model.entries.map((entry) => (
             <li key={entry.path} className="mf-file-row">
-              <span className="mf-file-name">
-                {entry.isDirectory
-                  ? "Folder"
-                  : entry.isSymlink
-                    ? "Link"
-                    : "File"}{" "}
-                {entry.isDirectory ? (
-                  <button
-                    type="button"
-                    className="mf-link-button"
-                    onClick={() => onOpenPath(entry.path)}
-                  >
+              <span>
+                {entry.isDirectory && entry.traversable ? (
+                  <button type="button" className="mf-link-button" onClick={() => onOpenPath(entry.path)}>
                     {entry.name}
                   </button>
                 ) : (
                   entry.name
                 )}
               </span>
-              <span className="mf-file-kind">{entry.type}</span>
-              <span className="mf-file-meta">
-                {entry.isDirectory ? "" : formatBytes(entry.size)} ·{" "}
-                {entry.modifiedAt}
-              </span>
-              <span className="mf-file-membership">
-                {entry.membership.kind === "indexed" &&
-                entry.membership.memberships.length === 1 ? (
-                  <IndexedFileEntry
-                    storageId={model.storageId}
-                    path={entry.path}
-                    membership={entry.membership}
-                    contextKey={contextKey}
-                    sourceTarget={sourceTarget}
-                    sourceRead={
-                      sourceTarget !== null &&
-                      sourceTarget.storageId === model.storageId &&
-                      sourceTarget.path === entry.path
-                        ? sourceRead
-                        : undefined
-                    }
-                    onResolve={onResolveSource}
-                  />
-                ) : (
-                  membershipLabel(entry.membership)
+              <span>{entry.type}</span>
+              <span>{entry.isDirectory ? "—" : formatBytes(entry.size)}</span>
+              <span>{entry.modifiedAt}</span>
+              <span className="mf-actions">
+                {!entry.isDirectory && entry.selectable && (
+                  <>
+                    <label className="mf-inline-control">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(entry.path)}
+                        onChange={() => onToggle(entry.path)}
+                      />
+                      Select
+                    </label>
+                    <button
+                      type="button"
+                      className="mf-link-button"
+                      onClick={() => onPreviewOne(entry.path)}
+                      disabled={previewing}
+                    >
+                      Preview organize
+                    </button>
+                  </>
                 )}
               </span>
             </li>
           ))}
         </ul>
       )}
-      <div className="mf-actions">
-        {model.hasNext && model.nextCursor !== null ? (
-          <button
-            className="mf-button mf-button-primary"
-            type="button"
-            onClick={() => onNextPage(model.nextCursor as string)}
-          >
-            Next page
-          </button>
-        ) : null}
-        <Link className="mf-button mf-button-secondary" to="/library">
-          Back to Library
-        </Link>
-      </div>
-    </section>
-  );
-}
-
-function FileFailureView({
-  title,
-  detail,
-  nextAction,
-  onRetry,
-  retrying,
-  onBack,
-}: {
-  readonly title: string;
-  readonly detail: string;
-  readonly nextAction: string;
-  readonly onRetry: () => void;
-  readonly retrying: boolean;
-  readonly onBack: () => void;
-}) {
-  return (
-    <section className="mf-status mf-status-error" role="alert">
-      <h2>{title}</h2>
-      <p>{detail}</p>
-      <p>
-        <strong>Next action:</strong> {nextAction}
-      </p>
-      <div className="mf-actions">
-        <button
-          className="mf-button mf-button-primary"
-          type="button"
-          onClick={onRetry}
-          disabled={retrying}
-        >
-          {retrying ? "Retrying…" : "Retry read"}
+      {model.hasNext && model.nextCursor !== null && (
+        <button type="button" className="mf-button mf-button-secondary" onClick={() => onNextPage(model.nextCursor!)}>
+          Load next page
         </button>
-        <button
-          className="mf-button mf-button-secondary"
-          type="button"
-          onClick={onBack}
-        >
-          Back to Storage files
-        </button>
-      </div>
+      )}
     </section>
-  );
-}
-
-export interface StorageFilesViewProps {
-  readonly status: SystemStatusModel | null;
-  readonly storageId: string | null;
-  readonly path: string;
-  readonly fileResult: StorageFilesRead | undefined;
-  readonly filePending: boolean;
-  readonly fileFetching: boolean;
-  readonly refreshFiles: () => void;
-  readonly onOpenStorage: (storageId: string) => void;
-  readonly onOpenPath: (path: string) => void;
-  readonly onNextPage: (cursor: string) => void;
-  readonly onReturnRoot: () => void;
-  readonly onBack: () => void;
-  readonly onRefreshRuntime: () => void;
-  readonly sourceTarget: SourceResolutionTarget | null;
-  readonly contextKey: string;
-  readonly sourceRead: FileBySourceRead | undefined;
-  readonly sourceResolution: ReactNode;
-  readonly onResolveSource: (target: SourceResolutionTarget) => void;
-}
-
-export function StorageFilesView({
-  status,
-  storageId,
-  path,
-  fileResult,
-  filePending,
-  fileFetching,
-  refreshFiles,
-  onOpenStorage,
-  onOpenPath,
-  onNextPage,
-  onReturnRoot,
-  onBack,
-  onRefreshRuntime,
-  sourceTarget,
-  contextKey,
-  sourceRead,
-  sourceResolution,
-  onResolveSource,
-}: StorageFilesViewProps) {
-  if (status === null || !status.configurationActive) {
-    return (
-      <section className="mf-status mf-status-warning">
-        <h2>No Active runtime</h2>
-        <p>
-          MediaFlow has no valid managed Active configuration snapshot to
-          browse. Draft, JSON and local rows are never presented as Active
-          authority.
-        </p>
-        <div className="mf-actions">
-          <Link className="mf-button mf-button-secondary" to="/library">
-            Back to Library
-          </Link>
-          <a className="mf-button mf-button-secondary" href="/ui">
-            Open current Web UI
-          </a>
-        </div>
-      </section>
-    );
-  }
-  const storages = status.storages;
-  const activeStorage = storages.find((item) => item.id === storageId) ?? null;
-
-  if (storageId === null) {
-    return (
-      <section className="mf-library-choices" aria-label="Choose a Storage">
-        <h2>Choose a Storage</h2>
-        <p>
-          Select one of the configured Storages from the exact managed Active
-          runtime to open its Storage-relative root.
-        </p>
-        {storages.length === 0 ? (
-          <section className="mf-status mf-status-warning">
-            <h3>No configured Storage</h3>
-            <p>
-              The Active runtime has no configured Storage. Configuration
-              changes belong to the current Web UI.
-            </p>
-            <div className="mf-actions">
-              <Link className="mf-button mf-button-secondary" to="/library">
-                Back to Library
-              </Link>
-              <a className="mf-button mf-button-secondary" href="/ui">
-                Open current Web UI
-              </a>
-            </div>
-          </section>
-        ) : (
-          <ul className="mf-storage-list">
-            {storages.map((storage) => (
-              <li key={storage.id}>
-                <button
-                  className="mf-storage-button"
-                  type="button"
-                  onClick={() => onOpenStorage(storage.id)}
-                >
-                  <span className="mf-storage-name">{storage.name}</span>
-                  <span className="mf-storage-meta">
-                    {storage.type} · read only:{" "}
-                    {storage.readOnly ? "yes" : "no"}
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
-    );
-  }
-
-  if (activeStorage === null) {
-    return (
-      <section className="mf-status mf-status-warning">
-        <h2>Storage is no longer available</h2>
-        <p>
-          The selected Storage is not present in the current managed Active
-          runtime. Choose another configured Storage to continue.
-        </p>
-        <div className="mf-actions">
-          <button
-            className="mf-button mf-button-secondary"
-            type="button"
-            onClick={onBack}
-          >
-            Back to Storage files
-          </button>
-        </div>
-      </section>
-    );
-  }
-
-  if (filePending || fileResult === undefined) {
-    return (
-      <section className="mf-status mf-status-info" role="status">
-        <h2>Loading Storage files</h2>
-        <p>
-          Requesting a bounded read-only directory listing from the Active
-          Storage.
-        </p>
-        <p className="mf-dashboard-meta">
-          Storage-relative path: {path === "" ? "Storage root" : path}
-        </p>
-      </section>
-    );
-  }
-
-  if (!fileResult.ok) {
-    const failure = fileResult.failure;
-    if (failure.kind === "configuration_unavailable") {
-      return (
-        <section className="mf-status mf-status-warning">
-          <h2>No Active runtime</h2>
-          <p>
-            The managed Active configuration snapshot is unavailable. This is
-            not an API or permission failure; restore or activate a valid Active
-            runtime before browsing.
-          </p>
-          <p>
-            <strong>Next action:</strong> {failure.nextAction}
-          </p>
-          <div className="mf-actions">
-            <button
-              className="mf-button mf-button-primary"
-              type="button"
-              onClick={refreshFiles}
-              disabled={fileFetching}
-            >
-              {fileFetching ? "Retrying…" : "Retry read"}
-            </button>
-            <Link className="mf-button mf-button-secondary" to="/library">
-              Back to Library
-            </Link>
-            <a className="mf-button mf-button-secondary" href="/ui">
-              Open current Web UI
-            </a>
-          </div>
-        </section>
-      );
-    }
-    return (
-      <FileFailureView
-        title={failure.title}
-        detail={failureDetail(failure.kind, path)}
-        nextAction={failure.nextAction}
-        onRetry={refreshFiles}
-        retrying={fileFetching}
-        onBack={onBack}
-      />
-    );
-  }
-
-  const model = fileResult.model;
-  if (
-    !status.configurationActive ||
-    status.authority !== "MANAGED" ||
-    status.configurationSnapshotId === null ||
-    model.authority !== "MANAGED" ||
-    model.revisionId !== status.configurationSnapshotId
-  ) {
-    return (
-      <section className="mf-status mf-status-warning">
-        <h2>Active runtime changed</h2>
-        <p>
-          The managed Active runtime changed while this read was in progress.
-          The Storage listing was not accepted because its snapshot identity no
-          longer matches the selected runtime.
-        </p>
-        <p>
-          <strong>Next action:</strong> refresh the Active runtime and retry
-          this bounded read.
-        </p>
-        <div className="mf-actions">
-          <button
-            className="mf-button mf-button-primary"
-            type="button"
-            onClick={onRefreshRuntime}
-          >
-            Refresh Active runtime
-          </button>
-          <button
-            className="mf-button mf-button-secondary"
-            type="button"
-            onClick={onBack}
-          >
-            Back to Storage files
-          </button>
-        </div>
-      </section>
-    );
-  }
-  if (model.storageId !== storageId) {
-    return (
-      <section className="mf-status mf-status-warning">
-        <h2>Storage changed</h2>
-        <p>
-          The backend returned a different Storage than selected. Path and page
-          state are scoped to one Storage and are never reused across another.
-        </p>
-        <div className="mf-actions">
-          <button
-            className="mf-button mf-button-secondary"
-            type="button"
-            onClick={onBack}
-          >
-            Back to Storage files
-          </button>
-        </div>
-      </section>
-    );
-  }
-  if (model.path !== path) {
-    return (
-      <section className="mf-status mf-status-warning">
-        <h2>Browse context changed</h2>
-        <p>
-          The returned directory does not match the requested Storage-relative
-          path. Return to the Storage root to continue safely.
-        </p>
-        <div className="mf-actions">
-          <button
-            className="mf-button mf-button-secondary"
-            type="button"
-            onClick={onReturnRoot}
-          >
-            Return to Storage root
-          </button>
-        </div>
-      </section>
-    );
-  }
-  return (
-    <FileBrowseView
-      model={model}
-      storage={activeStorage}
-      refreshing={fileFetching}
-      onRefresh={refreshFiles}
-      onOpenPath={onOpenPath}
-      onNextPage={onNextPage}
-      onReturnRoot={onReturnRoot}
-      sourceTarget={sourceTarget}
-      contextKey={contextKey}
-      sourceRead={sourceRead}
-      sourceResolution={sourceResolution}
-      onResolveSource={onResolveSource}
-    />
   );
 }
 
 export function StorageFilesPage() {
-  const navigate = useNavigate();
-  const routerState = useRouterState();
-  const location = routerState.location;
-  const query = new URLSearchParams(location.searchStr ?? "");
-  const storageId = query.get("storage");
-  const resourceLibrary = query.get("resourceLibrary");
-  const rawPath = query.get("path");
-  const rawCursor = query.get("cursor");
-  const path = rawPath ?? "";
-  const cursor = rawCursor ?? null;
-  const contextKey = `${storageId ?? ""}|${path}|${cursor ?? ""}`;
-
   const token = useAuthToken();
-  const system = useQuery(systemStatusQueryOptions(token));
-  const [sourceTarget, setSourceTarget] =
-    useState<SourceResolutionTarget | null>(null);
-  const activeSourceTarget =
-    sourceTarget !== null && sourceTarget.contextKey === contextKey
-      ? sourceTarget
-      : null;
+  const navigate = useNavigate();
+  const [selectedLibraryId, setSelectedLibraryId] = useState("");
+  const [path, setPath] = useState("");
+  const [cursor, setCursor] = useState<string | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<ReadonlySet<string>>(new Set());
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
-  const files = useQuery(
+  const statusQuery = useQuery(systemStatusQueryOptions(token));
+  const statusData = statusQuery.data;
+  const statusLibraries = statusData?.resourceLibraries.filter((item) => item.enabled) ?? [];
+  const effectiveLibraryId = selectedLibraryId || statusLibraries[0]?.id || "";
+  const filesQuery = useQuery(
     storageFilesQueryOptions(
       token,
-      {
-        storageId: storageId ?? "",
-        path,
-        cursor,
-        resourceLibrary,
-      },
-      system.data !== undefined,
+      { resourceLibraryId: effectiveLibraryId, path, cursor },
+      Boolean(statusData?.configurationActive && effectiveLibraryId),
     ),
   );
 
-  const source = useQuery(
-    fileBySourceQueryOptions(
-      token,
-      activeSourceTarget ?? { storageId: "", path: "", resourceLibrary: null },
-      activeSourceTarget !== null,
-    ),
-  );
-
-  const selectStorage = (nextStorageId: string) => {
-    const queryString = new URLSearchParams({ storage: nextStorageId });
-    void navigate({ to: `/library/files?${queryString.toString()}` });
-  };
-  const openPath = (nextPath: string) => {
-    const queryString = new URLSearchParams({ storage: storageId as string });
-    if (resourceLibrary !== null) {
-      queryString.set("resourceLibrary", resourceLibrary);
-    }
-    if (nextPath !== "") queryString.set("path", nextPath);
-    void navigate({ to: `/library/files?${queryString.toString()}` });
-  };
-  const nextPage = (nextCursor: string) => {
-    const queryString = new URLSearchParams({ storage: storageId as string });
-    if (resourceLibrary !== null) {
-      queryString.set("resourceLibrary", resourceLibrary);
-    }
-    if (path !== "") queryString.set("path", path);
-    queryString.set("cursor", nextCursor);
-    void navigate({ to: `/library/files?${queryString.toString()}` });
-  };
-  const returnRoot = () => {
-    const queryString = new URLSearchParams({ storage: storageId as string });
-    if (resourceLibrary !== null) {
-      queryString.set("resourceLibrary", resourceLibrary);
-    }
-    void navigate({ to: `/library/files?${queryString.toString()}` });
-  };
-  const backToSelection = () => {
-    void navigate({ to: "/library/files" });
-  };
+  const previewMutation = useMutation({
+    mutationFn: async ({ libraryId, paths }: { libraryId: string; paths: readonly string[] }) => {
+      if (paths.length !== 1) {
+        throw new Error("Batch Preview is planned; select one file for this Preview.");
+      }
+      const result = await submitServerBoundPreview(token, {
+        scopeKind: "file",
+        resourceLibraryId: libraryId,
+        relativePath: paths[0],
+      });
+      if (!result.ok) {
+        throw new Error(
+          result.code === "source_missing"
+            ? "文件已不存在，请刷新后重新预览"
+            : result.code === "source_stale" || result.code === "source_changed"
+              ? "文件已发生变化，请重新预览"
+              : result.code === "storage_unavailable"
+                ? "当前存储暂不可用，请稍后重试"
+                : "无法创建整理预览，请刷新后重试",
+        );
+      }
+      return result.model.previewId;
+    },
+    onSuccess: (previewId) => {
+      setPreviewError(null);
+      void navigate({ to: "/operations/preview/$previewId", params: { previewId } });
+    },
+    onError: (error) => {
+      setPreviewError(error instanceof Error ? error.message : "无法创建整理预览，请刷新后重试");
+    },
+  });
 
   return (
-    <AuthorizedReadBoundary
-      query={system}
-      unavailableTitle="Library unavailable"
-    >
-      {({
-        data: statusData,
-        isPending: statusPending,
-        refresh: refreshStatus,
-      }) => {
-        if (statusPending || statusData === undefined) {
+    <AuthorizedReadBoundary query={statusQuery} unavailableTitle="Files unavailable">
+      {({ data: status, isFetching: statusFetching, refresh: refreshStatus }) => {
+        if (status === undefined) {
+          return <p>Loading ResourceLibraries…</p>;
+        }
+        if (!status.configurationActive) {
           return (
-            <section className="mf-status mf-status-info" role="status">
-              <h2>Loading Library</h2>
-              <p>
-                Requesting the managed Active runtime snapshot from the
-                MediaFlow API.
-              </p>
+            <section className="mf-dashboard">
+              <h2>Files</h2>
+              <p>Activate a managed configuration before browsing ResourceLibraries.</p>
             </section>
           );
         }
+        const libraries = status.resourceLibraries.filter((item) => item.enabled);
+        const activeLibrary = libraries.find((item) => item.id === effectiveLibraryId) ?? null;
         return (
-          <AuthorizedReadBoundary
-            query={files}
-            unavailableTitle="Storage files unavailable"
-          >
-            {({
-              data: fileResult,
-              isPending: filePending,
-              isFetching: fileFetching,
-              refresh: refreshFiles,
-            }) => {
-              const sourceResolution =
-                activeSourceTarget === null ? null : (
-                  <AuthorizedReadBoundary
-                    query={source}
-                    unavailableTitle="Indexed link unavailable"
-                  >
-                    {({ data, isPending }) => (
-                      <SourceResolutionNotice
-                        target={activeSourceTarget}
-                        data={data}
-                        pending={isPending}
+          <div className="mf-dashboard">
+            <header className="mf-dashboard-head">
+              <div>
+                <h2>Files</h2>
+                <p className="mf-dashboard-meta">
+                  Browse live Storage through ResourceLibrary boundaries. FileIndex is not required for this page.
+                </p>
+              </div>
+              <Link className="mf-button mf-button-secondary" to="/operations">
+                Operations
+              </Link>
+            </header>
+            <div className="mf-files-layout">
+              <ResourceLibraryPicker
+                libraries={libraries}
+                storages={status.storages}
+                selectedId={activeLibrary?.id ?? ""}
+                onSelect={(id) => {
+                  setSelectedLibraryId(id);
+                  setPath("");
+                  setCursor(null);
+                  setSelectedFiles(new Set());
+                  setPreviewError(null);
+                }}
+              />
+              {activeLibrary === null ? (
+                <section className="mf-card">
+                  <h3>No enabled ResourceLibrary</h3>
+                  <p>Create or enable a ResourceLibrary in configuration to browse Files.</p>
+                </section>
+              ) : (
+                <AuthorizedReadBoundary query={filesQuery} unavailableTitle="Files read unavailable">
+                  {({ data: filesRead, isFetching, refresh }) => {
+                    const refreshing = isFetching || statusFetching;
+                    if (filesRead === undefined) return <p>Loading files…</p>;
+                    if (!filesRead.ok) {
+                      return (
+                        <section className="mf-card">
+                          <h3>{filesRead.failure.title}</h3>
+                          <p>{failureDetail(filesRead.failure.kind, path)}</p>
+                          <p className="mf-dashboard-meta">{filesRead.failure.nextAction}</p>
+                          <button type="button" className="mf-button" onClick={() => { refreshStatus(); refresh(); }}>
+                            Retry
+                          </button>
+                        </section>
+                      );
+                    }
+                    const model = filesRead.model;
+                    return (
+                      <FileBrowseView
+                        model={model}
+                        selected={selectedFiles}
+                        previewing={previewMutation.isPending || refreshing}
+                        previewError={previewError}
+                        onToggle={(entryPath) => {
+                          setSelectedFiles((current) => {
+                            const next = new Set(current);
+                            if (next.has(entryPath)) next.delete(entryPath);
+                            else next.add(entryPath);
+                            return next;
+                          });
+                        }}
+                        onPreviewOne={(entryPath) =>
+                          previewMutation.mutate({ libraryId: activeLibrary.id, paths: [entryPath] })
+                        }
+                        onPreviewSelected={() =>
+                          previewMutation.mutate({
+                            libraryId: activeLibrary.id,
+                            paths: Array.from(selectedFiles),
+                          })
+                        }
+                        onRefresh={refresh}
+                        onOpenPath={(nextPath) => {
+                          setPath(nextPath);
+                          setCursor(null);
+                          setSelectedFiles(new Set());
+                        }}
+                        onNextPage={(nextCursor) => setCursor(nextCursor)}
+                        onReturnRoot={() => {
+                          setPath("");
+                          setCursor(null);
+                          setSelectedFiles(new Set());
+                        }}
                       />
-                    )}
-                  </AuthorizedReadBoundary>
-                );
-              return (
-                <StorageFilesView
-                  status={statusData}
-                  storageId={storageId}
-                  path={path}
-                  fileResult={fileResult}
-                  filePending={filePending}
-                  fileFetching={fileFetching}
-                  refreshFiles={refreshFiles}
-                  onOpenStorage={selectStorage}
-                  onOpenPath={openPath}
-                  onNextPage={nextPage}
-                  onReturnRoot={returnRoot}
-                  onBack={backToSelection}
-                  onRefreshRuntime={() => {
-                    refreshStatus();
-                    refreshFiles();
+                    );
                   }}
-                  sourceTarget={activeSourceTarget}
-                  contextKey={contextKey}
-                  sourceRead={source.data}
-                  sourceResolution={sourceResolution}
-                  onResolveSource={setSourceTarget}
-                />
-              );
-            }}
-          </AuthorizedReadBoundary>
+                </AuthorizedReadBoundary>
+              )}
+            </div>
+          </div>
         );
       }}
     </AuthorizedReadBoundary>
   );
 }
+
+export default StorageFilesPage;
