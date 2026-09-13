@@ -8,10 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`, but no large Slice or implementation Task is active after Slice 33
-closure. The next legal action is for A to select the next large Slice in a later turn. The current
-Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
-[`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
+V2 remains active on `main`. A has reactivated Slice 33 for one post-closure P1 correction to its
+already-owned Manual Organize Preview and destructive-confirmation contract; there is no active
+implementation Task yet, and the next legal action is for B to plan one focused correction Task.
+The current Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
+[`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry and does not alter the
+historical 2026-09-13 closure entry below.
 
 ## Most Recently Closed Slice
 

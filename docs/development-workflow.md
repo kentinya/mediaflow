@@ -128,6 +128,30 @@ READY FOR A REVIEW
 → READY FOR A REVIEW
 ```
 
+Post-closure P0/P1 correction loop:
+
+```text
+PASS / CLOSED
+→ A confirms that a newly discovered P0/P1 regression belongs to the closed Slice
+→ A reactivates that same Slice as ACTIVE in the checkpointed Contract and Roadmap
+→ B creates one focused correction Task
+→ Developer implementation
+→ B Review
+→ READY FOR A REVIEW
+→ A Final Review
+→ PASS / CLOSED
+```
+
+This loop is exceptional and does not erase or rewrite the earlier closure. A keeps the immutable
+Slice Base, prior accepted Implementation Head, Closure Packet and A Final Review as historical
+facts, records the regression and its current severity, and checkpoints the reactivation before B
+plans. The correction remains inside the original Required Outcome, surface or safety invariant;
+it does not create a replacement Slice, move the defect into the next planned Slice or invent a Fix
+lifecycle object. The Roadmap reuses `ACTIVE`, while Progress retains the prior closure-ledger entry
+and may update only its current-development pointer. After the correction passes, the new Slice
+review covers the original Base through the corrected Implementation Head and records a new closure
+without amending accepted history. P2 cleanup does not reopen a closed Slice.
+
 `READY FOR B READINESS CHECK` is a one-time legacy-migration state only. On its first assessment B
 must resolve it to `ACTIVE` with a genuine Required-Outcome blocker and Task, or to
 `READY FOR A REVIEW` with a Closure Packet. It must not become a permanent third workflow.
