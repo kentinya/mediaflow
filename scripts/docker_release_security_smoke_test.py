@@ -933,7 +933,6 @@ with (
                 "providerId": "603",
                 "mediaType": "movie",
                 "title": "Release Manual Organize",
-                "year": 2001,
             },
             "namingPolicyId": "A",
             "classificationPolicyId": "A",
