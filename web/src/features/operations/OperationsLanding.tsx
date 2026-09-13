@@ -6,7 +6,7 @@
  * authoritative for lifecycle controls, failures and result evidence.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { dashboardQueryOptions } from "../dashboard/dashboard-query";
@@ -519,20 +519,19 @@ export function OperationsLanding() {
       {({ data, isFetching, refresh }) => {
         const page = data?.ok === true ? data.model : null;
         const needle = queryText.trim().toLocaleLowerCase("zh-CN");
-        const visibleItems = useMemo(() => {
-          if (!page) return [];
-          return page.items.filter((task) => {
-            if (typeFilter !== "all" && taskType(task) !== typeFilter) {
-              return false;
-            }
-            if (!needle) return true;
-            return [taskName(task), task.taskId, task.command, task.failure?.message]
-              .filter(Boolean)
-              .some((value) =>
-                String(value).toLocaleLowerCase("zh-CN").includes(needle),
-              );
-          });
-        }, [page, typeFilter, needle]);
+        const visibleItems = page
+          ? page.items.filter((task) => {
+              if (typeFilter !== "all" && taskType(task) !== typeFilter) {
+                return false;
+              }
+              if (!needle) return true;
+              return [taskName(task), task.taskId, task.command, task.failure?.message]
+                .filter(Boolean)
+                .some((value) =>
+                  String(value).toLocaleLowerCase("zh-CN").includes(needle),
+                );
+            })
+          : [];
 
         const goForward = () => {
           if (page?.nextCursor) {
