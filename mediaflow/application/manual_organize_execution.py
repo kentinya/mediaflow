@@ -116,6 +116,7 @@ class ManualOrganizeExecutionService:
         configuration_service=None,
         runtime_resolver=None,
         configuration=None,
+        runtime_catalog_factory=None,
         storages: Mapping[str, object] | None = None,
         storage_factory=None,
         executor: OrganizerExecutor | None = None,
@@ -142,6 +143,7 @@ class ManualOrganizeExecutionService:
             preview_service, "_runtime_resolver", None
         )
         self._configuration = configuration or getattr(preview_service, "_configuration", None)
+        self._runtime_catalog_factory = runtime_catalog_factory
         self._storages = dict(storages or getattr(preview_service, "_storages", {}) or {})
         self._storage_factory = storage_factory or getattr(
             preview_service, "_storage_factory", None
@@ -993,11 +995,42 @@ class ManualOrganizeExecutionService:
         runtime = self._load_runtime(
             authority.configuration_snapshot_id, authority.configuration_snapshot_digest
         )
+        self._bind_runtime_catalog(runtime)
         storage_ids: set[str] = set()
         for item in selected:
             storage_ids.update(self._plan_storage_ids(item.plan))
         storages = self._create_storages(runtime, storage_ids)
         return selected, storages, intent, runtime
+
+    def _bind_runtime_catalog(self, runtime) -> None:
+        """Bind source lookup to the exact runtime snapshot used by this execution.
+
+        A resident Worker may start from a management-only bootstrap, which intentionally
+        contains no workflow catalogs.  The catalog therefore has to be reconstructed only
+        after the admitted execution's pinned snapshot has been loaded and verified.
+        """
+
+        factory = self._runtime_catalog_factory
+        if not callable(factory):
+            return
+        try:
+            catalog = factory(runtime)
+        except Exception as error:
+            raise ManualExecutionError(
+                "the pinned source catalog is unavailable",
+                code="source_unavailable",
+                status=503,
+                next_action="inspect the pinned configuration and request a fresh Preview",
+            ) from error
+        if catalog is None:
+            raise ManualExecutionError(
+                "the pinned source catalog is unavailable",
+                code="source_unavailable",
+                status=503,
+                next_action="inspect the pinned configuration and request a fresh Preview",
+            )
+        self._intent_service._file_catalog = catalog
+        self._preview_service._file_catalog = catalog
 
     def _fail_pending_before_mutation(
         self, execution: ManualExecution, error: ManualExecutionError
