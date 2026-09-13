@@ -219,7 +219,7 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 49bdd4bf0d15dc91197e3bc3d8a59762011c7b51
 ```
 
 ## B Review Result
