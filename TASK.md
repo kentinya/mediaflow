@@ -159,126 +159,81 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
 - `mediaflow/interfaces/service_api.py`
 - `scripts/docker_release_security_smoke_test.py`
 - `tests/test_manual_organize_execution.py`
+- `tests/test_strategy_cli.py`
 
 ### Implemented
 
-- Added a pinned-runtime catalog factory to the manual execution service.
-- The resident Worker now rebuilds FileIndex source authority from the exact managed runtime
-  snapshot after loading the admitted execution's snapshot, instead of using empty
-  management-only bootstrap catalogs.
-- Bound both intent and Preview source lookup to the reconstructed catalog before source
-  revalidation; no direct-path or permissive fallback was added.
-- Added a regression covering admission followed by a Worker constructed with empty
-  management-only catalog IDs, proving the exact Local Storage move completes once.
-- Added a durable SQLite regression using the real `_manual_organize_worker_context`, managed
-  snapshot activation, independent FileIndex reopen, Active revision replacement, and exact
-  pinned-snapshot execution.
-- Added pinned offline metadata identity handling for an already source-linked identity under a
-  `MetadataPolicy` with `mediaQueryType: none`; live Provider-backed metadata selections retain
-  their existing lookup path.
-- Added the `metadataIdentity` alias to the operations Organize choice API so the release harness
-  exercises the same normalized identity contract as the general manual-intent API.
-- Extended the four-service release harness through API Scan, intent, source-linked metadata
-  identity choice, exact zero-mutation Preview, Execute admission, and resident Worker
-  observation with an explicit non-destructive COPY policy. The harness now asserts terminal
-  execution/item success, source preservation, and exactly one destination file.
+- Added a pinned-runtime catalog factory to the manual execution service so the resident Worker rebuilds FileIndex source authority from the admitted execution's exact managed runtime snapshot.
+- Bound intent and Preview source lookup to the reconstructed catalog before source revalidation; no direct-path or permissive fallback was added.
+- Extended the four-service Docker release harness through API Scan, durable intent, source-linked metadata identity choice, exact zero-mutation Preview, Execute admission, and resident Worker completion with one harmless COPY effect.
+- Tightened `StrategyTestRunner.run_path` so a supplied pinned `metadata_identity` is accepted only when the effective `MetadataPolicy.query_type` is `NONE` and `metadata_identity.recognition_type_id` equals the resolved RecognitionType.
+- Added focused pinned-identity tests for the allowed offline path, live-query-policy rejection, and mismatched RecognitionType rejection.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m unittest tests.test_strategy_cli` — PASS, 23 tests.
 - `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_manual_operations_contract tests.test_queued_job_execution_boundary tests.test_processing_worker_readiness` — PASS, 87 tests.
-- Real management-bootstrap/pinned-snapshot regressions — PASS, 2 tests.
-- `.venv/bin/ruff format --check .` — PASS.
-- `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS.
-- `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` — PASS.
-- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
-- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
 - `env -u NODE_ENV npm --prefix web ci` — PASS, 254 packages installed, 0 vulnerabilities.
 - `npm --prefix web run format:check` — PASS.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
+- `npm --prefix web test -- --run` — PASS, 452 tests.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web run test:e2e` — PASS, 119 tests.
-- `npm --prefix web test -- --run` — PASS, 452 tests.
-- `.venv/bin/python -m unittest discover -s tests -t .` in isolated Task Base worktree — FAIL /
-  PRE-EXISTING / UNRELATED, 1539 tests with 2 failures, 1 error, and 7 skips. Failures:
-  `tests.test_notifications.NotificationTests.test_configuration_validation_and_secret_resolution`
-  and
-  `tests.test_webhook_management.WebhookManagementTests.test_typed_lifecycle_create_edit_copy_enable_disable_delete`;
-  error:
-  `tests.test_runtime_strategy_configuration.RuntimeStrategyConfigurationTests.test_openlist_storage_uses_environment_owned_token`.
-- `.venv/bin/python -m unittest discover -s tests -t .` in isolated corrected HEAD worktree —
-  FAIL / PRE-EXISTING / UNRELATED, 1541 tests with 2 failures, 1 error, and 7 skips. The failure
-  and error identities and assertion messages match the Task Base run exactly; the two additional
-  tests are the Task's management-bootstrap regressions.
-- `python3 scripts/docker_release_security_smoke_test.py` — PASS, isolated four-service topology
-  built from clean committed HEAD; managed activation, Worker restart, API Scan, source-linked
-  `metadataIdentity` choice, exact zero-mutation Preview, execution admission, terminal execution
-  and item success, source preservation, one COPY destination effect, canary/log checks, and
-  durable SQLite scan all passed.
+- `.venv/bin/ruff format --check .` — PASS.
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS.
+- `.venv/bin/mediaflow --config config/strategy.example.json config validate` — PASS.
+- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` — PASS.
+- `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` — PASS.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS; isolated four-service topology built from clean checkout, managed activation, Worker restart, API Scan, source-linked `metadataIdentity` choice, exact Preview, execution admission, terminal execution/item success, source preservation, one COPY destination effect, canary/log checks and durable SQLite scan all passed.
+- `.venv/bin/python -m unittest discover -s tests -t .` from root worktree — FAIL, 1544 tests, 8 failures, 7 skips; the extra root-only failures reference local runtime/config state such as `HDD_2` and are not used as clean checkpoint evidence.
+- `.venv/bin/python -m unittest discover -s tests -t .` in isolated Task Base worktree `54f16d5f0e2b921307403e11e7895dffe7018b35` — FAIL / PRE-EXISTING / UNRELATED, 1539 tests, 2 failures, 7 skips: `tests.test_notifications.NotificationTests.test_configuration_validation_and_secret_resolution` and `tests.test_webhook_management.WebhookManagementTests.test_typed_lifecycle_create_edit_copy_enable_disable_delete`.
+- `.venv/bin/python -m unittest discover -s tests -t .` in isolated pre-fix HEAD worktree `1008c6255f101ad54286ae54def48b87a5903b5f` — FAIL / PRE-EXISTING / UNRELATED to this correction, 1541 tests, 2 failures, 7 skips with the same two failure identities/assertions as Task Base.
 - `git diff --check` — PASS.
 
 ### Decisions
 
-- Runtime snapshot loading remains the sole authority. The catalog is reconstructed only after the
-  admitted execution's snapshot identity has been validated.
-- The factory is optional to preserve existing in-process service composition; only the resident
-  Worker bootstrap supplies it.
-- Catalog reconstruction changes in-memory lookup composition only. FileIndex validation,
-  occurrence/fingerprint checks, capability checks, locks and OrganizerExecutor ordering remain
-  unchanged.
-- The release harness keeps the source bind read-only and uses COPY for its harmless temporary
-  effect; it does not weaken the mount or capability checks.
-- A source-linked identity is treated as an immutable offline metadata input only when the pinned
-  MetadataPolicy explicitly disables querying. This keeps the no-provider release acceptance
-  deterministic without turning an unverified identity into authority.
+- Pinned `metadata_identity` is treated as already-reviewed offline evidence, not as a generic bypass for live Provider-backed metadata policies.
+- RecognitionType authority remains the resolved RecognitionType from recognition/manual selection; a pinned identity must carry the same `recognition_type_id` and cannot change A/B/C semantics.
+- Existing source-linked metadata evidence validation in the manual-intent boundary was preserved; this correction only closes the downstream StrategyTestRunner acceptance hole identified by B.
+- The release harness continues using generated credentials, temporary Local Storage, COPY, and isolated runtime/media state; no production service, credential or user media is used.
 
 ### Remaining In-Slice Work
 
-- No additional work was identified inside this Task. Other Slice 33 work remains owned by B/A and
-  is not changed here.
+- No additional work was identified inside this Task. Other Slice 33 work remains owned by B/A and is not planned here.
 
 ### Risks / Deviations
 
-- The repository already contained an uncommitted `TASK.md` planning change and untracked
-  `node_modules/` at start; the planning content was preserved, the completion report was filled,
-  and `node_modules/` is not included in the checkpoint.
-- The full Python regression remains FAIL / PRE-EXISTING / UNRELATED in both isolated worktrees:
-  the Base and corrected HEAD have the same 2 failures, 1 error, and 7 skips. The OpenList error
-  is environment-related because the isolated checkouts do not have the optional `httpx` package;
-  the two webhook/secret assertions fail identically at both commits.
-- The required Vitest evidence remains the previously recorded PASS (`452` tests); it was not
-  rerun in this correction loop because the B blocker required the Python Base comparison and
-  Docker acceptance.
+- The repository had an uncommitted `TASK.md` B-review update and untracked root `node_modules/` at start; the B-review content was preserved, the report was updated, and root `node_modules/` is not staged.
+- Full unittest remains FAIL in clean isolated comparisons because of two pre-existing webhook/secret-readiness failures present at Task Base and pre-fix HEAD; this correction did not add new clean-worktree Python failures.
+- The initial `python3 -m pytest tests/test_strategy_cli.py -q` and `.venv/bin/python -m pytest tests/test_strategy_cli.py -q` commands were UNAVAILABLE because pytest is not installed; equivalent focused tests were run with `unittest`.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 8de912bc18e4c88ef223565393ab0cff31be10f7
+Head SHA: 0a7fcb2adee0ef3e1f4b4beb8e4c9f2c7fffc875
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 54f16d5f0e2b921307403e11e7895dffe7018b35..ac300512038df422e777851f087ffd081fa92f80
+Reviewed: 54f16d5f0e2b921307403e11e7895dffe7018b35..8de912bc18e4c88ef223565393ab0cff31be10f7
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The required four-service Docker manual-Organize acceptance still fails. The Developer's actual
-  `python3 scripts/docker_release_security_smoke_test.py` run reached four-service startup, managed
-  activation and Worker restart, but the added journey produced an `item_blocked` / `unavailable`
-  Preview and could not admit execution; no target effect was created. Correct the isolated fixture
-  and/or in-scope application composition so the API can produce one executable exact Preview,
-  admit it, let the resident Worker complete the explicit COPY exactly once, and assert the terminal
-  execution/item/Result state as well as source preservation and one destination file.
-- T4 full-regression evidence remains unproven. The new report records 1541 Python tests with 8
-  failures and 7 skips, while B's preceding root-worktree run at the earlier correction state had
-  1540 tests with 6 failures and 7 skips; no isolated clean-worktree run or Task-Base comparison was
-  completed. Run the final full suite in an isolated clean worktree at the corrected checkpoint,
-  compare any failures with Task Base when necessary, and report exact commands, totals and skips.
-  Do not label the two additional failures pre-existing/unrelated without that evidence.
+- The new pinned `metadata_identity` production boundary is not fail-closed to the semantics stated
+  in the Completion Report. Inspection of `StrategyTestRunner.run_path` shows that it validates only
+  provider/media type: it does not require the effective `MetadataPolicy.query_type` to be `NONE`
+  and does not require `metadata_identity.recognition_type_id` to equal the resolved RecognitionType.
+  B ran a read-only probe with the existing development strategy, forced RecognitionType A and a
+  TMDB/movie identity carrying RecognitionType C; the call succeeded and returned
+  `recognition=A, identity=C`. Constrain this input to the exact offline-policy and RecognitionType
+  authority promised by the Task (or remove the generic bypass), and add focused success plus
+  live-query-policy/mismatched-RecognitionType rejection tests. Preserve source-linked evidence
+  validation at the manual-intent boundary and rerun the affected T4 gates.

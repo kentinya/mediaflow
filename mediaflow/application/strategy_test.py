@@ -492,6 +492,14 @@ class StrategyTestRunner:
                 raise StrategyConfigurationError(
                     "pinned metadata identity requires a resolved MetadataPolicy"
                 )
+            if metadata_policy.query_type is not MediaQueryType.NONE:
+                raise StrategyConfigurationError(
+                    "pinned metadata identity requires an offline MetadataPolicy"
+                )
+            if metadata_identity.recognition_type_id != recognition.recognition_type_id:
+                raise StrategyConfigurationError(
+                    "pinned metadata identity RecognitionType no longer matches"
+                )
             if (
                 metadata_identity.provider != metadata_policy.provider_id
                 or metadata_identity.media_type is not metadata_policy.media_type
