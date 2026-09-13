@@ -928,11 +928,12 @@ with (
             "expectedVersion": intent["version"],
             "expectedItemVersion": intent_item["version"],
             "recognitionTypeId": "A",
-            "metadata": {
+            "metadataIdentity": {
                 "provider": "tmdb",
                 "providerId": "603",
                 "mediaType": "movie",
                 "title": "Release Manual Organize",
+                "year": 2001,
             },
             "namingPolicyId": "A",
             "classificationPolicyId": "A",
@@ -940,7 +941,7 @@ with (
         },
     )
     if status != 200:
-        raise RuntimeError(f"manual Organize choice returned HTTP {status}")
+        raise RuntimeError(f"manual Organize choice returned HTTP {status}: {intent}")
     status, preview = json_request(
         base,
         f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
@@ -950,6 +951,18 @@ with (
     )
     if status != 201 or not preview.get("zeroMutation"):
         raise RuntimeError("manual Organize Preview was not exact zero-mutation evidence")
+    preview_item = next(
+        (
+            value
+            for value in preview.get("items", [])
+            if value.get("itemId") == intent_item["itemId"]
+        ),
+        None,
+    )
+    if preview_item is None:
+        raise RuntimeError("manual Organize Preview omitted the selected item")
+    if preview_item.get("status") != "previewed":
+        raise RuntimeError(f"manual Organize Preview item is not executable: {preview_item}")
     status, execution = json_request(
         base,
         f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
@@ -979,6 +992,16 @@ with (
         }
 
     wait_until(execution_complete, timeout=120.0, description="manual Organize Worker completion")
+    status, detail = json_request(
+        base,
+        f"/api/v1/operations/organize/executions/{execution['executionId']}",
+        admin,
+    )
+    if status != 200 or detail.get("status") != "completed":
+        raise RuntimeError(f"manual Organize execution did not complete successfully: {detail}")
+    items = detail.get("items") or []
+    if len(items) != 1 or items[0].get("status") != "success":
+        raise RuntimeError(f"manual Organize item did not complete successfully: {items}")
     if not source.exists():
         raise RuntimeError("manual Organize COPY unexpectedly removed the source")
     moved = list(target_root.rglob("Release Manual Organize*.mkv"))

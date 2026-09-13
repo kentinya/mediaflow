@@ -54,6 +54,7 @@ from mediaflow.domain.manual_organize_preview import (
 )
 from mediaflow.domain.manual_safety import safe_manual_error
 from mediaflow.domain.metadata import (
+    MediaIdentity,
     MediaQueryType,
     MediaType,
     MetadataIdentificationStatus,
@@ -1400,8 +1401,18 @@ class ManualOrganizePreviewService:
         bound = self._bound_source_decisions(review_decisions, item)
         metadata_reference = self._metadata_reference(item.choice, intent, record, metadata_policy)
         metadata_selection = None
+        metadata_identity = None
         metadata_correction = None
-        if metadata_reference is not None:
+        if metadata_reference is not None and metadata_policy.query_type is MediaQueryType.NONE:
+            metadata_identity = MediaIdentity(
+                provider=metadata_reference.provider,
+                provider_id=metadata_reference.provider_id,
+                media_type=MediaType(metadata_reference.media_type),
+                title=metadata_reference.title or item.source.filename,
+                year=metadata_reference.year,
+                recognition_type_id=item.choice.recognition_type_id,
+            )
+        elif metadata_reference is not None:
             metadata_selection = self._metadata_selection(
                 item.choice.recognition_type_id,
                 type_policy.metadata_policy_id,
@@ -1412,10 +1423,10 @@ class ManualOrganizePreviewService:
                 bound, item, type_policy, metadata_policy
             )
         live_metadata = metadata_policy.query_type is not MediaQueryType.NONE
-        if (
-            metadata_reference is not None
-            or metadata_selection is not None
-            or metadata_correction is not None
+        if metadata_identity is not None:
+            live_metadata = False
+        if metadata_identity is None and (
+            metadata_selection is not None or metadata_correction is not None
         ):
             live_metadata = True
         providers = (
@@ -1432,6 +1443,7 @@ class ManualOrganizePreviewService:
             storage_id=source_library.storage_id,
             metadata_selection=metadata_selection,
             metadata_correction=metadata_correction,
+            metadata_identity=metadata_identity,
             classification_selection=classification_selection,
             forced_recognition_type_id=item.choice.recognition_type_id,
             storage_path=item.source.path,
