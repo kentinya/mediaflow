@@ -8,7 +8,7 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`, but no large Slice or implementation Task is active after Slice 32
+V2 remains active on `main`, but no large Slice or implementation Task is active after Slice 33
 closure. The next legal action is for A to select the next large Slice in a later turn. The current
 Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
@@ -16,6 +16,24 @@ Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
+
+### Slice 33 — Operations Workspace
+
+```text
+Status: PASS / CLOSED
+Base: 827c36b410687e41b1da53ba6475d8c03a47dbfd
+Implementation Head: 8a0048008057beabada1a36c53d5fdc3153e8e7b
+A Final Review: PASS / CLOSED — 2026-09-13
+```
+
+Delivered the V2 daily-operations command center across actionable Dashboard entry, durable
+Task/Job state and controls, bounded Scan/Preview, Web-native exact manual Organize, Automation
+definition/schedule/grant/occurrence operation and Webhook definition/test/activation/delivery
+recovery. Shared Python `/api/v1/*` authority, memory-only Bearer/RBAC, exact immutable snapshot and
+one-shot execution binding, zero-mutation analysis, OrganizerExecutor-only mutation, per-item
+evidence and V1 `/ui` coexistence remain intact. Deferred scope remains Slice 34 Review/Recovery,
+Slice 35 general Configuration, Slice 36 parity/accessibility/cutover and every other Slice 33
+Contract deferral.
 
 ### Slice 32 — Library & Files Experience
 
@@ -209,6 +227,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 33 — Operations Workspace | PASS / CLOSED | `827c36b410687e41b1da53ba6475d8c03a47dbfd` | `8a0048008057beabada1a36c53d5fdc3153e8e7b` | A Final Review PASS / CLOSED — 2026-09-13 | Actionable Dashboard, durable Tasks/Jobs and controls, bounded Scan/Preview, Web-native exact manual Organize, Automation operation and Webhook delivery operation | Slices 34–36 Review/Recovery, Configuration, parity/accessibility/cutover and other Contract deferrals |
 | 32 — Library & Files Experience | PASS / CLOSED | `76de3f60e223131a8b7db97a566d0ceaadd9b2a0` | `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99` | A Final Review PASS / CLOSED — 2026-09-10 | Distinct bounded Active Storage and FileIndex journeys, stable catalog paging, strict detail/evidence and safe physical/indexed context | Slices 33–36 Operations/Review/Configuration/parity/cutover and other Contract deferrals |
 | 31 — Operator Shell & Information Architecture | PASS / CLOSED | `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` | `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b` | A Final Review PASS / CLOSED — 2026-09-09 | Typed product-area IA, responsive/accessible shell, safe deep-link auth continuation, actionable route/permission recovery and truthful V1 handoff | Slices 32–36 business migrations/parity/cutover, new identity/API systems and other Contract deferrals |
 | 30 — V2 frontend platform and architecture | PASS / CLOSED | `7c7c602c6531c60ddf2d6678857e2ef76c3860b6` | `6953b87afa09e61ff62ffea5eb2a9a7d96c55492` | A Final Review PASS / CLOSED — 2026-09-09 | React/TypeScript/Vite platform, typed memory-only API boundary, read-only Dashboard proof, Python V2 static serving and Python-only Docker runtime artifact | Slices 31–36 migrations/cutover, new identity/session systems, API redesign and other Contract deferrals |

@@ -89,6 +89,13 @@ require an exact Active Storage and enabled ResourceLibrary binding, and detail 
 allowlisted and redacted. All Library requests are GET-only; V1 `/ui`, operational mutations and
 OrganizerExecutor ownership remain unchanged.
 
+Slice 33 is `PASS / CLOSED` at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and Implementation
+Head `8a0048008057beabada1a36c53d5fdc3153e8e7b`. It composes the existing Python application,
+persistence and `/api/v1/*` authority into the V2 Operations route family: actionable Dashboard,
+durable Tasks/Jobs, bounded Scan/Preview, exact Web-native manual Organize, Automation definitions,
+schedules, grants and occurrences, and Webhook definitions, tests and delivery recovery. The
+frontend owns typed presentation and exact requests, not business decisions or mutation authority.
+
 The current V2 frontend foundation is a client-side React/TypeScript SPA built with Vite, TanStack
 Router and TanStack Query, organized feature-first with a central typed API boundary and
 project-owned design system foundation. Vitest and React Testing Library cover unit/component
@@ -105,7 +112,7 @@ V1 keeps the environment-owned API-principal Bearer-token authentication model a
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
 reverse-proxy identity. Token rotation and secret injection are deployment responsibilities.
 
-### Interactive execution authorization: CURRENT V1 and V2 TARGET
+### Interactive execution authorization: CURRENT V1 and V2
 
 **CURRENT V1:** interactive remote execution may use a separately issued, short-lived, single-use
 execution authorization token. The operator or automation issues it through the local CLI, receives
@@ -116,17 +123,19 @@ Jobs Web UI does not expose this remote-execution token journey as a complete op
 mechanism may continue to support API automation, local administration, debugging, compatibility
 and emergency/support workflows.
 
-**V2 TARGET:** the routine operator-facing Web journey must not require manual CLI issuance or raw-
-token transfer. A later Operations Slice may provide a Web-native, short-lived/scoped execution
-grant, execution unlock, step-up authorization or equivalent interaction, automatically bound by
-the backend to the reviewed operation and permitted scope. This target does not select an endpoint,
-schema, table, grant identifier, WebAuthn/PIN mechanism or other concrete design.
+**CURRENT V2:** the routine operator-facing Web journey does not require CLI issuance or raw-token
+transfer. After the operator reviews an exact durable Preview and confirms the selected items and
+any permitted destructive effects, the backend creates server-held, short-lived, single-use
+authority bound to the authenticated principal, Preview/configuration/item set and effect scope.
+Admission and authority consumption are atomic; the resident Worker later claims the durable
+execution under a fence before OrganizerExecutor may perform Storage mutation. The browser neither
+receives nor submits the raw authority or its digest.
 
-Both CURRENT and TARGET preserve backend RBAC and permission enforcement, bounded execution
+Both V1 and V2 preserve backend RBAC and permission enforcement, bounded execution
 authority, limits, audit, immutable configuration binding, stale/concurrent fencing, explicit
 mutation intent and OrganizerExecutor-only Storage mutation. Uncertain mutation is not
-automatically replayed. Slice 33 owns the future Operations Workspace implementation boundary unless
-A later changes the Roadmap.
+automatically replayed. The V1 token mechanism may continue for API automation, local
+administration, debugging, compatibility and emergency/support workflows.
 
 V1 uses the `MetadataProvider` abstraction with TMDB as the production provider. Provider switching,
 additional production providers and arbitrary provider plugins are V1.x/V2 work. A missing or
@@ -234,7 +243,7 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `33`, configuration-management schema `10` and
+The implementation currently declares runtime schema `34`, configuration-management schema `10` and
 managed document schema `1`. These are compatibility markers, not feature statuses.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
@@ -293,12 +302,14 @@ reconstructs the plan from persisted Preview data; request bodies cannot supply 
 operations or provider payloads. `OrganizerExecutor` performs the actual mutation and persists each
 effect/result/checkpoint independently.
 
-The current file-level execute endpoint calls that bounded execution service synchronously inside
-the API request, even though durable Task/TaskItem/Result records are created. Files and FileIndex
-provide bounded file/ResourceLibrary Scan, exact Preview and explicit manual Organize entry points;
-the general Jobs API also supports bounded `scan`, `preview` and `organize` submission. Scan and
-Preview remain DryRun/zero-mutation operations. Organize requires the existing separate one-shot
-execution authority and explicit confirmation; the existing revalidation, RBAC, conflict and
+The compatibility file-level execute endpoint calls that bounded execution service synchronously
+inside the API request. The V2 Operations flow instead atomically admits an exact Preview selection
+with server-held one-shot authority, returns a durable execution/Task identity, and lets the
+resident processing Worker claim it under a persisted fence before any mutation. Files and
+FileIndex provide bounded file/ResourceLibrary Scan, exact Preview and explicit manual Organize
+entry points; the general Jobs API also supports bounded `scan`, `preview` and `organize`
+submission. Scan and Preview remain DryRun/zero-mutation operations. Organize requires explicit
+confirmation and the relevant destructive-effect permissions; revalidation, RBAC, conflict and
 capability gates remain in force, and only `OrganizerExecutor` mutates Storage.
 
 ## Automation and unattended execution
@@ -321,10 +332,12 @@ authenticated configuration, files, tasks, jobs, reviews, manual organize, recov
 schedules, notifications, logs, dashboard, security audit and system status routes. RBAC is applied
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
-The embedded Operator Web is a self-contained static UI served by the same application. It exposes
-Dashboard, Files, Tasks, Jobs, Schedules, Automation, Notifications, Logs, conflict/review views,
-Configuration and a bounded read-only System status view. The current UI holds the API token only in
-browser memory. It does not provide built-in account login.
+The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
+Python application. V2 currently exposes Dashboard, Library and the Operations route family for
+Tasks, Jobs, manual Scan/Preview/Organize, Automation and Notifications; Review/Recovery and general
+Configuration remain explicit migration landings. Both UIs use the shared `/api/v1/*` application
+authority. The browser holds the API token only in memory and does not provide built-in account
+login.
 
 The `api serve` HTTP listener uses `wsgiref.simple_server` and remains a development/trusted-loopback
 boundary. Production Compose uses the explicitly selected `api serve-production` command with the
@@ -411,7 +424,19 @@ catalog/search/filter/directional paging, strict detail/evidence projection and 
 physical/indexed navigation. It reuses managed Active snapshot, Storage and FileIndex/Application
 ports and existing authenticated `/api/v1/*` reads. The frontend stores no domain authority or
 credentials, renders no raw fingerprint/provider/private-path material, and exposes no Storage or
-workflow mutation. Operations, Review/Recovery, Configuration and V1 cutover remain Slices 33–36.
+workflow mutation. Review/Recovery, Configuration and V1 cutover remain Slices 34–36.
+
+## Current Slice 33 delivery
+
+Slice 33 adds the V2 daily Operations command center with actionable Dashboard links, filterable
+Task/Job state and backend-advertised controls, bounded manual Scan and zero-mutation Preview,
+Web-native exact manual Organize, Automation definition/schedule/grant/occurrence operation, and
+Webhook definition/test/activation/delivery recovery. Long work returns durable identities and is
+claimed by the resident Worker; independent item/delivery outcomes and bounded failure handoffs stay
+visible. The implementation preserves shared Python authority, exact Active snapshot and revision
+binding, memory-only Bearer/RBAC, explicit mutation intent, no automatic uncertain replay and
+OrganizerExecutor-only Storage mutation. Review/Recovery, general Configuration administration and
+final parity/accessibility/V1 UI retirement remain Slices 34–36.
 
 ## TARGET architecture
 
