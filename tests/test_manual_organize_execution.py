@@ -1109,7 +1109,16 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 )
                 self.assertNotEqual(active.revision_id, newer.revision_id)
 
-            management_bootstrap = load_management_bootstrap(document)
+            # Reopen the resident Worker from the strict management-only shape used by
+            # ``mediaflow worker run``.  API admission above used the independently
+            # persisted managed snapshot; this file must not provide stale workflow catalogs.
+            minimal_bootstrap = {
+                "version": document["version"],
+                "persistence": document["persistence"],
+                "api": {"principals": document["api"]["principals"]},
+            }
+            bootstrap_path.write_text(json.dumps(minimal_bootstrap), encoding="utf-8")
+            management_bootstrap = load_minimal_management_bootstrap(minimal_bootstrap)
             with SQLiteTaskRepository(fixture.database) as repository:
                 with _manual_organize_worker_context(
                     management_bootstrap, str(bootstrap_path), repository
