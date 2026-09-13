@@ -83,14 +83,17 @@ Primary program: Operator Web Architecture & UX Modernization
 Package version on main: 2.0.0.dev0
 ```
 
-V2 is organized as independently reviewable large Slices. Slices 30, 31 and 32 are `PASS / CLOSED`
+V2 is organized as independently reviewable large Slices. Slices 30, 31, 32 and 33 are `PASS / CLOSED`
 under their A-owned Contracts. Slice 30 delivered the `web/` frontend boundary, typed read-only Dashboard
 proving route, Python `/ui-v2/` static coexistence and production Docker artifact. Slice 31 delivered
 the centralized product-area information architecture, responsive shell, safe memory-only deep-link
 continuation and actionable route/authentication recovery described below. Slice 32 delivered the
 read-only Library journey across bounded Active Storage browsing, FileIndex catalog/detail and safe
-physical/indexed context. No large Slice is currently active; A selects the next one in a later
-turn. The V1 API, execution, authentication and Storage authority are unchanged.
+physical/indexed context. Slice 33 delivered the Operations command center across actionable
+Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
+scheduled Automation and Notification delivery operation. No large Slice is currently active; A
+selects the next one in a later turn. The V1 API, authentication and Storage authority remain
+available, while the shared Python `/api/v1/*` behavior remains authoritative for both UIs.
 
 ## V2 frontend (web/)
 
@@ -103,8 +106,9 @@ second HTTP service, SSR or CDN is involved in production.
 - **Entry and routes.** `/ui-v2/` is the V2 entry (documented migration prefix), and
   `/ui-v2/dashboard` is the implemented read-only Overview/Dashboard route. The same typed
   destination model owns the implemented `/ui-v2/library`, `/ui-v2/library/files`,
-  `/ui-v2/library/file-index` and FileIndex detail routes, plus truthful migration landings for
-  Operations, Review & Recovery and Configuration. Unknown client routes retain shell context and
+  `/ui-v2/library/file-index` and FileIndex detail routes, plus the implemented Operations route
+  family and truthful migration landings for Review & Recovery and Configuration. Unknown client
+  routes retain shell context and
   recovery after Python serves the V2 entry document. The V1 `/ui` remains available and unchanged
   during migration.
 - **Library.** The Library landing separates a bounded live read of configured Active Storage from
@@ -112,6 +116,12 @@ second HTTP service, SSR or CDN is involved in production.
   catalog search/filter/stable paging, bounded detail/history/evidence and uniquely confirmed
   physical/indexed navigation. All requests use the central authenticated GET boundary; malformed,
   unavailable, ambiguous, stale and permission states remain explicit and start no work.
+- **Operations.** The Operations landing and refresh-safe detail routes expose Worker readiness,
+  actionable Dashboard links, filterable Tasks/Jobs with valid lifecycle controls, bounded manual
+  Scan and zero-mutation Preview, Web-native exact Organize execution, Automation definitions,
+  schedules, grants and occurrences, plus Webhook definitions, exact tests and delivery recovery.
+  Mutations use the existing Python application/RBAC authority; the browser never handles a raw
+  execution token, and only OrganizerExecutor mutates Storage.
 - **Authentication continuity.** Opening a supported `/ui-v2/` deep route without a token presents
   the existing memory-only connection boundary in shell context and continues to that exact
   allowlisted route after valid connection. Root entry remains deterministic and connects to
@@ -131,8 +141,9 @@ second HTTP service, SSR or CDN is involved in production.
   accesses repositories, Storage, Providers or execution services. If the artifact has not been
   built, `/ui-v2/*` fails closed with 404.
 - **Source ownership.** `web/src/app` (bootstrap/providers), `web/src/routes` (router),
-  `web/src/features` (entry, Dashboard, Library and migration landings), `web/src/entities` (typed
-  Dashboard/Library models and normalization), `web/src/shared/api` (central typed client,
+  `web/src/features` (entry, Dashboard, Library, Operations and migration landings),
+  `web/src/entities` (typed Dashboard/Library/Operations models and normalization),
+  `web/src/shared/api` (central typed client,
   memory-only auth store and intended-route continuation), `web/src/shared/auth` (route/connection
   boundary, auth-state banners and the shared authorized-read lifecycle),
   `web/src/shared/navigation` (typed
@@ -453,13 +464,14 @@ The raw authorization token is displayed once and only its SHA-256 digest is per
 and Job creation are atomic. Scheduler configurations remain scan/preview-only, and all existing
 conflict/no-overwrite/OrganizerExecutor checks still apply.
 
-For V2 interactive operation, manual CLI issuance and raw-token copy/paste are not the intended
-final routine Web experience. A later Operations Slice may replace that operator-facing ceremony
-with a Web-native, scoped, short-lived execution grant, execution unlock, step-up authorization or
-equivalent interaction. The concrete API is not defined here; backend RBAC, bounded mutation
-authority, limits, audit and OrganizerExecutor-only mutation remain mandatory. The V1 mechanism may
-remain available for API automation, local administration, debugging, compatibility and emergency
-support.
+For V2 interactive operation, the routine Web flow reviews an exact durable Preview and submits one
+explicit confirmation without CLI issuance or raw-token copy/paste. The backend creates and
+atomically consumes server-held, short-lived, single-use authority bound to the authenticated
+principal, exact Preview/configuration/item set and permitted destructive effects; the resident
+Worker then claims the admitted execution under its durable fence. Backend RBAC, limits, audit,
+stale revalidation, no automatic uncertain replay and OrganizerExecutor-only mutation remain
+mandatory. The V1 token mechanism remains available for API automation, local administration,
+debugging, compatibility and emergency support.
 
 Every authenticated or denied API request is recorded in a redacted SQLite security audit. Inspect
 it locally with `mediaflow security-audit list --limit 100`, or through auditor/admin-only

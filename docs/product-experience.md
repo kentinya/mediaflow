@@ -242,18 +242,19 @@ or mutate Storage.
   reconciliation action. Known successful siblings remain terminal; uncertain mutation is never
   automatically replayed.
 
-### V2 target
+### Current V2
 
-Routine interactive organization must become a complete Web-native journey. The operator reviews a
-Preview, chooses Execute, and supplies meaningful confirmation or step-up authorization only when
-the authority or effect boundary requires it. The backend then obtains and binds short-lived scoped
-execution authority, admits the Job and consumes, expires or revokes that authority without asking
-the operator to issue a CLI token or copy a raw secret.
+Slice 33 delivers routine interactive organization as a complete Web-native journey. The operator
+reviews an exact durable Preview, selects the intended items, separately permits any overwrite or
+source-cleanup effect, and chooses Execute once. The backend binds server-held, short-lived,
+single-use authority to the authenticated principal, exact Preview/configuration/item set and
+permitted effects, atomically admits the durable execution, and consumes the authority without
+asking the operator to issue a CLI token or copy a raw secret. The resident Worker claims the
+execution under a fence and only OrganizerExecutor may mutate Storage.
 
-This target defines the product journey, not an endpoint, schema or credential design. The current
-V1 one-shot mechanism may remain for API automation, local administration, debugging,
-compatibility and emergency/support use. RBAC, revalidation, bounded authority, limits, audit,
-conflict handling and OrganizerExecutor-only mutation remain mandatory.
+The V1 one-shot token mechanism remains available for API automation, local administration,
+debugging, compatibility and emergency/support use. RBAC, revalidation, bounded authority, limits,
+audit, conflict handling and no automatic replay of uncertain effects remain mandatory.
 
 ## Manual operations and file lifecycle
 
@@ -370,11 +371,11 @@ email/chat/media-server notifications remain V1.x/V2 or deployment-specific work
 
 ## V2 Operator Web migration
 
-The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30, 31 and 32 have
+The V1 `/ui` remains available while the V2 Operator Web is introduced. Slices 30, 31, 32 and 33 have
 delivered and closed the architecture/platform foundation, bounded Dashboard proving journey,
 operator shell, centralized information architecture, shared route/authentication recovery and
-read-only Library journey below. They do not claim the later Operations, Review/Recovery,
-Configuration or final V1 UI cutover migrations.
+read-only Library journey, plus the daily Operations command center below. They do not claim the
+later Review/Recovery, general Configuration or final V1 UI cutover migrations.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -425,6 +426,33 @@ Configuration or final V1 UI cutover migrations.
 - **Recovery:** retry or restart the read, select another Active Storage, reset filters, return to a
   valid Library parent, reconnect, or use an explicit V1 handoff for a journey not yet migrated.
 
+### CURRENT V2 OPERATIONS — Daily command center
+
+- **Goal:** start and follow bounded daily work from V2 without translating backend protocols or
+  copying raw execution authority, while retaining independent item outcomes and safe recovery.
+- **Entry:** open `/ui-v2/operations`, follow an actionable Dashboard count/failure, or continue
+  from a supported Library file, FileIndex record or ResourceLibrary scope. Task, Job, Preview,
+  execution, Automation, occurrence, Webhook and delivery details are refresh-safe deep routes.
+- **Visible state:** Worker readiness, source scope, Active/pinned configuration, admission versus
+  processing state, Task/Job/item outcomes, Preview choices/conflicts/capabilities/effects,
+  Automation Draft/Active/schedule/grant/occurrence state and Notification definition/delivery
+  state remain distinct and bounded.
+- **Action:** submit a bounded Scan or zero-mutation Preview; create, review and execute an exact
+  manual Organize; use only backend-advertised Task/Job controls; manage, preview, checked-activate
+  and grant/revoke an Automation definition; or manage, exact-test, checked-activate and recover one
+  eligible Webhook delivery.
+- **Success:** long work returns a durable identity immediately. Manual execution is bound to the
+  exact reviewed selection and separately permitted destructive effects; scheduled runs pin their
+  runtime and grant; every item and delivery retains an independent outcome.
+- **Failure:** missing Worker/Active runtime, stale source/Preview/revision, denied permission,
+  conflict/capability failure, expired or consumed authority, failed occurrence/delivery and
+  uncertain media effect are shown on the affected object without hiding successful siblings or
+  presenting unsafe replay as recovery.
+- **Recovery:** refresh the durable state, repair readiness, rerun a stale Preview, reauthorize the
+  exact reviewed operation, repair/repreview/regrant Automation or use the delivery-specific
+  recovery action. Media review, checkpoint continuation, Reprocess and failed-item/batch recovery
+  hand off honestly to V1 or the future V2 Review & Recovery workspace.
+
 ### Migration coexistence and deferrals
 
 - **CURRENT:** V1 `/ui`, its API behavior and Python execution authority remain available and
@@ -436,6 +464,10 @@ Configuration or final V1 UI cutover migrations.
 - **CURRENT V2 LIBRARY:** the implemented Library route family composes existing Python
   `/api/v1/*` read authority into distinct Active Storage and FileIndex journeys with strict typed
   models, bounded paging/detail evidence and zero-side-effect physical/indexed navigation.
+- **CURRENT V2 OPERATIONS:** the implemented Operations route family composes shared Python
+  `/api/v1/*` authority into actionable Dashboard, Task/Job, bounded Scan/Preview, Web-native exact
+  manual Organize, Automation and Notification journeys while preserving backend RBAC, immutable
+  binding, fencing, explicit destructive intent and OrganizerExecutor-only mutation.
 - **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
-  retirement acceptance. Operations, Review/Recovery and Configuration business migrations remain
+  retirement acceptance. Review/Recovery and general Configuration business migrations remain
   owned by later Slices; their current V2 landings do not claim those journeys.
