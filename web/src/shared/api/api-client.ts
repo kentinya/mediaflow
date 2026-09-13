@@ -2189,13 +2189,13 @@ export async function executeOrganizePreview(
     confirmation: true,
     itemIds: [...options.itemIds],
     expectedIntentVersion: options.expectedIntentVersion,
+    // Keep both effect decisions explicit in the bounded request. `false` is
+    // meaningful evidence that this exact selection did not request that
+    // authority; omission would make it impossible for a caller/test to prove
+    // the submitted selection was not broader than the reviewed effects.
+    allowOverwrite: options.allowOverwrite === true,
+    allowSourceCleanup: options.allowSourceCleanup === true,
   };
-  if (options.allowOverwrite === true) {
-    body.allowOverwrite = true;
-  }
-  if (options.allowSourceCleanup === true) {
-    body.allowSourceCleanup = true;
-  }
   return submitOrganizeMutation(
     token,
     `/api/v1/operations/organize/previews/${encodeURIComponent(options.previewId)}/execute`,

@@ -39,6 +39,23 @@ export type PreviewStatus = (typeof PREVIEW_STATUSES)[number];
 
 export const PREVIEW_SCOPE_KINDS = ["file", "resourceLibrary"] as const;
 
+/**
+ * The operation markers published by the bounded Python Preview plan.
+ *
+ * This is deliberately the plan vocabulary (uppercase), not the lower-case
+ * OrganizePolicy option vocabulary.  Keeping the two facts separate prevents
+ * a policy label from being mistaken for the operation the reviewed plan will
+ * actually perform.
+ */
+export const MANUAL_PREVIEW_OPERATIONS = [
+  "MOVE",
+  "COPY",
+  "LINK",
+  "NOOP",
+  "SKIP",
+] as const;
+export type ManualPreviewOperation = (typeof MANUAL_PREVIEW_OPERATIONS)[number];
+
 /** The execution states this Task's backend can truthfully mean. */
 export const PREVIEW_EXECUTION_STATES = [
   "not_available_in_this_task",
@@ -76,6 +93,13 @@ export interface ManualPreviewCapabilitiesModel {
   readonly required: readonly string[];
   readonly declared: readonly string[];
   readonly missing: readonly string[];
+}
+
+/** The only destructive effects a bounded Preview may ask the operator to authorize. */
+export interface ManualPreviewDestructiveImplicationsModel {
+  readonly overwriteRequired: boolean;
+  readonly sourceCleanupRequired: boolean;
+  readonly statement: string;
 }
 
 /** The MediaLibrary-relative proposed target. */
@@ -233,6 +257,8 @@ export interface ManualPreviewItemModel {
   readonly sourceFilename: string | null;
   readonly resourceLibraryId: string | null;
   readonly recognitionType: string | null;
+  readonly operation: ManualPreviewOperation | null;
+  readonly destructiveImplications: ManualPreviewDestructiveImplicationsModel | null;
   readonly title: string | null;
   readonly provider: string | null;
   readonly providerId: string | null;
@@ -366,6 +392,39 @@ function normalizeExecutionState(
   }
   try {
     return normalizeEnum(raw, field, PREVIEW_EXECUTION_STATES);
+  } catch {
+    return fail();
+  }
+}
+
+function optionalOperation(
+  source: Record<string, unknown>,
+  field: string,
+): ManualPreviewOperation | null {
+  const raw = source[field];
+  if (raw === null || raw === undefined) {
+    return null;
+  }
+  try {
+    return normalizeEnum(raw, field, MANUAL_PREVIEW_OPERATIONS);
+  } catch {
+    return fail();
+  }
+}
+
+function normalizeDestructiveImplications(
+  value: unknown,
+): ManualPreviewDestructiveImplicationsModel | null {
+  const source = optionalRecord(value, "plan.destructiveImplications");
+  if (source === null) {
+    return null;
+  }
+  try {
+    return {
+      overwriteRequired: flag(source, "overwriteRequired"),
+      sourceCleanupRequired: flag(source, "sourceCleanupRequired"),
+      statement: text(source, "statement"),
+    };
   } catch {
     return fail();
   }
@@ -788,6 +847,10 @@ function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
       resourceLibraryId: optionalText(sourceRecord, "resourceLibraryId"),
       recognitionType:
         plan === null ? null : optionalText(plan, "recognitionType"),
+      operation: plan === null ? null : optionalOperation(plan, "operation"),
+      destructiveImplications: normalizeDestructiveImplications(
+        plan?.["destructiveImplications"] ?? null,
+      ),
       title: mediaIdentity === null ? null : mediaIdentity.title,
       provider: mediaIdentity === null ? null : mediaIdentity.provider,
       providerId: mediaIdentity === null ? null : mediaIdentity.providerId,
@@ -829,7 +892,7 @@ export function normalizeManualPreview(payload: unknown): ManualPreviewModel {
   }
 
   const rawItems = source["items"];
-  if (!Array.isArray(rawItems)) {
+  if (!Array.isArray(rawItems) || rawItems.length > 100) {
     fail();
   }
   const scope = optionalRecord(source["scope"] ?? null, "scope");

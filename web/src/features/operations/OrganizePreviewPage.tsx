@@ -45,42 +45,8 @@ function safeValue(value: string | null): string {
   return value === null || value === "" ? "—" : value;
 }
 
-interface DestructiveImplications {
-  readonly overwriteRequired: boolean;
-  readonly sourceCleanupRequired: boolean;
-  readonly statement: string;
-}
-
-function destructiveImplications(
-  item: ManualPreviewItemModel,
-): DestructiveImplications | null {
-  const plan = (item as unknown as { readonly plan?: unknown }).plan;
-  if (plan === null || typeof plan !== "object") {
-    return null;
-  }
-  const candidate = (plan as Record<string, unknown>)[
-    "destructiveImplications"
-  ];
-  if (candidate === null || typeof candidate !== "object") {
-    return null;
-  }
-  const record = candidate as Record<string, unknown>;
-  if (
-    typeof record["overwriteRequired"] !== "boolean" ||
-    typeof record["sourceCleanupRequired"] !== "boolean" ||
-    typeof record["statement"] !== "string"
-  ) {
-    return null;
-  }
-  return {
-    overwriteRequired: record["overwriteRequired"],
-    sourceCleanupRequired: record["sourceCleanupRequired"],
-    statement: record["statement"],
-  };
-}
-
 function ItemFindings({ item }: { readonly item: ManualPreviewItemModel }) {
-  const implications = destructiveImplications(item);
+  const implications = item.destructiveImplications;
   return (
     <dl>
       <dt>Status</dt>
@@ -93,30 +59,14 @@ function ItemFindings({ item }: { readonly item: ManualPreviewItemModel }) {
         {safeValue(item.sourceStorageId)}:{safeValue(item.sourcePath)}
       </dd>
       <dt>RecognitionType</dt>
-      <dd>
-        {safeValue(
-          (
-            item as unknown as {
-              readonly plan?: { readonly recognitionType?: string | null };
-            }
-          ).plan?.recognitionType ?? null,
-        )}
-      </dd>
+      <dd>{safeValue(item.recognitionType)}</dd>
       <dt>Metadata identity</dt>
       <dd>
         {safeValue(item.provider)} / {safeValue(item.providerId)} ·{" "}
         {safeValue(item.title)}
       </dd>
       <dt>Operation</dt>
-      <dd>
-        {safeValue(
-          (
-            item as unknown as {
-              readonly plan?: { readonly operation?: string | null };
-            }
-          ).plan?.operation ?? null,
-        )}
-      </dd>
+      <dd>{safeValue(item.operation)}</dd>
       <dt>Proposed destination</dt>
       <dd>
         {safeValue(item.targetStorageId)}:
@@ -171,6 +121,9 @@ export function OrganizePreviewPage() {
   const [selected, setSelected] = useState<readonly string[] | null>(null);
   const [allowOverwrite, setAllowOverwrite] = useState(false);
   const [allowSourceCleanup, setAllowSourceCleanup] = useState(false);
+  const [confirmationSelectionKey, setConfirmationSelectionKey] = useState<
+    string | null
+  >(null);
   const [result, setResult] = useState<{
     readonly ok: boolean;
     readonly message: string;
@@ -180,13 +133,15 @@ export function OrganizePreviewPage() {
     mutationFn: (options: {
       readonly itemIds: readonly string[];
       readonly intentVersion: number;
+      readonly allowOverwrite: boolean;
+      readonly allowSourceCleanup: boolean;
     }) =>
       executeOrganizePreview(token, {
         previewId,
         itemIds: options.itemIds,
         expectedIntentVersion: options.intentVersion,
-        allowOverwrite,
-        allowSourceCleanup,
+        allowOverwrite: options.allowOverwrite,
+        allowSourceCleanup: options.allowSourceCleanup,
       }),
     retry: false,
     onMutate: () => setResult(null),
@@ -221,20 +176,37 @@ export function OrganizePreviewPage() {
     () => (preview ? [...preview.executionCandidateItemIds] : []),
     [preview],
   );
-  const activeSelection = selected ?? executableIds;
+  const activeSelection = useMemo(() => {
+    const requested = selected ?? executableIds;
+    // Keep the browser selection bounded by the exact candidate list the
+    // backend advertised for this current Preview. A stale local ID can never
+    // become an execution request merely because it remained in React state.
+    return executableIds.filter((itemId) => requested.includes(itemId));
+  }, [executableIds, selected]);
+  const selectionKey = JSON.stringify(activeSelection);
+  const confirmationIsBoundToSelection =
+    confirmationSelectionKey === selectionKey;
+  const effectiveAllowOverwrite =
+    confirmationIsBoundToSelection && allowOverwrite;
+  const effectiveAllowSourceCleanup =
+    confirmationIsBoundToSelection && allowSourceCleanup;
   const requiresOverwrite = useMemo(
     () =>
       (preview?.items ?? []).some(
-        (item) => destructiveImplications(item)?.overwriteRequired === true,
+        (item) =>
+          activeSelection.includes(item.itemId) &&
+          item.destructiveImplications?.overwriteRequired === true,
       ),
-    [preview],
+    [activeSelection, preview],
   );
   const requiresCleanup = useMemo(
     () =>
       (preview?.items ?? []).some(
-        (item) => destructiveImplications(item)?.sourceCleanupRequired === true,
+        (item) =>
+          activeSelection.includes(item.itemId) &&
+          item.destructiveImplications?.sourceCleanupRequired === true,
       ),
-    [preview],
+    [activeSelection, preview],
   );
 
   return (
@@ -269,8 +241,8 @@ export function OrganizePreviewPage() {
         const model = data.model;
         const execute = model.executeAction;
         const destructiveConfirmed =
-          (!requiresOverwrite || allowOverwrite) &&
-          (!requiresCleanup || allowSourceCleanup);
+          (!requiresOverwrite || effectiveAllowOverwrite) &&
+          (!requiresCleanup || effectiveAllowSourceCleanup);
         return (
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
@@ -320,22 +292,29 @@ export function OrganizePreviewPage() {
                       aria-label={`Select ${item.itemId}`}
                       checked={activeSelection.includes(item.itemId)}
                       disabled={!isExecutable}
-                      onChange={(event) =>
+                      onChange={(event) => {
                         setSelected(
                           event.target.checked
                             ? [...activeSelection, item.itemId]
                             : activeSelection.filter(
                                 (value) => value !== item.itemId,
                               ),
-                        )
-                      }
+                        );
+                        // A destructive confirmation is bound to the exact
+                        // item set that was reviewed. Any selection edit
+                        // requires the operator to make the effect choices
+                        // again, even if they later restore the same set.
+                        setAllowOverwrite(false);
+                        setAllowSourceCleanup(false);
+                        setConfirmationSelectionKey(null);
+                      }}
                     />{" "}
                     Include this exact item
                   </label>
                   <ItemFindings item={item} />
-                  {destructiveImplications(item) !== null && (
+                  {item.destructiveImplications !== null && (
                     <p className="mf-dashboard-meta">
-                      {destructiveImplications(item)?.statement}
+                      {item.destructiveImplications.statement}
                     </p>
                   )}
                   {item.failure !== null && (
@@ -363,10 +342,11 @@ export function OrganizePreviewPage() {
                 <label>
                   <input
                     type="checkbox"
-                    checked={allowOverwrite}
-                    onChange={(event) =>
-                      setAllowOverwrite(event.target.checked)
-                    }
+                    checked={effectiveAllowOverwrite}
+                    onChange={(event) => {
+                      setAllowOverwrite(event.target.checked);
+                      setConfirmationSelectionKey(selectionKey);
+                    }}
                   />{" "}
                   I confirm the reviewed plan may replace an existing
                   destination file
@@ -376,10 +356,11 @@ export function OrganizePreviewPage() {
                 <label>
                   <input
                     type="checkbox"
-                    checked={allowSourceCleanup}
-                    onChange={(event) =>
-                      setAllowSourceCleanup(event.target.checked)
-                    }
+                    checked={effectiveAllowSourceCleanup}
+                    onChange={(event) => {
+                      setAllowSourceCleanup(event.target.checked);
+                      setConfirmationSelectionKey(selectionKey);
+                    }}
                   />{" "}
                   I confirm the reviewed plan may delete emptied source
                   directories
@@ -398,6 +379,10 @@ export function OrganizePreviewPage() {
                     executeMutation.mutate({
                       itemIds: activeSelection,
                       intentVersion: model.intentVersion ?? 0,
+                      allowOverwrite:
+                        requiresOverwrite && effectiveAllowOverwrite,
+                      allowSourceCleanup:
+                        requiresCleanup && effectiveAllowSourceCleanup,
                     })
                   }
                 >

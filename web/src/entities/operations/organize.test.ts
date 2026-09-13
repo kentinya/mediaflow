@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import fixture from "./__fixtures__/manual-operations.json";
 import {
   normalizeOrganizeAction,
+  normalizeOrganizePreview,
   OrganizeNormalizationError,
 } from "./organize";
 
@@ -28,6 +30,26 @@ function offeredExecuteAction(path: string): Record<string, unknown> {
     requiresConfirmation: true,
     sideEffects: "reported_per_item",
   };
+}
+
+type Json = Record<string, unknown>;
+
+const documents = fixture as unknown as Record<string, Json>;
+
+function previewDocument(): Json {
+  const value = JSON.parse(
+    JSON.stringify(documents["organizePreviewDetail"]),
+  ) as Json;
+  value["previewId"] = "preview-1";
+  value["intentId"] = "intent-1";
+  value["executionCandidateItemIds"] = ["item-1"];
+  const item = (value["items"] as Json[])[0];
+  item["itemId"] = "item-1";
+  const action = (value["actions"] as Json)["execute"] as Json;
+  action["available"] = true;
+  action["reason"] = null;
+  action["path"] = "/api/v1/operations/organize/previews/preview-1/execute";
+  return value;
 }
 
 describe("normalizeOrganizeAction route binding", () => {
@@ -213,5 +235,82 @@ describe("normalizeOrganizeAction route binding", () => {
         "intent-execute",
       ),
     ).toThrow(OrganizeNormalizationError);
+  });
+});
+
+describe("normalizeOrganizePreview candidate safety binding", () => {
+  it("requires every execution candidate to have current typed plan safety facts", () => {
+    const malformedVariants: Array<(value: Json) => void> = [
+      (value) => {
+        ((value["items"] as Json[])[0]!["plan"] as Json)["operation"] = null;
+      },
+      (value) => {
+        ((value["items"] as Json[])[0]!["plan"] as Json)[
+          "destructiveImplications"
+        ] = null;
+      },
+      (value) => {
+        (value["items"] as Json[])[0]!["recognitionType"] = "C";
+        ((value["items"] as Json[])[0]!["plan"] as Json)["recognitionType"] =
+          null;
+      },
+      (value) => {
+        (value["items"] as Json[])[0]!["current"] = false;
+      },
+      (value) => {
+        (value["items"] as Json[])[0]!["status"] = "blocked";
+      },
+      (value) => {
+        value["executionCandidateItemIds"] = ["missing-item"];
+      },
+      (value) => {
+        value["selection"] = { selectedItemIds: [], unselectedItemIds: [] };
+      },
+    ];
+    for (const mutate of malformedVariants) {
+      const value = previewDocument();
+      mutate(value);
+      expect(() => normalizeOrganizePreview(value)).toThrow(
+        OrganizeNormalizationError,
+      );
+    }
+  });
+
+  it("keeps a legitimate blocked no-plan item visible and non-executable", () => {
+    const value = previewDocument();
+    const item = (value["items"] as Json[])[0]!;
+    item["status"] = "blocked";
+    item["current"] = false;
+    item["executionState"] = "not_available_in_this_task";
+    item["plan"] = null;
+    value["executionCandidateItemIds"] = [];
+    const action = (value["actions"] as Json)["execute"] as Json;
+    action["available"] = false;
+    action["reason"] = "no Preview item is current, complete and executable";
+
+    const model = normalizeOrganizePreview(value);
+    expect(model.items).toHaveLength(1);
+    expect(model.items[0]?.recognitionType).toBeNull();
+    expect(model.items[0]?.operation).toBeNull();
+    expect(model.items[0]?.destructiveImplications).toBeNull();
+    expect(model.executionCandidateItemIds).toEqual([]);
+    expect(model.executeAction.available).toBe(false);
+  });
+
+  it("rejects duplicate item identities before they can become an ambiguous candidate", () => {
+    const value = previewDocument();
+    const item = (value["items"] as Json[])[0]!;
+    value["items"] = [item, { ...item, previewItemId: "item-duplicate" }];
+    expect(() => normalizeOrganizePreview(value)).toThrow(
+      OrganizeNormalizationError,
+    );
+  });
+
+  it("rejects an offered Execute action without an exact candidate set", () => {
+    const value = previewDocument();
+    value["executionCandidateItemIds"] = [];
+    expect(() => normalizeOrganizePreview(value)).toThrow(
+      OrganizeNormalizationError,
+    );
   });
 });

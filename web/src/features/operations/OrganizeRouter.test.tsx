@@ -103,6 +103,42 @@ function previewDocument(): Json {
   return value;
 }
 
+function previewDocumentWithImplications(
+  implications: Json,
+  operation = "MOVE",
+): Json {
+  const value = previewDocument();
+  const item = (value["items"] as Json[])[0]!;
+  const plan = item["plan"] as Json;
+  plan["operation"] = operation;
+  plan["destructiveImplications"] = implications;
+  return value;
+}
+
+function previewDocumentWithTwoItems(
+  firstImplications: Json,
+  secondImplications: Json,
+): Json {
+  const value = previewDocumentWithImplications(firstImplications, "COPY");
+  const first = (value["items"] as Json[])[0]!;
+  const second = JSON.parse(JSON.stringify(first)) as Json;
+  second["itemId"] = "item-2";
+  second["previewItemId"] = "item-2";
+  second["sourceFilename"] = "Two.2002.mkv";
+  const source = second["source"] as Json;
+  source["filename"] = "Two.2002.mkv";
+  source["path"] = "Movies/Two.2002.mkv";
+  const plan = second["plan"] as Json;
+  plan["destructiveImplications"] = secondImplications;
+  value["items"] = [first, second];
+  value["executionCandidateItemIds"] = ["item-1", "item-2"];
+  value["selection"] = {
+    selectedItemIds: ["item-1", "item-2"],
+    unselectedItemIds: [],
+  };
+  return value;
+}
+
 function executionDocument(): Json {
   const value = document("organizeExecutionDetail");
   value["executionId"] = "execution-1";
@@ -298,6 +334,12 @@ describe("V2 manual Organize journey", () => {
       name: /Exact manual organize Preview/,
     });
     expect(screen.getByText(/Zero Storage mutation/)).toBeVisible();
+    expect(screen.getByText("MOVE")).toBeVisible();
+    expect(
+      screen.getAllByText(
+        /this exact plan replaces and deletes nothing; source media is preserved/,
+      ),
+    ).toHaveLength(2);
     const executeButton = await screen.findByRole("button", {
       name: "Execute selected exact items",
     });
@@ -334,6 +376,233 @@ describe("V2 manual Organize journey", () => {
     });
     expect(screen.getByText(/Execution execution-1/)).toBeVisible();
     expect(screen.getByText("Result")).toBeVisible();
+  });
+
+  it("renders each bounded destructive variant with exactly its required controls", async () => {
+    const variants = [
+      {
+        name: "non-destructive",
+        implications: {
+          overwriteRequired: false,
+          sourceCleanupRequired: false,
+          statement: "this exact plan replaces and deletes nothing",
+        },
+        requiresOverwrite: false,
+        requiresCleanup: false,
+      },
+      {
+        name: "overwrite-only",
+        implications: {
+          overwriteRequired: true,
+          sourceCleanupRequired: false,
+          statement:
+            "this exact plan would replace an existing destination file",
+        },
+        requiresOverwrite: true,
+        requiresCleanup: false,
+      },
+      {
+        name: "cleanup-only",
+        implications: {
+          overwriteRequired: false,
+          sourceCleanupRequired: true,
+          statement:
+            "this exact plan would delete the emptied source directories",
+        },
+        requiresOverwrite: false,
+        requiresCleanup: true,
+      },
+      {
+        name: "combined",
+        implications: {
+          overwriteRequired: true,
+          sourceCleanupRequired: true,
+          statement:
+            "this exact plan would replace an existing destination file and delete the emptied source directories",
+        },
+        requiresOverwrite: true,
+        requiresCleanup: true,
+      },
+    ] as const;
+
+    for (const variant of variants) {
+      const value = previewDocumentWithImplications(
+        variant.implications,
+        "COPY",
+      );
+      recordingFetch((call) => {
+        if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+          return jsonResponse(value);
+        }
+        return undefined;
+      });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+      await screen.findByRole("heading", {
+        name: /Exact manual organize Preview/,
+      });
+      expect(screen.getByText("COPY")).toBeVisible();
+      expect(screen.getAllByText(variant.implications.statement)).toHaveLength(
+        2,
+      );
+      const overwrite = screen.queryByRole("checkbox", {
+        name: /replace an existing destination file/,
+      });
+      const cleanupConfirmation = screen.queryByRole("checkbox", {
+        name: /delete emptied source directories/,
+      });
+      expect(overwrite !== null).toBe(variant.requiresOverwrite);
+      expect(cleanupConfirmation !== null).toBe(variant.requiresCleanup);
+
+      const execute = screen.getByRole("button", {
+        name: "Execute selected exact items",
+      });
+      if (variant.requiresOverwrite || variant.requiresCleanup) {
+        expect(execute).toBeDisabled();
+      } else {
+        expect(execute).toBeEnabled();
+      }
+      cleanup();
+      authStore.clearToken();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("submits explicit effect booleans for the exact confirmed selection", async () => {
+    const user = userEvent.setup();
+    const value = previewDocumentWithImplications(
+      {
+        overwriteRequired: true,
+        sourceCleanupRequired: false,
+        statement: "this exact plan would replace an existing destination file",
+      },
+      "COPY",
+    );
+    const execution = executionDocument();
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+        return jsonResponse(value);
+      }
+      if (
+        call.url === "/api/v1/operations/organize/previews/preview-1/execute" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(execution, 202);
+      }
+      if (call.url === "/api/v1/operations/organize/executions/execution-1") {
+        return jsonResponse(execution);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+    await screen.findByRole("heading", {
+      name: /Exact manual organize Preview/,
+    });
+    const overwrite = screen.getByRole("checkbox", {
+      name: /replace an existing destination file/,
+    });
+    await user.click(overwrite);
+    await user.click(
+      screen.getByRole("button", { name: "Execute selected exact items" }),
+    );
+    await screen.findByRole("heading", { name: "Manual organize execution" });
+
+    const execute = calls.find((call) => call.url.endsWith("/execute"));
+    expect(execute?.body).toMatchObject({
+      confirmation: true,
+      itemIds: ["item-1"],
+      expectedIntentVersion: 2,
+      allowOverwrite: true,
+      allowSourceCleanup: false,
+    });
+    expect(calls.filter((call) => call.url.endsWith("/execute"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("recomputes destructive requirements and invalidates confirmation when selection changes", async () => {
+    const user = userEvent.setup();
+    const value = previewDocumentWithTwoItems(
+      {
+        overwriteRequired: true,
+        sourceCleanupRequired: false,
+        statement: "item one would replace an existing destination file",
+      },
+      {
+        overwriteRequired: false,
+        sourceCleanupRequired: false,
+        statement: "item two replaces and deletes nothing",
+      },
+    );
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+        return jsonResponse(value);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+    await screen.findByRole("heading", {
+      name: /Exact manual organize Preview/,
+    });
+    const overwrite = screen.getByRole("checkbox", {
+      name: /replace an existing destination file/,
+    });
+    await user.click(overwrite);
+    expect(
+      screen.getByRole("button", { name: "Execute selected exact items" }),
+    ).toBeEnabled();
+
+    await user.click(screen.getByRole("checkbox", { name: "Select item-1" }));
+    expect(
+      screen.queryByRole("checkbox", {
+        name: /replace an existing destination file/,
+      }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Execute selected exact items" }),
+    ).toBeEnabled();
+
+    // Re-selecting the destructive item is a new review boundary; the prior
+    // confirmation is not reused even though the exact set is restored.
+    await user.click(screen.getByRole("checkbox", { name: "Select item-1" }));
+    expect(
+      screen.getByRole("checkbox", {
+        name: /replace an existing destination file/,
+      }),
+    ).not.toBeChecked();
+    expect(
+      screen.getByRole("button", { name: "Execute selected exact items" }),
+    ).toBeDisabled();
+  });
+
+  it("renders RecognitionType C independently from A naming and classification", async () => {
+    const value = previewDocument();
+    const item = (value["items"] as Json[])[0]!;
+    const plan = item["plan"] as Json;
+    plan["recognitionType"] = "C";
+    const policies = plan["policies"] as Json;
+    policies["recognitionTypePolicyId"] = "type-C";
+    policies["namingPolicyId"] = "A";
+    policies["classificationPolicyId"] = "A";
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+        return jsonResponse(value);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+    await screen.findByRole("heading", {
+      name: /Exact manual organize Preview/,
+    });
+    expect(screen.getByText("C")).toBeVisible();
+    expect(screen.getByText("MOVE")).toBeVisible();
   });
 
   it("renders no executable control when the backend withholds the Execute action", async () => {
@@ -438,6 +707,22 @@ describe("V2 manual Organize journey", () => {
       // A selection that contradicts its own identity list is malformed.
       (value) => {
         value["executionCandidateItemIds"] = ["item-1", "item-1"];
+      },
+      // An execution candidate without the typed operation is malformed.
+      (value) => {
+        ((value["items"] as Json[])[0]!["plan"] as Json)["operation"] = null;
+      },
+      // An execution candidate without separate destructive implications is
+      // malformed; the page must not treat missing facts as safe.
+      (value) => {
+        ((value["items"] as Json[])[0]!["plan"] as Json)[
+          "destructiveImplications"
+        ] = null;
+      },
+      // An unknown operation cannot become an open DOM string or a control.
+      (value) => {
+        ((value["items"] as Json[])[0]!["plan"] as Json)["operation"] =
+          "DELETE_ALL";
       },
     ];
 

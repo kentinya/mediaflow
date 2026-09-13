@@ -1942,6 +1942,7 @@ function manualActionMatrixDocument(request, permitted) {
 const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
 const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
+const ORGANIZE_DESTRUCTIVE_PREVIEW_ID = "organize-preview-destructive-e2e-001";
 const ORGANIZE_HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const ORGANIZE_MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
 const ORGANIZE_SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
@@ -2145,6 +2146,26 @@ function organizePreviewDocument(state) {
       ready: true,
     },
   };
+}
+
+function organizeDestructivePreviewDocument(state) {
+  const value = organizePreviewDocument(state);
+  value.previewId = ORGANIZE_DESTRUCTIVE_PREVIEW_ID;
+  value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_DESTRUCTIVE_PREVIEW_ID}/execute`;
+  value.items = value.items.map((item) => ({
+    ...item,
+    plan: {
+      ...item.plan,
+      operation: "COPY",
+      destructiveImplications: {
+        overwriteRequired: true,
+        sourceCleanupRequired: true,
+        statement:
+          "this exact plan would replace an existing destination file and delete the emptied source directories; both require separate explicit authority",
+      },
+    },
+  }));
+  return value;
 }
 
 function organizeExecutionDocument(status, state) {
@@ -5592,6 +5613,25 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (
+    url.pathname ===
+      `/api/v1/organize/previews/${ORGANIZE_DESTRUCTIVE_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_DESTRUCTIVE_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    sendJson(res, 200, organizeDestructivePreviewDocument(state));
+    return;
+  }
+
   // A deliberately malformed bounded document: it mirrors the real contract's
   // shape but carries an unmodelled action transport and an unknown item
   // status, so the built artifact must render no Execute control and no
@@ -5681,15 +5721,22 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const organizeExecuteMatch = url.pathname.match(
+    /^\/api\/v1\/organize\/previews\/([^/]+)\/execute$/,
+  );
   if (
-    url.pathname ===
-      `/api/v1/organize/previews/${ORGANIZE_PREVIEW_ID}/execute` &&
+    organizeExecuteMatch &&
+    [ORGANIZE_PREVIEW_ID, ORGANIZE_DESTRUCTIVE_PREVIEW_ID].includes(
+      organizeExecuteMatch[1],
+    ) &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
       return;
     }
     const state = organizeState(session);
+    const executePreviewId = organizeExecuteMatch[1];
+    const destructive = executePreviewId === ORGANIZE_DESTRUCTIVE_PREVIEW_ID;
     const parsed = await readBoundedJsonBody(req, res);
     if (!parsed.ok) {
       return;
@@ -5700,9 +5747,11 @@ const server = createServer(async (req, res) => {
         confirmation: fields.confirmation === true,
         expectedIntentVersion: fields.expectedIntentVersion,
         itemIds: Array.isArray(fields.itemIds) ? [...fields.itemIds] : null,
+        allowOverwrite: fields.allowOverwrite === true,
+        allowSourceCleanup: fields.allowSourceCleanup === true,
       },
       method: "POST",
-      objectId: ORGANIZE_PREVIEW_ID,
+      objectId: executePreviewId,
       objectType: "organize_execute",
       path: "/api/v1/organize/previews/:previewId/execute",
     });
@@ -5711,7 +5760,11 @@ const server = createServer(async (req, res) => {
       !Array.isArray(fields.itemIds) ||
       fields.itemIds.length !== 1 ||
       fields.itemIds[0] !== ORGANIZE_ITEM_ID ||
-      fields.expectedIntentVersion !== state.intentVersion
+      fields.expectedIntentVersion !== state.intentVersion ||
+      typeof fields.allowOverwrite !== "boolean" ||
+      typeof fields.allowSourceCleanup !== "boolean" ||
+      fields.allowOverwrite !== destructive ||
+      fields.allowSourceCleanup !== destructive
     ) {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
