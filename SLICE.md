@@ -7,9 +7,9 @@ This is the A-owned Slice Contract for the next independently reviewed V2 capabi
 Slice ID: 33
 Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
-Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
+Implementation Head: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
 Historical Closure Checkpoint: dcc2f34c38975662ddbc78e160bbbc2d423ae702
 ~~~
 
@@ -636,15 +636,12 @@ Decision: SLICE READY FOR A REVIEW
 ## Review State
 
 ~~~
-Slice Status: ACTIVE
-Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
+Slice Status: READY FOR A REVIEW
+Implementation Head: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
 Historical Closure: PASS / CLOSED at dcc2f34c38975662ddbc78e160bbbc2d423ae702
 P0/P1 Defects:
-- P1: V2 Web-native manual Organize repeatedly fails at Worker pre-mutation revalidation with
-  `the reviewed source file is unavailable` even though the inspected source FileIndex record,
-  source file, fingerprint/occurrence, Storage preflight and Active snapshot are valid. No Storage
-  mutation was recorded. B must plan a focused correction inside Slice 33.
-Next Action: B PLANS ONE FOCUSED CORRECTION TASK
+- None.
+Next Action: A FINAL REVIEW
 ~~~
 
 ## A Final Review — 2026-09-13 Post-closure correction
@@ -676,6 +673,101 @@ Closure Reconciliation:
   cutover and all other Contract deferrals remain deferred; no hidden dependency was introduced.
 
 Reviewed: 2026-09-13
+~~~
+
+## Closure Packet — 2026-09-13 Post-closure revalidation correction
+
+~~~
+Slice: 33 — Operations Workspace
+Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
+Head SHA: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
+
+Required Outcomes:
+- RO-1 COMPLETE
+- RO-2 COMPLETE
+- RO-3 COMPLETE
+- RO-4 COMPLETE
+- RO-5 COMPLETE
+- RO-6 COMPLETE
+- RO-7 COMPLETE
+- RO-8 COMPLETE
+
+Required Surfaces:
+- Operations route and Dashboard surface COMPLETE
+- Task, Job and Worker surface COMPLETE
+- Manual Scan/Preview surface COMPLETE
+- Manual Organize surface COMPLETE
+- Automation and schedule surface COMPLETE
+- Notification operation surface COMPLETE
+- Shared authority and coexistence surface COMPLETE
+- Failure, recovery and boundary-handoff surface COMPLETE
+
+Implemented:
+- Reconstructed the manual Organize FileCatalog authority from the exact persisted pinned runtime
+  snapshot when the resident Worker starts from a management-only bootstrap.
+- Preserved independent intent/Preview reload, source identity and occurrence/fingerprint
+  revalidation, Storage preflight, fences, OrganizerExecutor-only mutation and bounded fresh-Preview
+  failure recovery.
+- Added real management-bootstrap success, pinned-snapshot-after-Active-change and cross-authority
+  fail-closed Worker regressions.
+- Added the Docker release-security proof for harmless V2 Local Storage manual Organize completion.
+- Preserved the offline MetadataIdentity boundary and RecognitionType C preservation regressions
+  introduced by the same correction chain.
+
+Tasks completed:
+- Task 33.7 — Repair production Worker source revalidation for admitted manual Organize.
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- Focused management-Worker regressions — PASS, 3 tests.
+- Related Worker/manual operations/persistence suites — PASS, 88 tests.
+- `env -u NODE_ENV npm --prefix web ci` — PASS, 254 packages installed, 255 audited, 0
+  vulnerabilities.
+- Web format check, TypeScript typecheck, ESLint and production Vite build — PASS.
+- Clean-head Vitest — PASS, 34 files and 452 tests.
+- Clean-head Playwright built-artifact regression — PASS, 119/119.
+- Ruff format/check, compileall, pip check, example configuration validation and FFprobe/FFmpeg
+  scan — PASS.
+- Full Python unittest discovery in the repository worktree — 1545 run, 8 failures, 7 skips; the
+  additional six failures are caused by ignored root-CWD private runtime/configuration state.
+- Full Python unittest discovery in a detached clean HEAD worktree — 1545 run, 2 failures, 7 skips.
+  Both failures are the pre-existing Webhook secret-readiness cases and were reproduced at Task
+  Base with the same two tests.
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS with Docker available, including
+  the four-service resident Worker manual Organize proof.
+- `git diff --check` and Task Base..Head scope inspection — PASS.
+
+Safety Evidence:
+- The Task Base..Head diff contains no deleted tests, weakened assertions, hidden skips, credentials,
+  tracked `config/alist.json`, operator media, generated frontend artifacts or `node_modules`.
+- Management bootstrap content is not trusted as workflow authority after admission; the persisted
+  pinned snapshot reconstructs the exact catalog and Storage authority.
+- Cross-authority source evidence fails closed before mutation with durable per-item failure,
+  effect certainty `none`, preserved source and a fresh-Preview next action.
+- Preview and analysis remain zero-mutation; only OrganizerExecutor performs accepted Storage effects.
+  One-shot admission, claim/lease fencing, explicit destructive authority, no link fallback,
+  RecognitionType C preservation and no uncertain replay remain covered.
+
+Known Non-blocking Issues:
+- P2: two pre-existing Webhook secret-readiness unittest failures remain in clean HEAD and Task
+  Base; they are outside this Task's changed files and behavior.
+- P2: six extra failures occur only in the repository root worktree because ignored private runtime
+  and configuration state is present; the clean-head run does not reproduce them.
+- P3: existing sqlite ResourceWarnings, jsdom `window.scrollTo()` diagnostics, 7
+  environment-gated skips and the Vite large-chunk advisory remain.
+
+Explicitly Deferred:
+- Unchanged from the Contract: Slice 34 Review & Recovery, Slice 35 Configuration Administration,
+  Slice 36 parity/accessibility/legacy UI retirement, uncertain-effect replay/rollback, new
+  providers, general Secret Store/identity work, arbitrary Storage mutation and all other listed
+  deferrals.
+
+Documentation Reconciliation Needed:
+- A should review the current Operations/Worker revalidation facts in the authoritative current
+  documentation and retain the existing Slice 34–36 deferrals. No Contract scope or requirement
+  change is needed.
+
+Decision: SLICE READY FOR A REVIEW
 ~~~
 
 ## Historical A Final Review — 2026-09-13
