@@ -78,7 +78,6 @@ from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexReposito
 from mediaflow.infrastructure.runtime_configuration import (
     RuntimeConfiguration,
     StorageDefinition,
-    load_management_bootstrap,
     load_minimal_management_bootstrap,
     load_runtime_configuration,
     with_managed_snapshot,
