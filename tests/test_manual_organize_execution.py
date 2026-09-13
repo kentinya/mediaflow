@@ -19,6 +19,7 @@ from mediaflow.application.manual_organize_execution import (
     ManualOrganizeExecutionService,
 )
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
+from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
@@ -903,6 +904,64 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertEqual(run.items[0].task_item_id, persisted["items"][0]["taskItemId"])
                 self.assertIsNotNone(persisted["items"][0]["checkpoint"])
                 self.assertEqual(item.item_id, run.selected_item_ids[0])
+        finally:
+            fixture.cleanup()
+
+    def test_worker_rebuilds_management_bootstrap_catalog_from_pinned_runtime(self):
+        fixture = self._fixture()
+        try:
+            with SQLiteTaskRepository(fixture.database) as repository:
+                catalog, intents, previews, service, storages = self._services(repository, fixture)
+                _, preview = self._intent_and_preview(intents, previews)
+                admitted = service.admit(
+                    self._authorize(service, preview).authorization_id,
+                    actor="operator",
+                    confirmation=True,
+                )
+                self.assertEqual("admitted", admitted.status.value)
+
+                # A resident worker starts with management-only authority and therefore
+                # has no configured ResourceLibrary/Storage IDs until the pinned snapshot
+                # is loaded for this admitted execution.
+                bootstrap_catalog = FileCatalogService(
+                    fixture.index, (), (), task_repository=repository
+                )
+                bootstrap_intents = ManualOrganizeIntentService(
+                    repository, bootstrap_catalog, configuration_resolver=manual_snapshot
+                )
+                bootstrap_previews = ManualOrganizePreviewService(
+                    repository,
+                    bootstrap_intents,
+                    bootstrap_catalog,
+                    configuration=fixture.configuration,
+                    providers=MetadataProviderRegistry((fixture.provider,)),
+                    storages=storages,
+                )
+                worker_service = ManualOrganizeExecutionService(
+                    repository,
+                    bootstrap_previews,
+                    bootstrap_intents,
+                    runtime_catalog_factory=lambda runtime: FileCatalogService(
+                        fixture.index,
+                        tuple(
+                            item.library_id for item in runtime.resource_libraries if item.enabled
+                        ),
+                        tuple(item.storage_id for item in runtime.storage_definitions),
+                        task_repository=repository,
+                    ),
+                    storages=storages,
+                )
+                completed = ManualOrganizeExecutionWorker(
+                    worker_service, worker_id="management-bootstrap-worker"
+                ).run_next()
+
+                self.assertIsNotNone(completed)
+                self.assertEqual("completed", completed.status.value)
+                self.assertEqual("success", completed.items[0].status.value)
+                self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
+                self.assertTrue(
+                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                )
         finally:
             fixture.cleanup()
 
