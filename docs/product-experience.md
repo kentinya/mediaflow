@@ -253,8 +253,11 @@ asking the operator to issue a CLI token or copy a raw secret. The resident Work
 execution under a fence and only OrganizerExecutor may mutate Storage.
 
 The V1 one-shot token mechanism remains available for API automation, local administration,
-debugging, compatibility and emergency/support use. RBAC, revalidation, bounded authority, limits,
-audit, conflict handling and no automatic replay of uncertain effects remain mandatory.
+debugging, compatibility and emergency/support use. For real current-source organization, the
+reviewed Preview is the operator-facing source of truth: it pins Storage ID, source path and source
+fingerprint, and the Worker validates that exact Storage object directly before mutation rather than
+looking the file up again through FileIndex. RBAC, revalidation, bounded authority, limits, audit,
+conflict handling and no automatic replay of uncertain effects remain mandatory.
 
 ## Manual operations and file lifecycle
 

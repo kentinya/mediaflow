@@ -373,6 +373,31 @@ class ManualSourceIdentity:
             ),
         )
 
+    def stable_identity(self) -> tuple[object, ...]:
+        """Return source identity fields that do not change on a routine rescan.
+
+        ``last_seen_at``, ``updated_at``, ``stable_since`` and ``last_scan_id``
+        describe FileIndex observation history, not the media occurrence. The
+        occurrence ID and Storage-derived fingerprint are the authoritative
+        evidence for deciding whether the reviewed source is still the same.
+        """
+
+        return (
+            self.file_id,
+            self.storage_id,
+            self.resource_library_id,
+            self.path,
+            self.filename,
+            self.extension,
+            self.size,
+            self.modified_at,
+            self.occurrence_id,
+            self.fingerprint,
+            self.fingerprint_algorithm,
+            self.fingerprint_evidence,
+            self.occurrence_state,
+        )
+
     @classmethod
     def from_document(cls, value: object) -> ManualSourceIdentity:
         if not isinstance(value, dict):

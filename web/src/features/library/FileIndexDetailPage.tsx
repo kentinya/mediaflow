@@ -946,7 +946,7 @@ export function FileIndexDetailPage() {
                 }}
                 actionMatrix={actionMatrixQuery.data}
                 actionMatrixPending={actionMatrixQuery.isPending}
-                resourceLibraryId={returnContext.resourceLibrary ?? null}
+                resourceLibraryId={recordResourceLibraryId}
               />
             )}
           </AuthorizedReadBoundary>

@@ -7,7 +7,7 @@
  * never labelled safe to repeat, and a rejected control is never replayed.
  */
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -35,10 +35,21 @@ export const SCAN_ITEM_PAGE_SIZE = 20;
 export function ScanDetailPage() {
   const { taskId } = useParams({ strict: false }) as { taskId: string };
   const token = useAuthToken();
+  type ItemPagingState = {
+    readonly taskId: string;
+    readonly cursors: (string | null)[];
+  };
   // The visited cursor path is kept client-side so "Previous items" always
   // re-reads an exact already-visited page through its forward cursor: the
   // browser never filters, reorders or splices a page window locally.
-  const [itemCursors, setItemCursors] = useState<(string | null)[]>([null]);
+  const [itemPaging, setItemPaging] = useState<ItemPagingState>(() => ({
+    taskId,
+    cursors: [null],
+  }));
+  // Route components can remain mounted while only the taskId changes. Never
+  // submit a cursor that was minted for a different Scan collection.
+  const itemCursors =
+    itemPaging.taskId === taskId ? itemPaging.cursors : ([null] as const);
   const itemCursor = itemCursors[itemCursors.length - 1] ?? null;
   const [cancelResult, setCancelResult] = useState<{
     ok: boolean;
@@ -52,6 +63,24 @@ export function ScanDetailPage() {
       itemCursor,
     }),
   );
+
+  useEffect(() => {
+    // A cursor can outlive the collection it was minted for (for example
+    // after a browser tab resumes or the server has discarded that page
+    // window). Reads are safe to recover by returning to the first page.
+    if (
+      itemCursor !== null &&
+      query.data?.ok === false &&
+      query.data.failure.kind === "rejected"
+    ) {
+      // This effect reconciles a server-invalid continuation back into local
+      // navigation state; the query cannot recover without this state change.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- reset an invalid server cursor
+      setItemPaging((current) =>
+        current.taskId === taskId ? { taskId, cursors: [null] } : current,
+      );
+    }
+  }, [itemCursor, query.data, taskId]);
 
   const cancelMutation = useMutation({
     mutationFn: (tid: string) => submitManualScanCancellation(token, tid),
@@ -80,15 +109,21 @@ export function ScanDetailPage() {
     const read = query.data;
     if (read !== undefined && read.ok && read.model.nextItemCursor !== null) {
       const next = read.model.nextItemCursor;
-      setItemCursors((current) => [...current, next]);
+      setItemPaging((current) => {
+        const cursors =
+          current.taskId === taskId ? current.cursors : ([null] as const);
+        return { taskId, cursors: [...cursors, next] };
+      });
     }
-  }, [query.data]);
+  }, [query.data, taskId]);
 
   const goItemsBackward = useCallback(() => {
-    setItemCursors((current) =>
-      current.length > 1 ? current.slice(0, -1) : current,
+    setItemPaging((current) =>
+      current.taskId === taskId && current.cursors.length > 1
+        ? { taskId, cursors: current.cursors.slice(0, -1) }
+        : current,
     );
-  }, []);
+  }, [taskId]);
 
   return (
     <AuthorizedReadBoundary

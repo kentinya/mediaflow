@@ -722,9 +722,12 @@ Classification review actions through the same application and permission bounda
 General Jobs submit bounded Scan/Preview/Organize work within their respective authority, while
 bounded Files/FileIndex entry points support manual Scan/Preview/Organize and explicit recovery.
 Scan and Preview remain zero-mutation; Organize requires the existing separate one-shot execution
-authority and confirmation. Legacy preview may create formal review/conflict state; the newer manual
-and Automation Definition Previews are analysis-only. Processing Worker readiness and ownership are
-visible through the read-only Operator Web/API projections without widening execution authority.
+authority and confirmation. Current-source Organize execution uses the Preview-pinned Storage ID,
+source path and Storage-derived fingerprint directly, so Worker validation is `Storage.stat(path)`
+plus fingerprint comparison rather than a FileIndex relookup. Legacy preview may create formal
+review/conflict state; the newer manual and Automation Definition Previews are analysis-only.
+Processing Worker readiness and ownership are visible through the read-only Operator Web/API
+projections without widening execution authority.
 Database-managed users/login, OIDC, automatic secret rotation, Provider switching, and broader
 recovery beyond the delivered checkpoint journeys are not V1 capabilities. Slice 28 delivered day-2
 configuration and operations administration; Slice 29 delivered the Docker production release and

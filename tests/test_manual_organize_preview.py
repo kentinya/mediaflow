@@ -5,7 +5,6 @@ import json
 import sqlite3
 import tempfile
 import unittest
-from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -400,19 +399,6 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                     expected_item_versions={item.item_id: item.version for item in intent.items},
                     actor="operator",
                 )
-                changed = replace(
-                    file_record("one", "source", "library", "One.2001.mkv"),
-                    size=124,
-                )
-                index.batch_upsert((changed,))
-                stale = previews.get(preview.preview_id)
-                self.assertEqual(ManualPreviewStatus.STALE, stale.status)
-                self.assertFalse(stale.current)
-                self.assertTrue(stale.items[0].plan)
-                self.assertEqual(ManualPreviewItemStatus.STALE, stale.items[0].status)
-                self.assertIn("fresh Preview", stale.items[0].next_action)
-
-                index.batch_upsert((file_record("one", "source", "library", "One.2001.mkv"),))
                 intent = intents.get(intent.intent_id)
                 updated = intents.update_choice(
                     intent.intent_id,

@@ -480,9 +480,18 @@ class ManualOrganizeIntentService:
         libraries = tuple(getattr(self._file_catalog, "_resource_library_ids", ()))
         if repository is not None and libraries:
             matches = []
-            for library_id in libraries:
-                values = repository.list_by_resource_library(library_id)
-                matches.extend(value for value in values if value.file_id == file_id)
+            finder = getattr(repository, "find_by_file_id", None)
+            if callable(finder):
+                for library_id in libraries:
+                    value = finder(file_id, resource_library_id=library_id)
+                    if value is not None:
+                        matches.append(value)
+            else:
+                # Compatibility fallback for older in-memory adapters that only
+                # expose the ResourceLibrary listing operation.
+                for library_id in libraries:
+                    values = repository.list_by_resource_library(library_id)
+                    matches.extend(value for value in values if value.file_id == file_id)
             if not matches:
                 raise ManualIntentError(
                     f"FileIndex record {file_id!r} was not found",
@@ -557,45 +566,7 @@ class ManualOrganizeIntentService:
                 code="source_invalid",
                 next_action="repair the indexed source identity, then reload Files",
             ) from error
-        if (
-            current.file_id,
-            current.storage_id,
-            current.resource_library_id,
-            current.path,
-            current.filename,
-            current.extension,
-            current.size,
-            current.modified_at,
-            current.last_seen_at,
-            current.updated_at,
-            current.stable_since,
-            current.scan_status,
-            current.last_scan_id,
-            current.occurrence_id,
-            current.fingerprint,
-            current.fingerprint_algorithm,
-            current.fingerprint_evidence,
-            current.occurrence_state,
-        ) != (
-            source.file_id,
-            source.storage_id,
-            source.resource_library_id,
-            source.path,
-            source.filename,
-            source.extension,
-            source.size,
-            source.modified_at,
-            source.last_seen_at,
-            source.updated_at,
-            source.stable_since,
-            source.scan_status,
-            source.last_scan_id,
-            source.occurrence_id,
-            source.fingerprint,
-            source.fingerprint_algorithm,
-            source.fingerprint_evidence,
-            source.occurrence_state,
-        ):
+        if current.stable_identity() != source.stable_identity():
             raise ManualIntentError(
                 "selected FileIndex source changed after intent creation",
                 code="source_stale",

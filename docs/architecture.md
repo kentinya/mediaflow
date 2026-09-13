@@ -91,8 +91,11 @@ OrganizerExecutor ownership remain unchanged.
 
 Slice 33's accepted implementation is at Base `827c36b410687e41b1da53ba6475d8c03a47dbfd` and final
 Implementation Head `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08`. Its post-closure Worker correction
-reconstructs the exact pinned source authority across the resident Worker boundary and fails closed
-before mutation when source evidence cannot be proved; no accepted Operations behavior is removed.
+preserves exact current-source authority across the resident Worker boundary: the reviewed Preview
+persists Storage ID, source path and Storage-derived source fingerprint, and the Worker validates the
+live source by opening that Storage and calling `stat(source_path)` directly. Missing live sources or
+fingerprint mismatches fail closed before mutation; routine FileIndex rescans do not cause execution
+to re-resolve `file_id -> FileIndex -> path`. No accepted Operations behavior is removed.
 It composes the existing Python application,
 persistence and `/api/v1/*` authority into the V2 Operations route family: actionable Dashboard,
 durable Tasks/Jobs, bounded Scan/Preview, exact Web-native manual Organize, Automation definitions,
@@ -295,15 +298,19 @@ investigation-only.
 ## Manual organize
 
 Manual organization uses a durable intent and exact immutable Preview before execution. The Preview
-contains the selected source identity, choices, pinned configuration, destination, operation,
+contains the selected source identity, reviewed Storage ID, Storage-relative source path,
+Storage-derived source fingerprint, choices, pinned configuration, destination, operation,
 attachments, conflict and capability evidence. A separate one-shot authority and explicit
 confirmation admits only the exact selected Preview items.
 
-Admission rechecks versions, source identity, fingerprints, conflicts, capabilities and authority in
-one SQLite transaction, then acquires source/destination/attachment locks. The execution service
-reconstructs the plan from persisted Preview data; request bodies cannot supply arbitrary paths,
-operations or provider payloads. `OrganizerExecutor` performs the actual mutation and persists each
-effect/result/checkpoint independently.
+Admission rechecks versions, reviewed source fingerprint, conflicts, capabilities and authority in
+one SQLite transaction, then acquires source/destination/attachment locks. Execution does not
+resolve the source through FileIndex: the service reconstructs the plan from persisted Preview data,
+opens the reviewed Storage ID, calls `stat(source_path)`, and compares the live Storage fingerprint
+with `preview.source_fingerprint`. Missing sources and fingerprint mismatches fail closed before any
+mutation; request bodies cannot supply arbitrary paths, operations or provider payloads.
+`OrganizerExecutor` performs the actual mutation and persists each effect/result/checkpoint
+independently.
 
 The compatibility file-level execute endpoint calls that bounded execution service synchronously
 inside the API request. The V2 Operations flow instead atomically admits an exact Preview selection

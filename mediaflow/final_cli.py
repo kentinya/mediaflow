@@ -3529,12 +3529,6 @@ def _manual_organize_worker_context(configuration, configured_path: str | None, 
             repository,
             previews,
             intents,
-            runtime_catalog_factory=lambda runtime: FileCatalogService(
-                file_index,
-                tuple(item.library_id for item in runtime.resource_libraries if item.enabled),
-                tuple(item.storage_id for item in runtime.storage_definitions),
-                task_repository=repository,
-            ),
             checkpoint_service=ProcessingCheckpointService(repository),
         )
         yield ManualOrganizeExecutionWorker(execution)

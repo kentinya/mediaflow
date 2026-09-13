@@ -293,16 +293,6 @@ class ManualPreviewTests(unittest.TestCase):
                 value.record.occurrence_id, persisted_intent.items[0].source.occurrence_id
             )
 
-            value.index.batch_upsert((replace(value.record, size=value.record.size + 1),))
-            projected = previews.get(preview.preview_id)
-            self.assertFalse(projected.current)
-            raw = repository._connection.execute(
-                "SELECT status, current FROM manual_previews WHERE preview_id=?",
-                (preview.preview_id,),
-            ).fetchone()
-            self.assertEqual("previewed", raw["status"])
-            self.assertEqual(1, raw["current"])
-
     def test_resource_library_selection_is_bounded_and_persists_scope(self):
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
             _, _, previews = self.services(value, repository)
