@@ -2123,6 +2123,10 @@ function organizePreviewDocument(state) {
     executionCandidateItemIds: [ORGANIZE_ITEM_ID],
     intentId: ORGANIZE_INTENT_ID,
     intentVersion: state.intentVersion,
+    selection: {
+      selectedItemIds: [ORGANIZE_ITEM_ID],
+      unselectedItemIds: [],
+    },
     items: base.items.map((item) => ({
       ...item,
       itemId: ORGANIZE_ITEM_ID,
