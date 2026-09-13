@@ -308,7 +308,7 @@ authority and does not replace checked activation evidence.
 
 The implementation currently declares:
 
-- runtime SQLite schema: `33` in `mediaflow/infrastructure/sqlite_runtime.py`;
+- runtime SQLite schema: `34` in `mediaflow/infrastructure/sqlite_runtime.py`;
 - configuration-management SQLite schema: `10` in
   `mediaflow/infrastructure/sqlite_configuration_management.py`;
 - managed configuration document schema: `1` in

@@ -3,7 +3,7 @@
 
 The script builds two local image identities: a synthetic old-schema image whose
 runtime schema marker is pinned to 32 and the current candidate image (schema
-33).  It starts the old image on temporary ``/data`` and media mounts,
+34).  It starts the old image on temporary ``/data`` and media mounts,
 activates a managed runtime, seeds representative durable state, stops the
 stack, creates and verifies a local backup, runs candidate preflight and
 migration rehearsal against disposable copies, injects a migration failure,
@@ -48,7 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 UPGRADE_PROJECT_PREFIX = f"{PROJECT_PREFIX}-upgrade"
 IMAGE_TAG_PREFIX = "mediaflow:task29.5"
 OLD_SCHEMA = 32
-CURRENT_SCHEMA = 33
+CURRENT_SCHEMA = 34
 DEFINITION_ID = "upgrade-definition"
 SCHEDULE_ID = "hourly-scan"
 TASK_ID = "upgrade-task"
