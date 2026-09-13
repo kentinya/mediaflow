@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 33.7
 Parent Slice: 33
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 54f16d5f0e2b921307403e11e7895dffe7018b35
 Difficulty: High
 Test Level: T4
@@ -152,8 +152,7 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
 
 ### Changed Files
 
-- `mediaflow/application/manual_organize_execution.py`
-- `mediaflow/final_cli.py`
+- `scripts/docker_release_security_smoke_test.py`
 - `tests/test_manual_organize_execution.py`
 
 ### Implemented
@@ -166,12 +165,17 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
   revalidation; no direct-path or permissive fallback was added.
 - Added a regression covering admission followed by a Worker constructed with empty
   management-only catalog IDs, proving the exact Local Storage move completes once.
+- Added a durable SQLite regression using the real `_manual_organize_worker_context`, managed
+  snapshot activation, independent FileIndex reopen, Active revision replacement, and exact
+  pinned-snapshot execution.
+- Extended the four-service release harness through API Scan, intent, choice, Preview, Execute
+  admission, and resident Worker observation with an explicit non-destructive COPY policy.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_manual_operations_contract tests.test_queued_job_execution_boundary tests.test_processing_worker_readiness` — PASS, 86 tests.
-- Focused management-bootstrap regression — PASS, 1 test.
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_manual_operations_contract tests.test_queued_job_execution_boundary tests.test_processing_worker_readiness` — PASS, 87 tests.
+- Real management-bootstrap/pinned-snapshot regressions — PASS, 2 tests.
 - `.venv/bin/ruff format --check .` — PASS.
 - `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
@@ -185,9 +189,9 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
 - `npm --prefix web run lint` — PASS.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web run test:e2e` — PASS, 119 tests.
-- `npm --prefix web test -- --run` — FAIL / PRE-EXISTING / UNRELATED, 452 tests with 5 failures in existing Operations/Notification/Router jsdom tests; no changed frontend files.
-- `.venv/bin/python -m unittest discover -s tests -t .` — FAIL / PRE-EXISTING / UNRELATED, 1540 tests with 6 failures and 7 skips in existing credential/configuration/fixture expectations; the focused Task modules pass.
-- `python3 scripts/docker_release_security_smoke_test.py` — PASS, isolated four-service release-security smoke completed.
+- `npm --prefix web test -- --run` — PASS, 452 tests.
+- `.venv/bin/python -m unittest discover -s tests -t .` — FAIL / PRE-EXISTING / UNRELATED, 1541 tests with 8 failures and 7 skips in existing credential/configuration/fixture expectations; focused Task modules pass.
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / BLOCKED, four-service startup, managed activation and Worker restart passed, but the added manual flow returned bounded `item_blocked` / `unavailable` at execution admission; no Storage mutation occurred. The harness was rerun after correcting API field selection, explicit COPY policy, source-linked Result linkage and explicit metadata choice.
 - `git diff --check` — PASS.
 
 ### Decisions
@@ -199,6 +203,8 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
 - Catalog reconstruction changes in-memory lookup composition only. FileIndex validation,
   occurrence/fingerprint checks, capability checks, locks and OrganizerExecutor ordering remain
   unchanged.
+- The release harness keeps the source bind read-only and uses COPY for its harmless temporary
+  effect; it does not weaken the mount or capability checks.
 
 ### Remaining In-Slice Work
 
@@ -212,21 +218,47 @@ Worker bootstrap → durable manual execution/Preview/intent → pinned runtime 
   and `node_modules/` is not included in the checkpoint.
 - The required Vitest and Python full-regression commands have unrelated pre-existing failures
   listed above. They are not being treated as PASS.
-- The Docker harness passed, but its existing output does not identify a separate V2 manual
-  Organize assertion; the focused regression provides the new management-bootstrap proof.
+- The Docker manual-Organize acceptance remains unresolved: its temporary source-linked metadata
+  fixture still produces an unavailable Preview item before execution admission.
+- A separate clean-worktree baseline comparison for the full Python failures was not completed.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 49bdd4bf0d15dc91197e3bc3d8a59762011c7b51
+Head SHA: [pending correction commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 54f16d5f0e2b921307403e11e7895dffe7018b35..5eff61ccf03d335b5da6125ee387e5bcdb29939f
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The required production-composition and immutable-snapshot proof is missing. The actual diff adds
+  only a manually assembled unit fixture in `tests/test_manual_organize_execution.py`; it does not
+  invoke `_manual_organize_worker_context`, persist/load a managed SQLite revision, or prove an
+  admitted execution still consumes its pinned published snapshot after current Active changes.
+  Add an integration regression using the real management-only Worker construction and managed
+  snapshot loader, covering both successful exact execution and refusal to substitute a newer
+  Active/bootstrap authority.
+- The required four-service Docker manual-Organize acceptance is absent. Base..Head contains no
+  change to `scripts/docker_release_security_smoke_test.py`, and the Completion Report explicitly
+  says its passing run did not assert the V2 manual Organize journey. Extend the isolated harness to
+  admit harmless temporary Local-Storage work through the API, observe resident Worker completion,
+  verify the exact effect once, and preserve the existing security/canary checks.
+- T4 full-regression evidence is incomplete. B reproduced the root-worktree Python result as 1540
+  tests with 6 failures and 7 skips; the submitted report provides no Task-Base or isolated-clean-
+  worktree run proving those failures pre-existing/unrelated as Acceptance Criteria require. Run
+  the final full suite in an isolated clean worktree at the corrected checkpoint (and a baseline
+  comparison if needed), and record exact commands/totals. Also correct the frontend result: B's
+  independent rerun passed all 452 tests, so the final report must state the actual final rerun
+  rather than retain the earlier five-failure result.
+- The reported checkpoint SHA `49bdd4bf0d15dc91197e3bc3d8a59762011c7b51` does not exist. The
+  implementation commit actually present is `49bdd4ba9c08b3e4fbc23b998512b9293f744261`, followed by
+  report commit `5eff61ccf03d335b5da6125ee387e5bcdb29939f`. After completing the same-Task
+  fixes, create a coherent new checkpoint and record its exact full SHA so B can review the stated
+  range.
