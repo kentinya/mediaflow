@@ -56,6 +56,16 @@ const COMMAND_LABELS: Readonly<Record<string, string>> = {
   "file-metadata-correction": "文件元数据修正",
 };
 
+const OPERATION_LABELS: Readonly<Record<string, string>> = {
+  move: "移动",
+  copy: "复制",
+  rename: "重命名",
+  hardlink: "硬链接",
+  symlink: "软链接",
+  reflink: "克隆",
+  delete: "删除",
+};
+
 function safeSearchValue(
   search: Record<string, unknown>,
   key: string,
@@ -108,17 +118,7 @@ function formatTimestamp(value: string | null): string {
 
 function operationLabel(value: string | null): string {
   if (!value) return "整理";
-  return (
-    {
-      move: "移动",
-      copy: "复制",
-      rename: "重命名",
-      hardlink: "硬链接",
-      symlink: "软链接",
-      reflink: "克隆",
-      delete: "删除",
-    }[value] ?? value
-  );
+  return OPERATION_LABELS[value] ?? value;
 }
 
 function SummaryCard({
@@ -211,6 +211,9 @@ function TaskDetailDrawer({
   const model = data?.ok === true ? data.model : null;
   const task = model?.task ?? null;
   const lifecycle = model?.lifecycle ?? null;
+  const firstItem = model?.items[0] ?? null;
+  const detailFailureText =
+    data !== undefined && !data.ok ? data.failure.nextAction : null;
   const cancelAction = lifecycle
     ? availableLifecycleAction(lifecycle, "cancel")
     : null;
@@ -230,15 +233,14 @@ function TaskDetailDrawer({
         "waiting_metadata_correction",
         "waiting_classification",
       ].includes(item.status),
-    ) ?? model?.items[0];
-  const scopeText =
-    task && task.totalItems === 1 && model?.items[0]
-      ? model.items[0].sourcePath
-      : model?.items[0]?.resourceLibraryId
-        ? `${model.items[0].resourceLibraryId} 媒体库`
-        : task
-          ? `${task.totalItems} 个项目`
-          : "—";
+    ) ?? firstItem;
+  const scopeText = task
+    ? task.totalItems === 1 && firstItem
+      ? firstItem.sourcePath
+      : firstItem?.resourceLibraryId
+        ? `${firstItem.resourceLibraryId} 媒体库`
+        : `${task.totalItems} 个项目`
+    : "—";
 
   return (
     <aside className="mf-task-drawer" aria-label="任务详情">
@@ -268,7 +270,7 @@ function TaskDetailDrawer({
           <p>
             {detailQuery.isError
               ? "暂时无法读取这个任务，请稍后刷新。"
-              : data.failure.nextAction}
+              : detailFailureText ?? "请刷新后重试。"}
           </p>
         </StatusBanner>
       ) : task && model ? (
