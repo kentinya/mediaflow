@@ -7,7 +7,7 @@ This is the A-owned Slice Contract for the next independently reviewed V2 capabi
 Slice ID: 33
 Name: Operations Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
+Status: ACTIVE
 Base SHA: 827c36b410687e41b1da53ba6475d8c03a47dbfd
 Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
 Historical Closure Checkpoint: dcc2f34c38975662ddbc78e160bbbc2d423ae702
@@ -63,6 +63,28 @@ The Slice Base and historical accepted Implementation Head do not move during ac
 the focused correction Task and its Difficulty/Test Level; because the defect crosses the typed Web
 projection and destructive-confirmation safety boundary, B must assess T4 rather than treat it as a
 cosmetic-only label fix.
+
+## Post-closure revalidation correction activation — 2026-09-13
+
+After the post-closure Preview projection correction was accepted, live Docker validation exposed a
+second P1 in the same already-promised RO-4 journey. The V2 UI can complete exact Preview and
+server-held execution admission, but the resident Worker repeatedly fails the pre-mutation
+revalidation boundary with the bounded error `the reviewed source file is unavailable`. The current
+source file, FileIndex record, source fingerprint/occurrence, Storage read/write preflight and Active
+snapshot are all present and valid in the inspected deployment; the failure has produced no
+completed Storage operation, but it prevents a normal Web Organize journey from completing.
+
+This reactivation owns only the existing Slice 33 execution/revalidation boundary: reproduce and
+repair the API admission → durable execution → Worker source revalidation path, preserve the
+fail-closed behavior and expose a bounded actionable failure when revalidation cannot prove the
+source. It must not bypass FileIndex identity, source fingerprint/occurrence, Active snapshot,
+policy, capability, conflict, lock or OrganizerExecutor checks. It must not delete or rewrite
+durable failure evidence, replay uncertain mutation, or move recovery into Slice 34. B must plan one
+focused correction Task after this activation; Developer work may not begin before that Task exists.
+
+The previously accepted typed Preview/destructive-confirmation correction remains historical and
+accepted. The Slice Base remains unchanged, the accepted Implementation Head remains
+`437135dbe36e63d733eb994cda8edb23fcf671bc`, and Slices 34–36 remain PLANNED.
 
 ## User goal and vertical journey
 
@@ -614,12 +636,15 @@ Decision: SLICE READY FOR A REVIEW
 ## Review State
 
 ~~~
-Slice Status: PASS / CLOSED
+Slice Status: ACTIVE
 Implementation Head: 437135dbe36e63d733eb994cda8edb23fcf671bc
 Historical Closure: PASS / CLOSED at dcc2f34c38975662ddbc78e160bbbc2d423ae702
 P0/P1 Defects:
-- None after Task 33.6 correction.
-Next Action: A SELECTS THE NEXT LARGE SLICE
+- P1: V2 Web-native manual Organize repeatedly fails at Worker pre-mutation revalidation with
+  `the reviewed source file is unavailable` even though the inspected source FileIndex record,
+  source file, fingerprint/occurrence, Storage preflight and Active snapshot are valid. No Storage
+  mutation was recorded. B must plan a focused correction inside Slice 33.
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK
 ~~~
 
 ## A Final Review — 2026-09-13 Post-closure correction
