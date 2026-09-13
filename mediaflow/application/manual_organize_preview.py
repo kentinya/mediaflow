@@ -38,6 +38,7 @@ from mediaflow.domain.manual_organize import (
     ManualChoice,
     ManualIntentError,
     ManualIntentItemStatus,
+    ManualIntentUnavailable,
     ManualOrganizeIntent,
     ManualSourceIdentity,
 )
@@ -222,12 +223,17 @@ class ManualOrganizePreviewService:
                     details={"itemId": item.item_id, "status": item.status.value},
                 )
             try:
-                record = self._resolve_current_file(item.source.file_id)
-                self._assert_source(
-                    item.source,
-                    record,
-                    allow_unready=bool(source_admission_errors),
-                )
+                if self._is_storage_source_identity(item.source):
+                    runtime = self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
+                    self._assert_live_source_identity(runtime, item.source)
+                    record = item.source
+                else:
+                    record = self._resolve_current_file(item.source.file_id)
+                    self._assert_source(
+                        item.source,
+                        record,
+                        allow_unready=bool(source_admission_errors),
+                    )
                 self._validate_choice(intent, item.choice, record)
             except ManualIntentError as error:
                 if error.code in {"source_stale", "source_missing", "source_invalid"}:
@@ -471,6 +477,80 @@ class ManualOrganizePreviewService:
             source_admission_errors=source_admission_errors,
         )
 
+    def create_current_from_storage(
+        self,
+        *,
+        scope_kind: str,
+        actor: str,
+        resource_library_id: str | None = None,
+        relative_path: str | None = None,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+    ) -> ManualOrganizePreview:
+        """Preview UI-V2 Files selections directly from ResourceLibrary Storage.
+
+        The caller supplies only ResourceLibrary identity and a path relative to
+        that library root.  This method resolves the Active configuration, maps
+        the path to the bound Storage, stats the live file(s), builds immutable
+        SourceIdentity/fingerprint evidence, and then uses the existing
+        zero-mutation Preview planner.
+        """
+
+        actor = self._actor(actor)
+        kind = self._current_scope_kind(scope_kind)
+        if not self._valid_scope_id(resource_library_id):
+            raise ManualPreviewError(
+                "Preview requires resourceLibraryId",
+                code="malformed_selection",
+                next_action="select one enabled ResourceLibrary and retry Preview",
+            )
+        snapshot = self._current_snapshot(snapshot_id, snapshot_digest)
+        runtime = self._load_runtime(snapshot.snapshot_id, snapshot.digest)
+        library = self._runtime_library(runtime, resource_library_id)
+        storages = self._create_storages(runtime, {library.storage_id})
+        storage = self._guarded_storage(storages, library.storage_id)
+        if kind == "file":
+            rel = self._normalize_library_relative_path(relative_path, allow_empty=False)
+            sources = (self._source_identity_from_storage(storage, library, rel),)
+            scope_id = rel
+        else:
+            if relative_path not in (None, ""):
+                raise ManualPreviewError(
+                    "ResourceLibrary Preview cannot contain a file relativePath",
+                    code="malformed_selection",
+                    next_action="submit only the ResourceLibrary identity",
+                )
+            sources = self._enumerate_resource_library_sources(storage, library)
+            scope_id = library.library_id
+        intent_creator = getattr(self._intent_service, "create_from_sources", None)
+        if not callable(intent_creator):
+            raise ManualPreviewUnavailable("manual intent service cannot admit Storage sources")
+        try:
+            intent = intent_creator(
+                sources,
+                actor=actor,
+                snapshot_id=snapshot.snapshot_id,
+                snapshot_digest=snapshot.digest,
+            )
+        except ManualIntentError as error:
+            raise ManualPreviewError(
+                str(error),
+                code=error.code,
+                status=error.status,
+                next_action=error.next_action,
+                details=error.details,
+            ) from error
+        return self.create(
+            intent.intent_id,
+            expected_version=intent.version,
+            expected_item_versions={item.item_id: item.version for item in intent.items},
+            snapshot_id=snapshot.snapshot_id,
+            snapshot_digest=snapshot.digest,
+            actor=actor,
+            source_scope=kind,
+            source_scope_id=scope_id,
+        )
+
     create_current_preview = create_current
     create_source_preview = create_current
 
@@ -553,6 +633,228 @@ class ManualOrganizePreviewService:
             return ()
         values = method(kind, scope_id, limit=limit)
         return tuple(self.get_readonly(value.preview_id) for value in values)
+
+    def _runtime_library(self, runtime, resource_library_id: str):
+        matches = tuple(
+            value
+            for value in getattr(runtime, "resource_libraries", ())
+            if getattr(value, "library_id", None) == resource_library_id
+        )
+        if len(matches) != 1 or not getattr(matches[0], "enabled", False):
+            raise ManualPreviewError(
+                "the selected ResourceLibrary is unavailable in the Active configuration",
+                code="resource_library_not_found",
+                status=404,
+                next_action="refresh Files and choose an enabled ResourceLibrary",
+                details={"resourceLibraryId": resource_library_id},
+            )
+        library = matches[0]
+        storage = next(
+            (
+                item
+                for item in getattr(runtime, "storage_definitions", ())
+                if getattr(item, "storage_id", None) == library.storage_id
+            ),
+            None,
+        )
+        if storage is None or getattr(storage, "enabled", True) is False:
+            raise ManualPreviewError(
+                "the selected ResourceLibrary Storage is unavailable",
+                code="storage_unavailable",
+                status=503,
+                next_action="repair the ResourceLibrary Storage configuration and retry",
+                details={"resourceLibraryId": resource_library_id, "storageId": library.storage_id},
+            )
+        return library
+
+    def _source_identity_from_storage(
+        self, storage: Storage, library, relative_path: str
+    ) -> ManualSourceIdentity:
+        storage_path = self._join_library_path(library.root_path, relative_path)
+        try:
+            entry = storage.stat(storage_path)
+        except StorageError as error:
+            code = getattr(getattr(error, "code", None), "value", "unknown")
+            if code == "not_found":
+                raise ManualPreviewError(
+                    "selected source file no longer exists",
+                    code="source_missing",
+                    status=404,
+                    next_action="refresh Files and request a fresh Preview",
+                    details={"resourceLibraryId": library.library_id, "relativePath": relative_path},
+                ) from error
+            raise ManualPreviewUnavailable(
+                "selected source Storage is unavailable",
+                details={"storageId": library.storage_id, "reason": code},
+            ) from error
+        except (OSError, ValueError, KeyError) as error:
+            raise ManualPreviewUnavailable(
+                "selected source Storage is unavailable",
+                details={"storageId": library.storage_id, "reason": type(error).__name__},
+            ) from error
+        if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
+            raise ManualPreviewError(
+                "selected source is not a file",
+                code="source_not_file",
+                status=409,
+                next_action="select a file inside the ResourceLibrary",
+                details={"resourceLibraryId": library.library_id, "relativePath": relative_path},
+            )
+        if entry.path != storage_path:
+            if not self._path_in_library(entry.path, library.root_path):
+                raise ManualPreviewError(
+                    "selected source escaped the ResourceLibrary boundary",
+                    code="source_cross_authority",
+                    status=409,
+                    next_action="refresh Files and choose a source inside the ResourceLibrary",
+                    details={"resourceLibraryId": library.library_id},
+                )
+        observed = source_fingerprint(library.storage_id, library.library_id, entry)
+        if observed.state is not OccurrenceState.VERIFIED or observed.value is None:
+            raise ManualPreviewError(
+                "selected source identity could not be verified",
+                code="source_unverified",
+                status=409,
+                next_action="refresh Files and retry after the Storage returns stable stat data",
+                details={"resourceLibraryId": library.library_id, "relativePath": relative_path},
+            )
+        now = self._clock()
+        path = entry.path or storage_path
+        filename = entry.name or path.rsplit("/", 1)[-1]
+        extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else "media"
+        occurrence = occurrence_id_for(library.storage_id, library.library_id, path, observed.value)
+        file_id = hashlib.sha256(
+            json.dumps(
+                {
+                    "resourceLibraryId": library.library_id,
+                    "storageId": library.storage_id,
+                    "path": path,
+                    "fingerprint": observed.value,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return ManualSourceIdentity(
+            file_id,
+            library.storage_id,
+            library.library_id,
+            path,
+            filename,
+            extension,
+            entry.size,
+            entry.modified_at,
+            now,
+            now,
+            now,
+            "ready",
+            None,
+            occurrence,
+            observed.value,
+            observed.algorithm,
+            observed.evidence,
+            OccurrenceState.VERIFIED.value,
+        )
+
+    def _enumerate_resource_library_sources(self, storage: Storage, library) -> tuple[ManualSourceIdentity, ...]:
+        pending = [""]
+        sources: list[ManualSourceIdentity] = []
+        while pending:
+            rel_dir = pending.pop(0)
+            storage_dir = self._join_library_path(library.root_path, rel_dir)
+            cursor = None
+            while True:
+                page = storage.list_page(storage_dir, limit=min(100, self._max_items), cursor=cursor)
+                entries = tuple(getattr(page, "entries", ()))
+                for entry in entries:
+                    if not isinstance(entry, StorageEntry):
+                        continue
+                    rel_path = self._strip_library_path(entry.path, library.root_path)
+                    if entry.entry_type is StorageEntryType.DIRECTORY:
+                        pending.append(rel_path)
+                    elif entry.entry_type is StorageEntryType.FILE:
+                        sources.append(self._source_identity_from_storage(storage, library, rel_path))
+                        if len(sources) > self._max_items:
+                            raise ManualPreviewError(
+                                f"ResourceLibrary Preview selection exceeds the bound of {self._max_items}",
+                                code="selection_over_limit",
+                                next_action="select a smaller batch from Files",
+                                details={"resourceLibraryId": library.library_id},
+                            )
+                cursor = getattr(page, "next_cursor", None)
+                if not cursor:
+                    break
+        if not sources:
+            raise ManualPreviewError(
+                "ResourceLibrary has no selectable files",
+                code="selection_empty",
+                next_action="choose a ResourceLibrary containing visible files",
+                details={"resourceLibraryId": library.library_id},
+            )
+        return tuple(sources)
+
+    @staticmethod
+    def _normalize_library_relative_path(value: object, *, allow_empty: bool) -> str:
+        if value == "" and allow_empty:
+            return ""
+        if not isinstance(value, str) or not value or "\x00" in value:
+            raise ManualPreviewError(
+                "relativePath must be a safe ResourceLibrary-relative path",
+                code="invalid_path",
+                next_action="select a file inside the ResourceLibrary",
+            )
+        if value.startswith(("/", "\\")) or "\\" in value or ":" in value:
+            raise ManualPreviewError(
+                "relativePath must be a safe ResourceLibrary-relative path",
+                code="invalid_path",
+                next_action="select a file inside the ResourceLibrary",
+            )
+        parts = value.split("/")
+        if any(part in {"", ".", ".."} for part in parts):
+            raise ManualPreviewError(
+                "relativePath must not escape the ResourceLibrary",
+                code="invalid_path",
+                next_action="select a file inside the ResourceLibrary",
+            )
+        return "/".join(parts)
+
+    @classmethod
+    def _join_library_path(cls, root: str, relative_path: str) -> str:
+        root = cls._normalize_library_relative_path(root, allow_empty=True) if root else ""
+        relative_path = (
+            cls._normalize_library_relative_path(relative_path, allow_empty=True)
+            if relative_path
+            else ""
+        )
+        if not root:
+            return relative_path
+        return f"{root}/{relative_path}" if relative_path else root
+
+    @classmethod
+    def _strip_library_path(cls, path: str, root: str) -> str:
+        path = cls._normalize_library_relative_path(path, allow_empty=True) if path else ""
+        root = cls._normalize_library_relative_path(root, allow_empty=True) if root else ""
+        if not root:
+            return path
+        if path == root:
+            return ""
+        if path.startswith(root + "/"):
+            return path[len(root) + 1 :]
+        raise ManualPreviewError(
+            "Storage returned a path outside the ResourceLibrary boundary",
+            code="source_cross_authority",
+            status=409,
+            next_action="repair Storage path normalization and retry",
+        )
+
+    @classmethod
+    def _path_in_library(cls, path: str, root: str) -> bool:
+        try:
+            cls._strip_library_path(path, root)
+            return True
+        except ManualPreviewError:
+            return False
 
     @staticmethod
     def _current_scope_kind(value: str) -> str:
@@ -800,6 +1102,65 @@ class ManualOrganizePreviewService:
                     "refresh FileIndex and select a source from the current Active authority"
                 ),
                 details={"resourceLibraryId": resource_library_id},
+            )
+
+    @staticmethod
+    def _is_storage_source_identity(source: ManualSourceIdentity) -> bool:
+        return (
+            isinstance(source, ManualSourceIdentity)
+            and source.last_scan_id is None
+            and source.scan_status == "ready"
+            and source.fingerprint is not None
+            and source.fingerprint_algorithm is not None
+            and source.occurrence_state == OccurrenceState.VERIFIED.value
+        )
+
+    def _assert_live_source_identity(self, runtime, source: ManualSourceIdentity) -> None:
+        try:
+            storages = self._create_storages(runtime, {source.storage_id})
+            storage = self._guarded_storage(storages, source.storage_id)
+            entry = storage.stat(source.path)
+        except StorageError as error:
+            code = getattr(getattr(error, "code", None), "value", "unknown")
+            if code == "not_found":
+                raise ManualIntentError(
+                    "selected source is no longer present in Storage",
+                    code="source_missing",
+                    status=404,
+                    next_action="refresh Files and request a fresh Preview",
+                    details={"resourceLibraryId": source.resource_library_id, "path": source.path},
+                ) from error
+            raise ManualIntentUnavailable(
+                "the selected source Storage is unavailable for read-only Preview",
+                details={"storageId": source.storage_id, "reason": code},
+            ) from error
+        except (OSError, ValueError, KeyError) as error:
+            raise ManualIntentUnavailable(
+                "the selected source Storage is unavailable for read-only Preview",
+                details={"storageId": source.storage_id, "reason": type(error).__name__},
+            ) from error
+        if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
+            raise ManualIntentError(
+                "selected source is no longer a file in Storage",
+                code="source_stale",
+                next_action="refresh Files and request a fresh Preview",
+                details={"resourceLibraryId": source.resource_library_id, "path": source.path},
+            )
+        observed = source_fingerprint(source.storage_id, source.resource_library_id, entry)
+        observed_occurrence = occurrence_id_for(
+            source.storage_id, source.resource_library_id, entry.path, observed.value
+        )
+        if (
+            entry.path != source.path
+            or observed.state is not OccurrenceState.VERIFIED
+            or observed.value != source.fingerprint
+            or observed_occurrence != source.occurrence_id
+        ):
+            raise ManualIntentError(
+                "selected source changed after Files selection",
+                code="source_stale",
+                next_action="refresh Files and request a fresh Preview",
+                details={"resourceLibraryId": source.resource_library_id, "path": source.path},
             )
 
     def _assert_live_record(self, runtime, record) -> None:

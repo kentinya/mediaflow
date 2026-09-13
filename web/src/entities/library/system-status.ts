@@ -34,8 +34,8 @@ export interface SystemStorage {
 export interface SystemResourceLibrary {
   readonly id: string;
   readonly storageId: string;
-  /** The backend projection does not expose a ResourceLibrary display name. */
   readonly name: string | null;
+  readonly rootPath: string;
   readonly enabled: boolean;
 }
 
@@ -123,7 +123,15 @@ function normalizeResourceLibrary(
   if (typeof raw.enabled !== "boolean") {
     fail("resourceLibrary.enabled");
   }
-  return { id, storageId, name, enabled: raw.enabled };
+  const rootPath =
+    raw.root_path === null || raw.root_path === undefined
+      ? ""
+      : normalizeBoundedText(
+          raw.root_path,
+          "resourceLibrary.root_path",
+          MAX_TEXT_LENGTH,
+        );
+  return { id, storageId, name, rootPath, enabled: raw.enabled };
 }
 
 export function normalizeSystemStatus(payload: unknown): SystemStatusModel {

@@ -184,6 +184,131 @@ class ManualOrganizeIntentService:
             self._repository.list_manual_intent_audit(intent_id),
         )
 
+    def create_from_sources(
+        self,
+        sources: Iterable[ManualSourceIdentity],
+        *,
+        actor: str,
+        snapshot_id: str | None = None,
+        snapshot_digest: str | None = None,
+    ) -> ManualOrganizeIntent:
+        """Create a manual intent from server-built live Storage source identities.
+
+        This is the UI-V2 ResourceLibrary Files admission path.  The browser
+        supplies only ResourceLibrary-relative source selection; Preview builds
+        immutable SourceIdentity from Storage.stat and passes it here.  No
+        FileIndex row or fileId lookup is required on this path.
+        """
+
+        actor = self._actor(actor)
+        if (snapshot_id is None) != (snapshot_digest is None):
+            raise ManualIntentError(
+                "configuration snapshot ID and digest must be supplied together",
+                code="malformed_snapshot",
+                next_action="reload the current Active snapshot and retry the bounded selection",
+            )
+        values = tuple(sources)
+        if not 1 <= len(values) <= self._max_items:
+            raise ManualIntentError(
+                f"manual intent selection must contain between 1 and {self._max_items} files",
+                code="selection_empty" if not values else "selection_over_limit",
+            )
+        identities: set[tuple[str, str, str]] = set()
+        for source in values:
+            if not isinstance(source, ManualSourceIdentity):
+                raise ManualIntentError("manual source identity is invalid", code="source_invalid")
+            if source.scan_status != "ready" or source.fingerprint is None:
+                raise ManualIntentError(
+                    "manual source identity is not verified and ready",
+                    code="source_unverified",
+                    next_action="refresh Files and request a fresh Preview",
+                )
+            identity = (source.storage_id, source.resource_library_id, source.path)
+            if identity in identities:
+                raise ManualIntentError(
+                    "the selected files contain a duplicate source identity",
+                    code="duplicate_source",
+                    next_action="remove the duplicate and resubmit the bounded selection",
+                    details={"resourceLibraryId": source.resource_library_id, "path": source.path},
+                )
+            identities.add(identity)
+        snapshot = self._active_snapshot()
+        if snapshot_id is not None and (
+            snapshot.snapshot_id != snapshot_id or snapshot.digest != snapshot_digest
+        ):
+            raise ManualIntentConflict(
+                "the Active configuration changed before the manual intent was created",
+                next_action="reload the current Active configuration and resubmit the same files",
+                details={
+                    "currentSnapshotId": snapshot.snapshot_id,
+                    "currentSnapshotDigest": snapshot.digest,
+                },
+            )
+        now = self._clock()
+        intent_id = str(uuid4())
+        items: list[ManualIntentItem] = []
+        for position, source in enumerate(values):
+            choice = self._default_choice(source, snapshot)
+            self._validate_choice(choice, snapshot, source)
+            items.append(
+                ManualIntentItem(
+                    str(uuid4()),
+                    intent_id,
+                    position,
+                    source,
+                    choice,
+                    ManualIntentItemStatus.READY,
+                    None,
+                    1,
+                    now,
+                    now,
+                )
+            )
+        intent = ManualOrganizeIntent(
+            intent_id,
+            actor,
+            snapshot.snapshot_id,
+            snapshot.digest,
+            ManualIntentStatus.OPEN,
+            1,
+            now,
+            now,
+            tuple(items),
+            snapshot,
+            "continue to an exact zero-mutation Preview",
+            None,
+            (),
+        )
+        audit = ManualIntentAudit(
+            str(uuid4()),
+            intent_id,
+            None,
+            actor,
+            "created_from_storage_source",
+            {},
+            {
+                "intentId": intent_id,
+                "configurationSnapshotId": snapshot.snapshot_id,
+                "configurationSnapshotDigest": snapshot.digest,
+                "itemIds": [item.item_id for item in items],
+                "sourceIdentities": [
+                    {
+                        "resourceLibraryId": item.source.resource_library_id,
+                        "storageId": item.source.storage_id,
+                        "path": item.source.path,
+                    }
+                    for item in items
+                ],
+            },
+            now,
+        )
+        persisted = self._persist_create(intent, audit)
+        return self._with_options(
+            persisted if isinstance(persisted, ManualOrganizeIntent) else intent,
+            snapshot,
+            self._repository.list_manual_intent_audit(intent_id),
+        )
+
     # Explicit aliases make the application boundary easy to consume from
     # adapters while keeping one implementation and one validation path.
     create_intent = create

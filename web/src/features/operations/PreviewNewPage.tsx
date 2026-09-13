@@ -121,7 +121,7 @@ export function PreviewNewPage() {
     rawScopeKind === "file" || rawScopeKind === "resourceLibrary"
       ? (rawScopeKind as "file" | "resourceLibrary")
       : null;
-  const fileId = searchParams.fileId ? String(searchParams.fileId) : undefined;
+  const relativePath = searchParams.relativePath ? String(searchParams.relativePath) : undefined;
   const resourceLibraryId = searchParams.resourceLibraryId
     ? String(searchParams.resourceLibraryId)
     : undefined;
@@ -132,7 +132,7 @@ export function PreviewNewPage() {
   const matrixQuery = useQuery(
     manualActionsQueryOptions(token, {
       scopeKind,
-      fileId: fileId ?? null,
+      fileId: null,
       resourceLibraryId: resourceLibraryId ?? null,
     }),
   );
@@ -147,7 +147,7 @@ export function PreviewNewPage() {
     mutationFn: () =>
       submitServerBoundPreview(token, {
         scopeKind: scopeKind as "file" | "resourceLibrary",
-        fileId: fileId ?? null,
+        relativePath: relativePath ?? null,
         resourceLibraryId: resourceLibraryId ?? null,
       }),
     retry: false,
@@ -183,7 +183,7 @@ export function PreviewNewPage() {
   const selectedResourceLibraryId = resourceLibraryId ?? "";
   const isValidScope =
     scopeKind === "file"
-      ? Boolean(fileId && resourceLibraryId)
+      ? Boolean(relativePath && resourceLibraryId)
       : scopeKind === "resourceLibrary"
         ? Boolean(resourceLibraryId)
         : false;
@@ -234,7 +234,7 @@ export function PreviewNewPage() {
             {(matrix.selectionRequired || !isValidScope) && (
               <StatusBanner variant="error" title="Invalid scope">
                 <p>
-                  Select one exact current FileIndex item or one configured
+                  Select one ResourceLibrary file or one configured
                   ResourceLibrary before running a Preview.
                 </p>
                 <div className="mf-actions">

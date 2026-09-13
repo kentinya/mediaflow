@@ -11,9 +11,7 @@ import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
 import { LibraryLanding } from "../features/library/LibraryLanding";
-import { FileIndexCatalogPage } from "../features/library/FileIndexCatalogPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
-import { FileIndexDetailPage } from "../features/library/FileIndexDetailPage";
 import { OperationsLanding } from "../features/operations/OperationsLanding";
 import { TaskListPage } from "../features/operations/TaskListPage";
 import { TaskDetailPage } from "../features/operations/TaskDetailPage";
@@ -95,16 +93,6 @@ const libraryFilesRoute = createRoute({
   component: StorageFilesPage,
 });
 
-const libraryFileIndexPath = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "library/file-index",
-  component: FileIndexCatalogPage,
-});
-const libraryFileIndexDetailRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "library/file-index/$fileId",
-  component: FileIndexDetailPage,
-});
 const operationsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "operations",
@@ -272,8 +260,6 @@ const routeTree = rootRoute.addChildren([
   dashboardRoute,
   libraryRoute,
   libraryFilesRoute,
-  libraryFileIndexPath,
-  libraryFileIndexDetailRoute,
   operationsRoute,
   taskListRoute,
   taskDetailRoute,

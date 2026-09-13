@@ -23,7 +23,7 @@ describe("AppShell", () => {
     );
     expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
     expect(
-      screen.getByRole("link", { name: "Open Storage files" }),
+      screen.getByRole("link", { name: "Open Files" }),
     ).toBeVisible();
     expect(document.title).toBe("Library | MediaFlow");
     expect(

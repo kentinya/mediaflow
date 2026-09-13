@@ -3,12 +3,8 @@ import {
   fetchStorageFiles,
   fetchSystemStatus,
   storageFilesUrl,
-  fetchFileIndex,
-  fileIndexUrl,
-  type FileIndexQueryOptions,
 } from "./api-client";
 import {
-  FileIndexApiError,
   StorageFilesApiError,
   SystemStatusApiError,
 } from "./api-errors";
@@ -31,7 +27,7 @@ const systemStatusPayload = {
   resource_libraries: {
     total: 1,
     truncated: false,
-    items: [{ id: "resources", storage_id: "local-1", enabled: true }],
+    items: [{ id: "resources", name: "Resources", storage_id: "local-1", root_path: "incoming", enabled: true }],
   },
 };
 
@@ -43,7 +39,13 @@ const filesPayload = {
     version: 1,
     digest: "digest-1",
   },
-  storage: { id: "local-1", name: "Local media", type: "local" },
+  resourceLibrary: {
+    id: "resources",
+    name: "Resources",
+    enabled: true,
+    rootPath: "incoming",
+    storage: { id: "local-1", name: "Local media", type: "local", readOnly: false },
+  },
   path: "",
   breadcrumbs: [{ name: "Storage root", path: "", isRoot: true }],
   entries: [],
@@ -75,21 +77,20 @@ afterEach(() => {
 });
 
 describe("storageFilesUrl", () => {
-  it("encodes storage, Storage-relative path and cursor once", () => {
+  it("encodes ResourceLibrary-relative path and cursor once", () => {
     const url = storageFilesUrl({
-      storageId: "local-1",
+      resourceLibraryId: "resources",
       path: "Movies/New & Old",
       cursor: "a+b/c",
-      resourceLibrary: null,
     });
     expect(url).toBe(
-      "/api/v1/storage/files?storageId=local-1&path=Movies%2FNew+%26+Old&cursor=a%2Bb%2Fc",
+      "/api/v1/resource-libraries/resources/files?path=Movies%2FNew+%26+Old&cursor=a%2Bb%2Fc",
     );
   });
 
   it("omits optional fields when not selected", () => {
-    expect(storageFilesUrl({ storageId: "local-1" })).toBe(
-      "/api/v1/storage/files?storageId=local-1",
+    expect(storageFilesUrl({ resourceLibraryId: "resources" })).toBe(
+      "/api/v1/resource-libraries/resources/files",
     );
   });
 });
@@ -107,7 +108,8 @@ describe("fetchSystemStatus", () => {
     expect(model.resourceLibraries[0]).toEqual({
       id: "resources",
       storageId: "local-1",
-      name: null,
+      name: "Resources",
+      rootPath: "incoming",
       enabled: true,
     });
     const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
@@ -148,7 +150,7 @@ describe("fetchStorageFiles", () => {
   it("returns a normalized successful read", async () => {
     stubFetch(async () => jsonResponse(filesPayload));
     const read = await fetchStorageFiles(TOKEN, {
-      storageId: "local-1",
+      resourceLibraryId: "resources",
     });
     expect(read.ok).toBe(true);
     if (read.ok) {
@@ -173,7 +175,7 @@ describe("fetchStorageFiles", () => {
         403,
       ),
     );
-    const read = await fetchStorageFiles(TOKEN, { storageId: "local-1" });
+    const read = await fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" });
     expect(read.ok).toBe(false);
     if (!read.ok) {
       expect(read.failure.kind).toBe("storage_unavailable");
@@ -189,7 +191,7 @@ describe("fetchStorageFiles", () => {
       ),
     );
     await expect(
-      fetchStorageFiles(TOKEN, { storageId: "local-1" }),
+      fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" }),
     ).rejects.toMatchObject({
       name: "StorageFilesApiError",
       category: "forbidden",
@@ -208,7 +210,7 @@ describe("fetchStorageFiles", () => {
         503,
       ),
     );
-    const read = await fetchStorageFiles(TOKEN, { storageId: "local-1" });
+    const read = await fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" });
     expect(read.ok).toBe(false);
     if (!read.ok) {
       expect(read.failure.kind).toBe("configuration_unavailable");
@@ -246,7 +248,7 @@ describe("fetchStorageFiles", () => {
           item.status,
         ),
       );
-      const read = await fetchStorageFiles(TOKEN, { storageId: "local-1" });
+      const read = await fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" });
       expect(read.ok).toBe(false);
       if (!read.ok) {
         expect(read.failure.kind).toBe(item.expected);
@@ -258,7 +260,7 @@ describe("fetchStorageFiles", () => {
   it("throws the bounded malformed category for a successful but invalid body", async () => {
     stubFetch(async () => jsonResponse({ hello: "world" }));
     await expect(
-      fetchStorageFiles(TOKEN, { storageId: "local-1" }),
+      fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" }),
     ).rejects.toMatchObject({
       name: "StorageFilesApiError",
       category: "malformed",
@@ -270,7 +272,7 @@ describe("fetchStorageFiles", () => {
       jsonResponse({ error: { code: "unauthorized" } }, 401),
     );
     await expect(
-      fetchStorageFiles(TOKEN, { storageId: "local-1" }),
+      fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" }),
     ).rejects.toMatchObject({
       name: "StorageFilesApiError",
       category: "unauthorized",
@@ -280,7 +282,7 @@ describe("fetchStorageFiles", () => {
   it("keeps every thrown message bounded and free of the token", async () => {
     stubFetch(async () => jsonResponse({ error: { code: "forbidden" } }, 403));
     const error = await fetchStorageFiles(TOKEN, {
-      storageId: "local-1",
+      resourceLibraryId: "resources",
     }).catch((caught: unknown) => caught);
     expect(error).toBeInstanceOf(StorageFilesApiError);
     expect((error as Error).message).not.toContain(TOKEN);
@@ -293,257 +295,5 @@ describe("error classes", () => {
     const error = new SystemStatusApiError("unavailable");
     expect(error.name).toBe("SystemStatusApiError");
     expect(error.category).toBe("unavailable");
-  });
-});
-
-const fileIndexPayload = {
-  surface: "file_index",
-  fileIndexSurface: "/api/v1/file-index",
-  filesSurface: "/api/v1/storage/files",
-  items: [
-    {
-      fileId: "f1",
-      storageId: "local",
-      resourceLibraryId: "movies",
-      path: "Movies/A.mkv",
-      filename: "A.mkv",
-      extension: "mkv",
-      size: 1024,
-      modifiedAt: "2026-08-22T12:00:00+00:00",
-      stableSince: "2026-08-21T12:00:00+00:00",
-      scanStatus: "ready",
-      change: "unchanged",
-      firstSeenAt: "2026-08-20T12:00:00+00:00",
-      lastSeenAt: "2026-08-23T12:00:00+00:00",
-      missingSince: null,
-      lastScanId: "scan-1",
-      updatedAt: "2026-08-23T12:00:00+00:00",
-      discovery: {
-        status: "ready",
-        change: "unchanged",
-        stableSince: null,
-        lastSeenAt: "2026-08-23T12:00:00+00:00",
-        missingSince: null,
-        lastScanId: "scan-1",
-      },
-      processingDisposition: "organized",
-      processing: {
-        disposition: "organized",
-        resultId: "res-1",
-        effectCertainty: "high",
-        retrySafety: "safe",
-        nextAction: "x",
-        updatedAt: "2026-08-23T12:00:00+00:00",
-      },
-      priorResultRelevance: {
-        currentResultId: "res-1",
-        current: true,
-        historicalOnly: false,
-      },
-      currentOccurrence: {
-        occurrenceId: "occ-1",
-        fingerprint: "fp",
-        fingerprintAlgorithm: "sha256",
-        fingerprintEvidence: {},
-        state: "verified",
-        current: true,
-      },
-      reprocess: { eligible: true, reason: "x" },
-    },
-  ],
-  limit: 50,
-};
-
-describe("fileIndexUrl", () => {
-  it("encodes only set filter fields plus the bounded lookahead limit", () => {
-    const url = fileIndexUrl({
-      storage: "local",
-      scanStatus: "ready",
-      processingDisposition: "organized",
-      query: "A.mkv",
-      limit: 50,
-    } as FileIndexQueryOptions);
-    expect(url).toBe(
-      "/api/v1/file-index?storage=local&scanStatus=ready&query=A.mkv&processingDisposition=organized&limit=51",
-    );
-  });
-
-  it("omits empty filter fields and never sends the token", () => {
-    const url = fileIndexUrl({ limit: 50 } as FileIndexQueryOptions);
-    expect(url).toBe("/api/v1/file-index?limit=51");
-  });
-
-  it("encodes the cursor pair exactly once", () => {
-    const url = fileIndexUrl({
-      after: "2026-08-23T12:00:00+00:00",
-      cursorFileId: "f1",
-      limit: 50,
-    } as FileIndexQueryOptions);
-    expect(url).toBe(
-      "/api/v1/file-index?after=2026-08-23T12%3A00%3A00%2B00%3A00&cursorFileId=f1&limit=51",
-    );
-  });
-
-  it("encodes the backward cursor before the bounded lookahead limit", () => {
-    const url = fileIndexUrl({
-      before: "2026-08-23T12:00:00+00:00",
-      cursorFileId: "f1",
-      limit: 50,
-    } as FileIndexQueryOptions);
-    expect(url).toBe(
-      "/api/v1/file-index?cursorFileId=f1&before=2026-08-23T12%3A00%3A00%2B00%3A00&limit=51",
-    );
-  });
-
-  it("encodes every supported scalar filter without credentials or protocol fields", () => {
-    const url = fileIndexUrl({
-      resourceLibrary: "resources",
-      storage: "local",
-      scanStatus: "ready",
-      query: "Movie & Show",
-      processingDisposition: "attention",
-      recognitionType: "Movie",
-      provider: "tmdb",
-      providerId: "101",
-      title: "Example",
-      taskId: "task-1",
-      year: "2025",
-      after: "2026-08-23T12:00:00+00:00",
-      cursorFileId: "f1",
-      limit: 50,
-    });
-    expect(url).toBe(
-      "/api/v1/file-index?resourceLibrary=resources&storage=local&scanStatus=ready&query=Movie+%26+Show&processingDisposition=attention&recognitionType=Movie&provider=tmdb&providerId=101&title=Example&taskId=task-1&year=2025&after=2026-08-23T12%3A00%3A00%2B00%3A00&cursorFileId=f1&limit=51",
-    );
-    expect(url).not.toContain("token");
-  });
-});
-
-describe("fetchFileIndex", () => {
-  it("performs one bounded GET and normalizes the catalog page", async () => {
-    const fetchMock = stubFetch(async () => jsonResponse(fileIndexPayload));
-    const read = await fetchFileIndex(TOKEN, { limit: 50 });
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    expect(read.model.items[0]?.fileId).toBe("f1");
-    expect(read.model.items[0]?.processingDisposition).toBe("organized");
-    expect(read.model.hasNext).toBe(false);
-    expect(read.model.hasPrevious).toBe(false);
-    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(input).toBe("/api/v1/file-index?limit=51");
-    expect(init.method).toBe("GET");
-    expect((init.headers as Record<string, string>).Authorization).toBe(
-      `Bearer ${TOKEN}`,
-    );
-  });
-
-  it("trims the bounded one-record lookahead into the page and reports hasNext", async () => {
-    stubFetch(async () => {
-      // The client requests limit+1; return the page plus one extra record
-      // so the page can establish a next-page existence without a separate
-      // query. With a pageLimit of 1, two returned records prove hasNext.
-      const data = {
-        ...fileIndexPayload,
-        items: [
-          ...fileIndexPayload.items,
-          { ...fileIndexPayload.items[0], fileId: "extra" },
-        ],
-      };
-      return jsonResponse(data);
-    });
-    // Request a small page so the extra record triggers the lookahead.
-    const read = await fetchFileIndex(TOKEN, { limit: 1 });
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    expect(read.model.items).toHaveLength(1);
-    expect(read.model.hasNext).toBe(true);
-    expect(read.model.hasPrevious).toBe(false);
-  });
-
-  it("trims the nearest backward page and preserves both cursor directions", async () => {
-    stubFetch(async () => {
-      const data = {
-        ...fileIndexPayload,
-        items: [
-          { ...fileIndexPayload.items[0], fileId: "older-lookahead" },
-          { ...fileIndexPayload.items[0], fileId: "nearest-1" },
-          { ...fileIndexPayload.items[0], fileId: "nearest-2" },
-        ],
-      };
-      return jsonResponse(data);
-    });
-    const read = await fetchFileIndex(TOKEN, {
-      before: "2026-08-23T12:00:00+00:00",
-      cursorFileId: "cursor",
-      limit: 2,
-    });
-    expect(read.ok).toBe(true);
-    if (!read.ok) return;
-    expect(read.model.items.map((item) => item.fileId)).toEqual([
-      "nearest-1",
-      "nearest-2",
-    ]);
-    expect(read.model.hasPrevious).toBe(true);
-    expect(read.model.hasNext).toBe(true);
-  });
-
-  it("returns a bounded invalid_filter failure for a 400 without a cursor", async () => {
-    stubFetch(async () =>
-      jsonResponse({ error: { code: "invalid_request" } }, 400),
-    );
-    const read = await fetchFileIndex(TOKEN, { limit: 50 });
-    expect(read.ok).toBe(false);
-    if (read.ok) return;
-    expect(read.failure.kind).toBe("invalid_filter");
-  });
-
-  it("returns a bounded invalid_cursor failure for a 400 that carried a cursor", async () => {
-    stubFetch(async () =>
-      jsonResponse({ error: { code: "invalid_request" } }, 400),
-    );
-    const read = await fetchFileIndex(TOKEN, {
-      after: "2026-08-23T12:00:00+00:00",
-      cursorFileId: "f1",
-      limit: 50,
-    });
-    expect(read.ok).toBe(false);
-    if (read.ok) return;
-    expect(read.failure.kind).toBe("invalid_cursor");
-  });
-
-  it("clears the authority on a 401", async () => {
-    stubFetch(async () =>
-      jsonResponse({ error: { code: "unauthorized" } }, 401),
-    );
-    await expect(fetchFileIndex(TOKEN, { limit: 50 })).rejects.toBeInstanceOf(
-      FileIndexApiError,
-    );
-  });
-
-  it("throws a forbidden typed error on a 403 RBAC denial", async () => {
-    stubFetch(async () => jsonResponse({ error: { code: "forbidden" } }, 403));
-    await expect(fetchFileIndex(TOKEN, { limit: 50 })).rejects.toBeInstanceOf(
-      FileIndexApiError,
-    );
-  });
-
-  it("treats a network failure as an unavailable result, not an error", async () => {
-    stubFetch(async () => {
-      throw new Error("network down");
-    });
-    const read = await fetchFileIndex(TOKEN, { limit: 50 });
-    expect(read.ok).toBe(false);
-    if (read.ok) return;
-    expect(read.failure.kind).toBe("unavailable");
-  });
-
-  it("keeps every thrown message bounded and free of the token", async () => {
-    stubFetch(async () => jsonResponse({ error: { code: "forbidden" } }, 403));
-    const error = await fetchFileIndex(TOKEN, { limit: 50 }).catch(
-      (caught: unknown) => caught,
-    );
-    expect(error).toBeInstanceOf(FileIndexApiError);
-    expect((error as Error).message).not.toContain(TOKEN);
-    expect((error as Error).message.length).toBeLessThan(200);
   });
 });

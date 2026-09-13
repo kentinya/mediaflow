@@ -51,3 +51,12 @@ React, TypeScript, Vite, TanStack Router, TanStack Query, testing tools and the 
 tree are adopted Slice 30 architecture decisions. They are intentionally not encoded as permanent
 product requirements here; the Python runtime, authority, authentication, coexistence and cutover
 boundaries are.
+
+## UI-V2 Files Contract — 2026-09-13
+
+- UI-V2 Files exposes ResourceLibrary as the first-level business object.
+- Files browsing is ResourceLibrary-scoped and backed by live Storage reads.
+- UI-V2 Files requests use `resourceLibraryId` plus ResourceLibrary-relative `path`; browser-supplied `storageId` and arbitrary Storage paths are not authority.
+- FileIndex catalog/detail journeys are not ordinary UI-V2 user routes.
+- Files entries must not expose FileIndex membership, fileId, scan status, occurrence IDs, fingerprints, claim tokens, or plan hashes.
+- Manual organize Preview admission from UI-V2 Files uses `resourceLibraryId` and `relativePath`; the server creates SourceIdentity and OrganizePlan.

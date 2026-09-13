@@ -265,3 +265,11 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 Earlier completed delivery and every historical Task/Fix/test/review record remain available in Git
 and the legacy archive. They are intentionally not duplicated here or translated into new Slices.
+
+## 2026-09-13 — UI-V2 Files ResourceLibrary Contract
+
+- Reworked UI-V2 Files authority from Storage/FileIndex membership to ResourceLibrary -> live Storage.
+- Removed ordinary UI-V2 FileIndex catalog/detail routes and navigation entries.
+- Added ResourceLibrary-scoped Files API and frontend model without FileIndex membership fields.
+- Added Storage-source Preview admission that builds SourceIdentity from live Storage.stat without requiring a FileIndex row.
+- Preserved Worker execution revalidation against Preview SourceIdentity and live Storage.

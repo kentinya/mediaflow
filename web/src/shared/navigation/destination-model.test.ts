@@ -22,9 +22,7 @@ describe("destination model", () => {
       destinations.filter((item) => item.availability === "migration"),
     ).toHaveLength(2);
     expect(childDestinations.map((item) => item.label)).toEqual([
-      "Storage files",
-      "FileIndex",
-      "FileIndex detail",
+      "Files",
       "Task list",
       "Task detail",
       "Job list",
@@ -56,55 +54,27 @@ describe("destination model", () => {
     expect(destinationForPath("/dashboard")?.id).toBe("overview");
     expect(destinationForPath("/library")?.availability).toBe("implemented");
     expect(destinationForPath("/library/files")?.id).toBe("library-files");
-    expect(destinationForPath("/library/file-index")?.id).toBe(
-      "library-file-index",
-    );
+    expect(destinationForPath("/library/file-index")).toBeUndefined();
     expect(destinationForPath("/unknown")).toBeUndefined();
   });
 
-  it("resolves bounded concrete instances of dynamic detail routes", () => {
-    expect(destinationForPath("/library/file-index/file-123")?.id).toBe(
-      "library-file-index-detail",
-    );
-    expect(destinationForPath("/library/file-index/file-123")?.title).toBe(
-      "FileIndex detail | MediaFlow",
-    );
-    // The catalog route keeps its own identity. Exactly the declared number
-    // of bounded identity segments resolves to the detail destination;
-    // deeper, traversal, placeholder, empty or unsafe paths never resolve
-    // and stay the shell's not-found responsibility.
-    expect(destinationForPath("/library/file-index")?.id).toBe(
-      "library-file-index",
-    );
-    expect(destinationForPath("/library/file-index/a/b")).toBeUndefined();
-    expect(destinationForPath("/library/file-index/a/..")).toBeUndefined();
-    expect(destinationForPath("/library/file-index/a/$fileId")).toBeUndefined();
-    expect(destinationForPath("/library/file-index//b")).toBeUndefined();
-    expect(destinationForPath("/library/file-index/")?.id).toBe(
-      "library-file-index",
-    );
-    // Two-segment declared routes resolve their exact concrete instance.
+  it("rejects retired FileIndex routes while preserving dynamic detail routes", () => {
+    expect(destinationForPath("/library/file-index/file-123")).toBeUndefined();
+    expect(destinationForPath("/library/file-index/$fileId")).toBeUndefined();
+    expect(isDestinationPath("/library/file-index/file-123")).toBe(false);
     expect(
       destinationForPath("/operations/automation/preview/def-1/preview-1")?.id,
     ).toBe("operations-automation-preview");
     expect(
       destinationForPath("/operations/automation/preview/def-1"),
     ).toBeUndefined();
-    // The declared template path resolves to the same destination contract;
-    // it is never a navigable route (the router only registers the
-    // parameterized path), but it must not invent a second identity.
-    expect(destinationForPath("/library/file-index/$fileId")?.id).toBe(
-      "library-file-index-detail",
-    );
-    expect(isDestinationPath("/library/file-index/file-123")).toBe(true);
-    expect(isDestinationPath("/library/file-index/abc")).toBe(true);
   });
 
   it("derives a unique path allowlist from the destinations contract", () => {
     expect(destinationPaths).toEqual(destinations.map((item) => item.path));
     expect(new Set(destinationPaths).size).toBe(destinations.length);
     expect(allDestinationPaths).toContain("/library/files");
-    expect(allDestinationPaths).toContain("/library/file-index");
+    expect(allDestinationPaths).not.toContain("/library/file-index");
     for (const path of destinationPaths) {
       expect(isDestinationPath(path)).toBe(true);
     }
@@ -116,20 +86,20 @@ describe("destination model", () => {
   });
 
   describe("allowlistedDestinationSearch", () => {
-    it("returns allowed storage/path/cursor keys for library/files", () => {
+    it("returns allowed ResourceLibrary/path/cursor keys for library/files", () => {
       const search = allowlistedDestinationSearch(
         "/library/files",
-        "storage=local-1&path=movies&cursor=abc",
+        "resourceLibraryId=resources&path=movies&cursor=abc",
       );
-      expect(search).toBe("storage=local-1&path=movies&cursor=abc");
+      expect(search).toBe("resourceLibraryId=resources&path=movies&cursor=abc");
     });
 
     it("drops unknown and credential-like query keys", () => {
       const search = allowlistedDestinationSearch(
         "/library/files",
-        "storage=local-1&token=secret&authorization=Bearer x&unknown=x",
+        "resourceLibraryId=resources&token=secret&authorization=Bearer x&unknown=x",
       );
-      expect(search).toBe("storage=local-1");
+      expect(search).toBe("resourceLibraryId=resources");
     });
 
     it("returns null for non-library/files routes", () => {
@@ -151,38 +121,16 @@ describe("destination model", () => {
     it("preserves safe URL encoding", () => {
       const search = allowlistedDestinationSearch(
         "/library/files",
-        "storage=local-1&path=movies%2FNew%20%26%20Old&cursor=a+b/c",
+        "resourceLibraryId=resources&path=movies%2FNew%20%26%20Old&cursor=a+b/c",
       );
       // URLSearchParams normalizes %20 to + for spaces and %2F to / for slashes
       expect(search).toBe(
-        "storage=local-1&path=movies%2FNew+%26+Old&cursor=a+b%2Fc",
+        "resourceLibraryId=resources&path=movies%2FNew+%26+Old&cursor=a+b%2Fc",
       );
     });
 
-    it("preserves only catalog view state for FileIndex continuation", () => {
-      const search = allowlistedDestinationSearch(
-        "/library/file-index",
-        "query=movie&processingDisposition=organized&token=secret&limit=50",
-      );
-      expect(search).toBe("query=movie&processingDisposition=organized");
-    });
 
-    it("preserves q_ keys and drops others for the detail route", () => {
-      const search = allowlistedDestinationSearch(
-        "/library/file-index/$fileId",
-        "q_query=movie&q_resourceLibrary=tv&token=secret&limit=50",
-      );
-      expect(search).toBe("q_query=movie&q_resourceLibrary=tv");
-    });
 
-    it("returns null when no q_ keys are present on the detail route", () => {
-      expect(
-        allowlistedDestinationSearch(
-          "/library/file-index/$fileId",
-          "token=secret&limit=50",
-        ),
-      ).toBeNull();
-    });
 
     it("keeps only the submitted Operations collection filters", () => {
       expect(

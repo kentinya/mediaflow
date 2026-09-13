@@ -250,6 +250,46 @@ class ManualOrganizePreviewTests(unittest.TestCase):
         )
         return catalog, intents, previews, source, target
 
+    def test_storage_source_preview_succeeds_without_file_index_row(self):
+        fixture = self._fixture(("One.2001.mkv",))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            _index,
+            configuration,
+            provider,
+        ) = fixture
+        try:
+            with SQLiteTaskRepository(database) as repository:
+                empty_index = InMemoryFileIndexRepository()
+                _, _intents, previews, source, target = self._services(
+                    repository, empty_index, configuration, provider, source_root, target_root
+                )
+                preview = previews.create_current_from_storage(
+                    scope_kind="file",
+                    actor="operator",
+                    resource_library_id="library",
+                    relative_path="One.2001.mkv",
+                )
+                self.assertEqual(preview.status, ManualPreviewStatus.PREVIEWED)
+                self.assertEqual(preview.source_scope, "file")
+                self.assertEqual(preview.source_scope_id, "One.2001.mkv")
+                self.assertEqual(len(preview.items), 1)
+                item = preview.items[0]
+                self.assertEqual(item.source.resource_library_id, "library")
+                self.assertEqual(item.source.path, "One.2001.mkv")
+                self.assertIsNotNone(item.source.fingerprint)
+                self.assertIsNotNone(item.source.occurrence_id)
+                self.assertTrue(item.zero_mutation)
+                self.assertEqual(source.calls, [])
+                self.assertEqual(target.calls, [])
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
     def test_single_preview_persists_exact_type_c_plan_and_reloads_without_mutation(self):
         fixture = self._fixture(("One.2001.mkv",))
         (

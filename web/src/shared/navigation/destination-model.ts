@@ -24,7 +24,7 @@ const destinationData = [
     title: "Library | MediaFlow",
     availability: "implemented" as const,
     description:
-      "Browse the configured Active Storage and its FileIndex membership in V2.",
+      "Browse live Storage files through enabled ResourceLibrary boundaries in V2.",
   },
   {
     id: "operations",
@@ -67,28 +67,11 @@ const destinationData = [
 const childDestinationData = [
   {
     id: "library-files",
-    label: "Storage files",
+    label: "Files",
     path: "/library/files",
-    title: "Storage files | MediaFlow",
+    title: "Files | MediaFlow",
     availability: "implemented" as const,
-    description: "Browse the configured Active Storage.",
-  },
-  {
-    id: "library-file-index",
-    label: "FileIndex",
-    path: "/library/file-index",
-    title: "FileIndex | MediaFlow",
-    availability: "implemented" as const,
-    description: "Browse the durable indexed discovery records.",
-  },
-  {
-    id: "library-file-index-detail",
-    label: "FileIndex detail",
-    path: "/library/file-index/$fileId",
-    title: "FileIndex detail | MediaFlow",
-    availability: "implemented" as const,
-    description: "Read-only detail for one indexed FileIndex discovery record.",
-    dynamicPrefix: "/library/file-index/" as const,
+    description: "Browse live Storage through ResourceLibrary boundaries.",
   },
   {
     id: "operations-tasks",
@@ -453,71 +436,9 @@ export function allowlistedDestinationSearch(
   if (path === "/library/files") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
-    for (const key of [
-      "storage",
-      "resourceLibrary",
-      "path",
-      "cursor",
-    ] as const) {
+    for (const key of ["resourceLibraryId", "path", "cursor"] as const) {
       const value = current.get(key);
       setSafe(allowed, key, value);
-    }
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
-  if (path === "/library/file-index") {
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    for (const key of [
-      "resourceLibrary",
-      "storage",
-      "scanStatus",
-      "query",
-      "processingDisposition",
-      "recognitionType",
-      "provider",
-      "providerId",
-      "title",
-      "taskId",
-      "year",
-      "after",
-      "before",
-      "cursorFileId",
-    ] as const) {
-      const value = current.get(key);
-      setSafe(allowed, key, value);
-    }
-    return allowed.toString().length > 0 ? allowed.toString() : null;
-  }
-  if (path === "/library/file-index/$fileId") {
-    // A detail link only carries the catalog return context back, and that
-    // context uses `q_`-prefixed keys exclusively. Anything else
-    // (credentials, unknown state) is dropped before reconnect replay.
-    const allowed = new URLSearchParams();
-    const current = new URLSearchParams(search);
-    const detailKeys = new Set([
-      "q_resourceLibrary",
-      "q_storage",
-      "q_scanStatus",
-      "q_query",
-      "q_processingDisposition",
-      "q_recognitionType",
-      "q_provider",
-      "q_providerId",
-      "q_title",
-      "q_taskId",
-      "q_year",
-      "q_after",
-      "q_cursorFileId",
-      "q_before",
-    ]);
-    for (const key of current.keys()) {
-      if (!detailKeys.has(key)) {
-        continue;
-      }
-      const value = current.get(key);
-      if (value !== null && !allowed.has(key)) {
-        setSafe(allowed, key, value);
-      }
     }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
@@ -576,12 +497,19 @@ export function allowlistedDestinationSearch(
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
-  if (path === "/operations/scan/new" || path === "/operations/preview/new") {
-    // Admission routes carry only their bounded scope parameters.
+  if (path === "/operations/scan/new") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setSafe(allowed, "scopeKind", current.get("scopeKind"));
     setSafe(allowed, "fileId", current.get("fileId"));
+    setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/operations/preview/new") {
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setSafe(allowed, "scopeKind", current.get("scopeKind"));
+    setSafe(allowed, "relativePath", current.get("relativePath"));
     setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }

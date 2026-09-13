@@ -59,7 +59,9 @@ def build_configuration_snapshot(configuration: RuntimeConfiguration) -> Configu
             key=lambda item: item.library_id,
             value=lambda item: {
                 "id": item.library_id,
+                "name": item.name,
                 "storage_id": item.storage_id,
+                "root_path": item.root_path,
                 "enabled": item.enabled,
                 "scan_mode": item.scan_mode.value,
                 "max_depth": item.max_depth,

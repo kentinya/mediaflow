@@ -323,25 +323,21 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 file_index.batch_upsert((_record("indexed-active", "active-only.mkv"),))
                 api = _api(task_repository, file_index, managed, document)
 
-                status, files = _request(api, "/api/v1/storage/files?storageId=storage")
+                status, files = _request(api, "/api/v1/resource-libraries/resources/files")
                 self.assertEqual(status, 200)
                 self.assertEqual(files["surface"], "files")
-                self.assertEqual(files["fileIndexSurface"], "/api/v1/file-index")
+                self.assertEqual(files["resourceLibrary"]["id"], "resources")
+                self.assertEqual(files["path"], "")
                 self.assertEqual(files["configuration"]["authority"], "MANAGED")
                 self.assertEqual(files["configuration"]["revisionId"], active.revision_id)
                 self.assertEqual([item["name"] for item in files["entries"]], ["active-only.mkv"])
-                self.assertEqual(
-                    files["entries"][0]["indexMembership"]["memberships"][0]["fileId"],
-                    "indexed-active",
-                )
-                self.assertNotIn("processingDisposition", files["entries"][0]["indexMembership"])
-                self.assertNotIn("currentOccurrence", files["entries"][0]["indexMembership"])
-                self.assertNotIn("organizationOutcome", files["entries"][0]["indexMembership"])
+                self.assertNotIn("fileIndexSurface", files)
+                self.assertNotIn("indexMembership", files["entries"][0])
+                self.assertNotIn("fileId", files["entries"][0])
 
                 status, file_index_document = _request(api, "/api/v1/file-index")
                 self.assertEqual(status, 200)
                 self.assertEqual(file_index_document["surface"], "file_index")
-                self.assertEqual(file_index_document["filesSurface"], "/api/v1/storage/files")
                 self.assertEqual(file_index_document["items"][0]["fileId"], "indexed-active")
                 self.assertEqual(task_repository.list_tasks(), ())
                 self.assertEqual(task_repository.list_jobs(), ())
