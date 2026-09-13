@@ -95,6 +95,9 @@ function previewDocument(): Json {
   value["executionCandidateItemIds"] = ["item-1"];
   const items = value["items"] as Json[];
   items[0]["itemId"] = "item-1";
+  const selection = value["selection"] as Json;
+  selection["selectedItemIds"] = ["item-1"];
+  selection["unselectedItemIds"] = [];
   const actions = value["actions"] as Json;
   (actions["execute"] as Json)["available"] = true;
   (actions["execute"] as Json)["reason"] = null;
