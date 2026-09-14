@@ -79,6 +79,14 @@ The visible states are:
 Editing invalidates prior evidence. Activation is atomic and fail-closed. A failed or unavailable
 Active revision leaves recovery/status routes available and does not start media work.
 
+The Files-page `+ 添加资源库` journey is a page-local convenience around this same managed
+configuration authority. Its final `保存` action submits one complete ResourceLibrary candidate;
+the backend uses the save-time Active snapshot as its base, performs the required validation and
+checked-activation steps internally, and publishes the new immutable Active runtime only when the
+whole flow succeeds. The operator does not perform separate Validate or Activate actions in this
+drawer. Any validation, dependency, Storage check, activation or runtime-load error rejects the
+save and preserves the previous Active runtime.
+
 ### Journey
 
 - **Goal:** safely change the runtime behavior.
@@ -179,33 +187,57 @@ activation.
 Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
 Storage-relative directory/file views. Listings are lazy, deterministic and read-only, with confined
 roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path access. This
-Files surface is distinct from the indexed FileIndex, does not read FileIndex membership for its
-display and does not recursively scan Storage or create work merely by viewing it.
+Files surface uses live Storage as the physical file source. It may additionally show a bounded
+FileIndex-derived recognition/business-status projection, but FileIndex does not enumerate the
+physical listing and does not provide source or execution authority. Viewing it does not recursively
+scan Storage or create work merely by viewing it.
 
 ### Journey
 
 - **Goal:** inspect the real configured Storage and choose a bounded file or ResourceLibrary scope.
 - **Entry:** **Files** navigation, Dashboard or a ResourceLibrary action.
 - **Visible state:** ResourceLibrary identity, its configured Storage binding, relative
-  root/breadcrumb, bounded live entries, pagination and provider/error state. FileIndex membership,
-  scan status, occurrence and fingerprint are not Files-page display state.
+  root/breadcrumb, bounded live entries, pagination, provider/error state and, when available,
+  bounded recognition/business-status feedback. FileIndex membership, occurrence, fingerprint and
+  other authority fields are not Files-page display state.
 - **Action:** browse a directory, select a bounded file/directory scope, refresh or continue to the
   shared Scan/Preview/Organize journey.
-- **Success:** the operator reaches an exact ResourceLibrary-relative source/scope without
-  consulting FileIndex or granting mutation authority.
+- **Success:** the operator reaches an exact ResourceLibrary-relative source/scope without using
+  FileIndex as source authority or granting mutation authority; a new ResourceLibrary becomes
+  browseable only after the backend has successfully activated its complete configuration.
 - **Failure:** missing root, permission, timeout, provider or path-escape failures identify the
   affected Storage-relative request and remain read-only.
-- **Recovery:** correct the configured Storage/path or retry the bounded read; no automatic scan,
-  Provider request, Task or Storage mutation is started.
+- **Recovery:** correct the configured Storage/path, retry the bounded read, or correct and resubmit
+  a failed ResourceLibrary save. A failed save leaves the previous Active runtime intact; browsing
+  and selection do not start an automatic scan, Provider request, Task or Storage mutation.
+
+### Add ResourceLibrary from Files
+
+- **Goal:** add a source ResourceLibrary without requiring the operator to manage internal
+  Draft/Validated/Active mechanics.
+- **Entry:** choose `+ 添加资源库` on the Files page.
+- **Visible state:** a page-local three-step drawer for basic information, Storage location and
+  confirmation, with bounded field errors and the current configuration context.
+- **Action:** complete the ResourceLibrary form and choose `保存`.
+- **Success:** the backend merges the candidate with the current configuration, completes the
+  existing validation and checked-activation flow, publishes a new immutable Active runtime, and
+  returns the new ResourceLibrary for selection on Files.
+- **Failure:** any invalid field, duplicate ID, invalid Storage reference/path, failed Storage
+  evidence, activation conflict or runtime-load failure rejects the save. The prior Active runtime
+  remains authoritative and the ResourceLibrary is not presented as saved.
+- **Recovery:** correct only the reported blocker and submit the same bounded form again; no
+  partially activated configuration or silent fallback is exposed.
 
 ## FileIndex and Media
 
 ### Current
 
 FileIndex presents indexed discovery records separately from the real Storage Files view. Only files
-discovered by a ResourceLibrary scan appear. Its `scanStatus` describes discovery/stability, while
-processing disposition, current source occurrence and bounded fingerprint evidence describe whether
-the indexed occurrence is organized, skipped, blocked or failed. Prior Results are marked current,
+discovered by a ResourceLibrary scan appear in its catalog. Its `scanStatus` describes
+discovery/stability, while processing disposition, current source occurrence and bounded fingerprint
+evidence describe whether the indexed occurrence is organized, skipped, blocked or failed. The
+Files page may consume only a bounded display projection of recognition and processing feedback;
+the FileIndex record remains a separate authority boundary. Prior Results are marked current,
 historical or unverified. An explicit Reprocess request is shown only when the exact current
 occurrence is eligible; admission records a durable next action and does not create processing work
 or mutate Storage.
@@ -230,7 +262,8 @@ or mutate Storage.
 ### Current V1
 
 - **Goal:** review and execute a bounded, explicit one-shot organization for the generic indexed
-  V1 path. The V2 ResourceLibrary Files path is separate and does not use FileIndex.
+  V1 path. The V2 ResourceLibrary Files path uses live Storage for source authority and may use
+  only the bounded FileIndex business-status projection described in the Files journey.
 - **Entry:** select current Files and choose manual organize.
 - **Visible state:** durable intent, choices, exact Preview, pinned configuration identity, source and
   destination, attachments, conflicts, capabilities, destructive implications and per-item state.
@@ -272,31 +305,37 @@ surfaces outside this Files-originated journey.
 
 Slice 27 delivers the bounded daily-operations journey across real Storage Files, FileIndex state,
 manual Scan/Preview/Organize, conflict/review/recovery continuation and Processing Worker readiness.
-The current V2 Files page narrows its own path further: both display and Files-originated organize
-Preview use ResourceLibrary/live Storage authority, while FileIndex remains a separate indexed
-discovery and compatibility surface.
+The current V2 Files page narrows its own path further: physical display and Files-originated
+organize Preview use ResourceLibrary/live Storage authority, while a bounded FileIndex projection may
+provide recognition and processing feedback for display. FileIndex remains a separate indexed
+discovery and compatibility surface and is not used as source or execution authority by Files.
 
 - **Goal:** start from a real configured Storage or from MediaFlow's indexed processing view and
   safely complete a file- or ResourceLibrary-scoped manual operation.
 - **Entry:** **Files** for bounded live-Storage browsing, **FileIndex** for indexed discovery and
   processing state, or a ResourceLibrary manual-action entry. These are separate authority paths;
-  Files-originated Preview/Organize does not query FileIndex.
-- **Visible state:** Files shows ResourceLibrary-relative live entries; FileIndex shows indexed
-  discovery, scan/discovery state and processing disposition. Current source
-  occurrence/fingerprint, prior result relevance, worker readiness, Preview findings and any real
-  execution blocker belong to the indexed/processing surfaces that expose them, not to the
-  ResourceLibrary Files display.
+  Files-originated Preview/Organize does not query FileIndex for source identity or execution
+  authority; only the bounded display projection and post-Organize result synchronization are
+  permitted.
+- **Visible state:** Files shows ResourceLibrary-relative live entries plus bounded recognition and
+  processing feedback when FileIndex has a matching current record; FileIndex shows indexed
+  discovery, scan/discovery state and processing disposition. Current source occurrence/fingerprint,
+  prior result relevance, worker readiness, Preview findings and any real execution blocker remain
+  on the indexed/processing surfaces and are not exposed as Files authority.
 - **Action:** choose bounded **Scan**, **Preview** or **Organize**; Preview records only inspectable
   findings, while Organize requires the correct one-shot manual authority. Explicit Reprocess is
   available when a current source occurrence is otherwise protected from accidental duplicate work.
 - **Success:** Preview performs zero mutation and creates no mandatory review backlog; Organize
-  records an independent result/disposition for every selected item.
+  records an independent result/disposition for every selected item and automatically synchronizes
+  each terminal outcome to FileIndex.
 - **Failure:** an actual Organize item may enter Attention/Conflict/Review/Recovery with known
   effects and retry safety. A queued request with no live processing Worker is reported as such
-  rather than remaining inexplicably Pending.
+  rather than remaining inexplicably Pending. A FileIndex synchronization failure is recorded as
+  an independent post-result failure and does not make an uncertain Storage mutation eligible for
+  automatic replay.
 - **Recovery:** save the operator decision without executing it, re-analyze the exact item, obtain
-  explicit continuation authority, and continue the original Organize journey without replaying
-  successful siblings or uncertain mutation.
+  explicit continuation authority, or repair the bounded FileIndex synchronization state. Continue
+  the original Organize journey without replaying successful siblings or uncertain mutation.
 
 ## Per-item failure and recovery
 
@@ -431,10 +470,10 @@ boundaries are not current work commitments.
 - **Entry:** open `/ui-v2/library` or a supported Storage Files, FileIndex catalog or detail deep
   link through the shared memory-only authentication continuation.
 - **Visible state:** the Library landing separates fresh Storage reads from durable discovery;
-  Storage Files shows Active Storage selection, relative breadcrumbs, bounded pages and membership;
-  FileIndex shows submitted filters, stable pages, discovery versus processing state, and bounded
-  detail/history/evidence with current, historical, legacy, truncated and unavailable facts kept
-  distinct.
+  Storage Files shows Active Storage selection, relative breadcrumbs, bounded pages and an optional
+  display-only recognition/business-status projection; FileIndex shows submitted filters, stable
+  pages, discovery versus processing state, and bounded detail/history/evidence with current,
+  historical, legacy, truncated and unavailable facts kept distinct.
 - **Action:** browse, search, filter, page, inspect, refresh and follow a uniquely confirmed
   physical/indexed link. These actions are authenticated bounded GETs and do not submit Scan,
   Preview, Organize, Reprocess, review/recovery or configuration work.
@@ -493,15 +532,27 @@ boundaries are not current work commitments.
   Review/Recovery, general Configuration and other non-Files migrations are outside the current
   Roadmap boundary; their existing routes and handoffs remain unchanged.
 
-## Files Journey Update — 2026-09-13
+## Files Journey Update — 2026-09-14
 
-The Files journey is now: choose ResourceLibrary, browse its directories, select one or more files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in Operations. Storage is described only as the ResourceLibrary backing implementation. FileIndex terminology is not part of the ordinary Files page experience, and the Files-originated organize Preview does not resolve the selected path through FileIndex.
+The Files journey is: choose or create a ResourceLibrary, browse its directories, inspect live
+Storage entries and any bounded FileIndex recognition/business-status feedback, select one or more
+files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in
+Operations. The `+ 添加资源库` action creates a ResourceLibrary; its final `保存` action wraps the
+existing managed configuration validation and activation flow on the server. A successful save
+publishes a new immutable Active runtime; any error rejects the save and preserves the prior Active
+runtime.
+
+FileIndex is allowed only as a display-feedback source for business status and as the automatic
+post-Organize synchronization target. The Files-originated organize Preview still derives
+SourceIdentity from live Storage and does not resolve the selected path through FileIndex. Browsing,
+selection, ResourceLibrary configuration and Preview admission must not otherwise introduce a
+FileIndex dependency.
 
 ## Files Page Visual Fidelity Update — 2026-09-14
 
 Slice 37 makes [`docs/pics/文件页.png`](pics/文件页.png) the sole visual reference for the V2 Files
 page at `1536 x 1024`. The page-local shell composition, ResourceLibrary summary, directory tree,
-file table, selection footer and open `添加媒体库` drawer are specified in
+file table, selection footer and open `添加资源库` drawer are specified in
 [`file-page-visual-spec.md`](file-page-visual-spec.md). The reference success state is a
-pixel-level acceptance target; loading, empty, permission and provider failures must remain
-bounded recovery states. Other pages and their journeys are frozen.
+pixel-level acceptance target; loading, empty, permission, provider and configuration-activation
+failures must remain bounded recovery states. Other pages and their journeys are frozen.

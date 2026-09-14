@@ -91,6 +91,20 @@ atomic. A failed activation leaves the previous Active revision and the candidat
 missing or invalid Active revision fails media work closed while status and replacement Draft
 recovery remain available through the bootstrap database locator.
 
+### Files-page ResourceLibrary save
+
+The Files page provides a focused `+ 添加资源库` flow for creating a ResourceLibrary. Its final
+`保存` action is a page-local convenience over the managed lifecycle rather than a second
+configuration authority. The backend reads the current Active snapshot, merges the complete
+ResourceLibrary candidate, performs the same structural/reference validation and applicable checked
+activation work, and publishes a new immutable Active runtime only after all steps succeed.
+
+The operator does not separately click Validate or Activate in this flow. Any invalid field,
+duplicate ID, invalid Storage reference or path, failed Storage evidence, activation conflict or
+runtime-load error rejects the save and keeps the previous Active runtime authoritative. The
+ResourceLibrary must not be shown as saved when the activation command fails. The general
+Configuration page retains its explicit Draft/Validate/Activate journey.
+
 CLI equivalents are:
 
 ```bash
@@ -166,7 +180,9 @@ The runtime loader supports these Storage types:
 
 Adapters implement the Storage port and report capabilities. Unsupported Move, Copy, Delete,
 HardLink or SoftLink operations fail explicitly; there is no implicit fallback. The managed object
-editor does not probe or mutate a Storage while saving a Draft.
+editor does not probe or mutate a Storage while saving a Draft. The Files-page ResourceLibrary
+save is the explicit page-local exception: it runs the existing bounded checks and activation
+workflow as one backend command, and it still does not mutate media Storage.
 
 ## Path model
 
@@ -246,6 +262,8 @@ semantics. They include:
   authority, destination preview, per-Storage read-only checks, Local diagnostic and
   provider-neutral destination precheck;
 - managed System Settings with exact Active consumption evidence and typed successor-Draft editing;
+- page-local ResourceLibrary creation from Files with backend-composed validation and atomic
+  activation on final Save;
 - Dashboard, Files list/detail/stats, Task/TaskItem and Job observability;
 - Recognition, Metadata, Classification and conflict review actions;
 - bounded manual Preview and reviewed one-shot manual execution;

@@ -54,25 +54,42 @@ tree are adopted Slice 30 architecture decisions. They are intentionally not enc
 product requirements here; the Python runtime, authority, authentication, coexistence and cutover
 boundaries are.
 
-## UI-V2 Files Contract — 2026-09-13
+## UI-V2 Files Contract — 2026-09-14
 
 - UI-V2 Files exposes ResourceLibrary as the first-level business object.
 - Files browsing is ResourceLibrary-scoped and backed by live Storage reads.
 - UI-V2 Files requests use `resourceLibraryId` plus ResourceLibrary-relative `path`; browser-supplied `storageId` and arbitrary Storage paths are not authority.
 - FileIndex catalog/detail journeys are not ordinary UI-V2 user routes.
-- Files entries must not expose FileIndex membership, fileId, scan status, occurrence IDs, fingerprints, claim tokens, or plan hashes.
+- Files entries must not expose FileIndex membership, `fileId`, occurrence IDs, fingerprints, claim
+  tokens or plan hashes as ordinary page authority. A bounded recognition/business-status projection
+  may be shown as display feedback when available; missing feedback must not hide or rewrite the live
+  Storage entry.
 - Manual organize Preview admission from UI-V2 Files uses `resourceLibraryId` and `relativePath`; the server creates SourceIdentity and OrganizePlan.
-- The UI-V2 Files path is FileIndex-independent for both display and organize Preview. The server
-  resolves the Active ResourceLibrary/Storage binding and derives source identity from live
-  Storage; it does not re-resolve the selected path through FileIndex.
+- The UI-V2 Files path is FileIndex-independent for physical listing and organize Preview. The
+  server resolves the Active ResourceLibrary/Storage binding and derives source identity from live
+  Storage; it does not re-resolve the selected path through FileIndex. FileIndex may be consulted
+  only for the bounded display feedback projection.
+- The `+ 添加资源库` action creates a ResourceLibrary. Its final `保存` action submits one complete
+  candidate; the backend bases it on the current Active configuration, runs the existing validation
+  and checked-activation flow internally, and publishes a new immutable Active runtime only on
+  success. Any error rejects the save and preserves the previous Active runtime.
+- Every terminal Organize item automatically synchronizes its known outcome to FileIndex after the
+  OrganizerExecutor result is recorded. A synchronization failure is an independent durable
+  recovery state and never authorizes replay of an uncertain Storage mutation.
+- Browsing, selection, ResourceLibrary configuration and Preview admission must not otherwise
+  introduce a FileIndex dependency.
 - FileIndex-backed compatibility and legacy operation paths may remain elsewhere in the product,
-  but they are not valid dependencies of the ResourceLibrary Files page.
+  but they are not valid physical-listing, source-identity or execution dependencies of the
+  ResourceLibrary Files page. The bounded display-feedback exception and terminal-result
+  synchronization above are the only permitted Files-page uses.
 
 ## UI-V2 Files Visual Contract — 2026-09-14
 
 - The sole visual reference is [`docs/pics/文件页.png`](pics/文件页.png) at `1536 x 1024`.
 - The exact page composition, copy, data fixture, drawer state and screenshot acceptance are
   defined in [`file-page-visual-spec.md`](file-page-visual-spec.md).
-- This visual contract narrows the current implementation focus only; it does not add a new API,
-  persistence model, FileIndex authority or mutation path.
+- This visual contract narrows the current implementation focus only; it does not move authority
+  into the frontend or make FileIndex a source/execution authority. Focused backend/application
+  behavior for ResourceLibrary save/activation and terminal Organize-result synchronization is
+  part of the confirmed Files journey; unrelated routes and mutation paths remain unchanged.
 - Non-Files pages and their existing routes remain outside the current Roadmap focus and unchanged.

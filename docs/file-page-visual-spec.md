@@ -7,8 +7,8 @@ Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
 
 This document is the visual source of truth for the Files page. The image is an existing user
 asset and must not be edited, regenerated, compressed, recolored or replaced. This documentation
-round changes documentation only; it does not change the frontend, backend, tests or the behavior
-of any other page.
+round records the confirmed functional semantics for the page; it does not change the frontend,
+backend, tests or the behavior of any other page.
 
 ## Current Code Status — 2026-09-14
 
@@ -21,9 +21,10 @@ page:
 - The runtime Files browser reads live Storage through the configured ResourceLibrary root. Its
   optional `file_index` constructor argument is retained only for older composition code and is
   intentionally not consulted by the UI-V2 Files projection.
-- The typed Files model excludes FileIndex membership, `fileId`, scan status, occurrence and
-  fingerprint details. Extra FileIndex-shaped fields in a response are ignored rather than
-  becoming page authority.
+- The typed Files model excludes FileIndex membership, `fileId`, occurrence and fingerprint
+  authority. A bounded `recognitionResult` / `businessStatus` projection may be added for display
+  feedback sourced from FileIndex, but it is not source identity, path authority or execution
+  authority. Raw FileIndex identifiers remain excluded from ordinary page display.
 - Files-originated organization Preview is also FileIndex-independent. The page submits
   `scopeKind: "file"`, `resourceLibraryId` and `relativePath` to
   `POST /api/v1/operations/previews`. The server maps the path through the Active
@@ -38,19 +39,21 @@ page:
   through the implemented Preview path.
 
 The codebase still contains FileIndex-backed compatibility and legacy operation paths, including
-indexed discovery and older file-scoped APIs. Those paths are not the authority for the
-ResourceLibrary Files page and must not be reintroduced into its display or organize flow.
+indexed discovery and older file-scoped APIs. Those paths are not the source or authority for the
+ResourceLibrary Files page. The page may consume bounded FileIndex business-state feedback for
+display, and completed Organize items synchronize their terminal outcome back to FileIndex. No
+other Files-page action may introduce a FileIndex dependency.
 
 The reference image remains a visual target rather than a claim of completed visual parity. The
 current implementation does not yet provide every screenshot element, including the exact Chinese
-copy, table columns/status presentation or the open `添加媒体库` drawer.
+copy, table columns/status presentation or the open `添加资源库` drawer.
 
 ## Scope
 
 Slice 37 owns one operator-facing page:
 
 - the V2 **Files** page;
-- the Files page's local "Add media library" drawer shown in the reference image;
+- the Files page's local "Add ResourceLibrary" drawer shown in the reference image;
 - the existing ResourceLibrary-scoped file browsing and selection journey as rendered on that page.
 
 The following are frozen for this Slice:
@@ -60,8 +63,12 @@ The following are frozen for this Slice:
 - the V1 `/ui` surface;
 - shared API, domain, persistence, Storage, OrganizerExecutor and metadata authority;
 - global navigation semantics and shared shell behavior outside the Files route;
-- FileIndex as an ordinary Files-page concept;
-- new backend endpoints, schema changes, new providers and new Storage capabilities.
+- FileIndex as a physical file source, source identity authority or execution authority. A bounded
+  display-only business-status projection and terminal Organize-result synchronization are allowed.
+- unrelated backend endpoints, schema changes, new providers and new Storage capabilities. The
+  focused ResourceLibrary save/activation command and the required result-to-FileIndex
+  synchronization may reuse or extend the existing application authority without moving decisions
+  into the browser.
 
 If a later implementation needs a shared style or shell change, the change must be rejected unless
 it is strictly page-local or it proves that every frozen page remains visually and behaviorally
@@ -87,7 +94,7 @@ The reference content is:
 - selected item: `Avatar.2009.1080p.mkv`;
 - selected total: `1 个文件（12.4 GB）`;
 - total entries: `7 个项目`;
-- open drawer: `添加媒体库`, step `1 基本信息`.
+- open drawer: `添加资源库`, step `1 基本信息`.
 
 ## Layout Anchors
 
@@ -208,33 +215,41 @@ The footer shows, from left to right:
 The footer remains visible in the reference state and must not collapse, wrap or move the
 pagination into a second row at the reference viewport.
 
-### Add Media Library Drawer
+### Add ResourceLibrary Drawer
 
 The drawer is open on the right and contains:
 
-- title `添加媒体库`;
+- title `添加资源库`;
 - close control at the upper-right;
 - vertical steps:
   - active `1 基本信息`;
   - inactive `2 存储位置`;
   - inactive `3 确认`;
 - active panel title `基本信息`;
-- helper text `设置媒体库的基本信息`;
+- helper text `设置资源库的基本信息`;
 - required field `名称 *`;
 - placeholder `例如：115电影`;
 - helper text `请输入易于识别的名称`;
-- required field `媒体库 ID *`;
-- placeholder `例如：115-movies`;
+- required field `资源库 ID *`;
+- placeholder `例如：source`;
 - helper text `仅支持小写字母、数字、连字符，创建后不可修改`;
+- step 2 shows the bound `Storage` and a safe Storage-relative resource root path;
+- step 3 shows the complete ResourceLibrary candidate and the activation impact;
 - field label `状态`;
 - enabled toggle and label `启用`;
-- helper text `关闭后将在媒体库列表中隐藏，但不会删除数据`;
-- bottom buttons `取消` and `下一步`.
+- helper text `关闭后将在资源库列表中隐藏，但不会删除数据`;
+- bottom buttons are `取消` and, on the final step, `保存`.
 
-The drawer is a page-local panel, not a replacement for the general Configuration page. Its
-visual stepper, field order, labels, required markers, button placement, close control and
-internal spacing must match the reference. The form's authoritative validation and persistence
-remain outside this documentation-only activation.
+The drawer is a page-local ResourceLibrary creation panel, not a MediaLibrary editor and not a
+replacement for the general Configuration page. Its visual stepper, field order, labels, required
+markers, button placement, close control and internal spacing must match the reference.
+
+The final `保存` action submits the complete ResourceLibrary candidate. The backend uses the
+current Active configuration as its base, runs the existing configuration validation and checked
+activation flow, and makes the new immutable Active runtime available on success. The operator does
+not perform a separate Validate or Activate action in this drawer. Any validation, dependency,
+Storage check, activation or runtime-load error rejects the save and preserves the previous Active
+configuration; the page must not present the ResourceLibrary as saved when activation failed.
 
 ## Journey Contract
 
@@ -246,14 +261,17 @@ The page must be documented and later implemented as one vertical journey:
 | Entry | Select `文件` from the shell or open `/ui-v2/library/files` |
 | Visible state | The reference shell, ResourceLibrary summary, directory tree, file table, selection footer and add-library drawer |
 | Action | Browse the ResourceLibrary, change directory, select files, refresh, switch view, open a folder or continue with the local add-library flow |
-| Success | The selected file and its bounded organize action are clear, while the page matches the reference image |
-| Failure | Missing Active configuration, unavailable Storage, invalid path, unauthorized access or malformed data is shown in the Files page without fabricated rows or unsafe mutation |
-| Recovery | Retry the bounded read, return to the ResourceLibrary root, select another enabled ResourceLibrary or leave the page; no automatic mutation, Provider call or unrelated-page navigation is created |
+| Success | The selected file and its bounded organize action are clear, a saved ResourceLibrary is Active and browseable, and the page matches the reference image |
+| Failure | Missing Active configuration, unavailable Storage, invalid path, unauthorized access, malformed data or ResourceLibrary activation failure is shown without fabricated rows or unsafe mutation |
+| Recovery | Retry the bounded read, return to the ResourceLibrary root, select another enabled ResourceLibrary, correct the add form and save again, or leave the page; a failed save preserves the previous Active configuration |
 
 Viewing, refreshing, browsing and selecting are read-only. Any later organize action must continue
-through the existing Preview, explicit intent and backend authority boundaries. The Files page must
-never accept arbitrary host paths, use FileIndex for display, resolve a selected path through
-FileIndex, expose credentials or use FileIndex-only identity as mutation authority.
+through the existing Preview, explicit intent and backend authority boundaries. The Files page may
+show bounded FileIndex-derived recognition and business-status feedback, but must never use
+FileIndex to enumerate physical entries, resolve a selected path, construct source authority,
+expose credentials or grant execution authority. After a terminal Organize result, the backend
+automatically synchronizes that item outcome to FileIndex; no other Files-page action may introduce
+FileIndex.
 
 ## Acceptance
 
@@ -267,11 +285,17 @@ The future implementation is accepted only when all of the following are true:
 3. The Files page preserves existing read-only, ResourceLibrary, authorization and Storage
    boundaries.
 4. The page has bounded loading, empty, unauthorized, forbidden, unavailable and malformed-data
-   states with action-oriented recovery; error states do not rewrite the reference success state.
-5. Other page screenshots and route behavior remain unchanged. No shared-shell change is accepted
-   without proof of this condition.
-6. The implementation adds no backend or persistence change unless a later A-owned scope decision
-   explicitly expands this Slice.
+      states with action-oriented recovery; error states do not rewrite the reference success state.
+5. `+ 添加资源库` creates a ResourceLibrary, and final `保存` invokes backend validation and
+      activation as one user action; any error rejects the save and preserves the previous Active.
+6. FileIndex may supply only bounded recognition/business-status feedback for display, and every
+      terminal Organize item attempts an automatic FileIndex synchronization without replaying media
+      mutation when synchronization fails.
+7. Other page screenshots and route behavior remain unchanged. No shared-shell change is accepted
+      without proof of this condition.
+8. The implementation contains no unrelated backend, persistence, provider or Storage capability
+      change; focused authority changes required by ResourceLibrary save/activation and
+      post-Organize FileIndex synchronization remain within this page journey.
 
 Required browser evidence, visual diff tooling and any implementation Task belong to a later B
 Task. This document does not claim that the image has already been implemented.

@@ -242,6 +242,14 @@ scheduled occurrences use that binding or their persisted snapshot identity. A m
 schema-incompatible or runtime-invalid Active fails media work closed and never falls back to JSON.
 Activation itself starts no scan, Job, Task, schedule occurrence or media mutation.
 
+The Files-page `+ 添加资源库` action is a bounded convenience over this same authority. Its final
+`保存` command uses the save-time Active snapshot as the candidate base and composes successor
+configuration, ResourceLibrary validation, applicable checked evidence, activation and runtime
+rebinding inside the backend. The operator does not manage the intermediate Draft/Validated states
+in this page-local flow. A validation, dependency, Storage-check, activation or runtime-load
+failure rejects the command and leaves the previous Active pointer and runtime authority intact.
+The general Configuration surface continues to expose the explicit Draft/Validate/Activate journey.
+
 ## Persistence
 
 The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, locks, review queues,
@@ -468,10 +476,11 @@ The browser supplies only `resourceLibraryId`, ResourceLibrary-relative `path`, 
 cursor. The server resolves the Active managed runtime, verifies the ResourceLibrary and backing
 Storage are enabled, joins the ResourceLibrary root with the relative path, and reads through the
 read-only Storage guard. `RuntimeFilesBrowserService` accepts a legacy `file_index` composition
-argument for compatibility but intentionally does not consult it for the UI-V2 Files projection.
-The Files projection intentionally excludes FileIndex membership, fileId, occurrence, fingerprint,
-scan status and FileIndex detail links. FileIndex remains a background/indexing and compatibility
-projection, not Files-page display authority.
+argument for compatibility but intentionally does not consult it to enumerate or authorize the UI-V2
+Files projection. The Files projection excludes FileIndex membership, `fileId`, occurrence,
+fingerprint and other raw authority fields. It may include a bounded recognition/business-status
+projection as display feedback. FileIndex remains a separate indexing and compatibility authority;
+it is not the source of physical Files entries or execution authority.
 
 UI-V2 manual organize admission now starts from ResourceLibrary source selection.  The normal single-file path is:
 
@@ -485,10 +494,19 @@ lookup is involved. The zero-mutation planner persists the reviewed evidence. Ex
 the reviewed source against live Storage and the persisted Preview identity; it does not
 re-resolve the source through FileIndex. FileIndex-backed compatibility routes remain separate.
 
+FileIndex is permitted on the Files path only for the bounded business-status/recognition display
+projection. It must not determine physical listing membership, path validity, Preview source
+identity, execution authorization or Storage capability. After each terminal Organize item result
+is recorded, the application automatically synchronizes the known result/disposition to FileIndex.
+If that synchronization fails, the index-sync failure is recorded independently and the system does
+not replay any completed or uncertain Storage mutation.
+
 ## UI-V2 Files visual contract update — 2026-09-14
 
 Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference
-for the Files route. The detailed layout, exact copy/data, open `添加媒体库` drawer and
+for the Files route. The detailed layout, exact copy/data, open `添加资源库` drawer and
 pixel-level acceptance rules are in [`docs/file-page-visual-spec.md`](file-page-visual-spec.md).
-This is a page-focused documentation contract. It does not move authority into the frontend,
-change the API or persistence model, or alter any non-Files route.
+This is a page-focused documentation contract. It does not move authority into the frontend or
+make FileIndex a physical-source/execution authority. Focused backend/application behavior for
+ResourceLibrary save/activation and terminal Organize-result synchronization is part of the
+confirmed Files journey; unrelated routes remain unchanged.
