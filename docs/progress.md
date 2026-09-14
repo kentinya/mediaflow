@@ -8,10 +8,11 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`. Slice 33 is now `PASS / CLOSED` after its focused post-closure Worker
-revalidation correction; there is no active implementation Task, and the next legal action is for A
-to select the next large Slice. The prior Slice 33 closure entries remain historical and are not
-erased.
+V2 remains active on `main`. Slice 37 is now `ACTIVE` after A's 2026-09-14 documentation-only
+activation for Files-page visual fidelity; there is no active implementation Task. Slice 33's
+closure entries and the prior planned Slice 34–36 references remain historical and are not erased.
+The current Files-page contract and visual reference are maintained in [`SLICE.md`](../SLICE.md)
+and [`file-page-visual-spec.md`](file-page-visual-spec.md).
 The current Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry and does not alter the
 historical 2026-09-13 closure entry below.
@@ -273,3 +274,14 @@ and the legacy archive. They are intentionally not duplicated here or translated
 - Added ResourceLibrary-scoped Files API and frontend model without FileIndex membership fields.
 - Added Storage-source Preview admission that builds SourceIdentity from live Storage.stat without requiring a FileIndex row.
 - Preserved Worker execution revalidation against Preview SourceIdentity and live Storage.
+
+## 2026-09-14 — Slice 37 Files Page Visual Fidelity Activation
+
+- Retired the previously planned Slice 34–36 roadmap boundary from current planning; historical
+  references remain immutable history.
+- Activated the Files-page-only Slice 37 contract with Base
+  `b507edba167f5af3af8c53bfcf1417ba4fefddf4`.
+- Added the canonical visual specification for `docs/pics/文件页.png` at `1536 x 1024`, including
+  exact copy, reference data, layout, drawer state, journey, frozen pages and pixel-level acceptance.
+- This activation changed documentation only. No code, tests, image asset or other-page behavior
+  changed.

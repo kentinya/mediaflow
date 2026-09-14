@@ -1,20 +1,11 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-Task 33.7 — Repair production Worker source revalidation for admitted manual Organize completed
-review.
+Slice 37 — Files Page Visual Fidelity is `ACTIVE` in [`SLICE.md`](SLICE.md) and the current
+Roadmap. This turn only records the A-owned visual contract and does not implement a Task.
 
-Last reviewed range: `54f16d5f0e2b921307403e11e7895dffe7018b35..e4a5f7696d1742f7b6ef2a784c3b5d234b707d08`
+B must checkpoint the Contract before planning the first implementation Task. The next Task must
+cover one coherent Files-page behavior inside the reference scope and must not modify other pages,
+the reference image, backend authority or unrelated product areas.
 
-## B Review Result
-
-```text
-Reviewed: 54f16d5f0e2b921307403e11e7895dffe7018b35..e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
-Decision: PASS
-Slice Required Outcomes all satisfied: YES
-Next: SLICE READY FOR A REVIEW
-```
-
-The full Task evidence and implementation history remain in Git; the current Slice Closure Packet
-is recorded in [`SLICE.md`](SLICE.md).
-
-Next Action: A SELECTS THE NEXT LARGE SLICE
+The previous Slice 33 Task and review history remain recoverable in Git; they are not repeated in
+the current Task document.
