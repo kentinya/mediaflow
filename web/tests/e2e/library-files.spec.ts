@@ -66,6 +66,25 @@ test("Library landing exposes Files without FileIndex catalog", async ({
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });
 
+test("shared shell keeps Files usable at the supported narrow viewport", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 760, height: 900 });
+  await openFiles(page);
+
+  const menu = page.getByRole("button", { name: "Open menu" });
+  await expect(menu).toBeVisible();
+  await menu.click();
+  await expect(page.getByRole("link", { name: "Files" })).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+});
+
 test("Files route rejects limited principals without leaking the token", async ({
   page,
 }) => {
@@ -193,10 +212,11 @@ test("row selection, selected-row styling, clear selection and batch guard", asy
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
   await expect(page.getByRole("button", { name: "批量整理" })).toBeEnabled();
 
-  // Select-all covers the bounded regular files of the live listing, then
-  // clear returns to the empty selection.
+  // Select-all covers the complete bounded live listing, including
+  // directories and the backend-ineligible file, then clear returns to the
+  // empty selection.
   await page.getByRole("checkbox", { name: "选择全部" }).check();
-  await expect(page.getByText(/已选择 3 个文件/)).toBeVisible();
+  await expect(page.getByText(/已选择 7 个项目/)).toBeVisible();
   await page.getByRole("button", { name: "取消选择" }).click();
   await expect(
     page.getByText("已选择 0 个文件", { exact: true }),
@@ -234,6 +254,41 @@ test("row selection, selected-row styling, clear selection and batch guard", asy
         request.method === "GET" || request.url.includes("operations/previews"),
     ),
   ).toBe(true);
+});
+
+test("general selection preserves ineligible rows while Preview uses only selectable entries", async ({
+  page,
+}) => {
+  const previewBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/api/v1/operations/previews")
+    ) {
+      previewBodies.push(request.postData() ?? "");
+    }
+  });
+  await openFiles(page);
+
+  const readmeRow = page.getByRole("row", { name: /readme\.txt/ });
+  await readmeRow.getByRole("checkbox").check();
+  await expect(readmeRow.getByRole("checkbox")).toBeChecked();
+  await expect(page.getByText("已选择 1 个文件")).toBeVisible();
+  await expect(page.getByText(/可进入整理预览 0 个/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "批量整理" })).toBeDisabled();
+
+  // A mixed general selection remains visible to the operator, but only the
+  // backend-admitted entry is sent to the existing single-file Preview flow.
+  const sampleRow = page.getByRole("row", { name: /sample\.mkv/ });
+  await sampleRow.getByRole("checkbox").check();
+  await expect(page.getByText("已选择 2 个文件")).toBeVisible();
+  await expect(page.getByText(/可进入整理预览 1 个/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "批量整理" })).toBeEnabled();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByText(/无法创建整理预览/)).toBeVisible();
+  expect(previewBodies).toHaveLength(1);
+  expect(previewBodies[0]).toContain('"relativePath":"sample.mkv"');
+  expect(previewBodies[0]).not.toContain("readme.txt");
 });
 
 test("list and grid presentation switch and bounded pagination", async ({

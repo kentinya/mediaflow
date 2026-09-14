@@ -319,8 +319,109 @@ export interface Destination {
   readonly dynamicPrefix?: string;
 }
 
+export interface ShellDestination {
+  readonly id: string;
+  readonly label: string;
+  readonly ariaLabel: string;
+  readonly path: DestinationPath;
+  readonly icon:
+    | "home"
+    | "folder"
+    | "library"
+    | "storage"
+    | "rules"
+    | "automation"
+    | "operations"
+    | "notification"
+    | "settings";
+  readonly isActive: (pathname: string) => boolean;
+}
+
 /** The single operator-goal navigation contract consumed by routes and shell. */
 export const destinations: readonly Destination[] = destinationData;
+
+/**
+ * The one shared V2 shell navigation model. Labels are intentionally separate
+ * from the existing route/product labels so the migration can adopt the
+ * reference IA without changing route authority or page headings.
+ */
+export const shellDestinations: readonly ShellDestination[] = [
+  {
+    id: "home",
+    label: "首页",
+    ariaLabel: "Overview",
+    path: "/dashboard",
+    icon: "home",
+    isActive: (pathname) => pathname === "/dashboard",
+  },
+  {
+    id: "files",
+    label: "文件",
+    ariaLabel: "Files",
+    path: "/library/files",
+    icon: "folder",
+    isActive: (pathname) => pathname === "/library/files",
+  },
+  {
+    id: "library",
+    label: "媒体库",
+    ariaLabel: "Library",
+    path: "/library",
+    icon: "library",
+    isActive: (pathname) => pathname === "/library",
+  },
+  {
+    id: "storage",
+    label: "存储管理",
+    ariaLabel: "Storage management",
+    path: "/configuration",
+    icon: "storage",
+    isActive: () => false,
+  },
+  {
+    id: "rules",
+    label: "整理规则",
+    ariaLabel: "Review & Recovery Migration",
+    path: "/review",
+    icon: "rules",
+    isActive: (pathname) => pathname === "/review",
+  },
+  {
+    id: "automation",
+    label: "自动化",
+    ariaLabel: "Automation",
+    path: "/operations/automation",
+    icon: "automation",
+    isActive: (pathname) => pathname.startsWith("/operations/automation"),
+  },
+  {
+    id: "operations",
+    label: "操作与任务",
+    ariaLabel: "Operations",
+    path: "/operations",
+    icon: "operations",
+    isActive: (pathname) =>
+      pathname.startsWith("/operations") &&
+      !pathname.startsWith("/operations/automation") &&
+      !pathname.startsWith("/operations/notifications"),
+  },
+  {
+    id: "notifications",
+    label: "通知",
+    ariaLabel: "Notifications",
+    path: "/operations/notifications",
+    icon: "notification",
+    isActive: (pathname) => pathname.startsWith("/operations/notifications"),
+  },
+  {
+    id: "settings",
+    label: "系统设置",
+    ariaLabel: "Configuration",
+    path: "/configuration",
+    icon: "settings",
+    isActive: (pathname) => pathname === "/configuration",
+  },
+];
 
 /** Supported child routes are typed and allowlisted but not top-level nav items. */
 export const childDestinations: readonly Destination[] = childDestinationData;
