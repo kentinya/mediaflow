@@ -14,12 +14,14 @@ V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 33 — Operations Workspace — PASS / CLOSED
 Slice 33 Base: 827c36b410687e41b1da53ba6475d8c03a47dbfd
 Slice 33 Implementation Head: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
-Active large Slice: none selected; A selects the next large Slice after Slice 33 closure
+Active large Slice: Slice 37 — Files Page Visual Fidelity
+Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32 and 33 are closed; the next large Slice is selected by A
-after this closure, and later Slice 34–36 capabilities remain independently planned.
+product requirements. Slices 30, 31, 32 and 33 are closed. Slice 37 is the current focused Files
+page effort. The previously planned Slice 34–36 boundaries are retired from the current Roadmap;
+their historical references remain historical and do not change the stable requirements layer.
 
 ## Stable V2 requirements
 
@@ -60,3 +62,12 @@ boundaries are.
 - FileIndex catalog/detail journeys are not ordinary UI-V2 user routes.
 - Files entries must not expose FileIndex membership, fileId, scan status, occurrence IDs, fingerprints, claim tokens, or plan hashes.
 - Manual organize Preview admission from UI-V2 Files uses `resourceLibraryId` and `relativePath`; the server creates SourceIdentity and OrganizePlan.
+
+## UI-V2 Files Visual Contract — 2026-09-14
+
+- The sole visual reference is [`docs/pics/文件页.png`](pics/文件页.png) at `1536 x 1024`.
+- The exact page composition, copy, data fixture, drawer state and screenshot acceptance are
+  defined in [`file-page-visual-spec.md`](file-page-visual-spec.md).
+- This visual contract narrows the current implementation focus only; it does not add a new API,
+  persistence model, FileIndex authority or mutation path.
+- Non-Files pages and their existing routes remain outside the current Roadmap focus and unchanged.

@@ -47,9 +47,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 31 — Operator Shell & Information Architecture
     → Slice 32 — Library & Files Experience
     → Slice 33 — Operations Workspace
-    → Slice 34 — Review & Recovery Workspace
-    → Slice 35 — Configuration Administration
-    → Slice 36 — V2 Parity, Accessibility & Legacy UI Retirement
+    → Slice 37 — Files Page Visual Fidelity
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -111,8 +109,9 @@ server runtime.
 
 The V2 program preserves the current `/api/v1/*` authority, Python application/domain behavior,
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
-and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration;
-its final `/ui` retirement is deferred to Slice 36.
+and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
+The current active focus is Slice 37 Files-page visual fidelity; non-Files migrations and final
+cutover are outside the current Roadmap boundary.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
@@ -434,7 +433,7 @@ catalog/search/filter/directional paging, strict detail/evidence projection and 
 physical/indexed navigation. It reuses managed Active snapshot, Storage and FileIndex/Application
 ports and existing authenticated `/api/v1/*` reads. The frontend stores no domain authority or
 credentials, renders no raw fingerprint/provider/private-path material, and exposes no Storage or
-workflow mutation. Review/Recovery, Configuration and V1 cutover remain Slices 34–36.
+workflow mutation. Its accepted behavior remains historical and unchanged.
 
 ## Current Slice 33 delivery
 
@@ -447,8 +446,8 @@ visible. The final Worker correction reconstructs the exact pinned ResourceLibra
 from the admitted execution's immutable runtime snapshot and fails closed before mutation on missing,
 stale or cross-authority evidence. The implementation preserves shared Python authority, exact Active
 snapshot and revision binding, memory-only Bearer/RBAC, explicit mutation intent, no automatic
-uncertain replay and OrganizerExecutor-only Storage mutation. Review/Recovery, general Configuration
-administration and final parity/accessibility/V1 UI retirement remain Slices 34–36.
+uncertain replay and OrganizerExecutor-only Storage mutation. Its accepted behavior remains
+historical and unchanged.
 
 ## TARGET architecture
 
@@ -471,3 +470,11 @@ UI-V2 manual organize admission now starts from ResourceLibrary source selection
 ResourceLibrary -> live Storage file -> zero-mutation Preview -> SourceIdentity + server OrganizePlan -> confirmed Task -> Worker -> live Storage revalidation -> OrganizerExecutor.
 
 Preview creates SourceIdentity from `Storage.stat()` using the existing storage-entry fingerprint/occurrence helpers and persists that evidence with the reviewed plan.  Execution validates the reviewed source against live Storage and the persisted Preview identity; it does not re-resolve the source through FileIndex.
+
+## UI-V2 Files visual contract update — 2026-09-14
+
+Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference
+for the Files route. The detailed layout, exact copy/data, open `添加媒体库` drawer and
+pixel-level acceptance rules are in [`docs/file-page-visual-spec.md`](file-page-visual-spec.md).
+This is a page-focused documentation contract. It does not move authority into the frontend,
+change the API or persistence model, or alter any non-Files route.

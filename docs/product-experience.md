@@ -379,8 +379,10 @@ have delivered and closed the architecture/platform foundation, bounded Dashboar
 operator shell, centralized information architecture, shared route/authentication recovery,
 read-only Library journey and the complete Operations workspace. Slice 33's accepted Worker
 correction reconstructs the exact pinned source authority across the resident Worker boundary and
-fails closed before mutation when source evidence cannot be proved. The later Review/Recovery,
-general Configuration and final V1 UI cutover migrations remain separate planned work.
+fails closed before mutation when source evidence cannot be proved. Slice 37 is now the only active
+large Slice and focuses exclusively on the Files page visual reference in
+[`file-page-visual-spec.md`](file-page-visual-spec.md). The previously planned later migration
+boundaries are not current work commitments.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -456,7 +458,8 @@ general Configuration and final V1 UI cutover migrations remain separate planned
 - **Recovery:** refresh the durable state, repair readiness, rerun a stale Preview, reauthorize the
   exact reviewed operation, repair/repreview/regrant Automation or use the delivery-specific
   recovery action. Media review, checkpoint continuation, Reprocess and failed-item/batch recovery
-  hand off honestly to V1 or the future V2 Review & Recovery workspace.
+  hand off honestly to an existing supported V1 destination; no new Review/Recovery page is part
+  of the current Slice.
 
 ### Migration coexistence and deferrals
 
@@ -473,10 +476,19 @@ general Configuration and final V1 UI cutover migrations remain separate planned
   `/api/v1/*` authority into actionable Dashboard, Task/Job, bounded Scan/Preview, Web-native exact
   manual Organize, Automation and Notification journeys while preserving backend RBAC, immutable
   binding, fencing, explicit destructive intent and OrganizerExecutor-only mutation.
-- **DEFERRED:** no `/ui` cutover or V1 UI retirement occurs until the later parity, accessibility and
-  retirement acceptance. Review/Recovery and general Configuration business migrations remain
-  owned by later Slices; their current V2 landings do not claim those journeys.
+- **DEFERRED:** no `/ui` cutover or V1 UI retirement is part of the current Files-page Slice.
+  Review/Recovery, general Configuration and other non-Files migrations are outside the current
+  Roadmap boundary; their existing routes and handoffs remain unchanged.
 
 ## Files Journey Update — 2026-09-13
 
-The Files journey is now: choose ResourceLibrary, browse its directories, select one or more files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in Operations.  Storage is described only as the ResourceLibrary backing implementation.  FileIndex terminology is not part of the ordinary Files page experience.
+The Files journey is now: choose ResourceLibrary, browse its directories, select one or more files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in Operations. Storage is described only as the ResourceLibrary backing implementation. FileIndex terminology is not part of the ordinary Files page experience.
+
+## Files Page Visual Fidelity Update — 2026-09-14
+
+Slice 37 makes [`docs/pics/文件页.png`](pics/文件页.png) the sole visual reference for the V2 Files
+page at `1536 x 1024`. The page-local shell composition, ResourceLibrary summary, directory tree,
+file table, selection footer and open `添加媒体库` drawer are specified in
+[`file-page-visual-spec.md`](file-page-visual-spec.md). The reference success state is a
+pixel-level acceptance target; loading, empty, permission and provider failures must remain
+bounded recovery states. Other pages and their journeys are frozen.
