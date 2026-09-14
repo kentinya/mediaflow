@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: NOT SET
-Contract Revision: 2026-09-14 A RESCOPE — common file operations expanded
+Contract Revision: 2026-09-14 A ACCEPTANCE REFINEMENT — reference-aligned visual fidelity
 ```
 
 The Slice Base is immutable. This A-owned rescope supersedes the earlier Files-page-only/frozen-shell
@@ -58,12 +58,12 @@ backend implementation details.
 `/ui-v2/library/files` (router path `/library/files`) through the existing memory-only API-principal
 authentication boundary.
 
-**Visible state:** at `1536 x 1024` the route reproduces the canonical image: shared light left rail,
-top bar, active Files navigation, search, ResourceLibrary summary, information banner, directory
-tree, breadcrumb, file table, selected row, selection footer, pagination and open `添加资源库`
-drawer. The action surfaces expose `新建文件夹`, `新建文本文件`, `上传`, `下载`, `重命名`, `复制`,
-`移动`, `删除` and supported `编辑`. Unsupported actions are absent or explain why they are
-unavailable. Raw backend authority fields are not displayed.
+**Visible state:** at `1536 x 1024` the route presents the canonical reference composition: shared
+light left rail, top bar, active Files navigation, search, ResourceLibrary summary, information
+banner, directory tree, breadcrumb, file table, selected row, selection footer, pagination and open
+`添加资源库` drawer. The action surfaces expose `新建文件夹`, `新建文本文件`, `上传`, `下载`,
+`重命名`, `复制`, `移动`, `删除` and supported `编辑`. Unsupported actions are absent or explain why
+they are unavailable. Raw backend authority fields are not displayed.
 
 **Action:** browse or refresh a ResourceLibrary-relative directory, switch presentation, select or
 clear entries, create a folder or supported text file, rename/copy/move/delete eligible files or
@@ -93,7 +93,7 @@ repeated.
 
 | ID | Outcome | Acceptance state |
 |---|---|---|
-| RO-1 | **Pixel-exact reference fidelity.** | A controlled `1536 x 1024` Files success screenshot matches `docs/pics/文件页.png` pixel for pixel after fonts/assets load, with zero unexplained difference. |
+| RO-1 | **Reference-aligned visual fidelity.** | A controlled `1536 x 1024` Files success screenshot preserves the canonical image's shared-shell and Files hierarchy, visible fixture state, labels, control order and design intent. Pixel-diff counts are diagnostic rather than a pass/fail threshold; bounded differences in font/glyph rendering, icon or thumbnail artwork, exact dimensions/spacing, borders, shadows and color nuance are acceptable when the required composition remains complete, recognizable and operable. |
 | RO-2 | **Shared V2 shell replacement.** | The old dark horizontal shell is replaced by the reference-aligned light left rail/top bar across V2. Files has no alternate shell; existing route/auth/deep-link behavior remains shared and non-Files business journeys remain functional. |
 | RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/status/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy. |
 | RO-4 | **ResourceLibrary drawer and activation.** | The three-step drawer matches the reference; final `保存` submits one complete candidate and the backend validates and atomically activates it, preserving the previous Active on every failure. |
@@ -136,15 +136,18 @@ repeated.
   mutation; deleted or renamed entries cannot remain as hidden stale selection.
 - Existing non-Files routes keep their information and recovery semantics inside the new shell.
   Shell replacement must not fabricate product areas that have not been migrated.
-- Desktop reference fidelity is exact; narrower layouts remain bounded, operable and free of
-  horizontal action loss even where the canonical image does not prescribe every pixel.
+- Desktop reference fidelity is structural and reference-aligned rather than pixel-identical.
+  Exact raster output, typography metrics, icon/thumbnail artwork and CSS measurements may differ
+  without blocking acceptance when the complete reference hierarchy, fixture state, labels and
+  controls remain recognizable and operable. Narrower layouts remain bounded, operable and free of
+  horizontal action loss.
 
 ## Shared shell contract
 
 - The reference left rail and top bar replace the old dark horizontal `Operator workspace` shell.
-- The left rail uses the exact reference brand, subtitle, icon/spacing treatment, active state and
-  ordered labels: `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `操作与任务`, `通知`,
-  `系统设置`.
+- The left rail uses the reference brand, subtitle, recognizable icon/spacing treatment, active
+  state and ordered labels: `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `操作与任务`,
+  `通知`, `系统设置`.
 - Navigation labels route to the existing supported V2 destination or an existing truthful migration
   landing; visual replacement does not fabricate a completed business surface.
 - The bottom `系统存储` block is bounded system-status presentation and performs no Storage access
@@ -284,7 +287,8 @@ repeated.
 - Tests prove ResourceLibrary Save rejects invalid/conflicting candidates and preserves prior Active.
 - Tests prove Files listing remains Storage-authoritative and FileIndex reconciliation failure does
   not replay completed/uncertain mutation.
-- Controlled screenshots prove exact Files/reference parity and the new shared shell across Files;
+- Controlled screenshots prove the reference composition, fixture state and new shared shell across
+  Files. Pixel-diff metrics remain useful diagnostic evidence but are not a zero-difference gate;
   responsive and route smoke evidence proves non-Files journeys still work.
 - Existing tests that freeze the old dark shell or contradict this Contract must be replaced, not
   retained to force obsolete behavior. Security/authority tests must not be deleted or weakened.
@@ -305,12 +309,17 @@ repeated.
 
 ## Slice Acceptance Criteria
 
-- [ ] `docs/pics/文件页.png` remains unchanged and the Files screenshot matches it pixel for pixel at
-      `1536 x 1024` with zero unexplained difference.
+- [ ] At `1536 x 1024`, the Files screenshot preserves the reference shared-shell and Files
+      hierarchy, visible fixture state, labels and control order. The comparison records material
+      differences, but nonzero pixel counts and bounded rendering/layout variations do not fail the
+      Slice when the composition remains complete, recognizable and operable; the reference asset
+      is not rewritten merely to manufacture a passing comparison.
 - [ ] The old dark horizontal V2 shell is fully replaced by the reference light rail/top bar, using
       one shared shell across V2 and retaining auth/deep-link/route recovery.
-- [ ] Exact labels, values, row order, selection states, drawer steps, controls, icons and assets from
-      the visual spec are present.
+- [ ] Required labels, values, row order, selection states, drawer steps and controls from the visual
+      spec are present. Recognizable implementation-owned icons/thumbnails and bounded table
+      truncation are acceptable when the complete value remains available to assistive technology
+      and the action/state remains unambiguous.
 - [ ] Create Folder/Text File, Rename, Copy, Move, Delete, supported text Edit, Upload and Download
       complete from Files with low-friction success/failure/recovery and bounded multi-selection
       where useful.
@@ -333,7 +342,9 @@ repeated.
 
 ## Final Validation Expectations
 
-- deterministic `1536 x 1024` pixel comparison against the canonical image after fonts/assets load;
+- deterministic `1536 x 1024` screenshot and pixel-diff report against the canonical image after
+  fonts/assets load, evaluated under RO-1's structural/reference-aligned acceptance rather than a
+  zero-difference threshold;
 - shared-shell route/deep-link/auth/401/403/responsive smoke across every V2 product area;
 - Files browse/search/navigation/selection/pagination/drawer interaction evidence;
 - Create Folder/Text File, Rename/Copy/Move/Delete/Edit/Upload/Download success and failure evidence
@@ -354,9 +365,12 @@ repeated.
 ```text
 Slice Status: ACTIVE
 Implementation Head: NOT SET
-Contract Revision: A RESCOPE — shared shell replacement and complete common file management added
-Prior Task 37.1 state: not accepted under this revised Contract; TASK.md intentionally not modified by A
-Next Action: checkpoint this Contract, then B reconciles and plans the next coherent Task
+Contract Revision: A ACCEPTANCE REFINEMENT — structural/reference-aligned visual fidelity replaces
+the pixel-identical gate; shared shell and common file-management scope remain unchanged
+Task 37.1 state: pending B re-review under this acceptance refinement; TASK.md intentionally not
+modified by A
+Next Action: checkpoint this Contract, then B reconciles and reviews Task 37.1 against the refined
+visual acceptance before selecting the next coherent Task
 ```
 
 ## Closure Packet

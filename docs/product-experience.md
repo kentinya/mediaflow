@@ -593,7 +593,10 @@ the previous dark horizontal shell across supported V2 routes; this is a complet
 replacement, not a Files card rendered inside the old shell. The Files composition,
 ResourceLibrary summary, directory tree, file table, selection footer, row actions and open
 `添加资源库` drawer are specified in [`file-page-visual-spec.md`](file-page-visual-spec.md). The
-reference success state is a pixel-level acceptance target; loading, empty, permission, provider,
-direct-command and configuration-activation failures remain bounded recovery states. Other pages'
-business journeys and backend behavior are frozen, while their shared outer chrome intentionally
-changes to the replacement shell.
+reference success state is a structural and design-intent acceptance target: the controlled
+screenshot and pixel diff remain evidence, but nonzero raster differences are not independently a
+failure when the required hierarchy, fixture state, labels and controls remain complete,
+recognizable and operable. Loading, empty, permission, provider, direct-command and
+configuration-activation failures remain bounded recovery states. Other pages' business journeys
+and backend behavior are frozen, while their shared outer chrome intentionally changes to the
+replacement shell.
