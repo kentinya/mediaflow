@@ -66,9 +66,7 @@ describe("EntryPage", () => {
     // Intended path was consumed and cleared, and navigation lands there.
     expect(authStore.getIntendedPath()).toBeNull();
     await screen.findByRole("heading", { name: "Library" });
-    expect(
-      screen.getByRole("link", { name: "Open Files" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Files" })).toBeVisible();
   });
 
   it("never displays the token after the entry interaction", async () => {

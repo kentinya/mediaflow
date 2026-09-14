@@ -126,11 +126,16 @@ function normalizeResourceLibrary(
   const rootPath =
     raw.root_path === null || raw.root_path === undefined
       ? ""
-      : normalizeBoundedText(
-          raw.root_path,
-          "resourceLibrary.root_path",
-          MAX_TEXT_LENGTH,
-        );
+      : // The backend ResourceLibrary.storagePath is optional and defaults to
+        // the Storage root (""). An empty string is a valid root, not
+        // malformed data; any other non-empty value stays strictly bounded.
+        String(raw.root_path).trimEnd() === ""
+        ? ""
+        : normalizeBoundedText(
+            raw.root_path,
+            "resourceLibrary.root_path",
+            MAX_TEXT_LENGTH,
+          );
   return { id, storageId, name, rootPath, enabled: raw.enabled };
 }
 

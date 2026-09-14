@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.1
 Parent Slice: 37
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: d48937485834502eaa186f29e710a4b44e7110fe
 Difficulty: Medium
 Test Level: T3
@@ -223,8 +223,25 @@ Head SHA: e9f3c08a032410c28f642968b6e12bd901362160
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: d48937485834502eaa186f29e710a4b44e7110fe..e9f3c08a032410c28f642968b6e12bd901362160
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The reported checkpoint is not self-contained and does not pass its required browser suite.
+  From a clean archive of `e9f3c08a032410c28f642968b6e12bd901362160`, after `npm run build`,
+  `npm run test:e2e -- tests/e2e/library-files.spec.ts` produced 9 failures and 2 passes:
+  the fake system-status response contains the valid Storage-root ResourceLibrary value
+  `root_path: ""`, but the committed status normalizer rejects it, so the Files route renders
+  `文件页不可用` and never reaches the drawer or browse state. The same suite passes 11/11 only
+  with an uncommitted worktree normalization change that the completion report excludes from the
+  checkpoint. Make the committed Task checkpoint handle the valid empty ResourceLibrary root
+  coherently, add focused regression coverage, and rerun/report the required T3 commands from the
+  exact self-contained Head without relying on unrelated worktree edits.
+- `StorageFilesPage.tsx` no longer honors the server-projected `entry.selectable` boundary:
+  `isFileSelectable` returns true for every regular non-symlink file, so rows that the response
+  explicitly marks `selectable: false` can receive a checkbox, be included by select-all and be
+  submitted to Preview. Restore the bounded selection behavior across row selection, select-all,
+  selected counts/actions and Preview admission, and add automated coverage proving an
+  unselectable regular file cannot enter the selection or Preview request.

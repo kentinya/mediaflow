@@ -4,10 +4,7 @@ import {
   fetchSystemStatus,
   storageFilesUrl,
 } from "./api-client";
-import {
-  StorageFilesApiError,
-  SystemStatusApiError,
-} from "./api-errors";
+import { StorageFilesApiError, SystemStatusApiError } from "./api-errors";
 
 const TOKEN = "memory-only-library-token";
 
@@ -27,7 +24,15 @@ const systemStatusPayload = {
   resource_libraries: {
     total: 1,
     truncated: false,
-    items: [{ id: "resources", name: "Resources", storage_id: "local-1", root_path: "incoming", enabled: true }],
+    items: [
+      {
+        id: "resources",
+        name: "Resources",
+        storage_id: "local-1",
+        root_path: "incoming",
+        enabled: true,
+      },
+    ],
   },
 };
 
@@ -44,7 +49,12 @@ const filesPayload = {
     name: "Resources",
     enabled: true,
     rootPath: "incoming",
-    storage: { id: "local-1", name: "Local media", type: "local", readOnly: false },
+    storage: {
+      id: "local-1",
+      name: "Local media",
+      type: "local",
+      readOnly: false,
+    },
   },
   path: "",
   breadcrumbs: [{ name: "Storage root", path: "", isRoot: true }],
@@ -175,7 +185,9 @@ describe("fetchStorageFiles", () => {
         403,
       ),
     );
-    const read = await fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" });
+    const read = await fetchStorageFiles(TOKEN, {
+      resourceLibraryId: "resources",
+    });
     expect(read.ok).toBe(false);
     if (!read.ok) {
       expect(read.failure.kind).toBe("storage_unavailable");
@@ -210,7 +222,9 @@ describe("fetchStorageFiles", () => {
         503,
       ),
     );
-    const read = await fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" });
+    const read = await fetchStorageFiles(TOKEN, {
+      resourceLibraryId: "resources",
+    });
     expect(read.ok).toBe(false);
     if (!read.ok) {
       expect(read.failure.kind).toBe("configuration_unavailable");
@@ -248,7 +262,9 @@ describe("fetchStorageFiles", () => {
           item.status,
         ),
       );
-      const read = await fetchStorageFiles(TOKEN, { resourceLibraryId: "resources" });
+      const read = await fetchStorageFiles(TOKEN, {
+        resourceLibraryId: "resources",
+      });
       expect(read.ok).toBe(false);
       if (!read.ok) {
         expect(read.failure.kind).toBe(item.expected);

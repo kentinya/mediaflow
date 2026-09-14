@@ -47,7 +47,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 31 — Operator Shell & Information Architecture
     → Slice 32 — Library & Files Experience
     → Slice 33 — Operations Workspace
-    → Slice 37 — Files Page Visual Fidelity
+    → Slice 37 — Files Workspace, Common File Management and V2 Shell
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -110,8 +110,10 @@ server runtime.
 The V2 program preserves the current `/api/v1/*` authority, Python application/domain behavior,
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
 and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
-The current active focus is Slice 37 Files-page visual fidelity; non-Files migrations and final
-cutover are outside the current Roadmap boundary.
+The current active focus is Slice 37: replacing the former V2 shell presentation with the shared
+light shell in the canonical Files reference and completing Files with common bounded file
+management. Non-Files business-surface migrations and final cutover remain outside the current
+Roadmap boundary; existing non-Files route behavior is retained inside the replacement shell.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
@@ -501,12 +503,66 @@ is recorded, the application automatically synchronizes the known result/disposi
 If that synchronization fails, the index-sync failure is recorded independently and the system does
 not replay any completed or uncertain Storage mutation.
 
-## UI-V2 Files visual contract update — 2026-09-14
+## UI-V2 direct file-management authority update — 2026-09-14
+
+The Files workspace adds deliberately short read and mutation paths for ordinary maintenance:
+
+```text
+selected Active ResourceLibrary source/destination
+    -> live list/stat/read + capability/limit admission
+       ├─ Download -> bounded response/archive stream -> read result
+       └─ mutation command
+            -> OrganizerExecutor
+            -> per-item audit/result
+            -> refreshed live listing
+            -> optional FileIndex display reconciliation
+```
+
+This boundary supports CreateDirectory, bounded text-file creation, Rename, Copy, Move, Delete,
+bounded allowlisted text Read/Write, Upload and Download for one item or a bounded selection. It
+does not run Scanner, Parser, Recognition, Metadata, Naming, Classification, the organize Planner,
+organize Preview or execution-token review. The shorter journey does not create a second mutation authority: the
+application enforces backend RBAC, selected Active source/destination bindings, relative-path
+confinement, provider capability, item/depth/size limits, stale/conflict checks and explicit
+Delete/Replace/Save intent. Only OrganizerExecutor invokes CreateDirectory/Copy/Move/Delete/Write;
+Download uses confined Storage reads and streams no artifact back into managed Storage.
+
+Same-Storage Copy/Move uses advertised native capability without fallback. Cross-Storage Copy is an
+explicit transfer. Cross-Storage Move is modeled as a visible compound operation with per-item
+checkpoints:
+
+```text
+Copy destination -> verify destination -> delete source
+```
+
+Failed verification leaves the source intact. Failure after a verified copy records a partial
+result and recovery rather than concealing two extant copies or replaying an uncertain deletion.
+Bounded recursive/batch mutations use the existing Task system and independent item outcomes.
+Delete may include bounded non-empty directories after a lightweight item/size impact summary and
+one explicit confirmation, but ResourceLibrary roots and unbounded recursion are rejected.
+
+File/directory-tree uploads stream safe relative paths to the selected destination under configured
+count/file/depth/request limits and use explicit conflict behavior. Downloads stream a file or a
+bounded directory/multi-selection archive; archive construction is read-only and does not persist a
+hidden file to Storage. Arbitrary binary
+or media-content editing and arbitrary host paths remain outside this boundary.
+
+Live Storage is authoritative before and after each command. FileIndex may be reconciled to prevent
+stale display feedback, but it never admits the command; reconciliation failure is recorded and
+must never replay a completed or uncertain mutation.
+
+## UI-V2 Files and shared-shell contract update — 2026-09-14
 
 Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference
-for the Files route. The detailed layout, exact copy/data, open `添加资源库` drawer and
+for the Files route and shared V2 shell. One shared AppShell implementation must replace the former
+dark horizontal chrome with the reference light left rail and top bar across every supported V2
+route; the reference is not rendered as a nested Files card inside the old shell. Route identity,
+memory-only authentication continuation, query ownership, backend calls and non-Files page-body
+behavior remain unchanged even though their outer chrome changes.
+
+The detailed Files layout, exact copy/data, row command surfaces, open `添加资源库` drawer and
 pixel-level acceptance rules are in [`docs/file-page-visual-spec.md`](file-page-visual-spec.md).
-This is a page-focused documentation contract. It does not move authority into the frontend or
+The frontend owns presentation and exact user intent only. It does not become Storage authority or
 make FileIndex a physical-source/execution authority. Focused backend/application behavior for
-ResourceLibrary save/activation and terminal Organize-result synchronization is part of the
-confirmed Files journey; unrelated routes remain unchanged.
+ResourceLibrary save/activation, direct file commands and post-mutation index reconciliation is
+part of the confirmed Files journey; unrelated business behavior remains unchanged.

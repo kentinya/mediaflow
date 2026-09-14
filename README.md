@@ -93,9 +93,13 @@ read-only Library journey across bounded Active Storage browsing, FileIndex cata
 physical/indexed context. Slice 33 delivered the Operations command center across actionable
 Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
 scheduled Automation and Notification delivery operation, including the accepted Worker
-pre-mutation revalidation correction. Slice 37 is now the only active focus and is limited to the
-Files page visual reference in [`docs/file-page-visual-spec.md`](docs/file-page-visual-spec.md).
-The previously planned Slice 34–36 boundaries are retired from the current Roadmap.
+pre-mutation revalidation correction. Slice 37 is now the only active focus: its Contract requires
+replacement of the former dark horizontal V2 shell with the shared light shell in the canonical
+Files reference, plus completion of Files with bounded ResourceLibrary activation, direct
+Create Folder/Text File, Rename/Copy/Move/Delete/text Edit/Upload/Download and organize continuation as specified in
+[`docs/file-page-visual-spec.md`](docs/file-page-visual-spec.md). Non-Files business journeys stay
+unchanged inside the replacement shell. The previously planned Slice 34–36 boundaries are retired
+from the current Roadmap.
 The V1 API, authentication and Storage authority remain
 available, while the shared Python `/api/v1/*` behavior remains authoritative for both UIs.
 

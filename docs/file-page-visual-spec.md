@@ -5,10 +5,10 @@ Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
 Reference size: `1536 x 1024` pixels
 Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
 
-This document is the visual source of truth for the Files page. The image is an existing user
-asset and must not be edited, regenerated, compressed, recolored or replaced. This documentation
-round records the confirmed functional semantics for the page; it does not change the frontend,
-backend, tests or the behavior of any other page.
+This document is the visual source of truth for the Files page and the shared V2 shell that frames
+it. The image is an existing user asset and must not be edited, regenerated, compressed, recolored
+or replaced. The 2026-09-14 A rescope makes the reference shell the replacement for the prior dark
+horizontal V2 shell rather than a Files-only imitation inside it.
 
 ## Current Code Status — 2026-09-14
 
@@ -37,42 +37,45 @@ page:
 - The current page permits local selection of multiple entries, but its Preview mutation currently
   rejects more than one path with `Batch Preview is planned`; only one selected file can proceed
   through the implemented Preview path.
+- The current implementation does not yet provide the complete backend-authoritative common file
+  command set from Files. Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit,
+  Upload and Download are now required by Slice 37 and remain distinct from media organization.
 
 The codebase still contains FileIndex-backed compatibility and legacy operation paths, including
 indexed discovery and older file-scoped APIs. Those paths are not the source or authority for the
 ResourceLibrary Files page. The page may consume bounded FileIndex business-state feedback for
-display, and completed Organize items synchronize their terminal outcome back to FileIndex. No
-other Files-page action may introduce a FileIndex dependency.
+display, and completed Organize or direct file-management mutations may reconcile their known
+terminal outcome back to FileIndex. FileIndex is never the source/path/execution authority and a
+reconciliation failure never replays Storage mutation.
 
-The reference image remains a visual target rather than a claim of completed visual parity. The
-current implementation does not yet provide every screenshot element, including the exact Chinese
-copy, table columns/status presentation or the open `添加资源库` drawer.
+The reference image remains a target rather than a claim of completed parity. Task 37.1's page-local
+composition inside the old shell is not accepted as completion of the revised Contract; the shell,
+Files workspace and direct file actions still require coherent implementation and evidence.
 
 ## Scope
 
-Slice 37 owns one operator-facing page:
+Slice 37 owns the shared V2 shell presentation and one primary operator-facing workspace:
 
+- the shared shell chrome rendered across every V2 route;
 - the V2 **Files** page;
 - the Files page's local "Add ResourceLibrary" drawer shown in the reference image;
-- the existing ResourceLibrary-scoped file browsing and selection journey as rendered on that page.
+- the ResourceLibrary-scoped browse, selection, Create Folder/Text File, Rename, Copy, Move, Delete,
+  bounded text Edit, Upload, Download and organize continuation journey rendered on that page.
 
-The following are frozen for this Slice:
+The following remain behaviorally frozen:
 
 - Dashboard, Operations, Review, Configuration, Notifications, Settings and all other page
-  journeys;
+  business journeys, although their shared outer shell intentionally changes;
 - the V1 `/ui` surface;
-- shared API, domain, persistence, Storage, OrganizerExecutor and metadata authority;
-- global navigation semantics and shared shell behavior outside the Files route;
+- existing route/auth/deep-link semantics and Python business authority;
 - FileIndex as a physical file source, source identity authority or execution authority. A bounded
-  display-only business-status projection and terminal Organize-result synchronization are allowed.
-- unrelated backend endpoints, schema changes, new providers and new Storage capabilities. The
-  focused ResourceLibrary save/activation command and the required result-to-FileIndex
-  synchronization may reuse or extend the existing application authority without moving decisions
-  into the browser.
+  display projection and post-mutation synchronization/reconciliation are allowed.
+- unrelated backend endpoints, schema rewrites, new providers and new Storage capabilities.
 
-If a later implementation needs a shared style or shell change, the change must be rejected unless
-it is strictly page-local or it proves that every frozen page remains visually and behaviorally
-unchanged.
+The old dark horizontal shell is explicitly not frozen. It must be replaced with the reference
+left rail/top bar through the single shared shell component. Non-Files page bodies may adapt to the
+new available content rectangle but must not acquire new business behavior or lose existing route,
+permission, loading, failure or recovery semantics.
 
 ## Reference State
 
@@ -124,7 +127,7 @@ color. Exact rendered pixels in the reference image take precedence over any nam
 
 ### Shell
 
-The Files screenshot must show the existing operator shell in the following visual order:
+The Files screenshot must show the replacement shared V2 shell in the following visual order:
 
 1. MediaFlow brand block at the top of the left rail.
 2. Navigation items, in order:
@@ -133,8 +136,9 @@ The Files screenshot must show the existing operator shell in the following visu
 4. A `系统存储` usage block is visible at the bottom of the left rail.
 5. The top bar contains the search field, notification icon and `admin` account control.
 
-The shell must not acquire a second Files-only navigation model. Icons, spacing, selected-state
-backgrounds and alignment must follow the reference image.
+The shell must not acquire a second Files-only navigation model. The same shell and ordered
+navigation frame every V2 route; Files supplies its search behavior through the shared top-bar slot.
+Icons, spacing, selected-state backgrounds and alignment must follow the reference image.
 
 ### Page Header and ResourceLibrary Summary
 
@@ -180,6 +184,12 @@ The file pane shows the breadcrumb and controls:
 - list view selected;
 - grid view available but not selected.
 
+The screenshot remains authoritative for the exact closed, non-hover success state. Row overflow and
+directory-node hover/focus/context actions provide `新建文件夹`, `新建文本文件`, `上传`, `下载`,
+`复制`, `移动` and `删除` without adding persistent pixels or shifting the reference controls while
+menus/dialogs are closed. Keyboard and touch users receive an equivalent focusable action entry;
+right-click alone is not sufficient discoverability.
+
 The table columns are exactly:
 
 ```text
@@ -201,6 +211,40 @@ The reference rows, in order, are:
 The first row is checked. Its thumbnail, file-type icon, status pill, action button and overflow
 menu must retain the same alignment as the reference. Rows with `整理` use the blue action style;
 `查看` and `打开` use the neutral action style; `跳过` uses the muted status style.
+
+The closed overflow menu is the reference screenshot state. For an authorized eligible entry, the
+menu exposes applicable `下载`, `重命名`, `复制`, `移动`, `删除` and, for an allowlisted bounded
+text file, `编辑` actions.
+Opening a direct-action dialog must not disturb the reference screenshot state when the menu is
+closed. Unsupported operations are omitted or disabled with a reason.
+
+### Common File Actions
+
+- `新建文件夹` creates one valid directory in the selected ResourceLibrary-relative location and
+  never replaces an existing entry.
+- `新建文本文件` creates one bounded allowlisted text file and enters the same stale-safe text
+  editing flow; it cannot create arbitrary binary/media content.
+- `重命名` edits one basename within the same ResourceLibrary/Storage. It rejects path separators,
+  root rename and existing-target overwrite, then refreshes the live listing on known success.
+- `复制` and `移动` accept one item or a bounded selection and open a ResourceLibrary-confined
+  destination picker. Same-Storage actions use advertised native capability. Cross-Storage Move is
+  explicitly shown as Copy, verify, then source Delete; failed verification preserves the source and
+  partial outcomes remain visible per item.
+- `删除` accepts one item or a bounded selection. Non-empty directories receive a lightweight
+  bounded item/size impact summary and one explicit permanent-effect confirmation; ResourceLibrary
+  roots and unbounded recursion are never deletable.
+- `编辑` supports only size-bounded, allowlisted text files. Save is the explicit overwrite
+  intent for the exact loaded version; binary, oversized, invalid-encoding or stale content fails
+  without writing.
+- `上传` streams bounded browser-selected files or a directory tree into the current directory with
+  safe relative paths, per-item progress/outcome and explicit conflict handling. `下载` streams an
+  authorized bounded file or directory/multi-selection archive without writing that archive back to
+  Storage.
+- These actions use a direct backend command rather than Recognition/Metadata/Naming/
+  Classification/Organize Preview ceremony. They still enforce RBAC, selected Active
+  ResourceLibrary confinement, Storage capability, limits, stale/conflict checks and audit. Every
+  mutation goes through `OrganizerExecutor`; Download is zero-mutation. No uncertain mutation is
+  automatically retried and no operation silently falls back.
 
 ### Selection Footer
 
@@ -238,7 +282,8 @@ The drawer is open on the right and contains:
 - field label `状态`;
 - enabled toggle and label `启用`;
 - helper text `关闭后将在资源库列表中隐藏，但不会删除数据`;
-- bottom buttons are `取消` and, on the final step, `保存`.
+- bottom buttons in the reference step-1 state are `取消` and `下一步`; the final step replaces
+  `下一步` with `保存`.
 
 The drawer is a page-local ResourceLibrary creation panel, not a MediaLibrary editor and not a
 replacement for the general Configuration page. Its visual stepper, field order, labels, required
@@ -257,21 +302,23 @@ The page must be documented and later implemented as one vertical journey:
 
 | Stage | Files page contract |
 |---|---|
-| Goal | Browse a configured ResourceLibrary and choose files to organize |
+| Goal | Browse and fully manage common file operations in configured ResourceLibraries, create a ResourceLibrary, or choose media to organize |
 | Entry | Select `文件` from the shell or open `/ui-v2/library/files` |
-| Visible state | The reference shell, ResourceLibrary summary, directory tree, file table, selection footer and add-library drawer |
-| Action | Browse the ResourceLibrary, change directory, select files, refresh, switch view, open a folder or continue with the local add-library flow |
-| Success | The selected file and its bounded organize action are clear, a saved ResourceLibrary is Active and browseable, and the page matches the reference image |
-| Failure | Missing Active configuration, unavailable Storage, invalid path, unauthorized access, malformed data or ResourceLibrary activation failure is shown without fabricated rows or unsafe mutation |
-| Recovery | Retry the bounded read, return to the ResourceLibrary root, select another enabled ResourceLibrary, correct the add form and save again, or leave the page; a failed save preserves the previous Active configuration |
+| Visible state | The replacement shared shell, ResourceLibrary summary, directory tree, file table, common file commands/progress, selection footer and add-library drawer |
+| Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit/Upload/Download eligible content, organize selected media or complete the local add-library flow |
+| Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page matches the reference |
+| Failure | Read, permission, capability, path, limit, stale/conflict, partial transfer, malformed-data or activation failure is shown on the affected item without fabricated success or uncertain replay |
+| Recovery | Retry safe reads/downloads, return to root, correct input/destination, reload stale text, inspect partial items, reconfirm a current delete/replace, select another library or correct and resubmit a failed ResourceLibrary save |
 
-Viewing, refreshing, browsing and selecting are read-only. Any later organize action must continue
+Viewing, refreshing, browsing, selecting and Download are read-only. Common mutation commands are
+explicit and do not start merely by viewing or selecting. Any organize action continues
 through the existing Preview, explicit intent and backend authority boundaries. The Files page may
 show bounded FileIndex-derived recognition and business-status feedback, but must never use
 FileIndex to enumerate physical entries, resolve a selected path, construct source authority,
 expose credentials or grant execution authority. After a terminal Organize result, the backend
-automatically synchronizes that item outcome to FileIndex; no other Files-page action may introduce
-FileIndex.
+automatically synchronizes that item outcome to FileIndex. A known direct file-operation result may
+also reconcile display state, but FileIndex never authorizes the operation and reconciliation
+failure never replays Storage mutation.
 
 ## Acceptance
 
@@ -282,8 +329,8 @@ The future implementation is accepted only when all of the following are true:
    it is not waived as a design preference.
 2. The exact visible Chinese labels, row order, values, selected states, drawer state and control
    order above are present.
-3. The Files page preserves existing read-only, ResourceLibrary, authorization and Storage
-   boundaries.
+3. The old dark horizontal shell is replaced by the reference light shared shell across V2 without
+   creating a Files-only navigation model or breaking existing route/auth/deep-link behavior.
 4. The page has bounded loading, empty, unauthorized, forbidden, unavailable and malformed-data
       states with action-oriented recovery; error states do not rewrite the reference success state.
 5. `+ 添加资源库` creates a ResourceLibrary, and final `保存` invokes backend validation and
@@ -291,11 +338,15 @@ The future implementation is accepted only when all of the following are true:
 6. FileIndex may supply only bounded recognition/business-status feedback for display, and every
       terminal Organize item attempts an automatic FileIndex synchronization without replaying media
       mutation when synchronization fails.
-7. Other page screenshots and route behavior remain unchanged. No shared-shell change is accepted
-      without proof of this condition.
-8. The implementation contains no unrelated backend, persistence, provider or Storage capability
-      change; focused authority changes required by ResourceLibrary save/activation and
-      post-Organize FileIndex synchronization remain within this page journey.
+7. Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit, Upload and Download
+   complete through direct, low-friction backend-authoritative commands with explicit destructive/
+   overwrite intent, bounded selection/recursion, partial-outcome recovery and
+   `OrganizerExecutor`-only mutation. Download remains zero-mutation.
+8. Non-Files V2 business journeys and route behavior remain functional inside the intentionally
+      replaced shared shell, and V1 `/ui` remains unchanged.
+9. The implementation contains no unrelated provider, Storage-adapter or identity-system change;
+      focused direct-file, ResourceLibrary activation and post-mutation reconciliation behavior
+      stays within the revised Files journey.
 
 Required browser evidence, visual diff tooling and any implementation Task belong to a later B
 Task. This document does not claim that the image has already been implemented.

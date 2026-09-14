@@ -14,14 +14,15 @@ V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 33 — Operations Workspace — PASS / CLOSED
 Slice 33 Base: 827c36b410687e41b1da53ba6475d8c03a47dbfd
 Slice 33 Implementation Head: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
-Active large Slice: Slice 37 — Files Page Visual Fidelity
+Active large Slice: Slice 37 — Files Workspace, Common File Management and V2 Shell
 Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32 and 33 are closed. Slice 37 is the current focused Files
-page effort. The previously planned Slice 34–36 boundaries are retired from the current Roadmap;
-their historical references remain historical and do not change the stable requirements layer.
+product requirements. Slices 30, 31, 32 and 33 are closed. Slice 37 replaces the prior V2 shell
+presentation and completes the Files workspace. The previously planned Slice 34–36 boundaries are
+retired from the current Roadmap; their historical references remain historical and do not change
+the stable requirements layer.
 
 ## Stable V2 requirements
 
@@ -37,6 +38,10 @@ their historical references remain historical and do not change the stable requi
 | V2-MIG-001 | Existing `/api/v1/*` and shared application behavior remain authoritative during migration. | V2 UI and V1 UI use the same API semantics, validation, permissions, state transitions and safety gates. |
 | V2-MIG-002 | V1 `/ui` and the V2 migration surface may coexist until parity and cutover acceptance. | The V1 UI remains available during migration, and a separate V2 entry is used until the approved cutover. |
 | V2-SAFE-001 | Read-only V2 UI actions remain zero-side-effect. | A read, refresh or status view does not create Jobs/Tasks, invoke a Provider or mutate Storage unless a later explicitly approved journey says otherwise. |
+| V2-SHELL-001 | V2 uses one shared reference-aligned operator shell across all V2 routes. | The light left rail/top bar in `docs/pics/文件页.png` replaces the earlier dark horizontal shell; Files does not create a parallel navigation model, existing route/auth/deep-link semantics remain shared, and non-Files business journeys remain functional inside the new chrome. |
+| V2-FILES-001 | Files is a live-Storage ResourceLibrary browser and a complete common file-management surface. | An authorized operator can Create Folder/Text File, Rename, Copy, Move, Delete, Edit an allowlisted bounded text file, Upload and Download eligible files/directories, with bounded multi-selection where meaningful, without entering the media-organize policy pipeline. |
+| V2-FILES-002 | Direct file management is low friction but backend authoritative. | A direct command needs no Organize Preview, recognition/metadata/naming/classification stages or raw execution token; it still enforces RBAC, explicit destructive/overwrite intent, Active ResourceLibrary confinement, Storage capability, stale/conflict checks, audit and `OrganizerExecutor`-only mutation. |
+| V2-FILES-003 | Direct file operations preserve truthful state and bounded recovery. | Known success refreshes from live Storage; invalid path/name/content, unsupported capability, conflict, stale source, root/unbounded directory scope, transfer/verification failure, denied permission or uncertain effect remains item-specific and is never silently overwritten/deleted or automatically replayed. |
 | V2-DEPLOY-001 | Production remains operable without a Node runtime server. | Node may build the frontend, while the existing Python/MediaFlow application serves the built static assets and API. |
 | V2-MIG-003 | Final V1 UI retirement requires explicit parity and cutover acceptance. | `/ui` is not removed merely because a V2 route or partial migration exists; parity, accessibility and migration evidence are required first. |
 
@@ -78,6 +83,24 @@ boundaries are.
   recovery state and never authorizes replay of an uncertain Storage mutation.
 - Browsing, selection, ResourceLibrary configuration and Preview admission must not otherwise
   introduce a FileIndex dependency.
+- Files exposes Create Folder/Text File, Rename, Copy, Move, Delete, allowlisted bounded text Edit,
+  Upload and Download. Mutations use explicitly selected Active source/destination
+  ResourceLibraries and relative paths and execute only through the backend `OrganizerExecutor`;
+  Download is a confined zero-mutation stream.
+- Direct file commands do not run the media Organize pipeline or require its Preview/execution-token
+  ceremony. Conflicts default to no overwrite, Delete requires one explicit permanent-effect
+  confirmation, and Replace/Edit Save are explicit overwrite intents bound to current Storage state.
+- Bounded selection and bounded directory recursion preserve per-item outcomes. Same-Storage
+  operations require advertised native capability; cross-Storage Copy is explicit, and cross-Storage
+  Move is an explicit Copy/verify/Delete-source compound operation that never deletes the source
+  after failed verification and never masquerades as a fallback.
+- File/directory-tree Upload is bounded and streamed with safe relative paths and per-item outcomes.
+  File/directory Download is a bounded read;
+  multi-item/directory download may use a streamed archive that is never written into managed
+  Storage. Unbounded recursion and arbitrary binary/media editing remain outside this requirement.
+- A known direct-operation result may reconcile bounded FileIndex display state after Storage
+  outcome is recorded. FileIndex does not authorize the operation, and reconciliation failure does
+  not replay it.
 - FileIndex-backed compatibility and legacy operation paths may remain elsewhere in the product,
   but they are not valid physical-listing, source-identity or execution dependencies of the
   ResourceLibrary Files page. The bounded display-feedback exception and terminal-result
@@ -88,8 +111,10 @@ boundaries are.
 - The sole visual reference is [`docs/pics/文件页.png`](pics/文件页.png) at `1536 x 1024`.
 - The exact page composition, copy, data fixture, drawer state and screenshot acceptance are
   defined in [`file-page-visual-spec.md`](file-page-visual-spec.md).
-- This visual contract narrows the current implementation focus only; it does not move authority
-  into the frontend or make FileIndex a source/execution authority. Focused backend/application
-  behavior for ResourceLibrary save/activation and terminal Organize-result synchronization is
-  part of the confirmed Files journey; unrelated routes and mutation paths remain unchanged.
-- Non-Files pages and their existing routes remain outside the current Roadmap focus and unchanged.
+- The reference left navigation rail and top bar replace the previous dark horizontal V2 shell
+  through the single shared shell used by every V2 route. This is not a Files-only alternate shell.
+- This visual contract does not move authority into the frontend or make FileIndex a source or
+  execution authority. Focused backend behavior for direct file commands, ResourceLibrary
+  save/activation and post-mutation reconciliation is part of the confirmed Files journey.
+- Non-Files business features and routes remain outside the current Roadmap focus, but their shared
+  shell pixels intentionally change and must remain functionally compatible.

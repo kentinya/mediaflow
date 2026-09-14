@@ -185,12 +185,15 @@ activation.
 ### Current
 
 Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
-Storage-relative directory/file views. Listings are lazy, deterministic and read-only, with confined
-roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path access. This
-Files surface uses live Storage as the physical file source. It may additionally show a bounded
-FileIndex-derived recognition/business-status projection, but FileIndex does not enumerate the
-physical listing and does not provide source or execution authority. Viewing it does not recursively
-scan Storage or create work merely by viewing it.
+Storage-relative directory/file views. Current listings are lazy, deterministic and read-only,
+with confined roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path
+access. Active Slice 37 adds Create Folder/Text File, Rename, Copy, Move, Delete, supported bounded
+text Edit, Upload and Download commands to this Files workspace, with bounded multi-selection where
+meaningful. Live Storage remains the physical source and authority. Files may
+additionally show a bounded FileIndex-derived recognition/business-status projection or reconcile
+that projection after a known mutation, but FileIndex does not enumerate the physical listing and
+does not provide source or execution authority. Viewing it does not recursively scan Storage or
+create work merely by viewing it.
 
 ### Journey
 
@@ -200,16 +203,41 @@ scan Storage or create work merely by viewing it.
   root/breadcrumb, bounded live entries, pagination, provider/error state and, when available,
   bounded recognition/business-status feedback. FileIndex membership, occurrence, fingerprint and
   other authority fields are not Files-page display state.
-- **Action:** browse a directory, select a bounded file/directory scope, refresh or continue to the
-  shared Scan/Preview/Organize journey.
+- **Action:** browse a directory, select a bounded file/directory scope, refresh, create a folder or
+  text file, rename/copy/move/delete eligible content, edit supported bounded text, upload/download
+  bounded content, or continue to the shared Scan/Preview/Organize journey.
 - **Success:** the operator reaches an exact ResourceLibrary-relative source/scope without using
-  FileIndex as source authority or granting mutation authority; a new ResourceLibrary becomes
-  browseable only after the backend has successfully activated its complete configuration.
-- **Failure:** missing root, permission, timeout, provider or path-escape failures identify the
-  affected Storage-relative request and remain read-only.
+  FileIndex as source authority; a common file command refreshes the live listing after its audited
+  per-item results, and a new ResourceLibrary becomes browseable only after the backend has successfully
+  activated its complete configuration.
+- **Failure:** missing root, permission, timeout, provider, capability, conflict, stale-entry or
+  path-escape failures identify the affected Storage-relative request and do not imply success.
 - **Recovery:** correct the configured Storage/path, retry the bounded read, or correct and resubmit
-  a failed ResourceLibrary save. A failed save leaves the previous Active runtime intact; browsing
-  and selection do not start an automatic scan, Provider request, Task or Storage mutation.
+  a failed ResourceLibrary save or direct command. A failed save leaves the previous Active runtime
+  intact; browsing and selection do not start an automatic scan, Provider request, Task or Storage
+  mutation, and an uncertain mutation is never replayed automatically.
+
+### Common file management from Files
+
+- **Goal:** perform ordinary, bounded maintenance without entering the media-organize workflow.
+- **Entry:** use the Files toolbar, selection action bar or one live entry's action menu.
+- **Visible state:** exact source/destination ResourceLibraries and relative paths, operation,
+  relevant capabilities, bounded selection/impact, per-item transfer progress and concise conflict,
+  stale or partial-state explanations; text editing shows bounded text rather than a media editor.
+- **Action:** create a folder or supported text file; rename, copy, move or delete one/bounded-many
+  files/directories; save supported text; upload bounded selected files/directories; or download
+  bounded files/directories.
+- **Success:** the backend revalidates RBAC, selected Active Storage bindings, confinement,
+  capability and current entry evidence; OrganizerExecutor performs requested mutations with
+  independent results, Download streams a confined read, and Files returns to refreshed live truth.
+- **Failure:** unsupported capability/type, root or unbounded deletion, destination conflict,
+  transfer limit/verification failure, stale evidence, denied authority or uncertain execution fails
+  closed with independent affected-item state and a safe next action.
+- **Recovery:** refresh and retry only known-safe items, choose another name/destination, inspect and
+  resolve partial transfers, reconfirm current delete/replace scope, or reopen changed text before
+  saving. Cross-Storage Move never deletes its source before verified Copy. These commands do not
+  require organize recognition, metadata, naming/classification, Preview or execution-token
+  ceremony, but retain mandatory mutation invariants. Download is a confined zero-mutation read.
 
 ### Add ResourceLibrary from Files
 
@@ -432,7 +460,8 @@ operator shell, centralized information architecture, shared route/authenticatio
 read-only Library journey and the complete Operations workspace. Slice 33's accepted Worker
 correction reconstructs the exact pinned source authority across the resident Worker boundary and
 fails closed before mutation when source evidence cannot be proved. Slice 37 is now the only active
-large Slice and focuses exclusively on the Files page visual reference in
+large Slice: it replaces the old V2 shell presentation with the shared shell shown in the Files
+reference and completes the Files workspace defined by
 [`file-page-visual-spec.md`](file-page-visual-spec.md). The previously planned later migration
 boundaries are not current work commitments.
 
@@ -535,24 +564,36 @@ boundaries are not current work commitments.
 ## Files Journey Update — 2026-09-14
 
 The Files journey is: choose or create a ResourceLibrary, browse its directories, inspect live
-Storage entries and any bounded FileIndex recognition/business-status feedback, select one or more
-files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in
-Operations. The `+ 添加资源库` action creates a ResourceLibrary; its final `保存` action wraps the
-existing managed configuration validation and activation flow on the server. A successful save
-publishes a new immutable Active runtime; any error rejects the save and preserves the prior Active
-runtime.
+Storage entries and any bounded FileIndex recognition/business-status feedback, perform bounded
+common Create Folder/Text File/Rename/Copy/Move/Delete/supported text Edit/Upload/Download actions,
+or select one or more files to create a zero-mutation organize Preview, confirm the reviewed result,
+and follow progress in Operations. The
+`+ 添加资源库` action creates a ResourceLibrary; its final `保存` action wraps the existing managed
+configuration validation and activation flow on the server. A successful save publishes a new
+immutable Active runtime; any error rejects the save and preserves the prior Active runtime.
 
-FileIndex is allowed only as a display-feedback source for business status and as the automatic
-post-Organize synchronization target. The Files-originated organize Preview still derives
-SourceIdentity from live Storage and does not resolve the selected path through FileIndex. Browsing,
-selection, ResourceLibrary configuration and Preview admission must not otherwise introduce a
-FileIndex dependency.
+Common file management is deliberately lower-friction than media organization: it does not invoke
+recognition, metadata, naming/classification, organize Preview or execution-token review. It still
+requires backend RBAC, Active Storage binding, path confinement, provider capability and current
+entry checks, explicit Delete/Replace/Save intent, OrganizerExecutor-only mutation and audit-safe
+results. Bounded batch/recursive work preserves per-item outcomes; cross-Storage Move is explicit
+Copy/verify/Delete with source preservation on failed verification; Download remains zero-mutation.
+
+FileIndex is allowed only as a display-feedback source for business status and as a post-mutation
+reconciliation target. The Files-originated organize Preview and direct file commands still derive
+authority from live Storage and do not resolve the selected path through FileIndex. Browsing,
+selection, ResourceLibrary configuration and command admission must not otherwise introduce a
+FileIndex dependency; failed reconciliation cannot silently replay a Storage mutation.
 
 ## Files Page Visual Fidelity Update — 2026-09-14
 
 Slice 37 makes [`docs/pics/文件页.png`](pics/文件页.png) the sole visual reference for the V2 Files
-page at `1536 x 1024`. The page-local shell composition, ResourceLibrary summary, directory tree,
-file table, selection footer and open `添加资源库` drawer are specified in
-[`file-page-visual-spec.md`](file-page-visual-spec.md). The reference success state is a
-pixel-level acceptance target; loading, empty, permission, provider and configuration-activation
-failures must remain bounded recovery states. Other pages and their journeys are frozen.
+page and shared V2 shell at `1536 x 1024`. The reference light navigation rail and top bar replace
+the previous dark horizontal shell across supported V2 routes; this is a complete shared-shell
+replacement, not a Files card rendered inside the old shell. The Files composition,
+ResourceLibrary summary, directory tree, file table, selection footer, row actions and open
+`添加资源库` drawer are specified in [`file-page-visual-spec.md`](file-page-visual-spec.md). The
+reference success state is a pixel-level acceptance target; loading, empty, permission, provider,
+direct-command and configuration-activation failures remain bounded recovery states. Other pages'
+business journeys and backend behavior are frozen, while their shared outer chrome intentionally
+changes to the replacement shell.
