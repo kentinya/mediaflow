@@ -82,7 +82,7 @@ test("direct deep entry redirects to the in-shell connection boundary without an
   await page.goto("/ui-v2/dashboard");
   // Shell context is present on the connection boundary.
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
-  await expect(page.getByText("Operator workspace")).toBeVisible();
+  await expect(page.getByText("MediaFlow", { exact: true })).toBeVisible();
   // The allowlisted destination was recorded and the operator redirected to
   // the existing memory-only connection interaction.
   await expect(page).toHaveURL(/\/ui-v2\/$/);
@@ -127,9 +127,10 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   await expect(
     page.getByRole("heading", { name: "Library", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Open Storage files" }),
-  ).toHaveAttribute("href", "/ui-v2/library/files");
+  await expect(page.getByRole("link", { name: "Open Files" })).toHaveAttribute(
+    "href",
+    "/ui-v2/library/files",
+  );
   await expect(page).toHaveTitle("Library | MediaFlow");
   await expect(
     page.getByRole("link", { name: "Library", exact: true }),
@@ -281,8 +282,10 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
   await expect(
     page.getByRole("heading", { name: "Not authorized" }),
   ).toHaveCount(0);
-  // A 403 does not discard the still-authenticated principal.
-  await expect(page.getByText("API token active in memory")).toBeVisible();
+  // A 403 does not discard the still-authenticated principal; the shared
+  // account control remains available even though the status copy is not
+  // part of the reference top-bar composition.
+  await expect(page.getByRole("button", { name: "Disconnect" })).toBeVisible();
   await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
 
   // The smallest recovery action leads to the entry where the operator can
@@ -291,7 +294,9 @@ test("403 is visibly distinct from 401 and retains the authenticated principal",
     .getByRole("link", { name: "Connect a principal with read permission" })
     .click();
   await expect(page).toHaveURL(/\/ui-v2\/$/);
-  await expect(page.getByText("API token active in memory")).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Disconnect" }).first(),
+  ).toBeVisible();
   await page.getByRole("button", { name: "Disconnect" }).first().click();
   await expect(page.getByLabel("API token")).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);

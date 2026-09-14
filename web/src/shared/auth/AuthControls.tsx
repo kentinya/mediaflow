@@ -3,6 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../api/auth-context";
 import { authStore } from "../api/auth-store";
 import { Button } from "../ui/Button";
+import { Icon } from "../ui/Icons";
 
 /**
  * Shared authentication surface of the shell. It reports only whether an
@@ -31,8 +32,18 @@ export function AuthControls() {
   return (
     <div className="mf-auth-controls">
       <span className="mf-auth-state">API token active in memory</span>
-      <Button variant="secondary" onClick={disconnect}>
-        Disconnect
+      <Button
+        variant="secondary"
+        className="mf-button mf-button-secondary mf-account-button"
+        aria-label="Disconnect"
+        title="Disconnect"
+        onClick={disconnect}
+      >
+        <span className="mf-account-avatar" aria-hidden="true">
+          A
+        </span>
+        <span className="mf-account-name">admin</span>
+        <Icon name="chevron-down" />
       </Button>
     </div>
   );

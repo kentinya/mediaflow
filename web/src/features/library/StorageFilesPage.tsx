@@ -3,6 +3,8 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { useFilesSearch } from "../../shared/ui/AppShell";
+import { Icon } from "../../shared/ui/Icons";
 import type {
   StorageFilesEntry,
   StorageFilesModel,
@@ -24,6 +26,7 @@ interface FilesRowVm {
   readonly isDirectory: boolean;
   readonly traversable: boolean;
   readonly selectable: boolean;
+  readonly organizeEligible: boolean;
   readonly typeLabel: string;
   readonly sizeLabel: string;
   readonly modifiedLabel: string;
@@ -141,10 +144,6 @@ function displayStatus(value: string | null): {
   return { label: value, kind: "unknown" };
 }
 
-function isFileSelectable(entry: StorageFilesEntry): boolean {
-  return !entry.isDirectory && !entry.isSymlink;
-}
-
 function buildRows(
   model: StorageFilesModel,
   selected: ReadonlySet<string>,
@@ -157,15 +156,18 @@ function buildRows(
     )
     .map((entry) => {
       const status = displayStatus(entry.businessStatus);
-      const canOrganize =
-        !entry.isDirectory && entry.businessStatus === "pending";
+      const organizeEligible = entry.selectable === true;
       return {
         name: entry.name,
         path: entry.path,
         size: entry.size,
         isDirectory: entry.isDirectory,
         traversable: entry.traversable,
-        selectable: isFileSelectable(entry),
+        // General selection is intentionally independent from the backend
+        // organize admission flag. Future direct-file commands can attach
+        // their own capability checks to this bounded local selection set.
+        selectable: true,
+        organizeEligible,
         typeLabel: entryTypeLabel(entry),
         sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
         modifiedLabel: formatModified(entry.modifiedAt),
@@ -174,7 +176,7 @@ function buildRows(
         organizeStatusKind: status.kind,
         organizeAction: entry.isDirectory
           ? "打开"
-          : canOrganize
+          : organizeEligible && entry.businessStatus === "pending"
             ? "整理"
             : "查看",
         checked: selected.has(entry.path),
@@ -188,7 +190,7 @@ function formatSelectedSize(
 ): string {
   const total = model.entries.reduce(
     (sum, entry) =>
-      selected.has(entry.path) && isFileSelectable(entry)
+      selected.has(entry.path) && !entry.isDirectory && !entry.isSymlink
         ? sum + entry.size
         : sum,
     0,
@@ -212,26 +214,50 @@ function buildDirectoryTree(
     }
   }
   for (const entry of model.entries) {
-    if (entry.isDirectory && entry.traversable && !names.has(entry.path)) {
+    const parentPath = entry.path.split("/").slice(0, -1).join("/");
+    const currentDepth = model.path === "" ? 0 : model.path.split("/").length;
+    const hideCurrentChildren = currentDepth > 1 && parentPath === model.path;
+    if (
+      entry.isDirectory &&
+      entry.traversable &&
+      !hideCurrentChildren &&
+      !names.has(entry.path)
+    ) {
       names.set(entry.path, entry.name);
     }
   }
   return Array.from(names.entries())
     .sort((left, right) => {
-      const leftDepth = left[0].split("/").length;
-      const rightDepth = right[0].split("/").length;
-      if (leftDepth !== rightDepth) return leftDepth - rightDepth;
-      const leftName = left[0].split("/").at(-1) ?? left[1];
-      const rightName = right[0].split("/").at(-1) ?? right[1];
-      const leftOrder = DIRECTORY_PRESENTATION_ORDER.indexOf(leftName);
-      const rightOrder = DIRECTORY_PRESENTATION_ORDER.indexOf(rightName);
-      if (leftOrder !== rightOrder) {
-        return (
-          (leftOrder === -1 ? DIRECTORY_PRESENTATION_ORDER.length : leftOrder) -
-          (rightOrder === -1 ? DIRECTORY_PRESENTATION_ORDER.length : rightOrder)
+      const leftParts = left[0].split("/");
+      const rightParts = right[0].split("/");
+      for (
+        let index = 0;
+        index < Math.min(leftParts.length, rightParts.length);
+        index += 1
+      ) {
+        const leftOrder = DIRECTORY_PRESENTATION_ORDER.indexOf(
+          leftParts[index] ?? "",
         );
+        const rightOrder = DIRECTORY_PRESENTATION_ORDER.indexOf(
+          rightParts[index] ?? "",
+        );
+        if (leftOrder !== rightOrder) {
+          return (
+            (leftOrder === -1
+              ? DIRECTORY_PRESENTATION_ORDER.length
+              : leftOrder) -
+            (rightOrder === -1
+              ? DIRECTORY_PRESENTATION_ORDER.length
+              : rightOrder)
+          );
+        }
+        if (leftParts[index] !== rightParts[index]) {
+          return (leftParts[index] ?? "").localeCompare(
+            rightParts[index] ?? "",
+          );
+        }
       }
-      return left[0].localeCompare(right[0]);
+      return leftParts.length - rightParts.length;
     })
     .map(([path, name]) => ({
       name,
@@ -297,8 +323,11 @@ function DirectoryTree({
             currentPath === "" ? "mf-tree-row is-selected" : "mf-tree-row"
           }
         >
-          <span className="mf-tree-icon" aria-hidden="true">
-            ☁
+          <span className="mf-tree-disclosure" aria-hidden="true">
+            <Icon name="chevron-down" />
+          </span>
+          <span className="mf-tree-icon mf-tree-icon-cloud" aria-hidden="true">
+            <Icon name="storage" />
           </span>
           <button
             type="button"
@@ -319,8 +348,19 @@ function DirectoryTree({
             }
             style={{ paddingLeft: node.depth * 16 + "px" }}
           >
+            <span className="mf-tree-disclosure" aria-hidden="true">
+              {nodes.some(
+                (candidate) =>
+                  candidate.path !== node.path &&
+                  candidate.path.startsWith(node.path + "/"),
+              ) ? (
+                <Icon name="chevron-down" />
+              ) : (
+                <Icon name="chevron-right" />
+              )}
+            </span>
             <span className="mf-tree-icon" aria-hidden="true">
-              📁
+              <Icon name="folder" />
             </span>
             <button
               type="button"
@@ -373,8 +413,46 @@ function GridView({
   );
 }
 
+function FileRowIcon({ row }: { readonly row: FilesRowVm }) {
+  if (row.isDirectory) {
+    return (
+      <span className="mf-file-icon mf-file-icon-folder" aria-hidden="true">
+        <Icon name="folder" />
+      </span>
+    );
+  }
+  if (row.typeLabel === "视频") {
+    return (
+      <span
+        className={`mf-file-thumbnail mf-file-thumbnail-${row.name.toLowerCase().includes("behind") ? "behind" : "avatar"}`}
+        aria-hidden="true"
+      >
+        <Icon name="video" />
+      </span>
+    );
+  }
+  if (row.typeLabel === "图片") {
+    return (
+      <span
+        className={`mf-file-thumbnail mf-file-thumbnail-${row.name.toLowerCase().includes("poster") ? "poster" : row.name.toLowerCase().includes("fanart") ? "fanart" : "sample"}`}
+        aria-hidden="true"
+      >
+        <Icon name="image" />
+      </span>
+    );
+  }
+  return (
+    <span className="mf-file-icon mf-file-icon-document" aria-hidden="true">
+      <Icon name="file" />
+    </span>
+  );
+}
+
 function LibrarySummary({
   libraryName,
+  libraries,
+  selectedLibraryId,
+  onLibraryChange,
   enabled,
   storageName,
   rootPath,
@@ -382,6 +460,9 @@ function LibrarySummary({
   totalSize,
 }: {
   readonly libraryName: string;
+  readonly libraries: readonly SystemResourceLibrary[];
+  readonly selectedLibraryId: string;
+  readonly onLibraryChange: (id: string) => void;
   readonly enabled: boolean;
   readonly storageName: string;
   readonly rootPath: string;
@@ -397,11 +478,25 @@ function LibrarySummary({
   return (
     <div className="mf-library-summary mf-card">
       <span className="mf-summary-icon" aria-hidden="true">
-        📁
+        <Icon name="folder" />
       </span>
       <div className="mf-summary-text">
         <div className="mf-summary-title">
           <strong>{libraryName}</strong>
+          {libraries.length > 1 ? (
+            <select
+              aria-label="选择资源库"
+              className="mf-summary-library-select"
+              value={selectedLibraryId}
+              onChange={(event) => onLibraryChange(event.target.value)}
+            >
+              {libraries.map((library) => (
+                <option key={library.id} value={library.id}>
+                  {library.name ?? library.id}
+                </option>
+              ))}
+            </select>
+          ) : null}
           {enabled && <span className="mf-pill mf-pill-enabled">已启用</span>}
         </div>
         <span>存储: {storageName}</span>
@@ -442,6 +537,8 @@ function failureDetail(kind: string, path: string): string {
 
 function FileBrowseView({
   model,
+  libraries,
+  selectedLibraryId,
   selected,
   tree,
   view,
@@ -451,6 +548,7 @@ function FileBrowseView({
   page,
   canPrev,
   onViewChange,
+  onLibraryChange,
   onDiscoverDirectories,
   onToggle,
   onToggleAll,
@@ -464,6 +562,8 @@ function FileBrowseView({
   onReturnRoot,
 }: {
   readonly model: StorageFilesModel;
+  readonly libraries: readonly SystemResourceLibrary[];
+  readonly selectedLibraryId: string;
   readonly selected: ReadonlySet<string>;
   readonly tree: readonly DirectoryNodeVm[];
   readonly view: FilesView;
@@ -473,6 +573,7 @@ function FileBrowseView({
   readonly page: number;
   readonly canPrev: boolean;
   readonly onViewChange: (view: FilesView) => void;
+  readonly onLibraryChange: (id: string) => void;
   readonly onDiscoverDirectories: (paths: readonly string[]) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
@@ -486,8 +587,16 @@ function FileBrowseView({
   readonly onReturnRoot: () => void;
 }) {
   useEffect(() => {
+    const currentDepth = model.path === "" ? 0 : model.path.split("/").length;
     const paths = model.entries
-      .filter((entry) => entry.isDirectory && entry.traversable)
+      .filter((entry) => {
+        const parentPath = entry.path.split("/").slice(0, -1).join("/");
+        return (
+          entry.isDirectory &&
+          entry.traversable &&
+          !(currentDepth > 1 && parentPath === model.path)
+        );
+      })
       .map((entry) => entry.path);
     if (paths.length > 0) onDiscoverDirectories(paths);
   }, [model, onDiscoverDirectories]);
@@ -495,13 +604,13 @@ function FileBrowseView({
     () => buildRows(model, selected, query),
     [model, selected, query],
   );
-  const checkedCount = model.entries.filter(
-    (entry) => selected.has(entry.path) && isFileSelectable(entry),
+  const selectedRows = rows.filter((row) => selected.has(row.path));
+  const selectedCount = selectedRows.length;
+  const organizeCount = selectedRows.filter(
+    (row) => row.organizeEligible,
   ).length;
-  const selectableRows = rows.filter((row) => row.selectable);
   const allChecked =
-    selectableRows.length > 0 &&
-    selectableRows.every((row) => selected.has(row.path));
+    rows.length > 0 && rows.every((row) => selected.has(row.path));
   const library = model.resourceLibrary;
   const libraryName = library?.name ?? "资源库";
   const hasNext = model.hasNext && model.nextCursor !== null;
@@ -515,6 +624,9 @@ function FileBrowseView({
       </div>
       <LibrarySummary
         libraryName={libraryName}
+        libraries={libraries}
+        selectedLibraryId={selectedLibraryId}
+        onLibraryChange={onLibraryChange}
         enabled={library?.enabled === true}
         storageName={model.storageName}
         rootPath={library?.rootPath ?? ""}
@@ -537,7 +649,7 @@ function FileBrowseView({
                 aria-label="返回资源库根目录"
                 onClick={onReturnRoot}
               >
-                ⌂
+                <Icon name="home" />
               </button>
               {model.breadcrumbs.map((crumb) =>
                 crumb.isRoot ? null : (
@@ -561,7 +673,7 @@ function FileBrowseView({
                 onClick={onRefresh}
                 disabled={previewing}
               >
-                ⟳ 刷新
+                <Icon name="refresh" /> 刷新
               </button>
               <button
                 className={
@@ -574,7 +686,7 @@ function FileBrowseView({
                 aria-label="列表视图"
                 onClick={() => onViewChange("list")}
               >
-                ☰
+                <Icon name="list" />
               </button>
               <button
                 className={
@@ -587,7 +699,7 @@ function FileBrowseView({
                 aria-label="网格视图"
                 onClick={() => onViewChange("grid")}
               >
-                ▦
+                <Icon name="grid" />
               </button>
             </div>
           </div>
@@ -643,14 +755,12 @@ function FileBrowseView({
                       className={row.checked ? "is-selected" : undefined}
                     >
                       <td className="mf-col-check">
-                        {row.selectable && (
-                          <input
-                            type="checkbox"
-                            aria-label={"选择 " + row.name}
-                            checked={row.checked}
-                            onChange={() => onToggle(row.path)}
-                          />
-                        )}
+                        <input
+                          type="checkbox"
+                          aria-label={"选择 " + row.name}
+                          checked={row.checked}
+                          onChange={() => onToggle(row.path)}
+                        />
                       </td>
                       <td className="mf-cell-name">
                         {row.isDirectory && row.traversable ? (
@@ -659,17 +769,11 @@ function FileBrowseView({
                             className="mf-link-button"
                             onClick={() => onOpenPath(row.path)}
                           >
-                            <span className="mf-tree-icon" aria-hidden="true">
-                              📁
-                            </span>{" "}
-                            {row.name}
+                            <FileRowIcon row={row} /> {row.name}
                           </button>
                         ) : (
                           <span>
-                            <span className="mf-tree-icon" aria-hidden="true">
-                              🎞
-                            </span>{" "}
-                            {row.name}
+                            <FileRowIcon row={row} /> {row.name}
                           </span>
                         )}
                       </td>
@@ -718,6 +822,15 @@ function FileBrowseView({
                             查看
                           </button>
                         )}
+                        <button
+                          type="button"
+                          className="mf-row-more"
+                          aria-label={`更多操作 ${row.name}`}
+                          title="更多文件操作将在后续任务提供"
+                          disabled
+                        >
+                          <Icon name="more" />
+                        </button>
                       </td>
                     </tr>
                   ))}
@@ -729,16 +842,26 @@ function FileBrowseView({
       </div>
       <footer className="mf-files-footer">
         <span className="mf-selection-summary">
-          已选择 {checkedCount} 个文件
-          {checkedCount > 0
+          已选择 {selectedCount} 个
+          {selectedCount === 1 && selectedRows[0]?.isDirectory
+            ? "文件夹"
+            : selectedRows.some((row) => row.isDirectory)
+              ? "项目"
+              : "文件"}
+          {selectedCount > 0
             ? "（" + formatSelectedSize(model, selected) + "）"
             : ""}
         </span>
+        {selectedCount > 0 && organizeCount !== selectedCount ? (
+          <span className="mf-selection-hint">
+            可进入整理预览 {organizeCount} 个；其余选择保留给文件管理操作。
+          </span>
+        ) : null}
         <button
           className="mf-button mf-button-primary"
           type="button"
           onClick={onPreviewSelected}
-          disabled={checkedCount === 0 || previewing}
+          disabled={organizeCount === 0 || previewing}
         >
           批量整理
         </button>
@@ -746,7 +869,7 @@ function FileBrowseView({
           className="mf-button mf-button-secondary"
           type="button"
           onClick={onClearSelection}
-          disabled={checkedCount === 0}
+          disabled={selectedCount === 0}
         >
           取消选择
         </button>
@@ -779,17 +902,9 @@ function FileBrowseView({
 
 function FilesHeader({
   libraries,
-  selectedLibraryId,
-  query,
-  onLibraryChange,
-  onQueryChange,
   onOpenDrawer,
 }: {
   readonly libraries: readonly SystemResourceLibrary[];
-  readonly selectedLibraryId: string;
-  readonly query: string;
-  readonly onLibraryChange: (id: string) => void;
-  readonly onQueryChange: (query: string) => void;
   readonly onOpenDrawer: () => void;
 }) {
   return (
@@ -801,30 +916,6 @@ function FilesHeader({
         </p>
       </div>
       <div className="mf-files-header-actions">
-        <input
-          type="search"
-          className="mf-files-page-search"
-          placeholder="搜索文件、文件夹或媒体库..."
-          aria-label="搜索文件、文件夹或媒体库"
-          value={query}
-          onChange={(event) => onQueryChange(event.target.value)}
-        />
-        <div className="mf-library-picker">
-          <label htmlFor="mf-files-library">资源库</label>
-          <select
-            id="mf-files-library"
-            value={selectedLibraryId}
-            onChange={(event) => onLibraryChange(event.target.value)}
-            disabled={libraries.length === 0}
-          >
-            {libraries.length === 0 && <option value="">无已启用资源库</option>}
-            {libraries.map((library) => (
-              <option key={library.id} value={library.id}>
-                {library.name ?? library.id}
-              </option>
-            ))}
-          </select>
-        </div>
         <button
           className="mf-button mf-button-primary"
           type="button"
@@ -862,7 +953,6 @@ function AddResourceLibraryDrawer({
       <div className="mf-files-drawer-header">
         <div>
           <h2>添加资源库</h2>
-          <p>按步骤创建一个新的 ResourceLibrary。</p>
         </div>
         <button
           type="button"
@@ -910,6 +1000,17 @@ function AddResourceLibraryDrawer({
               onChange={(event) => setResourceId(event.target.value)}
             />
             <small>仅支持小写字母、数字、连字符，创建后不可修改</small>
+            <label className="mf-files-toggle" htmlFor="mf-library-enabled">
+              <span>状态</span>
+              <input
+                id="mf-library-enabled"
+                type="checkbox"
+                checked={enabled}
+                onChange={(event) => setEnabled(event.target.checked)}
+              />
+              <span>{enabled ? "启用" : "停用"}</span>
+            </label>
+            <small>关闭后将在资源库列表中隐藏，但不会删除数据</small>
           </div>
         )}
         {step === 2 && (
@@ -963,16 +1064,6 @@ function AddResourceLibraryDrawer({
                 <dd>{rootPath || "未填写"}</dd>
               </div>
             </dl>
-            <label className="mf-files-toggle">
-              <span>状态</span>
-              <input
-                type="checkbox"
-                checked={enabled}
-                onChange={(event) => setEnabled(event.target.checked)}
-              />
-              <span>{enabled ? "启用" : "停用"}</span>
-            </label>
-            <small>关闭后将在资源库列表中隐藏，但不会删除数据</small>
             <p className="mf-files-drawer-note">
               保存和激活将在后续 Task 接入。当前面板不会写入配置或修改 Storage。
             </p>
@@ -1013,6 +1104,7 @@ function AddResourceLibraryDrawer({
 export function StorageFilesPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
+  const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
   const [selectedLibraryId, setSelectedLibraryId] = useState("");
   const [path, setPath] = useState(initialBrowse.path);
@@ -1029,7 +1121,6 @@ export function StorageFilesPage() {
   const [knownDirectoryPaths, setKnownDirectoryPaths] = useState<
     readonly string[]
   >([]);
-  const [query, setQuery] = useState("");
   const [view, setView] = useState<FilesView>("list");
   const [drawerOpen, setDrawerOpen] = useState(true);
 
@@ -1139,19 +1230,14 @@ export function StorageFilesPage() {
     resetBrowseState();
   };
 
-  const changeQuery = (value: string) => {
-    setQuery(value);
-    setSelectedFiles(new Set());
-  };
+  useEffect(() => {
+    return subscribeToQueryChange(() => setSelectedFiles(new Set()));
+  }, [subscribeToQueryChange]);
 
   return (
     <div className="mf-files-page">
       <FilesHeader
         libraries={libraries}
-        selectedLibraryId={activeLibraryId}
-        query={query}
-        onLibraryChange={changeLibrary}
-        onQueryChange={changeQuery}
         onOpenDrawer={() => setDrawerOpen(true)}
       />
       <AuthorizedReadBoundary
@@ -1216,6 +1302,9 @@ export function StorageFilesPage() {
                   </div>
                   <LibrarySummary
                     libraryName={currentLibrary.name ?? currentLibrary.id}
+                    libraries={currentLibraries}
+                    selectedLibraryId={activeLibraryId}
+                    onLibraryChange={changeLibrary}
                     enabled={currentLibrary.enabled}
                     storageName={
                       currentStatus.storages.find(
@@ -1244,6 +1333,9 @@ export function StorageFilesPage() {
                   </div>
                   <LibrarySummary
                     libraryName={currentLibrary.name ?? currentLibrary.id}
+                    libraries={currentLibraries}
+                    selectedLibraryId={activeLibraryId}
+                    onLibraryChange={changeLibrary}
                     enabled={currentLibrary.enabled}
                     storageName={
                       currentStatus.storages.find(
@@ -1305,6 +1397,8 @@ export function StorageFilesPage() {
                     return (
                       <FileBrowseView
                         model={model}
+                        libraries={libraries}
+                        selectedLibraryId={activeLibraryId}
                         selected={selectedFiles}
                         tree={buildDirectoryTree(model, [
                           ...knownDirectoryPaths,
@@ -1321,6 +1415,7 @@ export function StorageFilesPage() {
                         page={cursorHistory.length + 1}
                         canPrev={cursorHistory.length > 0}
                         onViewChange={setView}
+                        onLibraryChange={changeLibrary}
                         onDiscoverDirectories={(paths) => {
                           setKnownDirectoryPaths((current) => {
                             const next = new Set(current);
@@ -1342,9 +1437,9 @@ export function StorageFilesPage() {
                         }}
                         onToggleAll={() => {
                           setSelectedFiles((current) => {
-                            const selectablePaths = model.entries
-                              .filter(isFileSelectable)
-                              .map((entry) => entry.path);
+                            const selectablePaths = model.entries.map(
+                              (entry) => entry.path,
+                            );
                             const every = selectablePaths.every((entryPath) =>
                               current.has(entryPath),
                             );
@@ -1360,7 +1455,13 @@ export function StorageFilesPage() {
                         onPreviewSelected={() =>
                           previewMutation.mutate({
                             libraryId: currentLibrary.id,
-                            paths: Array.from(selectedFiles),
+                            paths: model.entries
+                              .filter(
+                                (entry) =>
+                                  selectedFiles.has(entry.path) &&
+                                  entry.selectable === true,
+                              )
+                              .map((entry) => entry.path),
                           })
                         }
                         onClearSelection={() => setSelectedFiles(new Set())}
