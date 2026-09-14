@@ -713,20 +713,26 @@ adapter options, and secrets remain excluded from public status evidence.
 The core pipeline, persistent recovery/conflict decisions, attachments, read-only API queries,
 persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, Slice 27 daily
 manual-operations journey, and Slice 28 Webhook definition/test/delivery-recovery journey are
-complete. The existing delivery engine is managed through Web/API without being reimplemented. The current
-Files tab browses configured Storage through bounded Storage-relative views, while FileIndex remains
-the separate indexed discovery and processing-disposition surface.
+complete. The existing delivery engine is managed through Web/API without being reimplemented. The
+current Files tab browses configured Storage through bounded ResourceLibrary-relative live Storage
+views. It does not use FileIndex for display. Files-originated organize Preview also does not use
+FileIndex: the page submits the ResourceLibrary ID and relative path, and the server derives
+SourceIdentity from live Storage before entering the existing zero-mutation Preview path. FileIndex
+remains the separate indexed discovery, processing-disposition and compatibility surface.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
 Task/Job/Scheduler/Notification/Log views, and bounded conflict, Recognition, Metadata, and
 Classification review actions through the same application and permission boundaries as the API.
-General Jobs submit bounded Scan/Preview/Organize work within their respective authority, while
-bounded Files/FileIndex entry points support manual Scan/Preview/Organize and explicit recovery.
+General Jobs submit bounded Scan/Preview/Organize work within their respective authority. The
+ResourceLibrary Files entry point uses live Storage for display and Files-originated Preview/Organize;
+the FileIndex entry point remains a separate indexed discovery and compatibility path.
 Scan and Preview remain zero-mutation; Organize requires the existing separate one-shot execution
 authority and confirmation. Current-source Organize execution uses the Preview-pinned Storage ID,
 source path and Storage-derived fingerprint directly, so Worker validation is `Storage.stat(path)`
-plus fingerprint comparison rather than a FileIndex relookup. Legacy preview may create formal
+plus fingerprint comparison rather than a FileIndex relookup. Legacy FileIndex-backed operation
+routes remain available for compatibility but are not used by the ResourceLibrary Files path. Legacy
+preview may create formal
 review/conflict state; the newer manual and Automation Definition Previews are analysis-only.
 Processing Worker readiness and ownership are visible through the read-only Operator Web/API
 projections without widening execution authority.

@@ -68,7 +68,7 @@ Scan, Preview, Organize, Provider work or navigation to an unrelated page.
 | RO-1 | **Reference fidelity.** | A controlled `1536 x 1024` screenshot of the Files success state matches `docs/pics/文件页.png` pixel for pixel after fonts and assets are loaded. |
 | RO-2 | **Exact Files composition.** | The shell, page header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values, status/actions, selection footer and pagination appear in the exact order and visual hierarchy defined by the reference. |
 | RO-3 | **Exact add-library drawer.** | The right drawer, three-step indicator, step-1 form labels/placeholders/help text, toggle and footer controls match the reference; the drawer remains local to Files and does not redefine Configuration authority. |
-| RO-4 | **ResourceLibrary journey.** | Files browsing remains ResourceLibrary-scoped and Storage-relative. Reads, selection, refresh and presentation changes remain bounded and zero-mutation; FileIndex is not required for ordinary Files-page display. |
+| RO-4 | **ResourceLibrary journey.** | Files browsing and Files-originated organize Preview remain ResourceLibrary-scoped and Storage-relative. The page reads live Storage without FileIndex, and its organize Preview submits only `resourceLibraryId` plus ResourceLibrary-relative path; the server builds SourceIdentity from live Storage and does not resolve through FileIndex. |
 | RO-5 | **Actionable state and recovery.** | Loading, empty, unauthorized, forbidden, unavailable, invalid-path, malformed and Storage-error states preserve page context and provide a safe next action without fabricated rows or automatic mutation. |
 | RO-6 | **Other pages frozen.** | Dashboard, Operations, Review, Configuration, Notifications, Settings, V1 `/ui`, shared route semantics and shared backend authority do not change as part of Files-page work. |
 | RO-7 | **Evidence and scope discipline.** | The visual spec remains linked to the unchanged reference image, implementation evidence is browser-based, and no code, test, schema, provider, Storage or persistence change is included in this documentation-only activation. |
@@ -107,6 +107,10 @@ Any future code change must prove that frozen pages retain their previous screen
   or create Tasks, Jobs, Provider requests or organize work.
 - All file operations remain behind Storage and ResourceLibrary boundaries; arbitrary host paths are
   rejected.
+- Files-originated organize Preview and its continuation do not use FileIndex. The browser submits
+  only ResourceLibrary identity and relative path; backend admission derives SourceIdentity from
+  live Storage and retains the existing Preview, intent, revalidation and OrganizerExecutor
+  authority.
 - Only `OrganizerExecutor` may mutate Storage. Files-page controls never grant mutation authority.
 - Any future organize continuation reuses the existing Preview, explicit intent, conflict,
   capability, source revalidation, configuration snapshot and OrganizerExecutor checks.
@@ -115,6 +119,8 @@ Any future code change must prove that frozen pages retain their previous screen
 - The browser does not persist the API-principal Bearer token or receive raw execution authority.
 - FileIndex membership, fingerprints, occurrence IDs, claim tokens and plan hashes are not ordinary
   Files-page display authority.
+- FileIndex-backed compatibility and legacy operation routes may remain elsewhere in the codebase,
+  but they are not an allowed dependency of the ResourceLibrary Files display or organize path.
 - No FFprobe/FFmpeg dependency, content probing, provider switch, schema migration or persistence
   rewrite is introduced by this Slice.
 - Existing V1 `/ui`, V2 non-Files routes, API/RBAC behavior and production serving remain intact.

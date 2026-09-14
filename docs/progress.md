@@ -275,6 +275,23 @@ and the legacy archive. They are intentionally not duplicated here or translated
 - Added Storage-source Preview admission that builds SourceIdentity from live Storage.stat without requiring a FileIndex row.
 - Preserved Worker execution revalidation against Preview SourceIdentity and live Storage.
 
+## 2026-09-14 — Files display and organize authority confirmation
+
+- Confirmed from the current code that `RuntimeFilesBrowserService.browse_resource_library` reads
+  the enabled ResourceLibrary's live Storage root and intentionally does not consult its optional
+  FileIndex composition argument.
+- Confirmed that `StorageFilesPage` sends `resourceLibraryId`, relative path and cursor for Files
+  reads; the typed Files model excludes FileIndex membership, `fileId`, scan status, occurrence and
+  fingerprint fields.
+- Confirmed that Files-originated organize Preview sends `scopeKind=file`,
+  `resourceLibraryId` and `relativePath`. `create_current_from_storage` resolves the bound
+  Storage, calls `Storage.stat()`, creates SourceIdentity and enters `create_from_sources` before
+  the existing zero-mutation Preview planner.
+- Confirmed by focused tests that a Storage-source Preview succeeds without a FileIndex row and
+  that Files and FileIndex remain separate API surfaces.
+- FileIndex-backed compatibility and legacy operation paths remain in the codebase but are not
+  valid dependencies for the ResourceLibrary Files display or organize path.
+
 ## 2026-09-14 — Slice 37 Files Page Visual Fidelity Activation
 
 - Retired the previously planned Slice 34–36 roadmap boundary from current planning; historical

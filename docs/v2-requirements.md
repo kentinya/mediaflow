@@ -62,6 +62,11 @@ boundaries are.
 - FileIndex catalog/detail journeys are not ordinary UI-V2 user routes.
 - Files entries must not expose FileIndex membership, fileId, scan status, occurrence IDs, fingerprints, claim tokens, or plan hashes.
 - Manual organize Preview admission from UI-V2 Files uses `resourceLibraryId` and `relativePath`; the server creates SourceIdentity and OrganizePlan.
+- The UI-V2 Files path is FileIndex-independent for both display and organize Preview. The server
+  resolves the Active ResourceLibrary/Storage binding and derives source identity from live
+  Storage; it does not re-resolve the selected path through FileIndex.
+- FileIndex-backed compatibility and legacy operation paths may remain elsewhere in the product,
+  but they are not valid dependencies of the ResourceLibrary Files page.
 
 ## UI-V2 Files Visual Contract — 2026-09-14
 
