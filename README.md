@@ -298,7 +298,7 @@ Cross-storage MOVE streams Copy, verifies the destination, and only then deletes
 
 The developer strategy inspector remains available as `strategy-test`.
 
-`config draft-import` stages the current JSON as Draft; the managed lifecycle is Draft →
+`config draft-import` stages the current JSON as Draft; the general managed lifecycle is Draft →
 Validate/Test → explicit Activate. Before the first activation, `config status` reports
 `JSON_BOOTSTRAP`. After activation, the managed revision ID/digest is the workflow runtime authority.
 New Tasks/Jobs and resident Scheduler emissions pin that identity, and a
@@ -308,6 +308,13 @@ details. The resident API captures one immutable Active binding per request, so 
 execute admission, schedules/status, and Job pins cannot mix revisions. A queued Job whose saved
 published revision is unavailable fails before workflow construction and exposes actionable,
 secret-free recovery evidence in API/Web detail.
+
+The Files page has a focused `+ 添加资源库` flow. Its final Save submits one complete ResourceLibrary
+candidate; the backend uses the current Active configuration as its base, performs the existing
+validation and checked-activation flow internally, and publishes a new immutable Active runtime only
+on success. Any field, dependency, Storage-check, activation or runtime-load error rejects the Save
+and preserves the previous Active runtime. The general Configuration page still exposes the
+explicit lifecycle for broader configuration work.
 
 The Configuration tab in the authenticated Operator UI is forms-first. Editing Active explicitly
 creates a successor Draft from the exact immutable snapshot; typed cards and forms provide the
@@ -715,10 +722,13 @@ persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, Sl
 manual-operations journey, and Slice 28 Webhook definition/test/delivery-recovery journey are
 complete. The existing delivery engine is managed through Web/API without being reimplemented. The
 current Files tab browses configured Storage through bounded ResourceLibrary-relative live Storage
-views. It does not use FileIndex for display. Files-originated organize Preview also does not use
-FileIndex: the page submits the ResourceLibrary ID and relative path, and the server derives
-SourceIdentity from live Storage before entering the existing zero-mutation Preview path. FileIndex
-remains the separate indexed discovery, processing-disposition and compatibility surface.
+views and may show a bounded FileIndex recognition/business-status feedback projection. It does not
+use FileIndex to enumerate physical files, validate paths or authorize Preview/Organize. Files-
+originated organize Preview submits the ResourceLibrary ID and relative path, and the server derives
+SourceIdentity from live Storage before entering the existing zero-mutation Preview path. After a
+terminal Organize result, the backend synchronizes the known outcome to FileIndex; no other Files
+feature introduces a FileIndex dependency. FileIndex remains the indexed discovery,
+processing-disposition and compatibility surface.
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,

@@ -22,7 +22,7 @@ only in [the development workflow](development-workflow.md).
 | 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PASS / CLOSED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PASS / CLOSED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
-| 37 — Files Page Visual Fidelity | Reproduce the approved `docs/pics/文件页.png` Files page at exact reference fidelity while preserving the existing ResourceLibrary and safety boundaries | ACTIVE | 33 and existing Files foundation |
+| 37 — Files Page and ResourceLibrary Workflow | Reproduce the approved `docs/pics/文件页.png` Files page, add the bounded ResourceLibrary Save-and-activate journey, show bounded FileIndex business-status feedback, and synchronize terminal Organize results without introducing a new security model | ACTIVE | 33 and existing Files foundation |
 
 ## Current boundary
 
