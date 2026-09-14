@@ -121,7 +121,9 @@ export function PreviewNewPage() {
     rawScopeKind === "file" || rawScopeKind === "resourceLibrary"
       ? (rawScopeKind as "file" | "resourceLibrary")
       : null;
-  const relativePath = searchParams.relativePath ? String(searchParams.relativePath) : undefined;
+  const relativePath = searchParams.relativePath
+    ? String(searchParams.relativePath)
+    : undefined;
   const resourceLibraryId = searchParams.resourceLibraryId
     ? String(searchParams.resourceLibraryId)
     : undefined;

@@ -69,9 +69,7 @@ describe("AuthBoundary", () => {
     expect(
       await screen.findByRole("heading", { name: "Library" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Open Files" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Files" })).toBeVisible();
   });
 
   it("replaces an earlier intention with the operator's newest route choice", async () => {

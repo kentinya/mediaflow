@@ -129,9 +129,6 @@ describe("destination model", () => {
       );
     });
 
-
-
-
     it("keeps only the submitted Operations collection filters", () => {
       expect(
         allowlistedDestinationSearch(

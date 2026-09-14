@@ -8,11 +8,15 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`. Slice 37 is now `ACTIVE` after A's 2026-09-14 documentation-only
-activation for Files-page visual fidelity; there is no active implementation Task. Slice 33's
-closure entries and the prior planned Slice 34–36 references remain historical and are not erased.
-The current Files-page contract and visual reference are maintained in [`SLICE.md`](../SLICE.md)
-and [`file-page-visual-spec.md`](file-page-visual-spec.md).
+V2 remains active on `main`. Slice 37 is `ACTIVE` after A's 2026-09-14 rescope from a
+Files-page-only/frozen-shell interpretation to **Files Workspace, Common File Management and V2
+Shell**. The revised Contract makes the canonical reference's light rail/top bar the replacement
+shared shell and requires Create Folder/Text File, Rename/Copy/Move/Delete/text Edit/Upload/Download while retaining
+the existing ResourceLibrary and organize authority. B must reconcile the current Task state
+against the revised Contract; this A rescope does not edit `TASK.md`. Slice 33's closure entries and the prior planned
+Slice 34–36 references remain historical and are not erased. The current Files and shell contract
+is maintained in [`SLICE.md`](../SLICE.md) and
+[`file-page-visual-spec.md`](file-page-visual-spec.md).
 The current Contract and Roadmap boundary are maintained in [`SLICE.md`](../SLICE.md) and
 [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry and does not alter the
 historical 2026-09-13 closure entry below.

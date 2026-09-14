@@ -22,9 +22,7 @@ describe("AppShell", () => {
       "page",
     );
     expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Open Files" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Open Files" })).toBeVisible();
     expect(document.title).toBe("Library | MediaFlow");
     expect(
       screen.getByRole("link", { name: "Skip to main content" }),

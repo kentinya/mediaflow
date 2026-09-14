@@ -48,7 +48,13 @@ describe("normalizeSystemStatus", () => {
         },
       ],
       resourceLibraries: [
-        { id: "resources", storageId: "local-1", name: null, rootPath: "", enabled: true },
+        {
+          id: "resources",
+          storageId: "local-1",
+          name: null,
+          rootPath: "",
+          enabled: true,
+        },
       ],
     });
   });
@@ -69,6 +75,43 @@ describe("normalizeSystemStatus", () => {
     };
     expect(normalizeSystemStatus(payload).resourceLibraries[0].name).toBe(
       "Visible name",
+    );
+  });
+
+  it("accepts an empty ResourceLibrary root_path as the Storage root", () => {
+    // The backend ResourceLibrary.storagePath is optional and defaults to "".
+    // An empty root is a valid Storage root, not malformed status data.
+    const payload = {
+      ...systemStatusPayload,
+      resource_libraries: {
+        ...systemStatusPayload.resource_libraries,
+        items: [
+          { ...systemStatusPayload.resource_libraries.items[0], root_path: "" },
+        ],
+      },
+    };
+    expect(normalizeSystemStatus(payload).resourceLibraries[0]).toMatchObject({
+      id: "resources",
+      rootPath: "",
+      enabled: true,
+    });
+  });
+
+  it("keeps a non-empty ResourceLibrary root_path bounded", () => {
+    const payload = {
+      ...systemStatusPayload,
+      resource_libraries: {
+        ...systemStatusPayload.resource_libraries,
+        items: [
+          {
+            ...systemStatusPayload.resource_libraries.items[0],
+            root_path: "incoming",
+          },
+        ],
+      },
+    };
+    expect(normalizeSystemStatus(payload).resourceLibraries[0].rootPath).toBe(
+      "incoming",
     );
   });
 

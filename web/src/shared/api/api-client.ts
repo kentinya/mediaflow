@@ -309,9 +309,12 @@ export async function fetchStorageFiles(
   if (!isSafeScopedIdentifier(options.resourceLibraryId)) {
     return {
       ok: false,
-      failure: failureFromErrorEnvelope("storage_browser_resource_library_not_found", {
-        category: "resource_library_not_found",
-      }),
+      failure: failureFromErrorEnvelope(
+        "storage_browser_resource_library_not_found",
+        {
+          category: "resource_library_not_found",
+        },
+      ),
     };
   }
   const headers: Record<string, string> = { Accept: "application/json" };
