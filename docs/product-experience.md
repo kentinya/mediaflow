@@ -179,19 +179,20 @@ activation.
 Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
 Storage-relative directory/file views. Listings are lazy, deterministic and read-only, with confined
 roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path access. This
-Files surface is distinct from the indexed FileIndex and does not recursively scan Storage or create
-work merely by viewing it.
+Files surface is distinct from the indexed FileIndex, does not read FileIndex membership for its
+display and does not recursively scan Storage or create work merely by viewing it.
 
 ### Journey
 
 - **Goal:** inspect the real configured Storage and choose a bounded file or ResourceLibrary scope.
-- **Entry:** **Files** navigation, Dashboard or a ResourceLibrary/FileIndex action.
-- **Visible state:** Storage identity, relative root/breadcrumb, bounded entries, pagination and
-  provider/error state; whether an entry is indexed is shown separately from Storage membership.
+- **Entry:** **Files** navigation, Dashboard or a ResourceLibrary action.
+- **Visible state:** ResourceLibrary identity, its configured Storage binding, relative
+  root/breadcrumb, bounded live entries, pagination and provider/error state. FileIndex membership,
+  scan status, occurrence and fingerprint are not Files-page display state.
 - **Action:** browse a directory, select a bounded file/directory scope, refresh or continue to the
   shared Scan/Preview/Organize journey.
-- **Success:** the operator reaches an exact Storage-relative source/scope without confusing it with
-  FileIndex state or granting mutation authority.
+- **Success:** the operator reaches an exact ResourceLibrary-relative source/scope without
+  consulting FileIndex or granting mutation authority.
 - **Failure:** missing root, permission, timeout, provider or path-escape failures identify the
   affected Storage-relative request and remain read-only.
 - **Recovery:** correct the configured Storage/path or retry the bounded read; no automatic scan,
@@ -228,7 +229,8 @@ or mutate Storage.
 
 ### Current V1
 
-- **Goal:** review and execute a bounded, explicit one-shot organization for selected indexed files.
+- **Goal:** review and execute a bounded, explicit one-shot organization for the generic indexed
+  V1 path. The V2 ResourceLibrary Files path is separate and does not use FileIndex.
 - **Entry:** select current Files and choose manual organize.
 - **Visible state:** durable intent, choices, exact Preview, pinned configuration identity, source and
   destination, attachments, conflicts, capabilities, destructive implications and per-item state.
@@ -253,11 +255,16 @@ asking the operator to issue a CLI token or copy a raw secret. The resident Work
 execution under a fence and only OrganizerExecutor may mutate Storage.
 
 The V1 one-shot token mechanism remains available for API automation, local administration,
-debugging, compatibility and emergency/support use. For real current-source organization, the
-reviewed Preview is the operator-facing source of truth: it pins Storage ID, source path and source
-fingerprint, and the Worker validates that exact Storage object directly before mutation rather than
-looking the file up again through FileIndex. RBAC, revalidation, bounded authority, limits, audit,
-conflict handling and no automatic replay of uncertain effects remain mandatory.
+debugging, compatibility and emergency/support use. For the V2 Files-originated path, the page
+sends only `resourceLibraryId` and a ResourceLibrary-relative path. The server resolves the Active
+ResourceLibrary/Storage binding, calls `Storage.stat()`, builds the immutable SourceIdentity and
+creates the zero-mutation Preview through `create_from_sources`; it does not resolve the selected
+file through FileIndex or accept browser-supplied `fileId`, occurrence or fingerprint authority.
+The reviewed Preview is the operator-facing source of truth: it pins Storage ID, source path and
+source fingerprint, and the Worker validates that exact Storage object directly before mutation.
+RBAC, revalidation, bounded authority, limits, audit, conflict handling and no automatic replay of
+uncertain effects remain mandatory. Older FileIndex-backed operation routes remain compatibility
+surfaces outside this Files-originated journey.
 
 ## Manual operations and file lifecycle
 
@@ -265,14 +272,20 @@ conflict handling and no automatic replay of uncertain effects remain mandatory.
 
 Slice 27 delivers the bounded daily-operations journey across real Storage Files, FileIndex state,
 manual Scan/Preview/Organize, conflict/review/recovery continuation and Processing Worker readiness.
+The current V2 Files page narrows its own path further: both display and Files-originated organize
+Preview use ResourceLibrary/live Storage authority, while FileIndex remains a separate indexed
+discovery and compatibility surface.
 
 - **Goal:** start from a real configured Storage or from MediaFlow's indexed processing view and
   safely complete a file- or ResourceLibrary-scoped manual operation.
-- **Entry:** **Files** for bounded real-Storage browsing, **FileIndex** for indexed discovery and
-  processing state, or a ResourceLibrary manual-action entry.
-- **Visible state:** Storage-relative directory contents, whether an entry is indexed, orthogonal
-  scan/discovery state and processing disposition, current source occurrence/fingerprint, prior
-  result relevance, worker readiness, Preview findings and any real execution blocker.
+- **Entry:** **Files** for bounded live-Storage browsing, **FileIndex** for indexed discovery and
+  processing state, or a ResourceLibrary manual-action entry. These are separate authority paths;
+  Files-originated Preview/Organize does not query FileIndex.
+- **Visible state:** Files shows ResourceLibrary-relative live entries; FileIndex shows indexed
+  discovery, scan/discovery state and processing disposition. Current source
+  occurrence/fingerprint, prior result relevance, worker readiness, Preview findings and any real
+  execution blocker belong to the indexed/processing surfaces that expose them, not to the
+  ResourceLibrary Files display.
 - **Action:** choose bounded **Scan**, **Preview** or **Organize**; Preview records only inspectable
   findings, while Organize requires the correct one-shot manual authority. Explicit Reprocess is
   available when a current source occurrence is otherwise protected from accidental duplicate work.
@@ -482,7 +495,7 @@ boundaries are not current work commitments.
 
 ## Files Journey Update — 2026-09-13
 
-The Files journey is now: choose ResourceLibrary, browse its directories, select one or more files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in Operations. Storage is described only as the ResourceLibrary backing implementation. FileIndex terminology is not part of the ordinary Files page experience.
+The Files journey is now: choose ResourceLibrary, browse its directories, select one or more files, create a zero-mutation organize Preview, confirm the reviewed result, and follow progress in Operations. Storage is described only as the ResourceLibrary backing implementation. FileIndex terminology is not part of the ordinary Files page experience, and the Files-originated organize Preview does not resolve the selected path through FileIndex.
 
 ## Files Page Visual Fidelity Update — 2026-09-14
 

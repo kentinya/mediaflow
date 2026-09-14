@@ -10,6 +10,41 @@ asset and must not be edited, regenerated, compressed, recolored or replaced. Th
 round changes documentation only; it does not change the frontend, backend, tests or the behavior
 of any other page.
 
+## Current Code Status — 2026-09-14
+
+The current implementation already establishes the data and authority boundary required by this
+page:
+
+- Files discovery is ResourceLibrary-scoped. The page loads enabled ResourceLibraries from the
+  Active runtime, then reads `GET /api/v1/resource-libraries/{resourceLibraryId}/files` with only
+  a ResourceLibrary-relative `path` and server-issued `cursor`.
+- The runtime Files browser reads live Storage through the configured ResourceLibrary root. Its
+  optional `file_index` constructor argument is retained only for older composition code and is
+  intentionally not consulted by the UI-V2 Files projection.
+- The typed Files model excludes FileIndex membership, `fileId`, scan status, occurrence and
+  fingerprint details. Extra FileIndex-shaped fields in a response are ignored rather than
+  becoming page authority.
+- Files-originated organization Preview is also FileIndex-independent. The page submits
+  `scopeKind: "file"`, `resourceLibraryId` and `relativePath` to
+  `POST /api/v1/operations/previews`. The server maps the path through the Active
+  ResourceLibrary/Storage binding, calls `Storage.stat()`, creates the immutable
+  `SourceIdentity`, and enters the existing zero-mutation Preview planner.
+- The Files-originated Preview path then calls `create_from_sources`; it does not resolve a
+  `fileId`, read a FileIndex row or echo occurrence/fingerprint authority from the browser. The
+  resulting Preview remains the source of truth for the existing server-authoritative organize
+  continuation and Worker revalidation.
+- The current page permits local selection of multiple entries, but its Preview mutation currently
+  rejects more than one path with `Batch Preview is planned`; only one selected file can proceed
+  through the implemented Preview path.
+
+The codebase still contains FileIndex-backed compatibility and legacy operation paths, including
+indexed discovery and older file-scoped APIs. Those paths are not the authority for the
+ResourceLibrary Files page and must not be reintroduced into its display or organize flow.
+
+The reference image remains a visual target rather than a claim of completed visual parity. The
+current implementation does not yet provide every screenshot element, including the exact Chinese
+copy, table columns/status presentation or the open `添加媒体库` drawer.
+
 ## Scope
 
 Slice 37 owns one operator-facing page:
@@ -216,8 +251,9 @@ The page must be documented and later implemented as one vertical journey:
 | Recovery | Retry the bounded read, return to the ResourceLibrary root, select another enabled ResourceLibrary or leave the page; no automatic mutation, Provider call or unrelated-page navigation is created |
 
 Viewing, refreshing, browsing and selecting are read-only. Any later organize action must continue
-through the existing Preview, explicit intent and backend authority boundaries. The page must never
-accept arbitrary host paths, expose credentials or use FileIndex-only identity as mutation authority.
+through the existing Preview, explicit intent and backend authority boundaries. The Files page must
+never accept arbitrary host paths, use FileIndex for display, resolve a selected path through
+FileIndex, expose credentials or use FileIndex-only identity as mutation authority.
 
 ## Acceptance
 
