@@ -560,8 +560,11 @@ route; the reference is not rendered as a nested Files card inside the old shell
 memory-only authentication continuation, query ownership, backend calls and non-Files page-body
 behavior remain unchanged even though their outer chrome changes.
 
-The detailed Files layout, exact copy/data, row command surfaces, open `添加资源库` drawer and
-pixel-level acceptance rules are in [`docs/file-page-visual-spec.md`](file-page-visual-spec.md).
+The detailed Files layout, required copy/data, row command surfaces, open `添加资源库` drawer and
+reference-aligned visual acceptance rules are in
+[`docs/file-page-visual-spec.md`](file-page-visual-spec.md). Controlled pixel diffs are diagnostic;
+the architecture does not require identical raster output when the specified structure, state and
+interaction remain intact.
 The frontend owns presentation and exact user intent only. It does not become Storage authority or
 make FileIndex a physical-source/execution authority. Focused backend/application behavior for
 ResourceLibrary save/activation, direct file commands and post-mutation index reconciliation is

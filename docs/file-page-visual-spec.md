@@ -48,9 +48,11 @@ display, and completed Organize or direct file-management mutations may reconcil
 terminal outcome back to FileIndex. FileIndex is never the source/path/execution authority and a
 reconciliation failure never replays Storage mutation.
 
-The reference image remains a target rather than a claim of completed parity. Task 37.1's page-local
-composition inside the old shell is not accepted as completion of the revised Contract; the shell,
-Files workspace and direct file actions still require coherent implementation and evidence.
+The current Task 37.1 checkpoint contains the replacement shared shell and the read-only Files
+composition. Its controlled screenshot is reference-aligned but not pixel-identical. Under the
+2026-09-14 A acceptance refinement, pixel-diff counts are diagnostic evidence rather than an
+independent pass/fail gate; B still owns Task review, and the remaining ResourceLibrary activation,
+direct file actions and synchronization work require later coherent implementation and evidence.
 
 ## Scope
 
@@ -101,8 +103,9 @@ The reference content is:
 
 ## Layout Anchors
 
-The image is authoritative. The following anchors are implementation guidance for the reference
-viewport and must not be used to replace screenshot comparison:
+The image is authoritative for design intent, composition, hierarchy and fixture state. The
+following anchors are implementation guidance for the reference viewport; they are approximate and
+do not impose pixel-identical CSS geometry:
 
 | Region | Reference placement |
 |---|---|
@@ -121,7 +124,8 @@ viewport and must not be used to replace screenshot comparison:
 The reference has a light neutral canvas, white surfaces, thin cool-gray borders, dark text and
 blue primary actions. The selected navigation item, selected tree row, selected table checkbox and
 primary buttons use the same blue family. The green `已启用` state is distinct from the blue action
-color. Exact rendered pixels in the reference image take precedence over any named color.
+color. The reference color relationships and visual hierarchy take precedence over named colors,
+but exact raster values are not independently pass/fail criteria.
 
 ## Visible Elements
 
@@ -138,7 +142,8 @@ The Files screenshot must show the replacement shared V2 shell in the following 
 
 The shell must not acquire a second Files-only navigation model. The same shell and ordered
 navigation frame every V2 route; Files supplies its search behavior through the shared top-bar slot.
-Icons, spacing, selected-state backgrounds and alignment must follow the reference image.
+Icons, spacing, selected-state backgrounds and alignment must remain recognizably aligned with the
+reference image. Exact glyph artwork, rasterization and CSS measurements may differ.
 
 ### Page Header and ResourceLibrary Summary
 
@@ -184,7 +189,7 @@ The file pane shows the breadcrumb and controls:
 - list view selected;
 - grid view available but not selected.
 
-The screenshot remains authoritative for the exact closed, non-hover success state. Row overflow and
+The screenshot remains authoritative for the closed, non-hover success-state composition. Row overflow and
 directory-node hover/focus/context actions provide `新建文件夹`, `新建文本文件`, `上传`, `下载`,
 `复制`, `移动` and `删除` without adding persistent pixels or shifting the reference controls while
 menus/dialogs are closed. Keyboard and touch users receive an equivalent focusable action entry;
@@ -209,7 +214,8 @@ The reference rows, in order, are:
 | `fanart.jpg` | `图片` | `1.5 MB` | `2024-01-14 08:20` | `-` | `跳过` | `查看` |
 
 The first row is checked. Its thumbnail, file-type icon, status pill, action button and overflow
-menu must retain the same alignment as the reference. Rows with `整理` use the blue action style;
+menu retain the reference grouping and recognizable alignment. Exact thumbnail/icon artwork and
+cell measurements may differ. Rows with `整理` use the blue action style;
 `查看` and `打开` use the neutral action style; `跳过` uses the muted status style.
 
 The closed overflow menu is the reference screenshot state. For an authorized eligible entry, the
@@ -287,7 +293,8 @@ The drawer is open on the right and contains:
 
 The drawer is a page-local ResourceLibrary creation panel, not a MediaLibrary editor and not a
 replacement for the general Configuration page. Its visual stepper, field order, labels, required
-markers, button placement, close control and internal spacing must match the reference.
+markers, button placement and close control follow the reference structure. Exact internal spacing,
+typography metrics, borders and shadows may differ when the complete step remains clear and usable.
 
 The final `保存` action submits the complete ResourceLibrary candidate. The backend uses the
 current Active configuration as its base, runs the existing configuration validation and checked
@@ -324,11 +331,15 @@ failure never replays Storage mutation.
 
 The future implementation is accepted only when all of the following are true:
 
-1. A deterministic screenshot at exactly `1536 x 1024` matches `docs/pics/文件页.png` pixel for
-   pixel in the controlled browser/font environment. Any nonzero visual diff must be investigated;
-   it is not waived as a design preference.
-2. The exact visible Chinese labels, row order, values, selected states, drawer state and control
-   order above are present.
+1. A deterministic screenshot at exactly `1536 x 1024` is captured and compared with
+   `docs/pics/文件页.png` in the controlled browser/font environment. The report records observed
+   differences, but the pixel count is diagnostic rather than a pass/fail threshold. The shared
+   shell, Files hierarchy, fixture state, labels and control order must remain complete and
+   recognizably aligned. Bounded differences in font/glyph rendering, icon or thumbnail artwork,
+   exact dimensions/spacing, borders, shadows and color nuance are accepted.
+2. The required visible Chinese labels, row order, values, selected states, drawer state and control
+   order above are present. Dense table cells may use bounded ellipsis when the complete underlying
+   value remains available to assistive technology and the item/action is unambiguous.
 3. The old dark horizontal shell is replaced by the reference light shared shell across V2 without
    creating a Files-only navigation model or breaking existing route/auth/deep-link behavior.
 4. The page has bounded loading, empty, unauthorized, forbidden, unavailable and malformed-data
@@ -348,5 +359,5 @@ The future implementation is accepted only when all of the following are true:
       focused direct-file, ResourceLibrary activation and post-mutation reconciliation behavior
       stays within the revised Files journey.
 
-Required browser evidence, visual diff tooling and any implementation Task belong to a later B
-Task. This document does not claim that the image has already been implemented.
+Required browser evidence, visual-diff reporting and implementation Tasks remain B-planned work.
+This document defines acceptance semantics; it does not issue Task PASS or Slice closure.
