@@ -499,7 +499,7 @@ const SYSTEM_STATUS = {
     configuration_snapshot_digest: "digest-e2e-1",
   },
   storages: {
-    total: 2,
+    total: 3,
     truncated: false,
     items: [
       {
@@ -514,12 +514,33 @@ const SYSTEM_STATUS = {
         type: "openlist",
         read_only: false,
       },
+      {
+        id: "source-storage",
+        name: "source-storage",
+        type: "local",
+        read_only: true,
+      },
     ],
   },
   resource_libraries: {
-    total: 1,
+    total: 2,
     truncated: false,
-    items: [{ id: "resources", name: "Resources", storage_id: "local-media", root_path: "", enabled: true }],
+    items: [
+      {
+        id: "resources",
+        name: "Resources",
+        storage_id: "local-media",
+        root_path: "",
+        enabled: true,
+      },
+      {
+        id: "source",
+        name: "source",
+        storage_id: "source-storage",
+        root_path: "media/incoming",
+        enabled: true,
+      },
+    ],
   },
   media_libraries: { total: 1, truncated: false, items: [] },
   recognition_types: { total: 3, truncated: false, items: [] },
@@ -794,11 +815,179 @@ function fileIndexDocument(url) {
   };
 }
 
+// Deterministic reference-shaped Files fixtures (Slice 37). Directories use
+// backend `selectable` semantics (directory = selectable Organize scope).
+// Every entry stays secret-free and time-fixed so browser evidence is stable.
+const REFERENCE_MODIFIED_LATEST = "2024-01-15T10:30:00+00:00";
+const REFERENCE_MODIFIED_OLDER = "2024-01-14T08:20:00+00:00";
+
+function fileEntry(name, path, size, modifiedAt, options = {}) {
+  return {
+    name,
+    path,
+    type: "file",
+    entryType: "file",
+    size,
+    modifiedAt,
+    isDirectory: false,
+    isSymlink: false,
+    traversable: false,
+    selectable: options.selectable === true,
+    ...(options.selectable === true ? { selectKind: "file" } : {}),
+    ...(options.recognitionResult !== undefined
+      ? { recognitionResult: options.recognitionResult }
+      : {}),
+    ...(options.businessStatus !== undefined
+      ? { businessStatus: options.businessStatus }
+      : {}),
+  };
+}
+
+function directoryEntry(name, path, modifiedAt) {
+  return {
+    name,
+    path,
+    type: "directory",
+    entryType: "directory",
+    size: 0,
+    modifiedAt,
+    isDirectory: true,
+    isSymlink: false,
+    traversable: true,
+    selectable: true,
+    selectKind: "directory",
+  };
+}
+
+function referenceDirectoryEntries(path) {
+  if (path === "") {
+    return [
+      directoryEntry("Movies", "Movies", REFERENCE_MODIFIED_LATEST),
+      directoryEntry("TV", "TV", REFERENCE_MODIFIED_LATEST),
+      directoryEntry("Anime", "Anime", REFERENCE_MODIFIED_LATEST),
+      directoryEntry("Others", "Others", REFERENCE_MODIFIED_LATEST),
+      fileEntry("readme.txt", "readme.txt", 1024, REFERENCE_MODIFIED_LATEST),
+      fileEntry(
+        "sample.mkv",
+        "sample.mkv",
+        1_572_864_000,
+        REFERENCE_MODIFIED_LATEST,
+        {
+          selectable: true,
+          recognitionResult: "Sample",
+          businessStatus: "pending",
+        },
+      ),
+      fileEntry(
+        "Avatar.2009.1080p.mkv",
+        "Avatar.2009.1080p.mkv",
+        13_314_394_726,
+        REFERENCE_MODIFIED_LATEST,
+        {
+          selectable: true,
+          recognitionResult: "Avatar (2009)",
+          businessStatus: "pending",
+        },
+      ),
+    ];
+  }
+  if (path === "Movies") {
+    return [
+      directoryEntry(
+        "Avatar (2009)",
+        "Movies/Avatar (2009)",
+        REFERENCE_MODIFIED_LATEST,
+      ),
+      directoryEntry(
+        "Inception (2010)",
+        "Movies/Inception (2010)",
+        REFERENCE_MODIFIED_LATEST,
+      ),
+      directoryEntry(
+        "Interstellar (2014)",
+        "Movies/Interstellar (2014)",
+        REFERENCE_MODIFIED_LATEST,
+      ),
+      directoryEntry(
+        "Dune (2021)",
+        "Movies/Dune (2021)",
+        REFERENCE_MODIFIED_LATEST,
+      ),
+      fileEntry(
+        "Behind.The.Scenes.mkv",
+        "Movies/Behind.The.Scenes.mkv",
+        2_255_329_280,
+        REFERENCE_MODIFIED_OLDER,
+        { selectable: true, businessStatus: "pending" },
+      ),
+    ];
+  }
+  if (path === "Movies/Avatar (2009)") {
+    return [
+      fileEntry(
+        "Avatar.2009.1080p.mkv",
+        "Movies/Avatar (2009)/Avatar.2009.1080p.mkv",
+        13_314_394_726,
+        REFERENCE_MODIFIED_LATEST,
+        {
+          selectable: true,
+          recognitionResult: "Avatar (2009)",
+          businessStatus: "pending",
+        },
+      ),
+      fileEntry(
+        "Avatar.2009.nfo",
+        "Movies/Avatar (2009)/Avatar.2009.nfo",
+        4096,
+        REFERENCE_MODIFIED_LATEST,
+        { businessStatus: "skipped" },
+      ),
+      fileEntry(
+        "sample.jpg",
+        "Movies/Avatar (2009)/sample.jpg",
+        1_258_291,
+        REFERENCE_MODIFIED_LATEST,
+        { businessStatus: "skipped" },
+      ),
+      directoryEntry(
+        "Subtitles",
+        "Movies/Avatar (2009)/Subtitles",
+        REFERENCE_MODIFIED_LATEST,
+      ),
+      fileEntry(
+        "Behind.The.Scenes.mkv",
+        "Movies/Avatar (2009)/Behind.The.Scenes.mkv",
+        2_255_329_280,
+        REFERENCE_MODIFIED_OLDER,
+        { selectable: true, businessStatus: "pending" },
+      ),
+      fileEntry(
+        "Poster.jpg",
+        "Movies/Avatar (2009)/Poster.jpg",
+        876_544,
+        REFERENCE_MODIFIED_OLDER,
+        { businessStatus: "skipped" },
+      ),
+      fileEntry(
+        "fanart.jpg",
+        "Movies/Avatar (2009)/fanart.jpg",
+        1_572_864,
+        REFERENCE_MODIFIED_OLDER,
+        { businessStatus: "skipped" },
+      ),
+    ];
+  }
+  return [];
+}
+
 function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
+  const isReferenceLibrary = resourceLibraryId === "source";
   const storage =
     storageId === "remote-media"
       ? { id: "remote-media", name: "Remote media", type: "openlist" }
-      : { id: "local-media", name: "Local media", type: "local" };
+      : isReferenceLibrary
+        ? { id: "source-storage", name: "source-storage", type: "local" }
+        : { id: "local-media", name: "Local media", type: "local" };
   const isRoot = path === "";
   const segments = path === "" ? [] : path.split("/");
   const breadcrumbs = [
@@ -809,217 +998,23 @@ function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
       isRoot: false,
     })),
   ];
+  // Remote Storage keeps a tiny bounded fixture for unavailable-provider
+  // browsing evidence; reference-shaped directories live on local-media.
   const entries =
     storage.id === "remote-media"
       ? isRoot
         ? [
-            {
-              name: "remote.mkv",
-              path: "remote.mkv",
-              type: "file",
-              entryType: "file",
-              size: 1024,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: false,
-                memberships: [],
-                total: 0,
-                truncated: false,
-              },
-            },
+            fileEntry(
+              "remote.mkv",
+              "remote.mkv",
+              1024,
+              REFERENCE_MODIFIED_LATEST,
+            ),
           ]
         : []
-      : isRoot
-        ? [
-            {
-              name: "movies",
-              path: "movies",
-              type: "directory",
-              entryType: "directory",
-              size: 0,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: true,
-              isSymlink: false,
-              traversable: true,
-              selectable: true,
-              indexMembership: {
-                available: true,
-                indexed: false,
-                memberships: [],
-                total: 0,
-                truncated: false,
-              },
-            },
-            {
-              name: "show.mkv",
-              path: "show.mkv",
-              type: "file",
-              entryType: "file",
-              size: 1572864000,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: true,
-                memberships: [
-                  {
-                    fileId: "file-index-example",
-                    resourceLibraryId: "resources",
-                  },
-                ],
-                total: 1,
-                truncated: false,
-              },
-            },
-            {
-              name: "ambiguous.mkv",
-              path: "ambiguous.mkv",
-              type: "file",
-              entryType: "file",
-              size: 1572864000,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: true,
-                memberships: [
-                  {
-                    fileId: "file-index-example",
-                    resourceLibraryId: "resources",
-                  },
-                ],
-                total: 1,
-                truncated: false,
-              },
-            },
-            {
-              name: "unavailable.mkv",
-              path: "unavailable.mkv",
-              type: "file",
-              entryType: "file",
-              size: 1572864000,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: true,
-                memberships: [
-                  {
-                    fileId: "file-index-example",
-                    resourceLibraryId: "resources",
-                  },
-                ],
-                total: 1,
-                truncated: false,
-              },
-            },
-            {
-              name: "missing-link.mkv",
-              path: "missing-link.mkv",
-              type: "file",
-              entryType: "file",
-              size: 1572864000,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: true,
-                memberships: [
-                  {
-                    fileId: "file-index-example",
-                    resourceLibraryId: "resources",
-                  },
-                ],
-                total: 1,
-                truncated: false,
-              },
-            },
-            {
-              name: "malformed.mkv",
-              path: "malformed.mkv",
-              type: "file",
-              entryType: "file",
-              size: 1572864000,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: true,
-                memberships: [
-                  {
-                    fileId: "file-index-example",
-                    resourceLibraryId: "resources",
-                  },
-                ],
-                total: 1,
-                truncated: false,
-              },
-            },
-            {
-              name: "draft.mkv",
-              path: "draft.mkv",
-              type: "file",
-              entryType: "file",
-              size: 524288000,
-              modifiedAt: "2026-08-22T12:00:00+00:00",
-              isDirectory: false,
-              isSymlink: false,
-              traversable: false,
-              selectable: false,
-              indexMembership: {
-                available: true,
-                indexed: false,
-                memberships: [],
-                total: 0,
-                truncated: false,
-              },
-            },
-          ]
-        : path === "movies"
-          ? [
-              {
-                name: "movie.mkv",
-                path: "movies/movie.mkv",
-                type: "file",
-                entryType: "file",
-                size: 2097152000,
-                modifiedAt: "2026-08-22T12:00:00+00:00",
-                isDirectory: false,
-                isSymlink: false,
-                traversable: false,
-                selectable: false,
-                indexMembership: {
-                  available: false,
-                  indexed: false,
-                  memberships: [],
-                  total: 0,
-                  truncated: false,
-                },
-              },
-            ]
-          : [];
+      : referenceDirectoryEntries(path);
   const hasNext =
-    storage.id === "local-media" && (path === "" || Boolean(cursor));
+    storage.id !== "remote-media" && (path === "" || Boolean(cursor));
   return {
     revisionId: "rev-e2e-1",
     revision: { revisionId: "rev-e2e-1", version: 1, digest: "digest-e2e-1" },
@@ -1031,11 +1026,17 @@ function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
     },
     resourceLibrary: resourceLibraryId
       ? {
+          // The Files page renders the projection's bounded ResourceLibrary
+          // identity. The fake keeps the Active runtime identity coherent with
+          // the SYSTEM_STATUS fixture other frozen-page specs assert on.
           id: resourceLibraryId,
-          name: "Resources",
+          name: isReferenceLibrary ? "source" : "Resources",
           enabled: true,
-          rootPath: "",
+          rootPath: isReferenceLibrary ? "media/incoming" : "",
           storage: { ...storage, readOnly: false },
+          ...(isReferenceLibrary
+            ? { fileCount: 1248, totalSize: 324 * 1024 * 1024 * 1024 }
+            : {}),
         }
       : undefined,
     storage,
@@ -4552,7 +4553,10 @@ const server = createServer(async (req, res) => {
     sendJson(res, document.status, document.payload);
     return;
   }
-  if (url.pathname === "/api/v1/storage/files" || /^\/api\/v1\/resource-libraries\/[^/]+\/files$/.test(url.pathname)) {
+  if (
+    url.pathname === "/api/v1/storage/files" ||
+    /^\/api\/v1\/resource-libraries\/[^/]+\/files$/.test(url.pathname)
+  ) {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("GET required");
@@ -4579,10 +4583,21 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    const resourceMatch = url.pathname.match(/^\/api\/v1\/resource-libraries\/([^/]+)\/files$/);
-    const resourceLibraryId = resourceMatch ? decodeURIComponent(resourceMatch[1]) : null;
-    const storageId = resourceLibraryId ? "local-media" : url.searchParams.get("storageId");
-    if (resourceLibraryId !== null && resourceLibraryId !== "resources") {
+    const resourceMatch = url.pathname.match(
+      /^\/api\/v1\/resource-libraries\/([^/]+)\/files$/,
+    );
+    const resourceLibraryId = resourceMatch
+      ? decodeURIComponent(resourceMatch[1])
+      : null;
+    const storageId = resourceLibraryId
+      ? resourceLibraryId === "source"
+        ? "source-storage"
+        : "local-media"
+      : url.searchParams.get("storageId");
+    if (
+      resourceLibraryId !== null &&
+      !["resources", "source"].includes(resourceLibraryId)
+    ) {
       sendJson(res, 404, {
         error: {
           code: "storage_browser_resource_library_not_found",
@@ -4592,13 +4607,16 @@ const server = createServer(async (req, res) => {
             durableState: "active_runtime_preserved",
             sideEffects: "none",
             retrySafe: true,
-            nextAction: "reload the current Active runtime and choose an enabled ResourceLibrary",
+            nextAction:
+              "reload the current Active runtime and choose an enabled ResourceLibrary",
           },
         },
       });
       return;
     }
-    if (!["local-media", "remote-media"].includes(storageId)) {
+    if (
+      !["local-media", "remote-media", "source-storage"].includes(storageId)
+    ) {
       sendJson(res, 404, {
         error: {
           code: "storage_browser_storage_not_found",
@@ -4633,6 +4651,10 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    if (path === "malformed") {
+      sendJson(res, 200, { malformed: true });
+      return;
+    }
     if (path === "missing") {
       sendJson(res, 404, {
         error: {
@@ -4662,6 +4684,22 @@ const server = createServer(async (req, res) => {
             retrySafe: true,
             nextAction:
               "grant MediaFlow read/list permission, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
+    if (path === "unavailable") {
+      sendJson(res, 503, {
+        error: {
+          code: "storage_browser_provider_unavailable",
+          message: "Storage provider read failed",
+          details: {
+            category: "connection_failed",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "restore the Storage provider connection and retry",
           },
         },
       });
@@ -4702,7 +4740,11 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 200, filesDocument(path, cursor, storageId));
+    sendJson(
+      res,
+      200,
+      filesDocument(path, cursor, storageId, resourceLibraryId),
+    );
     return;
   }
   const detailMatch = url.pathname.match(
