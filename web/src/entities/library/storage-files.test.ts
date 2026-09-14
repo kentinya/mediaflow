@@ -16,7 +16,12 @@ const storageFilesPayload = {
     name: "Incoming resources",
     enabled: true,
     rootPath: "incoming",
-    storage: { id: "local-1", name: "Local media", type: "local", readOnly: false },
+    storage: {
+      id: "local-1",
+      name: "Local media",
+      type: "local",
+      readOnly: false,
+    },
   },
   path: "nested",
   breadcrumbs: [
@@ -71,7 +76,14 @@ describe("normalizeStorageFiles", () => {
       name: "Incoming resources",
       enabled: true,
       rootPath: "incoming",
-      storage: { id: "local-1", name: "Local media", type: "local", readOnly: false },
+      storage: {
+        id: "local-1",
+        name: "Local media",
+        type: "local",
+        readOnly: false,
+      },
+      fileCount: null,
+      totalSize: null,
     });
     expect(model.storageId).toBe("local-1");
     expect(model.path).toBe("nested");
@@ -94,11 +106,40 @@ describe("normalizeStorageFiles", () => {
     expect(model.retrySafe).toBe(true);
   });
 
+  it("normalizes optional bounded business projection without making it authority", () => {
+    const model = normalizeStorageFiles({
+      ...storageFilesPayload,
+      resourceLibrary: {
+        ...storageFilesPayload.resourceLibrary,
+        fileCount: 1248,
+        totalSize: 324 * 1024 * 1024 * 1024,
+      },
+      entries: [
+        {
+          ...storageFilesPayload.entries[0],
+          recognitionResult: "Avatar (2009)",
+          businessStatus: "pending",
+          fileId: "must-not-cross-boundary",
+        },
+      ],
+    });
+    expect(model.resourceLibrary?.fileCount).toBe(1248);
+    expect(model.resourceLibrary?.totalSize).toBe(324 * 1024 * 1024 * 1024);
+    expect(model.entries[0]?.recognitionResult).toBe("Avatar (2009)");
+    expect(model.entries[0]?.businessStatus).toBe("pending");
+    expect(model.entries[0]).not.toHaveProperty("fileId");
+  });
+
   it("accepts the compatibility storage object while still ignoring FileIndex fields", () => {
     const payload = {
       ...storageFilesPayload,
       resourceLibrary: undefined,
-      storage: { id: "local-1", name: "Local media", type: "local", readOnly: true },
+      storage: {
+        id: "local-1",
+        name: "Local media",
+        type: "local",
+        readOnly: true,
+      },
       nextCursor: null,
       hasNext: false,
       entries: [storageFilesPayload.entries[0]],
@@ -113,22 +154,46 @@ describe("normalizeStorageFiles", () => {
   it.each([
     ["non-object payload", "nope"],
     ["array payload", [storageFilesPayload]],
-    ["missing configuration", { ...storageFilesPayload, configuration: undefined }],
+    [
+      "missing configuration",
+      { ...storageFilesPayload, configuration: undefined },
+    ],
     [
       "non-managed configuration authority",
-      { ...storageFilesPayload, configuration: { ...storageFilesPayload.configuration, authority: "JSON_BOOTSTRAP" } },
+      {
+        ...storageFilesPayload,
+        configuration: {
+          ...storageFilesPayload.configuration,
+          authority: "JSON_BOOTSTRAP",
+        },
+      },
     ],
-    ["missing storage authority", { ...storageFilesPayload, resourceLibrary: undefined, storage: undefined }],
+    [
+      "missing storage authority",
+      {
+        ...storageFilesPayload,
+        resourceLibrary: undefined,
+        storage: undefined,
+      },
+    ],
     ["missing entries", { ...storageFilesPayload, entries: undefined }],
     ["non-array entries", { ...storageFilesPayload, entries: {} }],
-    ["too many entries", { ...storageFilesPayload, entries: Array(201).fill({}) }],
+    [
+      "too many entries",
+      { ...storageFilesPayload, entries: Array(201).fill({}) },
+    ],
     [
       "non-boolean traversable",
-      { ...storageFilesPayload, entries: [{ ...storageFilesPayload.entries[0], traversable: "yes" }] },
+      {
+        ...storageFilesPayload,
+        entries: [{ ...storageFilesPayload.entries[0], traversable: "yes" }],
+      },
     ],
     ["missing breadcrumbs", { ...storageFilesPayload, breadcrumbs: undefined }],
     ["non-string sideEffects", { ...storageFilesPayload, sideEffects: 42 }],
   ])("rejects %s", (_name, payload) => {
-    expect(() => normalizeStorageFiles(payload)).toThrow(StorageFilesNormalizationError);
+    expect(() => normalizeStorageFiles(payload)).toThrow(
+      StorageFilesNormalizationError,
+    );
   });
 });

@@ -655,3 +655,783 @@ body {
 .mf-count-link:focus-visible .mf-count-label {
   text-decoration: underline;
 }
+
+/* --- Files page (Slice 37) page-local presentation ----------------------- */
+/* Scoped to the V2 Files surface only; no shared or frozen-page selector
+   above is redefined. Light canvas variables are file-scoped aliases. */
+
+.mf-files-page {
+  --files-bg: #f5f7fa;
+  --files-surface: #ffffff;
+  --files-line: #e3e8ef;
+  --files-ink: #1f2733;
+  --files-muted: #64748b;
+  --files-accent: #2f6bff;
+  --files-accent-soft: #e8efff;
+  --files-enabled: #16a34a;
+  color: var(--files-ink);
+  background: var(--files-bg);
+  min-height: 100%;
+  padding: 20px 24px 28px;
+  border-radius: 10px;
+}
+
+.mf-files-page .mf-dashboard-meta {
+  color: var(--files-muted);
+}
+
+.mf-files-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mf-files-header h2 {
+  margin: 0;
+  font-size: 1.6rem;
+}
+
+.mf-files-header p {
+  margin: 6px 0 0;
+}
+
+.mf-files-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.mf-library-picker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--files-muted);
+}
+
+.mf-library-picker select {
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-ink);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.mf-files-page .mf-button {
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-ink);
+  padding: 8px 14px;
+  cursor: pointer;
+}
+
+.mf-files-page .mf-button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.mf-files-page .mf-button-primary {
+  background: var(--files-accent);
+  border-color: var(--files-accent);
+  color: #ffffff;
+}
+
+.mf-files-page .mf-button-secondary {
+  background: var(--files-surface);
+}
+
+.mf-files-page .mf-button-small {
+  padding: 4px 12px;
+  font-size: 0.85rem;
+}
+
+.mf-files-page .mf-link-button {
+  background: none;
+  border: none;
+  color: var(--files-ink);
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mf-files-page .mf-link-button:hover {
+  color: var(--files-accent);
+}
+
+.mf-files-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--files-accent-soft);
+  border: 1px solid #d5e2ff;
+  color: #274b8f;
+  border-radius: 8px;
+  padding: 10px 14px;
+  margin: 16px 0;
+}
+
+.mf-banner-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--files-accent);
+  color: #ffffff;
+  font-size: 0.75rem;
+  font-style: normal;
+}
+
+.mf-library-summary {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  background: var(--files-surface);
+  border: 1px solid var(--files-line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin: 0 0 16px;
+  max-width: 460px;
+}
+
+.mf-summary-icon {
+  font-size: 1.5rem;
+}
+
+.mf-summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--files-muted);
+}
+
+.mf-summary-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--files-ink);
+}
+
+.mf-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 0.78rem;
+}
+
+.mf-pill-enabled {
+  background: #e7f7ec;
+  color: var(--files-enabled);
+}
+
+.mf-pill-pending {
+  background: var(--files-accent-soft);
+  color: var(--files-accent);
+}
+
+.mf-pill-muted {
+  background: #eef1f5;
+  color: var(--files-muted);
+}
+
+.mf-files-workarea {
+  display: flex;
+  gap: 16px;
+  align-items: stretch;
+}
+
+.mf-files-tree {
+  width: 230px;
+  flex-shrink: 0;
+  background: var(--files-surface);
+  border: 1px solid var(--files-line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.mf-files-tree h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  color: var(--files-ink);
+}
+
+.mf-files-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mf-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  padding: 5px 8px;
+}
+
+.mf-tree-row.is-selected {
+  background: var(--files-accent-soft);
+}
+
+.mf-tree-icon {
+  font-size: 0.9rem;
+}
+
+.mf-files-pane {
+  flex: 1;
+  min-width: 0;
+  background: var(--files-surface);
+  border: 1px solid var(--files-line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mf-files-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.mf-files-page .mf-breadcrumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0;
+  color: var(--files-muted);
+}
+
+.mf-crumb-home {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 1rem;
+  color: var(--files-muted);
+  padding: 2px 4px;
+}
+
+.mf-crumb-home:hover {
+  color: var(--files-accent);
+}
+
+.mf-toolbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-files-search {
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-ink);
+  padding: 7px 12px;
+  min-width: 220px;
+  font: inherit;
+}
+
+.mf-view-toggle {
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-muted);
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.mf-view-toggle.is-active {
+  background: var(--files-accent-soft);
+  border-color: var(--files-accent);
+  color: var(--files-accent);
+}
+
+.mf-files-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.mf-files-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--files-muted);
+  border-bottom: 1px solid var(--files-line);
+  padding: 8px 6px;
+  white-space: nowrap;
+}
+
+.mf-files-table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-bottom: 1px solid var(--files-line);
+  padding: 9px 6px;
+  white-space: nowrap;
+  color: var(--files-ink);
+}
+
+.mf-files-table th:nth-child(1),
+.mf-files-table td:nth-child(1) {
+  width: 36px;
+}
+
+.mf-files-table th:nth-child(2),
+.mf-files-table td:nth-child(2) {
+  width: 28%;
+}
+
+.mf-files-table th:nth-child(3),
+.mf-files-table td:nth-child(3) {
+  width: 8%;
+}
+
+.mf-files-table th:nth-child(4),
+.mf-files-table td:nth-child(4) {
+  width: 10%;
+}
+
+.mf-files-table th:nth-child(5),
+.mf-files-table td:nth-child(5) {
+  width: 17%;
+}
+
+.mf-files-table th:nth-child(6),
+.mf-files-table td:nth-child(6) {
+  width: 15%;
+}
+
+.mf-files-table th:nth-child(7),
+.mf-files-table td:nth-child(7) {
+  width: 11%;
+}
+
+.mf-files-table th:nth-child(8),
+.mf-files-table td:nth-child(8) {
+  width: 11%;
+}
+
+.mf-files-table td:nth-child(5) {
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.mf-files-table tr.is-selected td {
+  background: var(--files-accent-soft);
+}
+
+.mf-col-check {
+  width: 36px;
+}
+
+.mf-cell-muted {
+  color: var(--files-muted);
+}
+
+.mf-sort {
+  color: var(--files-muted);
+  font-size: 0.8rem;
+}
+
+.mf-files-state {
+  color: var(--files-muted);
+  padding: 18px 4px;
+}
+
+.mf-files-page .mf-card {
+  background: var(--files-surface);
+  border: 1px solid var(--files-line);
+  border-radius: 8px;
+  padding: 16px 18px;
+}
+
+.mf-files-page .mf-error {
+  color: #b42318;
+  background: #fef3f2;
+  border: 1px solid #fecdca;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.mf-files-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.mf-grid-cell {
+  min-width: 0;
+}
+
+.mf-grid-button {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--files-line);
+  border-radius: 8px;
+  background: var(--files-surface);
+  padding: 14px 8px;
+  width: 100%;
+  cursor: default;
+  color: var(--files-ink);
+  font: inherit;
+  overflow: hidden;
+}
+
+button.mf-grid-button {
+  cursor: pointer;
+}
+
+.mf-grid-icon {
+  font-size: 1.6rem;
+}
+
+.mf-grid-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mf-files-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid var(--files-line);
+  background: var(--files-surface);
+  margin-top: 16px;
+  padding: 12px 4px 0;
+}
+
+.mf-selection-summary {
+  color: var(--files-ink);
+}
+
+.mf-files-pagination {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--files-muted);
+}
+
+.mf-page-button {
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-ink);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.mf-page-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mf-page-number {
+  min-width: 28px;
+  text-align: center;
+  border: 1px solid var(--files-accent);
+  border-radius: 6px;
+  color: var(--files-accent);
+  padding: 3px 6px;
+}
+
+@media (max-width: 700px) {
+  .mf-files-workarea {
+    flex-direction: column;
+  }
+
+  .mf-files-tree {
+    width: 100%;
+  }
+
+  .mf-files-table td,
+  .mf-files-table th {
+    white-space: normal;
+  }
+}
+
+/* Files route only: the reference composition needs the full content width.
+   The :has() condition matches exclusively when the Files page is mounted, so
+   every frozen route keeps its previous 1100px shell width. */
+.mf-shell-main:has(.mf-files-page) {
+  max-width: none;
+}
+
+.mf-files-table-scroll {
+  overflow-x: auto;
+}
+
+.mf-files-title {
+  min-width: 220px;
+}
+
+.mf-files-page-search {
+  width: min(280px, 24vw);
+  min-width: 210px;
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-ink);
+  padding: 8px 12px;
+  font: inherit;
+}
+
+.mf-files-page-search::placeholder {
+  color: var(--files-muted);
+}
+
+/* Keep the readable Files content beside the fixed reference drawer instead
+   of allowing the drawer to hide the table's right-hand status/actions. */
+.mf-files-page:has(.mf-files-drawer) {
+  padding-right: 385px;
+}
+
+.mf-files-drawer {
+  position: fixed;
+  top: 68px;
+  right: 12px;
+  bottom: 22px;
+  z-index: 30;
+  display: grid;
+  grid-template-columns: 148px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(425px, calc(100vw - 24px));
+  overflow: hidden;
+  background: var(--files-surface);
+  border: 1px solid var(--files-line);
+  border-radius: 8px;
+  box-shadow: 0 14px 40px rgba(15, 23, 42, 0.2);
+}
+
+.mf-files-drawer-header {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid var(--files-line);
+}
+
+.mf-files-drawer-header h2 {
+  margin: 0;
+  color: var(--files-ink);
+  font-size: 1.15rem;
+}
+
+.mf-files-drawer-header p {
+  margin: 5px 0 0;
+  color: var(--files-muted);
+  font-size: 0.82rem;
+}
+
+.mf-files-drawer-close {
+  border: none;
+  background: transparent;
+  color: var(--files-muted);
+  font-size: 1.45rem;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+.mf-files-drawer-steps {
+  grid-column: 1;
+  grid-row: 2;
+  list-style: none;
+  margin: 0;
+  padding: 18px 10px;
+  border-right: 1px solid var(--files-line);
+  background: #fbfcfe;
+}
+
+.mf-files-drawer-steps li + li {
+  margin-top: 8px;
+}
+
+.mf-files-drawer-steps button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  gap: 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--files-muted);
+  padding: 9px 8px;
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.mf-files-drawer-steps li.is-active button {
+  background: var(--files-accent-soft);
+  color: var(--files-accent);
+  font-weight: 600;
+}
+
+.mf-files-drawer-steps button span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
+  flex: 0 0 23px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  color: #ffffff;
+  font-size: 0.78rem;
+}
+
+.mf-files-drawer-steps li.is-active button span {
+  background: var(--files-accent);
+}
+
+.mf-files-drawer-body {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  overflow: auto;
+  padding: 20px 18px;
+}
+
+.mf-files-drawer-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.mf-files-drawer-panel h3 {
+  margin: 0;
+  color: var(--files-ink);
+  font-size: 1.05rem;
+}
+
+.mf-files-drawer-helper {
+  margin: 0 0 10px;
+  color: var(--files-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.mf-files-drawer-panel label {
+  margin-top: 8px;
+  color: var(--files-ink);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mf-files-drawer-panel input,
+.mf-files-drawer-panel select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--files-line);
+  border-radius: 6px;
+  background: var(--files-surface);
+  color: var(--files-ink);
+  padding: 8px 10px;
+  font: inherit;
+}
+
+.mf-files-drawer-panel small {
+  color: var(--files-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.mf-files-drawer-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 8px;
+}
+
+.mf-files-drawer-summary div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--files-line);
+  padding-bottom: 7px;
+}
+
+.mf-files-drawer-summary dt {
+  color: var(--files-muted);
+}
+
+.mf-files-drawer-summary dd {
+  max-width: 65%;
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--files-ink);
+  text-align: right;
+}
+
+.mf-files-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--files-ink);
+}
+
+.mf-files-toggle input {
+  width: auto;
+  accent-color: var(--files-accent);
+}
+
+.mf-files-drawer-note {
+  margin: 14px 0 0;
+  border-radius: 6px;
+  background: var(--files-accent-soft);
+  color: #274b8f;
+  padding: 9px 10px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.mf-files-drawer-footer {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  border-top: 1px solid var(--files-line);
+  padding: 12px 16px;
+}
+
+@media (max-width: 700px) {
+  .mf-files-page:has(.mf-files-drawer) {
+    padding-right: 24px;
+  }
+
+  .mf-files-page-search {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .mf-files-drawer {
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+  }
+}
