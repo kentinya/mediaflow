@@ -41,6 +41,11 @@ disappeared. Task 37.3 already owns Files toolbar/context state and authoritativ
 required RO-1/RO-4 correction belongs in the current vertical unit rather than a standalone visual
 or field-sized Task.
 
+The same evidence shows that Files currently initializes the Add ResourceLibrary drawer as open,
+turning an explicit creation workflow into the default page state and unnecessarily narrowing the
+browse workspace. The normal entry state must be the complete Files workspace; the drawer is an
+operator-invoked action state only.
+
 Delete adds material risk and therefore needs bounded impact discovery, explicit confirmation and
 durable long-running/batch behavior. Keeping these related same-library operations together avoids
 field-sized Tasks while leaving transfer-specific destination selection and byte-stream work for
@@ -112,9 +117,24 @@ Files command model → application admission/results → OrganizerExecutor → 
 - Use the existing local interaction images under `web/test-results/` as review references:
   `task37.2体验bug.png`, `task37.2体验bug-正确效果.png`,
   `task37.2体验bug-点击更多.png`, `task37.2体验bug-选择媒体库D.png` and
-  `task37.2体验bug-选择媒体库E.png`. The labels `媒体库A` through `媒体库E` are illustrative data,
-  not fixtures or a count limit, and the hand-drawn black rectangle is review annotation rather
-  than product UI. These ignored reference images must not be staged or rewritten by Developer.
+  `task37.2体验bug-选择媒体库E.png`. Also use `task37.2体验bug2-2.png` as the normal drawer-closed
+  Files entry reference and `task37.2体验bug2-1.png` only as the explicit Add ResourceLibrary
+  action-state reference. The labels `媒体库A` through `媒体库E` are illustrative data, not fixtures
+  or a count limit, and the hand-drawn black rectangle is review annotation rather than product UI.
+  These ignored reference images must not be staged or rewritten by Developer.
+- Initialize Files with the Add ResourceLibrary drawer closed. Mount, route entry/re-entry, query
+  refresh, authentication recovery and ordinary browsing must not open it automatically. The
+  complete-width browse workspace remains the default even when no enabled ResourceLibrary exists;
+  that recovery state explains the prerequisite and keeps the explicit `+ 添加资源库` action
+  available when eligible Storage exists.
+- Open the drawer only from explicit activation of `+ 添加资源库`. Close icon, Cancel and successful
+  Save close it and restore the normal Files layout; a later explicit open starts a fresh candidate.
+  Validation or Save failure keeps the drawer open at the relevant step with the entered candidate
+  intact and actionable recovery, without converting the failed action state into a future default.
+- Drawer-open layout may narrow the browse workspace as shown in the action-state reference, but it
+  must preserve useful current Files context and must not fabricate a ResourceLibrary or change the
+  selected library merely by opening or closing. Focus returns to the invoking control on Cancel or
+  close, and moves to a useful selected-library/browse target after successful Save.
 - Add Files toolbar, row-overflow and selection actions without changing the closed reference shell.
   Dialog/editor/impact states are keyboard operable and touch usable, preserve input on recoverable
   failure, prevent duplicate submission and avoid redundant confirmation for safe operations.
@@ -166,6 +186,18 @@ Files command model → application admission/results → OrganizerExecutor → 
       viewport and responsive widths with keyboard, touch, Escape and outside-close behavior. Names
       and counts come from authoritative runtime data; example A/B/C/D/E labels and the black review
       rectangle are not rendered or hard-coded.
+- [ ] Initial Files entry, route re-entry, refresh and authentication recovery render the normal
+      drawer-closed workspace represented by `task37.2体验bug2-2.png`; no lifecycle or empty-library
+      condition silently opens the Add ResourceLibrary drawer.
+- [ ] Only explicit `+ 添加资源库` activation enters the drawer-open state represented by
+      `task37.2体验bug2-1.png`. Close and Cancel discard that candidate and restore the normal layout;
+      successful Save closes the drawer and selects the saved enabled library.
+- [ ] Client validation or backend Save failure keeps the drawer, affected step and entered values
+      visible with a safe next action. After the operator closes/cancels that failure state, a later
+      Files visit remains closed and a later explicit open starts a fresh candidate.
+- [ ] Drawer open/close changes no Active configuration, selected ResourceLibrary or Storage state
+      by itself. Keyboard/touch activation, Escape/close behavior and focus restoration are covered
+      without weakening the existing Save authorization, atomic activation or failure semantics.
 - [ ] API and Web share application behavior, RBAC and safety semantics. Results/audit are bounded
       and secret-free; text, credentials, host roots and raw exceptions never enter them.
 - [ ] ResourceLibrary Save, Files browse/search/sort/paging/views, media-organize Preview, non-Files
