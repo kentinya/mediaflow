@@ -43,6 +43,7 @@ class StorageDefinition:
     name: str
     read_only: bool = False
     options: dict[str, Any] | None = None
+    enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -661,6 +662,9 @@ def _storage(value: dict) -> StorageDefinition:
     read_only = value.get("readOnly", False)
     if not isinstance(read_only, bool):
         raise ValueError("Storage readOnly must be boolean")
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError("Storage enabled must be boolean")
     raw_options = value.get("options")
     if raw_options is None:
         # Preserve the legacy JSON bootstrap spelling where provider fields live
@@ -682,6 +686,7 @@ def _storage(value: dict) -> StorageDefinition:
         str(value.get("name") or value["id"]),
         read_only,
         options,
+        enabled,
     )
 
 

@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.2
 Parent Slice: 37
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: c654ed4edc5439b9298c1ab19ccdf1908935f7a8
 Difficulty: High
 Test Level: T4
@@ -138,6 +138,11 @@ Managed configuration/application command â†’ persistence and runtime binding â†
 ## Required Tests
 
 - `python3 scripts/check_governance.py`
+- `scripts/docker_release_security_smoke_test.py`
+- `.venv/bin/ruff format --check .`
+- `.venv/bin/ruff check .`
+- `.venv/bin/python -m unittest discover -s tests`
+- `.venv/bin/python -m compileall -q mediaflow tests scripts`
 - `ruff format --check .`
 - `ruff check .`
 - `python -m unittest tests.test_resource_library_activation`

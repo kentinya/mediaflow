@@ -15,12 +15,19 @@ const systemStatusPayload = {
     total: 2,
     truncated: false,
     items: [
-      { id: "local-1", name: "Local media", type: "local", read_only: true },
+      {
+        id: "local-1",
+        name: "Local media",
+        type: "local",
+        read_only: true,
+        enabled: true,
+      },
       {
         id: "openlist-1",
         name: "Remote media",
         type: "openlist",
         read_only: false,
+        enabled: true,
       },
     ],
   },
@@ -39,12 +46,19 @@ describe("normalizeSystemStatus", () => {
       configurationActive: true,
       configurationSnapshotId: "rev-e2e-1",
       storages: [
-        { id: "local-1", name: "Local media", type: "local", readOnly: true },
+        {
+          id: "local-1",
+          name: "Local media",
+          type: "local",
+          readOnly: true,
+          enabled: true,
+        },
         {
           id: "openlist-1",
           name: "Remote media",
           type: "openlist",
           readOnly: false,
+          enabled: true,
         },
       ],
       resourceLibraries: [
@@ -193,7 +207,9 @@ describe("normalizeSystemStatus", () => {
         ...systemStatusPayload,
         storages: {
           ...systemStatusPayload.storages,
-          items: [{ id: "x", name: "X", type: "local", read_only: 1 }],
+          items: [
+            { id: "x", name: "X", type: "local", read_only: 1, enabled: true },
+          ],
         },
       },
     ],

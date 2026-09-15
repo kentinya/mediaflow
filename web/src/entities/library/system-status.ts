@@ -29,6 +29,7 @@ export interface SystemStorage {
   readonly name: string;
   readonly type: string;
   readonly readOnly: boolean;
+  readonly enabled: boolean;
 }
 
 export interface SystemResourceLibrary {
@@ -95,7 +96,10 @@ function normalizeStorage(raw: Record<string, unknown>): SystemStorage {
   if (typeof raw.read_only !== "boolean") {
     fail("storage.read_only");
   }
-  return { id, name, type, readOnly: raw.read_only };
+  if (typeof raw.enabled !== "boolean") {
+    fail("storage.enabled");
+  }
+  return { id, name, type, readOnly: raw.read_only, enabled: raw.enabled };
 }
 
 function normalizeResourceLibrary(

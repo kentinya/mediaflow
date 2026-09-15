@@ -78,6 +78,7 @@ from mediaflow.domain.configuration_management import (
     NamingPreviewEvidence,
     OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
+    ResourceLibrarySaveError,
     StorageConfigurationType,
     StorageSetupCheckEvidence,
     validate_storage_configuration,
@@ -330,6 +331,8 @@ class ConfigurationObjectService:
         "extensions",
         "maxDepth",
     }
+    _RESOURCE_LIBRARY_SAVE_FIELDS = {"id", "name", "storageId", "storagePath", "enabled"}
+    _RESOURCE_LIBRARY_SAVE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
     _MEDIA_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
     _RECOGNITION_TYPE_FIELDS = {"id", "name", "description", "enabled"}
     _RECOGNITION_RULE_FIELDS = {
@@ -538,16 +541,344 @@ class ConfigurationObjectService:
         *,
         expected_version: int,
         actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
     ) -> ManagedConfigurationRevision:
         revision = self._managed.require(revision_id)
         self.require_current_storage_checks(revision)
         self.require_current_strategy_test(revision)
         self.require_current_destination_precheck(revision)
+        if before_publish is None:
+            return self._managed.activate(
+                revision_id,
+                expected_version=expected_version,
+                actor=actor,
+            )
         return self._managed.activate(
             revision_id,
             expected_version=expected_version,
             actor=actor,
+            before_publish=before_publish,
         )
+
+    def save_resource_library(
+        self,
+        candidate: Mapping[str, object],
+        *,
+        actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Save one Files-page ResourceLibrary candidate as a managed successor.
+
+        The command deliberately captures Active once, composes a fresh successor
+        from that immutable document, runs the existing read-only admission gates,
+        and delegates publication to the normal checked activation boundary.  It
+        never creates workflow work or calls a mutating Storage operation.
+        """
+
+        if not isinstance(candidate, Mapping):
+            raise ValueError("ResourceLibrary Save candidate must be an object")
+        if set(candidate) != self._RESOURCE_LIBRARY_SAVE_FIELDS:
+            raise ValueError(
+                "ResourceLibrary Save accepts only id, name, storageId, storagePath, and enabled"
+            )
+        name = candidate.get("name")
+        storage_id = candidate.get("storageId")
+        storage_path = candidate.get("storagePath")
+        enabled = candidate.get("enabled")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 120
+            or any(character in name for character in "\x00\r\n")
+        ):
+            raise ValueError(
+                "ResourceLibrary Save name must be bounded text without control characters"
+            )
+        if (
+            not isinstance(storage_id, str)
+            or not storage_id.strip()
+            or len(storage_id) > 64
+            or any(character in storage_id for character in "/\\\x00")
+        ):
+            raise ValueError("ResourceLibrary Save storageId must be a safe bounded identifier")
+        if (
+            not isinstance(storage_path, str)
+            or len(storage_path) > 4096
+            or any(ord(character) < 32 or ord(character) == 127 for character in storage_path)
+        ):
+            raise ValueError("ResourceLibrary Save storagePath must be a safe bounded path")
+        if not isinstance(enabled, bool):
+            raise ValueError("ResourceLibrary Save enabled must be boolean")
+        normalized = self._normalize(ConfigurationObjectKind.RESOURCE_LIBRARY, candidate)
+        if not self._RESOURCE_LIBRARY_SAVE_ID.fullmatch(str(normalized["id"])):
+            raise ValueError(
+                "ResourceLibrary Save id must use lowercase letters, digits, and hyphens"
+            )
+
+        active = self._managed.active()
+        if active is None:
+            # Reuse the managed service's fail-closed missing/marker distinction.
+            self._managed.create_successor_draft(actor=actor)
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; ResourceLibrary Save is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+
+        storage_values = {
+            str(item.get("id")): item
+            for item in self._canonical_objects(active.document, "storages")
+        }
+        storage_id = str(normalized["storageId"])
+        storage = storage_values.get(storage_id)
+        if storage is None:
+            raise ResourceLibrarySaveError(
+                "resource_library_storage_unavailable",
+                "the selected Storage is not available in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="refresh Active state and choose an enabled configured Storage",
+            )
+        if storage.get("enabled", True) is False:
+            raise ResourceLibrarySaveError(
+                "resource_library_storage_unavailable",
+                "the selected Storage is disabled in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="enable the Storage in configuration, then refresh and retry",
+            )
+
+        current_resources = self._canonical_objects(active.document, "resourceLibraries")
+        resource_id = str(normalized["id"])
+        if any(item.get("id") == resource_id for item in current_resources):
+            raise ResourceLibrarySaveError(
+                "resource_library_duplicate",
+                "the ResourceLibrary ID already exists in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="choose a different ResourceLibrary ID, then retry",
+            )
+
+        try:
+            draft = self._managed.create_successor_draft(
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                verified_active=active,
+            )
+        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the successor configuration could not be created; the previous Active "
+                "remains in use",
+                status=503,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+
+        try:
+            edited = self.mutate(
+                draft.revision_id,
+                ConfigurationObjectKind.RESOURCE_LIBRARY,
+                object_id=None,
+                value=normalized,
+                expected_version=draft.version,
+                actor=actor,
+                audit_action="files_resource_library_save",
+                audit_metadata={"surface": "files", "candidate": normalized},
+            )
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the ResourceLibrary candidate could not be persisted; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=draft.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+        try:
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the successor configuration could not be validated; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=edited.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+        if validated.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ResourceLibrarySaveError(
+                "resource_library_validation_failed",
+                "the ResourceLibrary candidate failed complete configuration validation",
+                status=422,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="correct the ResourceLibrary fields, then retry the Save",
+            )
+
+        try:
+            for referenced_storage_id in self.referenced_storage_ids(validated):
+                evidence = self.storage_check(
+                    validated.revision_id,
+                    storage_id=referenced_storage_id,
+                    expected_version=validated.version,
+                    expected_digest=validated.digest,
+                    actor=actor,
+                )
+                if evidence.status is not ConfigurationStorageCheckStatus.PASSED:
+                    category = self._bounded_utf8(evidence.failure_category or "unknown", 128)
+                    raise ResourceLibrarySaveError(
+                        "resource_library_storage_check_failed",
+                        "a required read-only Storage check did not pass",
+                        revision_id=validated.revision_id,
+                        durable_state="active_preserved",
+                        next_action=(
+                            f"correct Storage availability ({category}), then retry Save"
+                        ),
+                    )
+
+            enabled_resources = [
+                item
+                for item in self._canonical_objects(validated.document, "resourceLibraries")
+                if item.get("enabled", True) is True
+            ]
+            recognition_type: str | None = None
+            if enabled_resources:
+                selected = next(
+                    (
+                        item
+                        for item in enabled_resources
+                        if item.get("id") == normalized["id"]
+                    ),
+                    enabled_resources[0],
+                )
+                strategy_evidence = self.recognition_strategy_test(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    expected_digest=validated.digest,
+                    actor=actor,
+                    resource_library_id=str(selected["id"]),
+                    synthetic_path="Example.Movie.2024.1080p.mkv",
+                )
+                if strategy_evidence.status is not ConfigurationStrategyTestStatus.COMPLETED:
+                    raise ResourceLibrarySaveError(
+                        "resource_library_strategy_test_failed",
+                        "the required offline Recognition Strategy Test did not pass",
+                        revision_id=validated.revision_id,
+                        durable_state="active_preserved",
+                        next_action="correct the recognition strategy, then retry Save",
+                    )
+                result = strategy_evidence.result or {}
+                recognition = result.get("recognition")
+                if isinstance(recognition, Mapping):
+                    raw_recognition_type = recognition.get("recognitionType")
+                    if isinstance(raw_recognition_type, str) and raw_recognition_type.strip():
+                        recognition_type = raw_recognition_type
+
+            media_libraries = self._canonical_objects(validated.document, "mediaLibraries")
+            if media_libraries:
+                if recognition_type is None:
+                    recognition_types = self._canonical_objects(
+                        validated.document, "recognitionTypes"
+                    )
+                    recognition_type = next(
+                        (
+                            str(item["id"])
+                            for item in recognition_types
+                            if item.get("enabled", True) is True
+                        ),
+                        None,
+                    )
+                if recognition_type is None:
+                    raise ResourceLibrarySaveError(
+                        "resource_library_evidence_failed",
+                        "the successor has no usable RecognitionType for destination checking",
+                        revision_id=validated.revision_id,
+                        durable_state="active_preserved",
+                        next_action="correct the recognition strategy, then retry Save",
+                    )
+                destination_evidence = self.destination_precheck(
+                    validated.revision_id,
+                    expected_version=validated.version,
+                    expected_digest=validated.digest,
+                    actor=actor,
+                    recognition_type=recognition_type,
+                    sample={
+                        "title": "The Matrix",
+                        "mediaType": "movie",
+                        "year": 1999,
+                        "genres": ["Action"],
+                        "extension": "mkv",
+                    },
+                )
+                if (
+                    destination_evidence.status
+                    is not ConfigurationDestinationPrecheckStatus.COMPLETED
+                ):
+                    raise ResourceLibrarySaveError(
+                        "resource_library_destination_check_failed",
+                        "the required read-only destination check did not pass",
+                        revision_id=validated.revision_id,
+                        durable_state="active_preserved",
+                        next_action="correct the destination policy, then retry Save",
+                    )
+        except ResourceLibrarySaveError:
+            raise
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_evidence_failed",
+                "a required read-only configuration check could not complete; the previous "
+                "Active remains in use",
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="inspect the check condition, then retry Save",
+            ) from error
+
+        try:
+            return self.activate_checked(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+                before_publish=before_publish,
+            )
+        except ResourceLibrarySaveError:
+            raise
+        except ConfigurationActivationConflict as error:
+            if error.current_revision_id is not None:
+                raise
+            raise ResourceLibrarySaveError(
+                "resource_library_evidence_failed",
+                "checked activation admission failed; the previous Active remains in use",
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action=(
+                    error.next_action
+                    or "refresh the current Active configuration and retry Save"
+                ),
+            ) from error
+        except ConfigurationVersionConflict:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the successor could not be published; the previous Active remains in use",
+                status=503,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry Save",
+            ) from error
 
     def revision_detail(self, revision_id: str) -> dict[str, object]:
         revision = self._managed.require(revision_id)
@@ -5128,6 +5459,15 @@ class ConfigurationObjectService:
                 )
 
     def require_current_strategy_test(self, revision: ManagedConfigurationRevision) -> None:
+        if not any(
+            item.get("enabled", True) is True
+            for item in self._canonical_objects(revision.document, "resourceLibraries")
+        ):
+            # A disabled ResourceLibrary may be saved as a truthful, non-browseable
+            # configuration while an operator repairs the next enabled source.
+            # There is no executable library against which an offline strategy
+            # test could be run, so this gate is not applicable in that state.
+            return
         evidence = self._repository.get_recognition_strategy_test(revision.revision_id)
         if evidence is None or evidence.status is not ConfigurationStrategyTestStatus.COMPLETED:
             raise ConfigurationActivationConflict(

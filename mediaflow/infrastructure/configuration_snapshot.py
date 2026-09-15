@@ -52,6 +52,7 @@ def build_configuration_snapshot(configuration: RuntimeConfiguration) -> Configu
                 "name": item.name,
                 "type": item.storage_type,
                 "read_only": item.read_only,
+                "enabled": item.enabled,
             },
         ),
         "resource_libraries": _section(

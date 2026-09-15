@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchStorageFiles,
   fetchSystemStatus,
+  saveResourceLibrary,
   storageFilesUrl,
 } from "./api-client";
 import { StorageFilesApiError, SystemStatusApiError } from "./api-errors";
@@ -18,7 +19,13 @@ const systemStatusPayload = {
     total: 1,
     truncated: false,
     items: [
-      { id: "local-1", name: "Local media", type: "local", read_only: true },
+      {
+        id: "local-1",
+        name: "Local media",
+        type: "local",
+        read_only: true,
+        enabled: true,
+      },
     ],
   },
   resource_libraries: {
@@ -113,7 +120,13 @@ describe("fetchSystemStatus", () => {
     expect(model.authority).toBe("MANAGED");
     expect(model.configurationSnapshotId).toBe("rev-1");
     expect(model.storages).toEqual([
-      { id: "local-1", name: "Local media", type: "local", readOnly: true },
+      {
+        id: "local-1",
+        name: "Local media",
+        type: "local",
+        readOnly: true,
+        enabled: true,
+      },
     ]);
     expect(model.resourceLibraries[0]).toEqual({
       id: "resources",
@@ -303,6 +316,103 @@ describe("fetchStorageFiles", () => {
     expect(error).toBeInstanceOf(StorageFilesApiError);
     expect((error as Error).message).not.toContain(TOKEN);
     expect((error as Error).message.length).toBeLessThan(200);
+  });
+});
+
+describe("saveResourceLibrary", () => {
+  it("submits one exact page-local candidate and normalizes the Active result", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({
+        resourceLibrary: {
+          id: "new-library",
+          name: "New Library",
+          storageId: "local-1",
+          storagePath: "incoming/new",
+          enabled: true,
+        },
+        active: { revisionId: "rev-2", status: "active", version: 2 },
+        configuration: {
+          authority: "MANAGED",
+          revisionId: "rev-2",
+          version: 2,
+        },
+        sideEffects: "configuration_only",
+        nextAction: "refresh the Active ResourceLibrary list",
+      }),
+    );
+    const result = await saveResourceLibrary(TOKEN, {
+      resourceLibraryId: "new-library",
+      name: "New Library",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "incoming/new",
+    });
+    expect(result).toEqual({
+      ok: true,
+      status: 200,
+      model: {
+        id: "new-library",
+        name: "New Library",
+        storageId: "local-1",
+        storagePath: "incoming/new",
+        enabled: true,
+        activeRevisionId: "rev-2",
+      },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [input, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(input).toBe("/api/v1/resource-libraries");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({
+      resourceLibraryId: "new-library",
+      name: "New Library",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "incoming/new",
+    });
+    expect((init.headers as Record<string, string>).Authorization).toBe(
+      `Bearer ${TOKEN}`,
+    );
+  });
+
+  it("returns a bounded server error without retrying or exposing its message", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "resource_library_duplicate",
+            message: "private provider details must not cross the boundary",
+          },
+        },
+        409,
+      ),
+    );
+    const result = await saveResourceLibrary(TOKEN, {
+      resourceLibraryId: "existing-library",
+      name: "Existing Library",
+      enabled: false,
+      storageId: "local-1",
+      storagePath: "",
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: "resource_library_duplicate",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects malformed local input before any request", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse({}));
+    const result = await saveResourceLibrary(TOKEN, {
+      resourceLibraryId: "../outside",
+      name: "Invalid",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "",
+    });
+    expect(result).toEqual({ ok: false, status: 400, code: "invalid_request" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
 
