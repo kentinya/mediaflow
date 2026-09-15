@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.2
 Parent Slice: 37
-Status: IN PROGRESS
+Status: PASS
 Task Base: c654ed4edc5439b9298c1ab19ccdf1908935f7a8
 Difficulty: High
 Test Level: T4
@@ -304,61 +304,8 @@ Head SHA: 7dfdbde65c7eefe78dac9c538cf0198dd318732a
 ## B Review Result
 
 ```text
-Reviewed: c654ed4edc5439b9298c1ab19ccdf1908935f7a8..752920dbfcb96ea1989108474fa0e17bcefa9ea5
-Decision: FIX REQUIRED
+Reviewed: c654ed4edc5439b9298c1ab19ccdf1908935f7a8..7dfdbde65c7eefe78dac9c538cf0198dd318732a
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
-
-- ResourceLibrary Save failure recovery is not truthful for missing/corrupt or concurrently
-  replaced Active state.
-  - Evidence: `resourceLibrarySaveFailure()` in
-    `web/src/features/library/StorageFilesPage.tsx` lines 85-107 maps both
-    `resource_library_runtime_failed` and `configuration_unavailable` to “新配置无法绑定运行时，旧
-    Active 仍在使用”. The backend `RuntimeSnapshotUnavailable` response in
-    `mediaflow/interfaces/service_api.py` lines 1012-1045 instead reports
-    `durableState=managed_active_unavailable`; for a missing or corrupt Active there may be no usable
-    old Active at all, so the UI statement is a fabricated durable fact.
-  - Evidence: the same frontend function maps `configuration_conflict` and
-    `configuration_version_conflict` to “旧 Active 仍在使用”. In these races the backend refreshes
-    its runtime binding to the competing winner before returning the conflict, so the winner—not
-    necessarily the request's old Active—is authoritative. The failure path only sets `saveError`
-    and does not invalidate system-status or Files queries, leaving the page on a potentially stale
-    Active identity and ResourceLibrary list.
-  - Required correction: distinguish unavailable Active, failed candidate runtime binding and
-    concurrent-winner states. State that the candidate was not saved, describe the actual known
-    durable state, and refresh authoritative status/browse truth when Active may have changed or
-    become unavailable. Preserve the drawer values and current step, and never automatically retry
-    or replay Save.
-- The focused automation does not cover all failure and side-effect cases required by this Task.
-  - Evidence: `tests/test_resource_library_activation.py` contains seven tests. They cover success,
-    some invalid input, duplicate ID, missing Storage, read-check/runtime failure, a disabled
-    ResourceLibrary, concurrency and permission denial. The Storage fake also proves that its
-    mutating methods were not invoked in the exercised paths.
-  - Missing required backend evidence: no ResourceLibrary Save test covers an entirely missing
-    Active, corrupt/unreadable Active, an existing but disabled Storage, malformed field types,
-    oversized name/ID/path values, successor persistence failure, validation/persistence lifecycle
-    failure, activation/publication failure, or a real failure followed by a safe successful retry.
-    “Missing Storage” does not prove “disabled Storage”, and the Playwright fake-server retry does
-    not execute the real Python managed-configuration/evidence/activation path.
-  - Missing required zero-side-effect evidence: checking the Storage fake's mutation counters does
-    not prove that Save creates no Scan, Job or Task, issues no Metadata Provider request and never
-    invokes OrganizerExecutor. These separate Task acceptance claims need explicit falsifiable
-    assertions.
-  - Required correction: add focused Python and frontend/component or Playwright coverage for the
-    missing cases, including the corrected missing/corrupt/concurrent Active messages and
-    authoritative refresh behavior. Keep the existing assertions intact and do not hide skips.
-- The assigned T4 quality and packaging gate is incomplete.
-  - Evidence: the completion report records `.venv/bin/ruff format --check .`,
-    `.venv/bin/ruff check .`, the bare Ruff variants, `python -m pip check`, both installed
-    `mediaflow ... config validate` commands and wheel build as unavailable; wheel smoke was skipped
-    because no wheel was produced. Those Required Tests therefore have not passed.
-  - The reported direct `final_main` configuration checks and `compileall` are useful partial
-    evidence but do not prove Ruff compliance, dependency consistency, the installed CLI entry
-    point, wheel contents, installation or installed-artifact startup.
-  - Required correction: use a supported isolated development environment, run the specified Ruff,
-    installed CLI, dependency and wheel build/smoke commands, and record their actual results.
-  - The independently reproduced non-green full regressions are not this blocker and must remain
-    reported truthfully: the Task Base has the same Python 3 failures plus one missing optional
-    `httpx` error and the same 10 legacy FileIndex/Preview Playwright failures. They are
-    pre-existing/unrelated under the review rule and must not be hidden, skipped or weakened.
