@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.3
 Parent Slice: 37
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: e33a030055a81011a32de507bef6758d48607c9a
 Difficulty: High
 Test Level: T4
@@ -349,35 +349,229 @@ SMB/OpenList/S3/TMDB service, production credential or real media directory is p
 
 ### Changed Files
 
-- Pending.
+Backend:
+
+- `mediaflow/domain/direct_files.py` (new) — direct-command vocabulary, bounded
+  basename/text limits and allowlists, text-version evidence, bounded Delete
+  impact models.
+- `mediaflow/domain/organizer.py` — `PlanOperation` gains
+  `CREATE_DIRECTORY`/`WRITE`/`RENAME`/`DELETE` for the direct boundary (the
+  planner still produces only the five organize operations).
+- `mediaflow/application/organizer.py` — `OrganizerExecutor` narrow extension:
+  `execute_direct_create_directory/write/rename/delete` with dry-run,
+  capability, conflict, authority and post-mutation verification gates, plus
+  `_direct_capability_error`/`_DirectCommandPlan` helpers.
+- `mediaflow/application/direct_file_commands.py` (new) —
+  `DirectFileCommandService`: Active-snapshot admission, confinement, text
+  read/save evidence (size+digest), bounded impact enumeration with scope
+  digest, confirmed execution and durable per-item outcomes through
+  `PersistentTaskCoordinator` (new `complete_direct_item`), pause/cancel
+  handling; `DirectFileError` bounded error envelope.
+- `mediaflow/application/task_runtime.py` — `complete_direct_item` persists a
+  bounded result record and releases the operation lock.
+- `mediaflow/domain/task_persistence.py` — `FILES_DIRECT_COMMAND_TASK` /
+  `FILES_DELETE_TASK_COMMAND` task command names.
+- `mediaflow/application/configuration_objects.py` — extracted the shared
+  successor evidence gates into `_checked_successor_evidence` (Save behavior
+  unchanged) and added `remove_resource_library` +
+  `resource_library_removal_evidence` (referenced protection, successor draft,
+  complete validation, `activate_checked` atomic publication).
+- `mediaflow/interfaces/service_api.py` — new routes `POST
+  /api/v1/resource-libraries/{id}/files/commands`, `GET .../files/text`,
+  `GET .../files/delete-impact`, `GET .../removal-preview`,
+  `DELETE /api/v1/resource-libraries/{id}`; `DirectFileCommandService` wired
+  into the immutable runtime binding; `DirectFileError` mapping, audit-route
+  templates and read-audit suppression for the bounded reads.
+- `mediaflow/application/manual_organize_preview.py`,
+  `mediaflow/application/storage_browser.py` — lint-only fixes for six
+  pre-existing `ruff check .` failures (line wraps; kept the admission call in
+  `RuntimeFilesBrowserService.browse`).
+
+Web:
+
+- `web/src/entities/library/direct-files.ts` (new) — text/impact/command/
+  removal models and strict normalizers; `isTextFileName`.
+- `web/src/shared/api/api-client.ts` — `submitDirectFileCommand`,
+  `fetchTextFile`, `fetchDeleteImpact`, `fetchResourceLibraryRemovalPreview`,
+  `removeResourceLibrary` (mutation helper now also admits `DELETE`).
+- `web/src/features/library/LibraryCardStrip.tsx` (new) — responsive visible
+  card budget, `更多` popover with search and promotion semantics,
+  `CardActionMenu` (`删除资源库`).
+- `web/src/features/library/FileCommandDialogs.tsx` (new) — `ModalDialog`,
+  `NamePromptDialog` (Create Folder/Text/Rename), stale-safe
+  `TextEditorDialog`, `DeleteImpactDialog` with durable outcome view.
+- `web/src/features/library/DeleteResourceLibraryDialog.tsx` (new) — removal
+  confirmation with bounded reference evidence, `/review` resolution route and
+  the exact Storage-safety copy.
+- `web/src/features/library/StorageFilesPage.tsx` — drawer closed by default
+  with focus restoration; strip/summary switch; zero-ResourceLibrary
+  full-width empty state; URL route-state selection continuity with
+  deterministic fallback notice (no hard-coded default id); toolbar/row-menu/
+  selection command journeys; command failure copy; text editor and delete
+  confirmation wiring; removal flow.
+- `web/src/shared/ui/Icons.tsx`, `web/src/shared/ui/styles.css` — trash icon
+  and strip/popover/menu/dialog/empty-state styles.
+- `web/src/features/library/StorageFilesPage.test.tsx`,
+  `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs` — new
+  unit/e2e coverage and fake endpoints/fixtures.
 
 ### Implemented
 
-- Pending.
+- Backend: all five direct file commands (CREATE_DIRECTORY, CREATE_TEXT,
+  RENAME, SAVE_TEXT, DELETE) admitted against the exact immutable Active
+  ResourceLibrary snapshot and executed only through the new
+  `OrganizerExecutor` direct methods; admission re-checks confinement,
+  basename safety, existence/type, capability, stale evidence and bounds
+  immediately before mutation; every command persists a durable task/item/
+  result record; recursive or multi-item Delete runs as one Task with
+  independent per-item outcomes, pause/cancel observation, bounded impact
+  summary and a scope-digest-bound confirmation; ResourceLibrary removal is a
+  managed-configuration command (reference-protected, validated, checked
+  activation, prior Active preserved on every failure, zero Storage/executor
+  mutation); authenticated API surface with stable action-oriented errors and
+  secret-free details.
+- Web: the ResourceLibrary strip replaces the obscurable native selector
+  (complete cards fill the width, overflow reachable through the searchable
+  unclipped `更多` popover, selection promoted into the visible row and the
+  previous promoted card returned to overflow); the selected card exposes its
+  own `…` menu with `删除资源库`; removal confirmation identifies name,
+  Storage, relative root, references and the exact safety sentence; Files
+  toolbar/row/selection actions deliver Create Folder/Text File, Rename, Edit
+  (stale-safe, editor content preserved on stale) and Delete (bounded impact +
+  one confirmation + durable outcome); the Add ResourceLibrary drawer is an
+  operator-invoked state only; the zero-library Active configuration renders
+  the full-width empty state with both explicit add entries and no fabricated
+  ResourceLibrary-scoped request; selection survives route re-entry, deep link
+  and reload via URL route state with a deterministic, explained fallback and
+  no hard-coded default library.
 
 ### Tests and Results
 
-- Pending.
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/ruff format --check .` — PASS (303 files).
+- `.venv/bin/ruff check .` — PASS (six pre-existing failures fixed as in-scope
+  lint hygiene; all other work is new code).
+- `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS
+  (29 tests: executor gates, admission, stale, impact limits, task outcomes,
+  executor-only mutation, read-only denial, API/RBAC, removal journeys).
+- `.venv/bin/python -m unittest tests.test_resource_library_activation
+  tests.test_configuration_objects` — PASS.
+- `.venv/bin/python -m unittest tests.test_organizer
+  tests.test_organizer_mutation_authority tests.test_organizer_rollback
+  tests.test_runtime_files_browser tests.test_api_security` — PASS (242 total
+  across these and the Storage adapter modules).
+- `.venv/bin/python -m unittest tests.test_local_storage
+  tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage` —
+  PASS.
+- `.venv/bin/python -m unittest discover -s tests` — 1566 tests:
+  PASS except 3 known failures, each reproduced on a pristine HEAD worktree
+  and therefore `FAIL / PRE-EXISTING / UNRELATED`:
+  `test_configuration_status.ConfigurationSnapshotTests.
+  test_hostile_configuration_content_is_never_exposed`,
+  `test_manual_operations_contract.ManualOperationsContractTests.
+  test_real_api_documents_carry_no_forbidden_evidence`,
+  `test_manual_operations_contract.ManualOperationsContractTests.
+  test_real_api_documents_match_the_frontend_fixture`. 7 skips are the
+  pre-existing real-service acceptance skips.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS.
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL /
+  PRE-EXISTING / UNRELATED: manual Organize choice returns HTTP 400
+  (`invalid_request ... expectedVersion`) at
+  `scripts/docker_release_security_smoke_test.py:943`; reproduced identically
+  on a pristine HEAD worktree.
+- `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` —
+  PASS.
+- `cd web && npm run format:check` / `npm run typecheck` / `npm run lint` —
+  PASS.
+- `cd web && npx vitest run src/features/library/StorageFilesPage.test.tsx` —
+  PASS (14 tests: drawer-closed entry, empty state, strip/promotion, removal
+  confirm/refusal, create/delete/edit journeys).
+- `cd web && npm run test -- --run` — PASS (419 tests / 32 files).
+- `cd web && npm run build` — PASS.
+- `cd web && npx playwright test tests/e2e/library-files.spec.ts
+  --project=chromium` — PASS (22 tests, including new strip/更多 promotion,
+  empty-state, create/rename/edit/delete and removal-confirmation journeys).
+- `cd web && npm run test:e2e` — 101 PASS; 10 failures, each reproduced on a
+  pristine HEAD worktree build and therefore `FAIL / PRE-EXISTING /
+  UNRELATED` (7 × `library-file-detail.spec.ts`, 3 ×
+  `manual-operations.spec.ts`).
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` +
+  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
+  (SHA-256 27225bd2…, checked 2026-09-15).
+- `git diff --check` — PASS. Manifest inspected: `config/alist.json`, the
+  dirty `docs/pics/文件页.png`, credentials, `web/test-results/` references
+  and unrelated files are absent from the checkpoint (the pip-wheel
+  `node_modules/` build artifact was deleted, not committed).
 
 ### Decisions
 
-- Pending.
+- Direct commands reuse `EXECUTE_MANUAL_ORGANIZE` as the mutation permission
+  (viewer/read-only principals keep read-only access) and keep
+  configuration-scoped permissions for removal — no new RBAC vocabulary.
+- Every attempted command persists one durable Task/item/result record:
+  single-file operations use command `files_direct_command`, bounded
+  multi-item/recursive Delete uses `files_delete`, executed synchronously
+  within the admitting request while remaining pause/cancel observable; the
+  response reports per-item outcomes and the Task id for recovery.
+- Text save staleness is judged by size + sha256 digest of the current content
+  (mtime alone is not reliable across SMB providers); the editor keeps local
+  edits on stale and offers explicit reload.
+- Delete impact flattens directories bottom-up into per-entry items; the
+  selected directory itself is part of the impact; symlinks and ResourceLibrary
+  roots are refused before mutation; the confirmation digest pins the exact
+  enumerated scope.
+- The shared Save evidence-gate block was extracted
+  (`_checked_successor_evidence`) so removal runs the identical gates without
+  duplicating the policy; Save behavior is unchanged.
+- The card `…` menu renders only `删除资源库`; `编辑资源库` is intentionally
+  not rendered because no existing managed edit journey is reachable from
+  Files, and a dead control would violate the Task's own condition.
+- With exactly one enabled library the existing summary card is kept (matches
+  `task37.2体验bug2-2.png`); with two or more the card strip renders (matches
+  `task37.2体验bug-正确效果.png`). The popover uses `更多资源库`/`搜索资源库`
+  per the Task's rule that the source object is always called `资源库`.
+- Selection continuity uses `window.history.replaceState` for the
+  `resourceLibraryId` route param (already allowlisted by the destination
+  model) and derives the fallback entirely at render time (no effect-driven
+  state mutation).
 
 ### Remaining In-Slice Work
 
-- Pending.
+- Copy, Move, cross-Storage transfer, destination picker and transfer
+  fallback (RO-6 remainder).
+- Upload and Download bounded journeys.
+- Multi-item media Organize execution from the Files selection footer and
+  broader FileIndex reconciliation.
+- Slice-level final validation (1536x1024 reference screenshot report, full
+  shell smoke) remains with B/A per the Contract.
 
 ### Risks / Deviations
 
-- Pending.
+- The five pre-existing full-regression failures (3 Python, listed above) and
+  ten pre-existing non-Files e2e failures are documented with pristine-HEAD
+  reproduction evidence; the docker smoke-test failure (manual organize
+  choice HTTP 400) is also pre-existing. Judgment about their impact on Task
+  PASS belongs to B.
+- Recursive Delete of a bounded directory executes per-entry Storage deletions
+  synchronously inside the request; if the process dies mid-run the Task and
+  completed items remain durable and remaining paths can be re-deleted
+  (impact re-enumeration skips missing entries), but there is no automatic
+  continuation worker for this Task's command — documented behavior, not an
+  auto-replay.
+- The pre-existing `web/test-results/` interaction reference images and the
+  dirty `docs/pics/文件页.png` were neither staged nor modified; the e2e
+  screenshot `test-results/files-success-1536x1024.png` regenerates locally
+  and stays ignored.
 
 ### Checkpoint
 
 ```text
-Status: NOT STARTED
-Head SHA: N/A
-Commit: N/A
-Working tree: N/A
+Status: READY FOR B REVIEW
+Head SHA: 75abfe3c3f22cb451b80a7d9de2b21178274c78a
+Commit: 75abfe3 feat(files): bounded direct file commands and ResourceLibrary removal
+Working tree: clean except the pre-existing dirty docs/pics/文件页.png and
+ignored artifacts (dist/, web/test-results/, config/alist.json)
 ```
 
 ## B Review Result
