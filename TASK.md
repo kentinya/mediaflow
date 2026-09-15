@@ -119,14 +119,27 @@ Files command model → application admission/results → OrganizerExecutor → 
   `task37.2体验bug-点击更多.png`, `task37.2体验bug-选择媒体库D.png` and
   `task37.2体验bug-选择媒体库E.png`. Also use `task37.2体验bug2-2.png` as the normal drawer-closed
   Files entry reference and `task37.2体验bug2-1.png` only as the explicit Add ResourceLibrary
-  action-state reference. The labels `媒体库A` through `媒体库E` are illustrative data, not fixtures
-  or a count limit, and the hand-drawn black rectangle is review annotation rather than product UI.
-  These ignored reference images must not be staged or rewritten by Developer.
+  action-state reference. Use `task37.2体验bug2-无资源库.png` as the empty ResourceLibrary reference
+  when Active configuration has eligible Storage but no enabled ResourceLibrary. The labels
+  `媒体库A` through `媒体库E` are illustrative data, not fixtures or a count limit, and the
+  hand-drawn black rectangle is review annotation rather than product UI. These ignored reference
+  images must not be staged or rewritten by Developer.
 - Initialize Files with the Add ResourceLibrary drawer closed. Mount, route entry/re-entry, query
   refresh, authentication recovery and ordinary browsing must not open it automatically. The
   complete-width browse workspace remains the default even when no enabled ResourceLibrary exists;
   that recovery state explains the prerequisite and keeps the explicit `+ 添加资源库` action
   available when eligible Storage exists.
+- When Active configuration has eligible Storage but no enabled ResourceLibrary, render the
+  complete-width empty state from `task37.2体验bug2-无资源库.png`: retain the Files header and
+  top-level `+ 添加资源库`, replace the information copy with `尚未添加资源库。添加后即可在这里浏览和整理文件。`,
+  and show a centered folder/add illustration, `尚未添加资源库` heading, `请先添加一个资源库，选择存储位置和文件根路径。`
+  guidance and a second explicit `+ 添加资源库` entry. Both entry points open the same drawer
+  behavior and permissions.
+- The empty state must omit ResourceLibrary cards, paths, directory tree, breadcrumb, file toolbar,
+  table and rows. It must not fabricate `source`, a Storage root, directory or file, and must not
+  issue a ResourceLibrary-scoped Files request without an exact enabled ResourceLibrary. If no
+  eligible Storage exists, replace the add action with the existing actionable Storage prerequisite
+  rather than enabling a Save journey that cannot succeed.
 - Open the drawer only from explicit activation of `+ 添加资源库`. Close icon, Cancel and successful
   Save close it and restore the normal Files layout; a later explicit open starts a fresh candidate.
   Validation or Save failure keeps the drawer open at the relevant step with the entered candidate
@@ -189,6 +202,13 @@ Files command model → application admission/results → OrganizerExecutor → 
 - [ ] Initial Files entry, route re-entry, refresh and authentication recovery render the normal
       drawer-closed workspace represented by `task37.2体验bug2-2.png`; no lifecycle or empty-library
       condition silently opens the Add ResourceLibrary drawer.
+- [ ] With eligible Storage and zero enabled ResourceLibraries, Files matches
+      `task37.2体验bug2-无资源库.png`: the full-width empty state shows the specified explanation and
+      both explicit add entry points, while ResourceLibrary summary/path, tree, breadcrumb, file
+      toolbar/table/rows and any fabricated `source` identity are absent.
+- [ ] The zero-ResourceLibrary state performs no ResourceLibrary-scoped Files request, Scan,
+      Provider call, Task creation or Storage mutation. Either add entry opens the same authorized
+      drawer; absence of eligible Storage instead presents the truthful Storage prerequisite.
 - [ ] Only explicit `+ 添加资源库` activation enters the drawer-open state represented by
       `task37.2体验bug2-1.png`. Close and Cancel discard that candidate and restore the normal layout;
       successful Save closes the drawer and selects the saved enabled library.
