@@ -18,6 +18,7 @@ import { storageFilesQueryOptions } from "./storage-files-query";
 import {
   saveResourceLibrary,
   submitServerBoundPreview,
+  type AutomationMutationFailureDetails,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
 
@@ -82,28 +83,86 @@ function isSafeRelativePath(value: string): boolean {
     .every((part) => part !== "" && part !== "." && part !== "..");
 }
 
-function resourceLibrarySaveFailure(code: string): string {
+export interface ResourceLibrarySaveFailureView {
+  readonly message: string;
+  readonly refreshAuthoritativeState: boolean;
+}
+
+export function resourceLibrarySaveFailure(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): ResourceLibrarySaveFailureView {
+  const durableState = details?.durableState;
+  if (
+    code === "configuration_unavailable" ||
+    code === "runtime_not_configured"
+  ) {
+    if (
+      durableState === "no_active_configuration" ||
+      details?.reason === "active_missing"
+    ) {
+      return {
+        message:
+          "保存失败：当前没有可用的 Active 配置，候选资源库未保存；请先激活有效配置后重试。",
+        refreshAuthoritativeState: true,
+      };
+    }
+    return {
+      message:
+        "保存失败：当前 Active 配置不可用，候选资源库未保存；请先修复或替换有效配置后重试。",
+      refreshAuthoritativeState: true,
+    };
+  }
   switch (code) {
     case "invalid_request":
-      return "保存失败：请修正名称、ID、Storage 或根路径后重试。";
+      return {
+        message:
+          "保存失败：候选资源库未保存，请修正名称、ID、Storage 或根路径后重试。",
+        refreshAuthoritativeState: false,
+      };
     case "resource_library_duplicate":
-      return "保存失败：资源库 ID 已存在，请更换 ID 后重试。旧 Active 仍在使用。";
+      return {
+        message:
+          "保存失败：候选资源库未保存，资源库 ID 已存在；旧 Active 仍在使用，请更换 ID 后重试。",
+        refreshAuthoritativeState: false,
+      };
     case "forbidden":
-      return "保存失败：当前账号没有保存并激活资源库所需权限，请切换有权限的账号。";
+      return {
+        message:
+          "保存失败：候选资源库未保存，当前账号没有保存并激活资源库所需权限，请切换有权限的账号。",
+        refreshAuthoritativeState: false,
+      };
     case "configuration_conflict":
     case "configuration_version_conflict":
-      return "保存失败：Active 配置已变化，旧 Active 仍在使用；请刷新状态后重试。";
+      return {
+        message:
+          durableState === "active_winner_preserved"
+            ? "保存失败：Active 已被其他变更替换，本次候选未保存；当前获胜的 Active 仍为权威。状态已刷新，请检查后重试。"
+            : "保存失败：Active 配置已变化，本次候选未保存；请刷新当前状态后重试。",
+        refreshAuthoritativeState: true,
+      };
     case "resource_library_storage_unavailable":
     case "resource_library_storage_check_failed":
     case "resource_library_strategy_test_failed":
     case "resource_library_destination_check_failed":
     case "resource_library_evidence_failed":
-      return "保存失败：Storage 或只读检查未通过，旧 Active 仍在使用；请修正后重试。";
+      return {
+        message:
+          "保存失败：候选配置未发布，Storage 或只读检查未通过；旧 Active 仍在使用，请修正后重试。",
+        refreshAuthoritativeState: false,
+      };
     case "resource_library_runtime_failed":
-    case "configuration_unavailable":
-      return "保存失败：新配置无法绑定运行时，旧 Active 仍在使用；请刷新后重试。";
+      return {
+        message:
+          "保存失败：候选配置无法绑定运行时，未发布；旧 Active 仍在使用，请修正后重试。",
+        refreshAuthoritativeState: false,
+      };
     default:
-      return "保存失败：旧 Active 仍在使用，请修正问题后重试或刷新状态。";
+      return {
+        message:
+          "保存失败：候选资源库未保存，当前 Active 未被本次操作替换；请修正问题后重试或刷新状态。",
+        refreshAuthoritativeState: code === "transport_unavailable",
+      };
   }
 }
 
@@ -1207,8 +1266,9 @@ export function AddResourceLibraryDrawer({
               </div>
             </dl>
             <p className="mf-files-drawer-note">
-              保存会验证并激活这个 ResourceLibrary。失败时旧 Active
-              仍在使用，Storage 不会被修改。
+              保存会验证并激活这个
+              ResourceLibrary。失败时候选配置不会发布，Storage
+              不会被修改；页面会说明当前 Active 状态和下一步操作。
             </p>
           </div>
         )}
@@ -1269,13 +1329,16 @@ export function StorageFilesPage() {
   const [view, setView] = useState<FilesView>("list");
   const [drawerOpen, setDrawerOpen] = useState(true);
   const [saveError, setSaveError] = useState<string | null>(null);
-
   const statusQuery = useQuery(systemStatusQueryOptions(token));
   const status = statusQuery.data;
-  const libraries =
-    status?.resourceLibraries.filter((item) => item.enabled) ?? [];
-  const eligibleStorages =
-    status?.storages.filter((item) => item.enabled) ?? [];
+  const libraries = useMemo(
+    () => status?.resourceLibraries.filter((item) => item.enabled) ?? [],
+    [status?.resourceLibraries],
+  );
+  const eligibleStorages = useMemo(
+    () => status?.storages.filter((item) => item.enabled) ?? [],
+    [status?.storages],
+  );
   const defaultLibrary =
     libraries.find((item) => item.id === "source") ?? libraries[0];
   const effectiveLibraryId = selectedLibraryId || defaultLibrary?.id || "";
@@ -1384,7 +1447,12 @@ export function StorageFilesPage() {
     retry: false,
     onSuccess: (result) => {
       if (!result.ok) {
-        setSaveError(resourceLibrarySaveFailure(result.code));
+        const failure = resourceLibrarySaveFailure(result.code, result.details);
+        setSaveError(failure.message);
+        if (failure.refreshAuthoritativeState) {
+          void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+          void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+        }
         return;
       }
       setSaveError(null);
@@ -1400,8 +1468,10 @@ export function StorageFilesPage() {
     },
     onError: () => {
       setSaveError(
-        "保存请求未完成。旧 Active 仍在使用；请检查连接后修正或重试。",
+        "保存结果未知，未自动重试；候选配置未被确认发布。请刷新 Active 状态后再决定是否重试。",
       );
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
   });
 
@@ -1689,22 +1759,25 @@ export function StorageFilesPage() {
           );
         }}
       </AuthorizedReadBoundary>
-      {status?.configurationActive && eligibleStorages.length > 0 && (
-        <AddResourceLibraryDrawer
-          open={drawerOpen}
-          storages={eligibleStorages}
-          onClose={() => {
-            setSaveError(null);
-            setDrawerOpen(false);
-          }}
-          onSave={(candidate) => {
-            setSaveError(null);
-            saveLibraryMutation.mutate(candidate);
-          }}
-          saving={saveLibraryMutation.isPending}
-          saveError={saveError}
-        />
-      )}
+      {drawerOpen &&
+        (eligibleStorages.length > 0 ||
+          saveLibraryMutation.isPending ||
+          saveError !== null) && (
+          <AddResourceLibraryDrawer
+            open={drawerOpen}
+            storages={eligibleStorages}
+            onClose={() => {
+              setSaveError(null);
+              setDrawerOpen(false);
+            }}
+            onSave={(candidate) => {
+              setSaveError(null);
+              saveLibraryMutation.mutate(candidate);
+            }}
+            saving={saveLibraryMutation.isPending}
+            saveError={saveError}
+          />
+        )}
     </div>
   );
 }

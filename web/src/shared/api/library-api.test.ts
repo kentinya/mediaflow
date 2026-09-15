@@ -402,6 +402,48 @@ describe("saveResourceLibrary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps the bounded durable-state details needed for Save recovery", async () => {
+    stubFetch(async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "configuration_unavailable",
+            message: "private provider details must not cross the boundary",
+            details: {
+              reason: "digest_corrupt",
+              durableState: "managed_active_unavailable",
+              candidateState: "not_saved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "repair Active and retry",
+            },
+          },
+        },
+        503,
+      ),
+    );
+    const result = await saveResourceLibrary(TOKEN, {
+      resourceLibraryId: "new-library",
+      name: "New Library",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "incoming/new",
+    });
+    expect(result).toEqual({
+      ok: false,
+      status: 503,
+      code: "configuration_unavailable",
+      details: {
+        reason: "digest_corrupt",
+        durableState: "managed_active_unavailable",
+        candidateState: "not_saved",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "repair Active and retry",
+      },
+    });
+  });
+
   it("rejects malformed local input before any request", async () => {
     const fetchMock = stubFetch(async () => jsonResponse({}));
     const result = await saveResourceLibrary(TOKEN, {

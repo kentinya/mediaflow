@@ -79,6 +79,7 @@ from mediaflow.domain.configuration_management import (
     OrganizeAuthorityEvidence,
     RecognitionStrategyTestEvidence,
     ResourceLibrarySaveError,
+    RuntimeSnapshotUnavailable,
     StorageConfigurationType,
     StorageSetupCheckEvidence,
     validate_storage_configuration,
@@ -742,9 +743,7 @@ class ConfigurationObjectService:
                         "a required read-only Storage check did not pass",
                         revision_id=validated.revision_id,
                         durable_state="active_preserved",
-                        next_action=(
-                            f"correct Storage availability ({category}), then retry Save"
-                        ),
+                        next_action=(f"correct Storage availability ({category}), then retry Save"),
                     )
 
             enabled_resources = [
@@ -755,11 +754,7 @@ class ConfigurationObjectService:
             recognition_type: str | None = None
             if enabled_resources:
                 selected = next(
-                    (
-                        item
-                        for item in enabled_resources
-                        if item.get("id") == normalized["id"]
-                    ),
+                    (item for item in enabled_resources if item.get("id") == normalized["id"]),
                     enabled_resources[0],
                 )
                 strategy_evidence = self.recognition_strategy_test(
@@ -864,8 +859,7 @@ class ConfigurationObjectService:
                 revision_id=validated.revision_id,
                 durable_state="active_preserved",
                 next_action=(
-                    error.next_action
-                    or "refresh the current Active configuration and retry Save"
+                    error.next_action or "refresh the current Active configuration and retry Save"
                 ),
             ) from error
         except ConfigurationVersionConflict:

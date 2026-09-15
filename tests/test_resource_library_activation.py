@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from datetime import UTC, datetime
@@ -13,6 +14,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
     ConfigurationVersionConflict,
+    RuntimeSnapshotUnavailable,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
@@ -21,7 +23,6 @@ from mediaflow.infrastructure.sqlite_configuration_management import (
 )
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
-
 from tests.test_configuration_objects import example_document, request
 
 
@@ -141,14 +142,25 @@ class ResourceLibraryActivationTests(unittest.TestCase):
         *,
         storage_adapters=None,
         resource_enabled: bool = True,
+        include_disabled_storage: bool = False,
     ):
         document = self._document(root)
         document["resourceLibraries"][0]["enabled"] = resource_enabled
+        if include_disabled_storage:
+            document["storages"].append(
+                {
+                    "id": "disabled-storage",
+                    "name": "Disabled Storage",
+                    "type": "local",
+                    "rootPath": str(root / "disabled"),
+                    "readOnly": False,
+                    "enabled": False,
+                    "options": {},
+                }
+            )
         (root / "source" / "incoming").mkdir(parents=True)
         (root / "target" / "Movies").mkdir(parents=True)
-        configuration_repository = SQLiteConfigurationRepository(
-            root / "configuration.sqlite3"
-        )
+        configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
         self.addCleanup(configuration_repository.close)
         service = ManagedConfigurationService(
             configuration_repository,
@@ -230,9 +242,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             self.assertEqual(browse["resourceLibrary"]["id"], "new-library")
             self.assertEqual(source.mutations, [])
             self.assertEqual(target.mutations, [])
-            audits = configuration_repository.list_revision_audits(
-                service.active().revision_id
-            )
+            audits = configuration_repository.list_revision_audits(service.active().revision_id)
             self.assertTrue(
                 any(
                     audit.safe_after().get("objectChange", {}).get("action")
@@ -249,8 +259,19 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             for body, expected_code in (
                 ({**self._save_body(), "unexpected": True}, "invalid_request"),
                 ({**self._save_body(), "storagePath": "../escape"}, "invalid_request"),
-                ({**self._save_body(), "resourceLibraryId": "source"}, "resource_library_duplicate"),
-                ({**self._save_body(), "storageId": "missing-storage"}, "resource_library_storage_unavailable"),
+                ({**self._save_body(), "name": None}, "invalid_request"),
+                ({**self._save_body(), "enabled": "true"}, "invalid_request"),
+                ({**self._save_body(), "name": "x" * 121}, "invalid_request"),
+                ({**self._save_body(), "storageId": "x" * 65}, "invalid_request"),
+                ({**self._save_body(), "storagePath": "x" * 4097}, "invalid_request"),
+                (
+                    {**self._save_body(), "resourceLibraryId": "source"},
+                    "resource_library_duplicate",
+                ),
+                (
+                    {**self._save_body(), "storageId": "missing-storage"},
+                    "resource_library_storage_unavailable",
+                ),
             ):
                 status, response = request(
                     api,
@@ -261,6 +282,127 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 self.assertIn(status, {400, 409})
                 self.assertEqual(response["error"]["code"], expected_code)
                 self.assertEqual(service.active().revision_id, active.revision_id)
+
+    def test_missing_active_reports_no_active_without_claiming_old_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+            self.addCleanup(configuration_repository.close)
+            document = self._document(root)
+            service = ManagedConfigurationService(
+                configuration_repository,
+                bootstrap_database_path=str(root / "configuration.sqlite3"),
+            )
+            runtime_repository = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(runtime_repository.close)
+            principal = ResolvedApiPrincipal(
+                "admin",
+                "admin-token",
+                frozenset(ApiPermission),
+            )
+            api = MediaFlowApi(
+                runtime_repository,
+                None,
+                principals=(principal,),
+                configuration_service=service,
+                bootstrap_document=document,
+                management_only=True,
+            )
+
+            status, response = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(),
+            )
+
+            self.assertEqual(status, 503)
+            self.assertEqual(response["error"]["code"], "configuration_unavailable")
+            details = response["error"]["details"]
+            self.assertEqual(details["reason"], "active_missing")
+            self.assertEqual(details["durableState"], "no_active_configuration")
+            self.assertEqual(details["candidateState"], "not_saved")
+            self.assertEqual(details["sideEffects"], "none")
+            self.assertIsNone(service.active())
+            self.assertEqual(configuration_repository.list_revisions(), ())
+
+    def test_corrupt_active_reports_unavailable_without_claiming_old_runtime(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = self._active_api(root)
+            repository, service, _objects, active, _runtime_repository, api = values
+            corrupt_document = dict(active.document)
+            corrupt_document["resourceLibraries"] = list(corrupt_document["resourceLibraries"]) + [
+                {"id": "corrupt-candidate"}
+            ]
+            with repository._connection:
+                repository._connection.execute(
+                    "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                    (json.dumps(corrupt_document), active.revision_id),
+                )
+
+            status, response = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(),
+            )
+
+            self.assertEqual(status, 503)
+            self.assertEqual(response["error"]["code"], "configuration_unavailable")
+            details = response["error"]["details"]
+            self.assertEqual(details["reason"], "digest_corrupt")
+            self.assertEqual(details["durableState"], "managed_active_unavailable")
+            self.assertEqual(details["candidateState"], "not_saved")
+            self.assertEqual(
+                [item["id"] for item in service.active().document["resourceLibraries"]],
+                ["source", "corrupt-candidate"],
+            )
+
+    def test_unreadable_active_reports_unavailable_without_saving_candidate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = self._active_api(root)
+            repository, service, _objects, active, _runtime_repository, api = values
+            with repository._connection:
+                repository._connection.execute(
+                    "UPDATE managed_configuration_revisions SET payload=? WHERE revision_id=?",
+                    ("{not-json", active.revision_id),
+                )
+
+            status, response = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(),
+            )
+
+            self.assertEqual(status, 503)
+            self.assertEqual(response["error"]["code"], "configuration_unavailable")
+            details = response["error"]["details"]
+            self.assertEqual(details["reason"], "active_unreadable")
+            self.assertEqual(details["durableState"], "managed_active_unavailable")
+            self.assertEqual(details["candidateState"], "not_saved")
+            with self.assertRaises(RuntimeSnapshotUnavailable):
+                service.active()
+
+    def test_disabled_storage_is_rejected_before_read_only_checks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            values = self._active_api(root, include_disabled_storage=True)
+            _repository, service, _objects, active, _runtime_repository, api = values
+
+            status, response = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(storageId="disabled-storage"),
+            )
+
+            self.assertEqual(status, 409)
+            self.assertEqual(response["error"]["code"], "resource_library_storage_unavailable")
+            self.assertEqual(response["error"]["details"]["durableState"], "active_preserved")
+            self.assertEqual(service.active().revision_id, active.revision_id)
 
     def test_failed_read_only_check_and_runtime_binding_preserve_old_active(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -358,6 +500,10 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 )
             self.assertEqual(status, 409)
             self.assertEqual(response["error"]["code"], "configuration_conflict")
+            self.assertEqual(
+                response["error"]["details"]["durableState"], "active_winner_preserved"
+            )
+            self.assertEqual(response["error"]["details"]["candidateState"], "not_published")
             winner = service.active()
             self.assertNotEqual(winner.revision_id, active.revision_id)
             self.assertEqual(api._runtime_binding.snapshot_id, winner.revision_id)
@@ -388,6 +534,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                     revision_id=active.revision_id,
                     current_version=winner.version,
                     current_digest=winner.digest,
+                    durable_state="active_winner_preserved",
                 )
 
             with patch.object(
@@ -403,6 +550,10 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 )
             self.assertEqual(status, 409)
             self.assertEqual(response["error"]["code"], "configuration_version_conflict")
+            self.assertEqual(
+                response["error"]["details"]["durableState"], "active_winner_preserved"
+            )
+            self.assertEqual(response["error"]["details"]["candidateState"], "not_published")
             self.assertEqual(service.active().revision_id, winner_holder[0].revision_id)
             self.assertNotEqual(service.active().revision_id, active.revision_id)
             self.assertEqual(api._runtime_binding.snapshot_id, winner_holder[0].revision_id)
@@ -449,6 +600,167 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                     len(service.active().document["resourceLibraries"]),
                     1,
                 )
+
+    def test_persistence_validation_and_activation_failures_keep_active_and_can_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = ReadOnlyStorage("source-storage")
+            target = ReadOnlyStorage("media-target")
+            values = self._active_api(
+                root,
+                storage_adapters={"source-storage": source, "media-target": target},
+            )
+            repository, service, _objects, active, _runtime_repository, api = values
+
+            with patch.object(
+                repository,
+                "create_revision_with_audit",
+                side_effect=RuntimeError("simulated successor persistence failure"),
+            ):
+                status, response = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId="create-failure"),
+                )
+            self.assertEqual(status, 503)
+            self.assertEqual(response["error"]["code"], "resource_library_persistence_failed")
+            self.assertEqual(response["error"]["details"]["durableState"], "active_preserved")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+
+            with patch.object(
+                service,
+                "validate",
+                side_effect=RuntimeError("simulated validation lifecycle failure"),
+            ):
+                status, response = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId="validate-failure"),
+                )
+            self.assertEqual(status, 503)
+            self.assertEqual(response["error"]["code"], "resource_library_persistence_failed")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+
+            with patch.object(service, "validate", return_value=active):
+                status, response = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId="invalid-status"),
+                )
+            self.assertEqual(status, 422)
+            self.assertEqual(response["error"]["code"], "resource_library_validation_failed")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+
+            with patch.object(
+                repository,
+                "activate_revision",
+                side_effect=RuntimeError("simulated activation persistence failure"),
+            ):
+                status, response = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId="activation-failure"),
+                )
+            self.assertEqual(status, 503)
+            self.assertEqual(response["error"]["code"], "resource_library_persistence_failed")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+            self.assertEqual(source.mutations, [])
+            self.assertEqual(target.mutations, [])
+
+    def test_real_check_failure_then_explicit_retry_succeeds_without_auto_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = ReadOnlyStorage("source-storage")
+            target = ReadOnlyStorage("media-target")
+            values = self._active_api(
+                root,
+                storage_adapters={"source-storage": source, "media-target": target},
+            )
+            _repository, service, _objects, active, _runtime_repository, api = values
+            source.fail = True
+            status, response = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(resourceLibraryId="retry-library"),
+            )
+            self.assertEqual(status, 409)
+            self.assertEqual(response["error"]["code"], "resource_library_storage_check_failed")
+            self.assertEqual(service.active().revision_id, active.revision_id)
+
+            source.fail = False
+            status, response = request(
+                api,
+                "/api/v1/resource-libraries",
+                method="POST",
+                body=self._save_body(resourceLibraryId="retry-library"),
+            )
+            self.assertEqual(status, 200)
+            self.assertEqual(response["resourceLibrary"]["id"], "retry-library")
+            self.assertNotEqual(service.active().revision_id, active.revision_id)
+            self.assertEqual(source.mutations, [])
+            self.assertEqual(target.mutations, [])
+
+    def test_save_creates_no_work_provider_requests_or_organizer_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = ReadOnlyStorage("source-storage")
+            target = ReadOnlyStorage("media-target")
+            values = self._active_api(
+                root,
+                storage_adapters={"source-storage": source, "media-target": target},
+            )
+            _repository, service, objects, active, runtime_repository, api = values
+            connection = runtime_repository._connection
+            before_counts = {
+                table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("tasks", "automation_jobs")
+            }
+            provider_factory = patch.object(
+                objects,
+                "_metadata_provider_registry_factory",
+                side_effect=AssertionError("Save must not request Metadata"),
+            )
+            task_create = patch.object(
+                runtime_repository,
+                "create_task",
+                side_effect=AssertionError("Save must not create a Task"),
+            )
+            job_create = patch.object(
+                runtime_repository,
+                "create_job",
+                side_effect=AssertionError("Save must not create a Job"),
+            )
+            organizer_execute = patch(
+                "mediaflow.application.organizer.OrganizerExecutor.execute",
+                side_effect=AssertionError("Save must not invoke OrganizerExecutor"),
+            )
+            scanner = patch(
+                "mediaflow.application.library_pipeline.ResourceLibraryScanner.scan_all",
+                side_effect=AssertionError("Save must not invoke Scan"),
+            )
+            with provider_factory, task_create, job_create, organizer_execute, scanner:
+                status, response = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId="side-effect-free"),
+                )
+
+            self.assertEqual(status, 200)
+            self.assertEqual(response["sideEffects"], "configuration_only")
+            self.assertNotEqual(service.active().revision_id, active.revision_id)
+            after_counts = {
+                table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("tasks", "automation_jobs")
+            }
+            self.assertEqual(after_counts, before_counts)
+            self.assertEqual(source.mutations, [])
+            self.assertEqual(target.mutations, [])
 
 
 if __name__ == "__main__":
