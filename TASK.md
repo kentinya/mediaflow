@@ -22,6 +22,11 @@ stay in the current file context, use OrganizerExecutor as the only Storage-muta
 provide safe conflict, stale-state, confirmation, outcome and recovery behavior without forcing
 users through media-organize Preview/Execute ceremony.
 
+Within the same Files-owned ResourceLibrary context, this Task also completes the explicitly
+confirmed removal journey for an unreferenced ResourceLibrary configuration. That action removes
+only the selected ResourceLibrary from MediaFlow's managed configuration and atomically activates
+the successor; it never deletes the ResourceLibrary root or any Storage file/directory.
+
 This Task also advances **RO-9 Actionable recovery**, **RO-11 Test reconciliation** and **RO-12
 Security model continuity**. It establishes the direct-file-command boundary for later work but
 does not implement Copy, Move, Upload or Download.
@@ -50,6 +55,13 @@ Delete adds material risk and therefore needs bounded impact discovery, explicit
 durable long-running/batch behavior. Keeping these related same-library operations together avoids
 field-sized Tasks while leaving transfer-specific destination selection and byte-stream work for
 later independently testable units.
+
+Operator review also established the missing entry and safety semantics for ResourceLibrary
+removal. The selected ResourceLibrary card needs its own contextual `…` action entry, distinct from
+the `更多` overflow selector. Removal must reuse managed-configuration reference protection and
+atomic activation while making it unmistakable that Storage content is untouched. This is part of
+the Files ResourceLibrary lifecycle and selection continuity already owned by this Task; it is not
+file/directory Delete and must not be routed through OrganizerExecutor.
 
 ## Implementation Scope
 
@@ -114,6 +126,36 @@ Files command model → application admission/results → OrganizerExecutor → 
   state refreshed; never hard-code `source` as the preferred default. After ResourceLibrary Save,
   both prior and new enabled libraries remain discoverable and the new library is selected without
   making the prior one appear deleted.
+- Give the selected ResourceLibrary card its own keyboard- and touch-operable `…` action trigger,
+  visually and semantically distinct from the terminal `更多` overflow selector. Opening the card
+  menu does not change the selected library, browse state or Active configuration. The Task-required
+  destructive item is `删除资源库`; if `编辑资源库` is also rendered as in the interaction mockup, it
+  must continue to an already functional managed edit journey and must not be a dead control or
+  expand this Task into a new ResourceLibrary editor.
+- `删除资源库` opens one explicit confirmation bound to the currently selected ResourceLibrary and
+  current Active revision. The dialog identifies its display name, configured Storage and
+  ResourceLibrary-relative root path, reports whether Automation Task Definitions, recognition/
+  organization rules or other managed objects reference it, and uses the exact safety explanation
+  `只会删除 MediaFlow 中的资源库配置。不会删除 Storage 中的任何文件或文件夹。` Cancel, close and
+  Escape perform zero mutation and return focus to the card action trigger.
+- Implement ResourceLibrary removal as a managed-configuration command, not as direct file Delete:
+  resolve the current Active snapshot, reject a missing/disabled/mismatched or stale selection,
+  reuse authoritative reference evidence, create the bounded successor candidate without the exact
+  ResourceLibrary, run complete validation and required checked activation, and publish the new
+  immutable Active runtime atomically. Any reference, validation, Storage evidence, concurrency,
+  activation or runtime-load failure preserves the prior Active and keeps the selected library and
+  confirmation context available with an actionable next step.
+- A referenced ResourceLibrary is not deletable. Show bounded, secret-free reference categories and
+  names plus a route/action for resolving those references; do not weaken reference checks, cascade
+  delete dependent configuration or silently disable Automation/rules. A confirmed unreferenced
+  removal records actor, before/after identity, outcome and stable failure category in the existing
+  configuration audit without logging credentials, host roots or raw exceptions.
+- ResourceLibrary removal must perform zero Storage mutation: it never calls `Storage.delete`, any
+  other mutating Storage method, or OrganizerExecutor. On success, close the dialog, remove only the
+  deleted library card, clear its path/cursor/tree/file selection, refresh from the newly Active
+  runtime and deterministically select another eligible ResourceLibrary. If none remains, render the
+  already specified full-width zero-ResourceLibrary state. All real files and directories remain
+  browseable again if the same Storage root is later configured as a ResourceLibrary.
 - Use the existing local interaction images under `web/test-results/` as review references:
   `task37.2体验bug.png`, `task37.2体验bug-正确效果.png`,
   `task37.2体验bug-点击更多.png`, `task37.2体验bug-选择媒体库D.png` and
@@ -135,6 +177,11 @@ Files command model → application admission/results → OrganizerExecutor → 
   and show a centered folder/add illustration, `尚未添加资源库` heading, `请先添加一个资源库，选择存储位置和文件根路径。`
   guidance and a second explicit `+ 添加资源库` entry. Both entry points open the same drawer
   behavior and permissions.
+- Use `task37.2体验bug-删除资源库入口示意.png` for the selected-card action-menu entry and
+  `task37.2体验bug-删除资源库确认-修正版.png` for the confirmation hierarchy and wording. These are
+  ignored interaction references, not assets to commit or pixel-copy. In product UI, the source
+  object is always called `资源库`; keep the left-navigation `媒体库` label and the information
+  banner's destination phrase `整理到对应的媒体库` unchanged because those refer to MediaLibrary.
 - The empty state must omit ResourceLibrary cards, paths, directory tree, breadcrumb, file toolbar,
   table and rows. It must not fabricate `source`, a Storage root, directory or file, and must not
   issue a ResourceLibrary-scoped Files request without an exact enabled ResourceLibrary. If no
@@ -195,6 +242,27 @@ Files command model → application admission/results → OrganizerExecutor → 
 - [ ] A valid selection survives Files route re-entry, deep link and reload/auth recovery without
       silently reverting to a hard-coded `source`. A missing or disabled selection falls back to a
       current eligible library with incompatible browse state cleared and current truth explained.
+- [ ] The selected ResourceLibrary card exposes its own accessible `…` action menu, separate from
+      `更多`; choosing `删除资源库` opens the confirmation state without changing the selected
+      library or starting any mutation. If an `编辑资源库` row is shown, it is functional through
+      the existing managed edit journey rather than a placeholder.
+- [ ] ResourceLibrary confirmation identifies the exact selected name, configured Storage and
+      relative root; states that only MediaFlow configuration is removed and Storage files/folders
+      are retained; and requires one explicit, current-revision-bound destructive submission.
+      Cancel, close and Escape are zero-mutation, preserve Files context and restore focus.
+- [ ] A referenced, missing, disabled, mismatched or stale ResourceLibrary cannot be removed.
+      Reference conflicts show bounded actionable evidence without cascade deletion. Every
+      validation/check/activation/runtime failure leaves the prior immutable Active authoritative,
+      keeps real Storage untouched and supports a safe correction/retry.
+- [ ] Successful unreferenced ResourceLibrary removal atomically publishes the validated successor,
+      records a bounded secret-free configuration audit, closes the dialog, removes only that card,
+      clears incompatible browse state and selects a deterministic eligible fallback. Removing the
+      final enabled library enters the defined full-width empty state without issuing a fabricated
+      ResourceLibrary-scoped Files request.
+- [ ] ResourceLibrary removal never invokes OrganizerExecutor or any mutating Storage operation;
+      automated evidence proves files and directories under its configured root are byte-for-byte
+      and name-for-name unchanged. File/directory Delete remains the separate OrganizerExecutor-only
+      operation with bounded impact confirmation.
 - [ ] The ResourceLibrary strip and `更多` journey remain usable at the controlled `1536 x 1024`
       viewport and responsive widths with keyboard, touch, Escape and outside-close behavior. Names
       and counts come from authoritative runtime data; example A/B/C/D/E labels and the black review
@@ -235,6 +303,7 @@ Files command model → application admission/results → OrganizerExecutor → 
 - `.venv/bin/ruff format --check .`
 - `.venv/bin/ruff check .`
 - `.venv/bin/python -m unittest tests.test_direct_file_operations`
+- `.venv/bin/python -m unittest tests.test_resource_library_activation tests.test_configuration_objects`
 - `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_organizer_rollback tests.test_runtime_files_browser tests.test_api_security`
 - `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage`
 - `.venv/bin/python -m unittest discover -s tests`
@@ -271,9 +340,10 @@ SMB/OpenList/S3/TMDB service, production credential or real media directory is p
   access, undelete, trash policy or cross-operation rollback.
 - New Storage adapters/capabilities, broad Storage redesign, identity/configuration redesign,
   non-Files body redesign, unrelated refactors, optional proof or P2/P3 cleanup.
-- ResourceLibrary reorder, pin/favorite semantics, edit/delete management, hard-coded sample library
-  records, a fixed four/five-library maximum, or committing/generated rewriting of the local
-  `web/test-results/` interaction references.
+- ResourceLibrary reorder, pin/favorite semantics, a new Files-local ResourceLibrary edit form,
+  cascade deletion of referenced configuration, deletion of ResourceLibrary Storage content,
+  hard-coded sample library records, a fixed four/five-library maximum, or committing/generated
+  rewriting of the local `web/test-results/` interaction references.
 
 ## Developer Completion Report
 
