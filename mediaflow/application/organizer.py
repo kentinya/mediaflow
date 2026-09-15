@@ -680,6 +680,305 @@ class OrganizerExecutor:
             effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
         )
 
+    # ------------------------------------------------------------------
+    # Direct Files commands
+    #
+    # The same sole-mutation boundary extended to the ordinary
+    # file-management commands used by the Files workspace.  These are not
+    # organize operations: no plan, policy or media identity participates,
+    # the caller performs its own admission first, and a direct command
+    # never falls back to a different operation.
+    # ------------------------------------------------------------------
+
+    def execute_direct_create_directory(
+        self,
+        storage: Storage,
+        path: str,
+        *,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Create exactly one directory; an existing target is never replaced."""
+
+        return self._execute_direct(
+            storage,
+            PlanOperation.CREATE_DIRECTORY,
+            path,
+            path,
+            execute=execute,
+            mutation_authority=mutation_authority,
+            preflight=lambda: self._direct_conflict_preflight(storage, path),
+            mutate=lambda: storage.create_directory(path),
+            verify=lambda: self._direct_directory_verified(storage, path),
+        )
+
+    def execute_direct_write(
+        self,
+        storage: Storage,
+        path: str,
+        data: bytes,
+        *,
+        overwrite: bool = False,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Write one bounded byte payload to one exact path.
+
+        ``overwrite`` is granted only by the caller's stale evidence
+        admission; the executor itself still refuses to replace an
+        unauthorized existing target.
+        """
+
+        return self._execute_direct(
+            storage,
+            PlanOperation.WRITE,
+            path,
+            path,
+            execute=execute,
+            mutation_authority=mutation_authority,
+            preflight=lambda: self._direct_write_preflight(storage, path, data, overwrite),
+            mutate=lambda: storage.write(path, data, overwrite=overwrite),
+            verify=lambda: self._direct_write_verified(storage, path, data),
+        )
+
+    def execute_direct_rename(
+        self,
+        storage: Storage,
+        source: str,
+        target: str,
+        *,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Rename one exact entry within the same Storage; never Copy or Move."""
+
+        return self._execute_direct(
+            storage,
+            PlanOperation.RENAME,
+            source,
+            target,
+            execute=execute,
+            mutation_authority=mutation_authority,
+            preflight=lambda: self._direct_rename_preflight(storage, source, target),
+            mutate=lambda: storage.move(source, target, overwrite=False),
+            verify=lambda: self._direct_rename_verified(storage, source, target),
+        )
+
+    def execute_direct_delete(
+        self,
+        storage: Storage,
+        path: str,
+        *,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Delete one exact file or empty directory entry."""
+
+        return self._execute_direct(
+            storage,
+            PlanOperation.DELETE,
+            path,
+            path,
+            execute=execute,
+            mutation_authority=mutation_authority,
+            preflight=lambda: self._direct_exists_preflight(storage, path),
+            mutate=lambda: storage.delete(path),
+            verify=lambda: self._direct_gone_verified(storage, path),
+        )
+
+    def _execute_direct(
+        self,
+        storage: Storage,
+        operation: PlanOperation,
+        source: str,
+        target: str,
+        *,
+        execute: bool,
+        mutation_authority: MutationAuthority | None,
+        preflight,
+        mutate,
+        verify,
+    ) -> ExecutionResult:
+        started = time.monotonic()
+        if unsafe_relative_destination_path(source) or unsafe_relative_destination_path(target):
+            return self._direct_result(
+                operation,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("invalid destination",),
+            )
+        if not execute:
+            return self._direct_result(
+                operation,
+                source,
+                target,
+                started,
+                ExecutionStatus.DRY_RUN,
+                warnings=("dry-run: no Storage mutation was executed",),
+            )
+        capability_error = _direct_capability_error(operation, storage)
+        if capability_error:
+            return self._direct_result(
+                operation,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(capability_error,),
+            )
+        preflight_error = preflight()
+        if preflight_error:
+            return self._direct_result(
+                operation,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(preflight_error,),
+            )
+        if mutation_authority is not None:
+            try:
+                self._check_mutation_authority(
+                    _DirectCommandPlan(operation, source, target),
+                    f"DIRECT:{operation.value}",
+                    mutation_authority,
+                )
+            except MutationAuthorityRefused as error:
+                return self._direct_result(
+                    operation,
+                    source,
+                    target,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=(_authority_error(error),),
+                )
+        try:
+            mutate()
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                operation,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(_bounded_error(error),),
+            )
+        try:
+            verified = verify()
+        except (StorageError, RuntimeError, OSError) as error:
+            verified = False
+            verify_error = _bounded_error(error)
+        else:
+            verify_error = None
+        if not verified:
+            return self._direct_result(
+                operation,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(verify_error or "direct mutation verification failed",),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("mutation_outcome",),
+            )
+        return self._direct_result(
+            operation,
+            source,
+            target,
+            started,
+            ExecutionStatus.SUCCESS,
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
+
+    def _direct_result(
+        self,
+        operation: PlanOperation,
+        source: str,
+        target: str,
+        started: float,
+        status: ExecutionStatus,
+        *,
+        warnings: tuple[str, ...] = (),
+        errors: tuple[str, ...] = (),
+        effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.NONE,
+        uncertain_effects: tuple[str, ...] = (),
+    ) -> ExecutionResult:
+        result = ExecutionResult(
+            status=status,
+            operation=operation,
+            source=source,
+            destination=target,
+            warnings=warnings,
+            errors=errors,
+            duration=max(0, time.monotonic() - started),
+            effect_certainty=effect_certainty,
+            uncertain_effects=uncertain_effects,
+        )
+        if self._logger:
+            self._logger.log(
+                LogLevel.INFO
+                if status in {ExecutionStatus.SUCCESS, ExecutionStatus.DRY_RUN}
+                else LogLevel.ERROR,
+                "direct file command result",
+                timestamp=result.timestamp.isoformat(),
+                operation=operation.value,
+                result=status.value,
+                effect_certainty=result.effect_certainty.value,
+                uncertain_effects=result.uncertain_effects,
+                error_category=_execution_log_category(result),
+            )
+        return result
+
+    @staticmethod
+    def _direct_conflict_preflight(storage: Storage, path: str) -> str | None:
+        if storage.exists(path):
+            return "destination already exists"
+        return None
+
+    @staticmethod
+    def _direct_exists_preflight(storage: Storage, path: str) -> str | None:
+        if not storage.exists(path):
+            return "source does not exist"
+        return None
+
+    @staticmethod
+    def _direct_write_preflight(
+        storage: Storage, path: str, data: bytes, overwrite: bool
+    ) -> str | None:
+        if not storage.exists(path):
+            return None
+        if not overwrite:
+            return "destination already exists"
+        if storage.stat(path).entry_type is not StorageEntryType.FILE:
+            return "destination is not a regular file"
+        return None
+
+    @staticmethod
+    def _direct_rename_preflight(storage: Storage, source: str, target: str) -> str | None:
+        if not storage.exists(source):
+            return "source does not exist"
+        if storage.exists(target):
+            return "destination already exists"
+        return None
+
+    @staticmethod
+    def _direct_directory_verified(storage: Storage, path: str) -> bool:
+        return storage.exists(path) and storage.stat(path).entry_type is StorageEntryType.DIRECTORY
+
+    @staticmethod
+    def _direct_write_verified(storage: Storage, path: str, data: bytes) -> bool:
+        return storage.exists(path) and storage.stat(path).size == len(data)
+
+    @staticmethod
+    def _direct_rename_verified(storage: Storage, source: str, target: str) -> bool:
+        return not storage.exists(source) and storage.exists(target)
+
+    @staticmethod
+    def _direct_gone_verified(storage: Storage, path: str) -> bool:
+        return not storage.exists(path)
+
     def _cleanup_source_directories(
         self,
         plan: OrganizePlan,
@@ -1339,6 +1638,35 @@ def _resolved_execution_target(plan: OrganizePlan) -> str | None:
     if root is None or unsafe_relative_destination_path(plan.relative_destination):
         return ""
     return posixpath.join(root, plan.relative_destination)
+
+
+@dataclass(frozen=True)
+class _DirectCommandPlan:
+    """Minimal command stand-in passed to the mutation-authority hook."""
+
+    operation: PlanOperation
+    source: str
+    target: str
+
+
+def _direct_capability_error(operation: PlanOperation, storage: Storage) -> str | None:
+    """Refuse unsupported or denied direct commands before any mutation."""
+
+    if getattr(storage, "read_only", False):
+        return f"capability denied: {operation.value} requires writable Storage"
+    capabilities = getattr(storage, "capabilities", None)
+    if capabilities is None:
+        # Older in-memory test doubles and third-party adapters may not expose
+        # the capability descriptor yet; the executor still reports their
+        # operation failure through the mutation boundary.
+        return None
+    required = {
+        PlanOperation.RENAME: capabilities.can_move,
+        PlanOperation.DELETE: capabilities.can_delete,
+    }.get(operation)
+    if required is False:
+        return f"unsupported capability: {operation.value} is not supported"
+    return None
 
 
 def _storage_validation_error(plan: OrganizePlan, storages: Mapping[str, Storage]) -> str | None:

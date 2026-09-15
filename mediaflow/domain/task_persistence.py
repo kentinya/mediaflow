@@ -25,6 +25,15 @@ from mediaflow.domain.recovery import RecoveryRequest
 #: advertises no Web lifecycle control.
 MANUAL_ORGANIZE_TASK_COMMAND = "manual_organize"
 
+#: The command recorded by one bounded single-item direct Files command
+#: (Create Folder, Create Text File, Rename or Text Save).  It is executed
+#: synchronously inside the admitting API request with one durable item.
+FILES_DIRECT_COMMAND_TASK = "files_direct_command"
+
+#: The command recorded by a bounded multi-item or recursive Files Delete.
+#: It runs as one Task with independent per-item outcomes and recovery.
+FILES_DELETE_TASK_COMMAND = "files_delete"
+
 
 class PersistentTaskStatus(StrEnum):
     PENDING = "pending"

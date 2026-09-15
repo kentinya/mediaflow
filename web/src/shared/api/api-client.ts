@@ -25,6 +25,18 @@ import {
   type ResourceLibrarySaveModel,
 } from "../../entities/library/resource-library";
 import {
+  normalizeDeleteImpact,
+  normalizeDirectFileCommandResult,
+  normalizeRemovalPreview,
+  normalizeResourceLibraryRemoval,
+  normalizeTextFileDocument,
+  type DeleteImpactModel,
+  type DirectFileCommandResult,
+  type RemovalPreviewModel,
+  type ResourceLibraryRemovalModel,
+  type TextFileDocument,
+} from "../../entities/library/direct-files";
+import {
   DashboardApiError,
   StorageFilesApiError,
   SystemStatusApiError,
@@ -1958,9 +1970,16 @@ function normalizeAutomationMutationFailureDetails(
   return Object.keys(details).length > 0 ? details : undefined;
 }
 
+function failureDetailsSpread(value: unknown): {
+  details?: AutomationMutationFailureDetails;
+} {
+  const details = normalizeAutomationMutationFailureDetails(value);
+  return details === undefined ? {} : { details };
+}
+
 async function submitAutomationMutation<T>(
   token: string | null,
-  method: "POST" | "PUT",
+  method: "POST" | "PUT" | "DELETE",
   url: string,
   body: Record<string, unknown>,
   normalize: (payload: unknown) => T,
@@ -2045,6 +2064,257 @@ export async function saveResourceLibrary(
       storagePath: options.storagePath,
     },
     normalizeResourceLibrarySave,
+    fetchImpl,
+  );
+}
+
+export type DirectFileCommandOptions =
+  | {
+      readonly operation: "create_directory";
+      readonly parentPath: string;
+      readonly name: string;
+    }
+  | {
+      readonly operation: "create_text";
+      readonly parentPath: string;
+      readonly name: string;
+      readonly content: string;
+    }
+  | {
+      readonly operation: "rename";
+      readonly path: string;
+      readonly name: string;
+    }
+  | {
+      readonly operation: "save_text";
+      readonly path: string;
+      readonly content: string;
+      readonly expected: { readonly size: number; readonly digest: string };
+    }
+  | {
+      readonly operation: "delete";
+      readonly paths: readonly string[];
+      readonly confirmationDigest: string;
+    };
+
+/**
+ * Runs one bounded direct Files command.  The command result union carries
+ * both the success and durable execution outcome; HTTP failures become the
+ * bounded AutomationMutationResult failure shape.
+ */
+export async function submitDirectFileCommand(
+  token: string | null,
+  resourceLibraryId: string,
+  options: DirectFileCommandOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<DirectFileCommandResult>> {
+  if (resourceLibraryId.trim().length === 0 || resourceLibraryId.length > 128) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const body: Record<string, unknown> = { operation: options.operation };
+  if (options.operation === "create_directory") {
+    body.parentPath = options.parentPath;
+    body.name = options.name;
+  } else if (options.operation === "create_text") {
+    body.parentPath = options.parentPath;
+    body.name = options.name;
+    body.content = options.content;
+  } else if (options.operation === "rename") {
+    body.path = options.path;
+    body.name = options.name;
+  } else if (options.operation === "save_text") {
+    body.path = options.path;
+    body.content = options.content;
+    body.expected = {
+      size: options.expected.size,
+      digest: options.expected.digest,
+    };
+  } else {
+    body.paths = [...options.paths];
+    body.confirmationDigest = options.confirmationDigest;
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/commands`,
+    body,
+    normalizeDirectFileCommandResult,
+    fetchImpl,
+  );
+}
+
+function directFilesReadHeaders(token: string | null): HeadersInit {
+  return token === null
+    ? { Accept: "application/json" }
+    : { Accept: "application/json", Authorization: `Bearer ${token}` };
+}
+
+/** Bounded zero-mutation open of one allowlisted text file. */
+export async function fetchTextFile(
+  token: string | null,
+  resourceLibraryId: string,
+  path: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TextFileDocument }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (resourceLibraryId.trim().length === 0 || path.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/text?path=${encodeURIComponent(path)}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeTextFileDocument(await response.json()),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** Bounded zero-mutation impact enumeration for one Delete selection. */
+export async function fetchDeleteImpact(
+  token: string | null,
+  resourceLibraryId: string,
+  paths: readonly string[],
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: DeleteImpactModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    resourceLibraryId.trim().length === 0 ||
+    paths.length === 0 ||
+    paths.length > 50
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const query = paths
+    .map((path) => `path=${encodeURIComponent(path)}`)
+    .join("&");
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/delete-impact?${query}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return { ok: true, model: normalizeDeleteImpact(await response.json()) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** Bounded secret-free removal preview from the current Active snapshot. */
+export async function fetchResourceLibraryRemovalPreview(
+  token: string | null,
+  resourceLibraryId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: RemovalPreviewModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (resourceLibraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/removal-preview`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return { ok: true, model: normalizeRemovalPreview(await response.json()) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Removes one unreferenced ResourceLibrary from managed configuration.  The
+ * backend publishes the validated successor atomically and never touches
+ * Storage content.
+ */
+export async function removeResourceLibrary(
+  token: string | null,
+  resourceLibraryId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<ResourceLibraryRemovalModel>> {
+  if (resourceLibraryId.trim().length === 0 || resourceLibraryId.length > 128) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "DELETE",
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
+    {},
+    normalizeResourceLibraryRemoval,
     fetchImpl,
   );
 }

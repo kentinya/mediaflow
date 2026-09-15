@@ -727,6 +727,58 @@ class ConfigurationObjectService:
                 next_action="correct the ResourceLibrary fields, then retry the Save",
             )
 
+        self._checked_successor_evidence(
+            validated, actor=actor, preferred_resource_id=str(normalized["id"])
+        )
+
+        try:
+            return self.activate_checked(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+                before_publish=before_publish,
+            )
+        except ResourceLibrarySaveError:
+            raise
+        except ConfigurationActivationConflict as error:
+            if error.current_revision_id is not None:
+                raise
+            raise ResourceLibrarySaveError(
+                "resource_library_evidence_failed",
+                "checked activation admission failed; the previous Active remains in use",
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action=(
+                    error.next_action or "refresh the current Active configuration and retry Save"
+                ),
+            ) from error
+        except ConfigurationVersionConflict:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the successor could not be published; the previous Active remains in use",
+                status=503,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry Save",
+            ) from error
+
+    def _checked_successor_evidence(
+        self,
+        validated: ManagedConfigurationRevision,
+        *,
+        actor: str,
+        preferred_resource_id: str | None = None,
+    ) -> None:
+        """Run the shared read-only successor evidence gates.
+
+        Storage checks, the recognition strategy test and the destination
+        precheck are recorded against the exact validated successor version so
+        ``activate_checked`` can consume current evidence for Save and for
+        ResourceLibrary removal alike.
+        """
+
         try:
             for referenced_storage_id in self.referenced_storage_ids(validated):
                 evidence = self.storage_check(
@@ -754,7 +806,12 @@ class ConfigurationObjectService:
             recognition_type: str | None = None
             if enabled_resources:
                 selected = next(
-                    (item for item in enabled_resources if item.get("id") == normalized["id"]),
+                    (
+                        item
+                        for item in enabled_resources
+                        if preferred_resource_id is not None
+                        and item.get("id") == preferred_resource_id
+                    ),
                     enabled_resources[0],
                 )
                 strategy_evidence = self.recognition_strategy_test(
@@ -841,6 +898,179 @@ class ConfigurationObjectService:
                 next_action="inspect the check condition, then retry Save",
             ) from error
 
+    def resource_library_removal_evidence(self, resource_library_id: str) -> dict[str, object]:
+        """Bounded, secret-free removal preview from the current Active snapshot.
+
+        The evidence identifies the selected library, its configured Storage
+        and relative root, and whether Automation Task Definitions,
+        recognition/organization rules or other managed objects reference it.
+        It performs zero Storage and zero configuration mutation.
+        """
+
+        active = self._managed.active()
+        if active is None:
+            self._managed.create_successor_draft(actor="system")
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; ResourceLibrary removal is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        resource = self._active_resource_library(active, resource_library_id)
+        storage_values = {
+            str(item.get("id")): item
+            for item in self._canonical_objects(active.document, "storages")
+        }
+        storage = storage_values.get(str(resource.get("storageId")))
+        references = self._references_for(
+            ConfigurationObjectKind.RESOURCE_LIBRARY,
+            str(resource.get("id")),
+            active.document,
+        )
+        return {
+            "resourceLibrary": {
+                "id": resource.get("id"),
+                "name": resource.get("name"),
+                "storageId": resource.get("storageId"),
+                "storagePath": resource.get("storagePath", ""),
+                "enabled": resource.get("enabled", True),
+            },
+            "storage": None
+            if storage is None
+            else {
+                "id": storage.get("id"),
+                "name": storage.get("name"),
+                "type": storage.get("type"),
+                "enabled": storage.get("enabled", True),
+            },
+            "references": references.document(),
+            "active": active.summary(),
+            "sideEffects": "none",
+        }
+
+    def remove_resource_library(
+        self,
+        resource_library_id: str,
+        *,
+        actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Remove one unreferenced ResourceLibrary as a managed successor.
+
+        The command never calls a mutating Storage operation and never
+        involves OrganizerExecutor: it removes only the selected ResourceLibrary
+        from a successor of the immutable Active document, validates that
+        successor completely, and publishes it through the existing checked
+        atomic activation boundary.  Any reference, validation, concurrency or
+        runtime failure preserves the previous Active.
+        """
+
+        if not isinstance(resource_library_id, str) or not self._RESOURCE_LIBRARY_SAVE_ID.fullmatch(
+            resource_library_id
+        ):
+            raise ValueError("ResourceLibrary removal requires a valid ResourceLibrary ID")
+
+        active = self._managed.active()
+        if active is None:
+            self._managed.create_successor_draft(actor=actor)
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; ResourceLibrary removal is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        resource = self._active_resource_library(active, resource_library_id)
+
+        references = self._references_for(
+            ConfigurationObjectKind.RESOURCE_LIBRARY,
+            resource_library_id,
+            active.document,
+        )
+        if references.total > 0:
+            raise ConfigurationObjectReferenced(
+                ConfigurationObjectKind.RESOURCE_LIBRARY,
+                resource_library_id,
+                references.total,
+                evidence=references,
+            )
+
+        try:
+            draft = self._managed.create_successor_draft(
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                verified_active=active,
+            )
+        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the successor configuration could not be created; the previous Active "
+                "remains in use",
+                status=503,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+
+        try:
+            edited = self.mutate(
+                draft.revision_id,
+                ConfigurationObjectKind.RESOURCE_LIBRARY,
+                object_id=resource_library_id,
+                value=None,
+                expected_version=draft.version,
+                actor=actor,
+                delete=True,
+                audit_action="files_resource_library_remove",
+                audit_metadata={
+                    "surface": "files",
+                    "removed": {
+                        "id": resource.get("id"),
+                        "name": resource.get("name"),
+                        "storageId": resource.get("storageId"),
+                        "storagePath": resource.get("storagePath", ""),
+                    },
+                },
+            )
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the removal could not be persisted; the previous Active remains in use",
+                status=503,
+                revision_id=draft.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+
+        try:
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_persistence_failed",
+                "the successor configuration could not be validated; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=edited.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+        if validated.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ResourceLibrarySaveError(
+                "resource_library_validation_failed",
+                "the successor without the ResourceLibrary failed complete configuration "
+                "validation",
+                status=422,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="inspect the validation errors, then retry the removal",
+            )
+
+        self._checked_successor_evidence(validated, actor=actor, preferred_resource_id=None)
+
         try:
             return self.activate_checked(
                 validated.revision_id,
@@ -859,7 +1089,8 @@ class ConfigurationObjectService:
                 revision_id=validated.revision_id,
                 durable_state="active_preserved",
                 next_action=(
-                    error.next_action or "refresh the current Active configuration and retry Save"
+                    error.next_action
+                    or "refresh the current Active configuration and retry removal"
                 ),
             ) from error
         except ConfigurationVersionConflict:
@@ -871,8 +1102,27 @@ class ConfigurationObjectService:
                 status=503,
                 revision_id=validated.revision_id,
                 durable_state="active_preserved",
-                next_action="check configuration persistence health, then retry Save",
+                next_action="check configuration persistence health, then retry removal",
             ) from error
+
+    def _active_resource_library(self, active: ManagedConfigurationRevision, resource_library_id):
+        resource = next(
+            (
+                item
+                for item in self._canonical_objects(active.document, "resourceLibraries")
+                if item.get("id") == resource_library_id
+            ),
+            None,
+        )
+        if resource is None:
+            raise ResourceLibrarySaveError(
+                "resource_library_not_found",
+                "the selected ResourceLibrary is not part of the current Active configuration",
+                status=404,
+                durable_state="active_preserved",
+                next_action="refresh the Active ResourceLibrary list and retry",
+            )
+        return resource
 
     def revision_detail(self, revision_id: str) -> dict[str, object]:
         revision = self._managed.require(revision_id)

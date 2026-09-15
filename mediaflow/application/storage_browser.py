@@ -841,7 +841,7 @@ class RuntimeFilesBrowserService:
             normalized_path = _normalize_storage_relative_path(path)
         except StorageBrowserError as error:
             raise self._runtime_error(error) from error
-        libraries = self._libraries_for(storage_id, resource_library_id)
+        self._libraries_for(storage_id, resource_library_id)
         try:
             document = self._browser.browse_revision(
                 self._revision,

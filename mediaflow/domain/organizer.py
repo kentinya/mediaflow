@@ -102,6 +102,13 @@ class PlanOperation(StrEnum):
     LINK = "LINK"
     NOOP = "NOOP"
     SKIP = "SKIP"
+    # Direct Files commands executed by the same mutation boundary.  They
+    # never appear in organize plans; the planner keeps producing only the
+    # five operations above.
+    CREATE_DIRECTORY = "CREATE_DIRECTORY"
+    WRITE = "WRITE"
+    RENAME = "RENAME"
+    DELETE = "DELETE"
 
 
 class PlanStatus(StrEnum):

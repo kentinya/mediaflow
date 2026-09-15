@@ -681,7 +681,10 @@ class ManualOrganizePreviewService:
                     code="source_missing",
                     status=404,
                     next_action="refresh Files and request a fresh Preview",
-                    details={"resourceLibraryId": library.library_id, "relativePath": relative_path},
+                    details={
+                        "resourceLibraryId": library.library_id,
+                        "relativePath": relative_path,
+                    },
                 ) from error
             raise ManualPreviewUnavailable(
                 "selected source Storage is unavailable",
@@ -757,7 +760,9 @@ class ManualOrganizePreviewService:
             OccurrenceState.VERIFIED.value,
         )
 
-    def _enumerate_resource_library_sources(self, storage: Storage, library) -> tuple[ManualSourceIdentity, ...]:
+    def _enumerate_resource_library_sources(
+        self, storage: Storage, library
+    ) -> tuple[ManualSourceIdentity, ...]:
         pending = [""]
         sources: list[ManualSourceIdentity] = []
         while pending:
@@ -765,7 +770,9 @@ class ManualOrganizePreviewService:
             storage_dir = self._join_library_path(library.root_path, rel_dir)
             cursor = None
             while True:
-                page = storage.list_page(storage_dir, limit=min(100, self._max_items), cursor=cursor)
+                page = storage.list_page(
+                    storage_dir, limit=min(100, self._max_items), cursor=cursor
+                )
                 entries = tuple(getattr(page, "entries", ()))
                 for entry in entries:
                     if not isinstance(entry, StorageEntry):
@@ -774,10 +781,13 @@ class ManualOrganizePreviewService:
                     if entry.entry_type is StorageEntryType.DIRECTORY:
                         pending.append(rel_path)
                     elif entry.entry_type is StorageEntryType.FILE:
-                        sources.append(self._source_identity_from_storage(storage, library, rel_path))
+                        sources.append(
+                            self._source_identity_from_storage(storage, library, rel_path)
+                        )
                         if len(sources) > self._max_items:
                             raise ManualPreviewError(
-                                f"ResourceLibrary Preview selection exceeds the bound of {self._max_items}",
+                                f"ResourceLibrary Preview selection exceeds the bound of "
+                                f"{self._max_items}",
                                 code="selection_over_limit",
                                 next_action="select a smaller batch from Files",
                                 details={"resourceLibraryId": library.library_id},
