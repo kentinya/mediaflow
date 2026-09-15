@@ -781,6 +781,7 @@ class MediaFlowApi:
                 "conflict",
                 409,
             )
+            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
             details = {
                 key: value
                 for key, value in {
@@ -789,10 +790,15 @@ class MediaFlowApi:
                     "currentVersion": error.current_version,
                     "currentDigest": error.current_digest,
                     "durableState": (
-                        "draft_preserved_active_unchanged"
-                        if error.current_revision_id
-                        else "draft_preserved"
+                        "active_winner_preserved"
+                        if is_resource_library_save and error.current_revision_id
+                        else (
+                            "draft_preserved_active_unchanged"
+                            if error.current_revision_id
+                            else "draft_preserved"
+                        )
                     ),
+                    "candidateState": ("not_published" if is_resource_library_save else None),
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": (
@@ -861,13 +867,19 @@ class MediaFlowApi:
                 "conflict",
                 409,
             )
+            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
             details = {
                 key: value
                 for key, value in {
                     "revisionId": error.revision_id,
                     "currentVersion": error.current_version,
                     "currentDigest": error.current_digest,
-                    "durableState": error.durable_state or "draft_preserved",
+                    "durableState": (
+                        "active_winner_preserved"
+                        if is_resource_library_save and error.current_version is not None
+                        else error.durable_state or "draft_preserved"
+                    ),
+                    "candidateState": ("not_published" if is_resource_library_save else None),
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": error.next_action
@@ -928,6 +940,7 @@ class MediaFlowApi:
                 "denied",
                 503,
             )
+            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
             return self._error(
                 start_response,
                 503,
@@ -938,7 +951,12 @@ class MediaFlowApi:
                     "setupRequired": True,
                     "runtimeConfigured": False,
                     "workflowAvailable": False,
-                    "durableState": "no_workflow_work_created",
+                    "durableState": (
+                        "no_active_configuration"
+                        if is_resource_library_save
+                        else "no_workflow_work_created"
+                    ),
+                    "candidateState": "not_saved" if is_resource_library_save else None,
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": (
@@ -1020,6 +1038,21 @@ class MediaFlowApi:
                 "error",
                 503,
             )
+            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
+            active_unavailable_state = (
+                "no_active_configuration"
+                if is_resource_library_save and error.reason == "active_missing"
+                else "managed_active_unavailable"
+            )
+            next_action = (
+                (
+                    "activate a valid managed configuration, then retry Save"
+                    if error.reason == "active_missing"
+                    else "repair or replace the unavailable Active configuration, then retry Save"
+                )
+                if is_resource_library_save
+                else "inspect configuration status and stage a replacement Draft"
+            )
             details = {
                 key: value
                 for key, value in {
@@ -1027,10 +1060,11 @@ class MediaFlowApi:
                     "version": error.version,
                     "digest": error.digest,
                     "reason": error.reason,
-                    "durableState": "managed_active_unavailable",
+                    "durableState": active_unavailable_state,
+                    "candidateState": "not_saved" if is_resource_library_save else None,
                     "sideEffects": "none",
                     "retrySafe": True,
-                    "nextAction": "inspect configuration status and stage a replacement Draft",
+                    "nextAction": next_action,
                 }.items()
                 if value is not None
             }
@@ -1293,7 +1327,14 @@ class MediaFlowApi:
         management_readiness_route = parts == ["api", "v1", "management", "readiness"]
         task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
         worker_route = parts[:3] == ["api", "v1", "workers"]
-        if self._is_management_only_setup() and self._is_workflow_producing_route(method, parts):
+        resource_library_save_route = (
+            parts == ["api", "v1", "resource-libraries"] and method == "POST"
+        )
+        if (
+            self._is_management_only_setup()
+            and self._is_workflow_producing_route(method, parts)
+            and not resource_library_save_route
+        ):
             raise RuntimeConfigurationNotConfigured()
         binding = self._runtime_binding
         if (
@@ -4358,10 +4399,7 @@ class MediaFlowApi:
                 200,
                 binding.files_browser.browse_resource_library(**query),
             )
-        if (
-            parts == ["api", "v1", "resource-libraries", "files"]
-            and method == "GET"
-        ):
+        if parts == ["api", "v1", "resource-libraries", "files"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if binding.files_browser is None:
                 return self._files_browser_unavailable(start_response)
@@ -6661,16 +6699,12 @@ class MediaFlowApi:
                 snapshot_digest=revision.digest,
                 maximum_active_jobs=maximum_active_jobs,
                 remote_execution_enabled=runtime.remote_execution_enabled,
-                remote_execution_maximum_ttl_seconds=(
-                    runtime.remote_execution_maximum_ttl_seconds
-                ),
+                remote_execution_maximum_ttl_seconds=(runtime.remote_execution_maximum_ttl_seconds),
                 stale_job_age_seconds=runtime.automation_stale_job_age_seconds,
                 system_status=system_status,
                 schedules=runtime.automation_schedules,
                 metadata_policies=runtime.strategy.metadata_policies,
-                resource_library_count=sum(
-                    item.enabled for item in runtime.resource_libraries
-                ),
+                resource_library_count=sum(item.enabled for item in runtime.resource_libraries),
                 media_library_count=sum(item.enabled for item in runtime.media_libraries),
                 runtime_revision=runtime_revision,
                 runtime_configuration=runtime,
@@ -8193,7 +8227,6 @@ class MediaFlowApi:
             "expected_digest": expected_digest,
         }
 
-
     @staticmethod
     def _files_browser_unavailable(start_response: Callable):
         return MediaFlowApi._error(
@@ -8208,8 +8241,7 @@ class MediaFlowApi:
                 "sideEffects": "none",
                 "retrySafe": True,
                 "nextAction": (
-                    "inspect configuration status and restore or activate a valid Active "
-                    "runtime"
+                    "inspect configuration status and restore or activate a valid Active runtime"
                 ),
             },
         )
@@ -8496,12 +8528,16 @@ class MediaFlowApi:
         ):
             return True
         return (
-            parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
-            and (len(parts) == 4 or parts == ["api", "v1", parts[2], "by-source"])
-        ) or parts == ["api", "v1", "storage", "files"] or (
-            len(parts) == 5
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
+            (
+                parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
+                and (len(parts) == 4 or parts == ["api", "v1", parts[2], "by-source"])
+            )
+            or parts == ["api", "v1", "storage", "files"]
+            or (
+                len(parts) == 5
+                and parts[:3] == ["api", "v1", "resource-libraries"]
+                and parts[4] == "files"
+            )
         )
 
     @staticmethod

@@ -298,6 +298,7 @@ class ResourceLibrarySaveError(RuntimeError):
                 "currentRevisionId": self.current_revision_id,
                 "currentVersion": self.current_version,
                 "durableState": self.durable_state,
+                "candidateState": "not_published",
                 "sideEffects": self.side_effects,
                 "retrySafe": self.retry_safe,
                 "nextAction": self.next_action,

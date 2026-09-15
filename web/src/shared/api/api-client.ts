@@ -1894,7 +1894,69 @@ export async function fetchOrganizeExecutions(
 
 export type AutomationMutationResult<T> =
   | { readonly ok: true; readonly status: number; readonly model: T }
-  | { readonly ok: false; readonly status: number; readonly code: string };
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+/**
+ * The small, secret-free recovery projection shared by authenticated mutation
+ * responses.  Only stable state fields cross the API client boundary; raw
+ * server messages are deliberately discarded.
+ */
+export interface AutomationMutationFailureDetails {
+  readonly durableState?: string;
+  readonly candidateState?: string;
+  readonly sideEffects?: string;
+  readonly retrySafe?: boolean;
+  readonly nextAction?: string;
+  readonly reason?: string;
+  readonly currentRevisionId?: string;
+  readonly currentVersion?: number;
+}
+
+function normalizeAutomationMutationFailureDetails(
+  value: unknown,
+): AutomationMutationFailureDetails | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const details: AutomationMutationFailureDetails = {
+    ...(typeof record.durableState === "string" &&
+    record.durableState.length <= 128
+      ? { durableState: record.durableState }
+      : {}),
+    ...(typeof record.candidateState === "string" &&
+    record.candidateState.length <= 128
+      ? { candidateState: record.candidateState }
+      : {}),
+    ...(typeof record.sideEffects === "string" &&
+    record.sideEffects.length <= 256
+      ? { sideEffects: record.sideEffects }
+      : {}),
+    ...(typeof record.retrySafe === "boolean"
+      ? { retrySafe: record.retrySafe }
+      : {}),
+    ...(typeof record.nextAction === "string" && record.nextAction.length <= 256
+      ? { nextAction: record.nextAction }
+      : {}),
+    ...(typeof record.reason === "string" && record.reason.length <= 128
+      ? { reason: record.reason }
+      : {}),
+    ...(typeof record.currentRevisionId === "string" &&
+    record.currentRevisionId.length <= 128
+      ? { currentRevisionId: record.currentRevisionId }
+      : {}),
+    ...(typeof record.currentVersion === "number" &&
+    Number.isSafeInteger(record.currentVersion)
+      ? { currentVersion: record.currentVersion }
+      : {}),
+  };
+  return Object.keys(details).length > 0 ? details : undefined;
+}
 
 async function submitAutomationMutation<T>(
   token: string | null,
@@ -1915,10 +1977,17 @@ async function submitAutomationMutation<T>(
     return { ok: false, status: 0, code: "transport_unavailable" };
   }
   if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    const code =
+      typeof envelope.code === "string" && envelope.code.length > 0
+        ? envelope.code
+        : "request_rejected";
+    const details = normalizeAutomationMutationFailureDetails(envelope.details);
     return {
       ok: false,
       status: response.status,
-      code: await readErrorCode(response),
+      code,
+      ...(details === undefined ? {} : { details }),
     };
   }
   let payload: unknown;
