@@ -21,6 +21,7 @@ export type IconName =
   | "file"
   | "image"
   | "video"
+  | "trash"
   | "more";
 
 export interface IconProps extends SVGProps<SVGSVGElement> {
@@ -183,6 +184,13 @@ export function Icon({ name, ...props }: IconProps) {
           <circle cx="5" cy="12" r="1" fill="currentColor" stroke="none" />
           <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
           <circle cx="19" cy="12" r="1" fill="currentColor" stroke="none" />
+        </svg>
+      );
+    case "trash":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden="true" {...common}>
+          <path d="M4.5 6.5h15M9.5 6.5V4.8h5v1.7M6.5 6.5l.9 12.2a1.6 1.6 0 0 0 1.6 1.5h6a1.6 1.6 0 0 0 1.6-1.5l.9-12.2" />
+          <path d="M10 10.5v6M14 10.5v6" />
         </svg>
       );
   }

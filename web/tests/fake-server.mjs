@@ -561,7 +561,17 @@ function resourceLibraryState(session) {
   const key = session ?? "shared";
   let value = RESOURCE_LIBRARY_STATES.get(key);
   if (value === undefined) {
-    value = { saved: false, failOnce: false, failed: false, candidate: null };
+    value = {
+      saved: false,
+      failOnce: false,
+      failed: false,
+      candidate: null,
+      extra: [],
+      removedIds: [],
+      emptied: false,
+      textStale: false,
+      commandLog: [],
+    };
     RESOURCE_LIBRARY_STATES.set(key, value);
   }
   return value;
@@ -569,20 +579,143 @@ function resourceLibraryState(session) {
 
 function resourceLibrarySystemStatus(session) {
   const state = resourceLibraryState(session);
-  if (!state.saved) return SYSTEM_STATUS;
+  if (!state.saved && state.extra.length === 0 && !state.emptied) {
+    return SYSTEM_STATUS;
+  }
   const document = JSON.parse(JSON.stringify(SYSTEM_STATUS));
   document.system.configuration_snapshot_id = "rev-e2e-2";
   document.system.configuration_snapshot_digest = "digest-e2e-2";
+  if (state.emptied) {
+    document.resource_libraries.items = [];
+    document.resource_libraries.total = 0;
+    return document;
+  }
+  if (state.extra.length > 0) {
+    // The libraries fixture replaces the base list so strip journeys run
+    // against one deterministic, fully named set.
+    document.resource_libraries.items = state.extra.filter(
+      (item) => !state.removedIds.includes(item.id),
+    );
+    document.resource_libraries.total =
+      document.resource_libraries.items.length;
+    return document;
+  }
   const candidate = state.candidate ?? {};
-  document.resource_libraries.items.push({
-    id: candidate.resourceLibraryId ?? "new-e2e-library",
-    name: candidate.name ?? "E2E 新资源库",
-    storage_id: candidate.storageId ?? "local-media",
-    root_path: candidate.storagePath ?? "",
-    enabled: candidate.enabled === true,
-  });
+  if (state.saved) {
+    document.resource_libraries.items.push({
+      id: candidate.resourceLibraryId ?? "new-e2e-library",
+      name: candidate.name ?? "E2E 新资源库",
+      storage_id: candidate.storageId ?? "local-media",
+      root_path: candidate.storagePath ?? "",
+      enabled: candidate.enabled === true,
+    });
+  }
+  for (const item of state.extra) {
+    if (!state.removedIds.includes(item.id)) {
+      document.resource_libraries.items.push(item);
+    }
+  }
+  document.resource_libraries.items = document.resource_libraries.items.filter(
+    (item) => item.id !== "source" || !state.removedIds.includes("source"),
+  );
   document.resource_libraries.total = document.resource_libraries.items.length;
   return document;
+}
+
+const E2E_FAKE_REFERENCES = new Map([["source", 1]]);
+
+function removalPreviewDocument(resourceLibraryId, state) {
+  const total = E2E_FAKE_REFERENCES.get(resourceLibraryId) ?? 0;
+  const extra = state.extra.find((item) => item.id === resourceLibraryId);
+  const displayName = extra
+    ? extra.name
+    : resourceLibraryId === "source"
+      ? "source"
+      : resourceLibraryId;
+  const displayRoot = extra
+    ? extra.root_path
+    : resourceLibraryId === "source"
+      ? "media/incoming"
+      : "";
+  return {
+    resourceLibrary: {
+      id: resourceLibraryId,
+      name: displayName,
+      storageId:
+        resourceLibraryId === "source" ? "source-storage" : "local-media",
+      storagePath: displayRoot,
+      enabled: true,
+    },
+    storage:
+      resourceLibraryId === "source"
+        ? {
+            id: "source-storage",
+            name: "Source storage",
+            type: "local",
+            enabled: true,
+          }
+        : {
+            id: "local-media",
+            name: "Local media",
+            type: "local",
+            enabled: true,
+          },
+    references:
+      total === 0
+        ? { total: 0, items: [], truncated: false }
+        : {
+            total,
+            items: [
+              {
+                section: "recognitionRules",
+                id: "movie-library",
+                field: "resourceLibraryId",
+              },
+            ],
+            truncated: false,
+          },
+    active: { status: "active", revisionId: "rev-e2e-2", version: 2 },
+    sideEffects: "none",
+  };
+}
+
+const FAKE_DELETE_IMPACT_ENTRIES = new Map([
+  [
+    "Movies",
+    [
+      { path: "Movies", isDirectory: true, size: 0 },
+      { path: "Movies/Avatar (2009)", isDirectory: true, size: 0 },
+      {
+        path: "Movies/Avatar (2009)/Avatar.2009.1080p.mkv",
+        isDirectory: false,
+        size: 1024,
+      },
+    ],
+  ],
+]);
+
+function deleteImpactDocument(resourceLibraryId, paths) {
+  const entries = [];
+  for (const path of paths) {
+    const nested = FAKE_DELETE_IMPACT_ENTRIES.get(path);
+    if (nested) {
+      entries.push(...nested);
+    } else {
+      entries.push({ path, isDirectory: false, size: 32 });
+    }
+  }
+  const fileCount = entries.filter((entry) => !entry.isDirectory).length;
+  const directoryCount = entries.length - fileCount;
+  return {
+    resourceLibraryId,
+    topLevelPaths: [...paths],
+    entries,
+    fileCount,
+    directoryCount,
+    totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
+    truncated: false,
+    scopeDigest: "fake-scope-digest-" + paths.join(","),
+  };
 }
 
 const FILE_INDEX_ITEMS = [
@@ -1019,6 +1152,7 @@ function filesDocument(
   storageId,
   resourceLibraryId = null,
   savedCandidate = null,
+  extraLibrary = null,
 ) {
   const isReferenceLibrary = resourceLibraryId === "source";
   const isSavedResourceLibrary = resourceLibraryId === "new-e2e-library";
@@ -1077,11 +1211,15 @@ function filesDocument(
           id: resourceLibraryId,
           name: isReferenceLibrary
             ? "source"
-            : (savedCandidate?.name ?? "Resources"),
-          enabled: savedCandidate?.enabled ?? true,
+            : extraLibrary
+              ? extraLibrary.name
+              : (savedCandidate?.name ?? "Resources"),
+          enabled: extraLibrary ? true : (savedCandidate?.enabled ?? true),
           rootPath: isReferenceLibrary
             ? "media/incoming"
-            : (savedCandidate?.storagePath ?? ""),
+            : extraLibrary
+              ? extraLibrary.root_path
+              : (savedCandidate?.storagePath ?? ""),
           storage: { ...storage, readOnly: false },
           ...(isReferenceLibrary
             ? { fileCount: 1248, totalSize: 324 * 1024 * 1024 * 1024 }
@@ -4672,6 +4810,218 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  const directCommandMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact)$/,
+  );
+  if (directCommandMatch) {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const resourceLibraryId = decodeURIComponent(directCommandMatch[1]);
+    const action = directCommandMatch[2];
+    const state = resourceLibraryState(session);
+    if (action === "commands" && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const fields = parsed.document;
+      state.commandLog.push({ ...fields });
+      if (fields.operation === "delete") {
+        const digest = `fake-scope-digest-${(fields.paths ?? []).join(",")}`;
+        if (fields.confirmationDigest !== digest) {
+          sendJson(res, 409, {
+            error: {
+              code: "files_direct_stale_confirmation",
+              details: {
+                category: "stale_confirmation",
+                durableState: "storage_unchanged",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "review the refreshed impact summary and confirm again",
+              },
+            },
+          });
+          return;
+        }
+        const outcomes = (fields.paths ?? []).map((path) => ({
+          path,
+          status: "SUCCESS",
+          errorCategory: null,
+        }));
+        sendJson(res, 200, {
+          operation: "delete",
+          status: "SUCCESS",
+          taskId: "task-e2e-delete",
+          taskStatus: "completed",
+          topLevelPaths: fields.paths ?? [],
+          totalItems: outcomes.length,
+          succeededItems: outcomes.length,
+          failedItems: 0,
+          outcomes,
+          sideEffects: "storage_mutations",
+        });
+        return;
+      }
+      if (fields.operation === "save_text" && state.textStale) {
+        sendJson(res, 409, {
+          error: {
+            code: "files_direct_stale_content",
+            details: {
+              category: "stale_changed",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "reload the current content, reapply the edits and save again",
+            },
+          },
+        });
+        return;
+      }
+      const target =
+        fields.operation === "rename" || fields.operation === "save_text"
+          ? fields.operation === "rename"
+            ? fields.name
+            : fields.path
+          : (fields.name ?? "");
+      sendJson(res, 200, {
+        operation: fields.operation,
+        status: "SUCCESS",
+        path: fields.path ?? "",
+        target,
+        effectCertainty: "verified_complete",
+        sideEffects: "storage_mutations",
+      });
+      return;
+    }
+    if (action === "text" && req.method === "GET") {
+      const path = url.searchParams.get("path") ?? "";
+      if (state.textStale) {
+        // A stale marker does not affect the read; the Save compares digests.
+      }
+      sendJson(res, 200, {
+        resourceLibraryId,
+        path,
+        content: "fake bounded text\nline two\n",
+        evidence: {
+          size: 24,
+          modifiedAt: "2026-08-23T11:15:00Z",
+          digest: state.textStale ? "digest-stale" : "digest-e2e-1",
+        },
+        sideEffects: "none",
+        retrySafe: true,
+      });
+      return;
+    }
+    if (action === "delete-impact" && req.method === "GET") {
+      const paths = url.searchParams.getAll("path");
+      sendJson(res, 200, deleteImpactDocument(resourceLibraryId, paths));
+      return;
+    }
+  }
+  const removalPreviewMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/removal-preview$/,
+  );
+  if (removalPreviewMatch && req.method === "GET") {
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      removalPreviewDocument(
+        decodeURIComponent(removalPreviewMatch[1]),
+        resourceLibraryState(session),
+      ),
+    );
+    return;
+  }
+  const removalMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)$/,
+  );
+  if (removalMatch && req.method === "GET") {
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      removalPreviewDocument(
+        decodeURIComponent(removalMatch[1]),
+        resourceLibraryState(session),
+      ),
+    );
+    return;
+  }
+  if (removalMatch && req.method === "DELETE") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message:
+            "principal lacks configuration management and activation authority",
+        },
+      });
+      return;
+    }
+    const resourceLibraryId = decodeURIComponent(removalMatch[1]);
+    const state = resourceLibraryState(session);
+    if ((E2E_FAKE_REFERENCES.get(resourceLibraryId) ?? 0) > 0) {
+      sendJson(res, 409, {
+        error: {
+          code: "configuration_object_referenced",
+          message: "Configuration resource_library has references",
+          details: {
+            objectKind: "resource_library",
+            objectId: resourceLibraryId,
+            referenceCount: 1,
+            references: ["recognitionRules:movie-library.resourceLibraryId"],
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "update the references or cancel deletion",
+          },
+        },
+      });
+      return;
+    }
+    state.removedIds.push(resourceLibraryId);
+    state.extra = state.extra.filter((item) => item.id !== resourceLibraryId);
+    sendJson(res, 200, {
+      removed: { id: resourceLibraryId },
+      active: { status: "active", revisionId: "rev-e2e-3", version: 3 },
+      configuration: {
+        authority: "MANAGED",
+        revisionId: "rev-e2e-3",
+        version: 3,
+      },
+      sideEffects: "configuration_only",
+      nextAction:
+        "refresh the Active ResourceLibrary list and select another enabled library",
+    });
+    return;
+  }
   if (url.pathname === "/api/v1/file-index") {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -4733,7 +5083,11 @@ const server = createServer(async (req, res) => {
     const resourceLibraryId = resourceMatch
       ? decodeURIComponent(resourceMatch[1])
       : null;
-    const savedResourceLibrary = resourceLibraryState(session).saved;
+    const stateForFiles = resourceLibraryState(session);
+    const savedResourceLibrary = stateForFiles.saved;
+    const extraLibrary = stateForFiles.extra.find(
+      (item) => item.id === resourceLibraryId,
+    );
     const storageId = resourceLibraryId
       ? resourceLibraryId === "source"
         ? "source-storage"
@@ -4745,6 +5099,7 @@ const server = createServer(async (req, res) => {
         "resources",
         "source",
         ...(savedResourceLibrary ? ["new-e2e-library"] : []),
+        ...stateForFiles.extra.map((item) => item.id),
       ].includes(resourceLibraryId)
     ) {
       sendJson(res, 404, {
@@ -4895,9 +5250,10 @@ const server = createServer(async (req, res) => {
       filesDocument(
         path,
         cursor,
-        storageId,
+        extraLibrary ? extraLibrary.storage_id : storageId,
         resourceLibraryId,
         resourceLibraryState(session).candidate,
+        extraLibrary ?? null,
       ),
     );
     return;
@@ -7744,11 +8100,25 @@ const server = createServer(async (req, res) => {
   ) {
     const sessionId =
       session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    const libraries = Number(url.searchParams.get("libraries") ?? "0");
     RESOURCE_LIBRARY_STATES.set(sessionId, {
       saved: false,
       failOnce: url.searchParams.get("failOnce") === "1",
       failed: false,
       candidate: null,
+      extra: ["a", "b", "c", "d", "e"]
+        .slice(0, Number.isNaN(libraries) ? 0 : libraries)
+        .map((suffix) => ({
+          id: `lib-${suffix}`,
+          name: `资源库${suffix.toUpperCase()}`,
+          storage_id: "local-media",
+          root_path: `library-${suffix}`,
+          enabled: true,
+        })),
+      removedIds: [],
+      emptied: url.searchParams.get("empty") === "1",
+      textStale: url.searchParams.get("textStale") === "1",
+      commandLog: [],
     });
     res.setHeader(
       "Set-Cookie",

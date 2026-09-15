@@ -31,12 +31,6 @@ async function openFiles(
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
-  if (token === VIEWER_TOKEN) {
-    await expect(
-      page.getByRole("button", { name: "关闭添加资源库" }),
-    ).toBeVisible();
-    await page.getByRole("button", { name: "关闭添加资源库" }).click();
-  }
   if (expectTable) await expect(page.getByRole("table")).toBeVisible();
 }
 
@@ -103,17 +97,23 @@ test("Files success state presents the reference composition with live Storage r
   const apiRequests = apiRequestsOf(page);
   await openFiles(page);
 
-  // Reference hierarchy: banner, ResourceLibrary summary, directory pane,
-  // breadcrumb, toolbar, table, selection footer and pagination.
-  const summary = page.locator(".mf-library-summary");
+  // Reference hierarchy: banner, ResourceLibrary card strip, directory pane,
+  // breadcrumb, toolbar, table, selection footer and pagination.  Two enabled
+  // libraries render the directly visible card strip; the first eligible
+  // library is selected without any hard-coded default.
+  const strip = page.locator(".mf-library-strip");
   await expect(page.getByText(/当前显示的是资源库中的文件/)).toBeVisible();
-  await expect(summary.locator("strong")).toHaveText("source");
-  await expect(summary.getByText("已启用", { exact: true })).toBeVisible();
-  await expect(summary.getByText(/存储: source-storage/)).toBeVisible();
-  await expect(summary.getByText(/1,248 个文件 · 324 GB/)).toBeVisible();
+  await expect(strip).toBeVisible();
+  await expect(
+    strip.getByRole("button", { name: "Resources", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    strip.getByRole("button", { name: "source", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("路径: /")).toBeVisible();
   await expect(page.getByRole("heading", { name: "目录" })).toBeVisible();
   await expect(
-    page.getByRole("button", { name: "source", exact: true }),
+    directoryTree(page).getByRole("button", { name: "Resources", exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
 
@@ -419,11 +419,14 @@ test("ResourceLibrary Save keeps the old Active on failure and retries once safe
   await expect(page.getByRole("heading", { name: "添加资源库" })).toHaveCount(
     0,
   );
-  await expect(page.getByLabel("选择资源库")).toHaveValue("new-e2e-library");
+  // Two enabled libraries now render the card strip with the saved library
+  // selected, and the root/path summary resolves from the same selection.
   await expect(
-    page.getByRole("region", { name: "文件浏览" }).getByRole("strong"),
-  ).toHaveText("E2E New Library");
-  await expect(page.getByText("media/new")).toBeVisible();
+    page
+      .locator(".mf-library-card-select")
+      .filter({ hasText: "E2E New Library" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("路径: /media/new")).toBeVisible();
 
   const savePosts = apiRequests.filter(
     (request) =>
@@ -469,4 +472,240 @@ test("controlled 1536x1024 success-state evidence screenshot", async ({
     fullPage: false,
   });
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
+});
+
+const FAKE_RESET = "/__test__/reset-resource-library";
+
+async function resetFakeResourceLibraries(
+  page: Page,
+  query = "",
+): Promise<void> {
+  await page.goto("/ui-v2/");
+  // The fake server binds its fixture state to a session cookie; the Set-Cookie
+  // on this bootstrap request pins the session for the whole test.
+  await page.evaluate(async (target) => {
+    const reset = await fetch(target, { method: "POST" });
+    if (!reset.ok) throw new Error("resource-library fake reset failed");
+  }, FAKE_RESET + query);
+}
+
+test("normal entry keeps the Add ResourceLibrary drawer closed", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await page.goto("/ui-v2/library/files");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(
+    page.getByRole("heading", { name: "文件", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "添加资源库" })).toHaveCount(
+    0,
+  );
+
+  // Only explicit activation opens the drawer; Cancel restores the normal
+  // layout and keeps the invocation control usable again.
+  await page.getByRole("button", { name: "+ 添加资源库" }).click();
+  await expect(page.getByRole("heading", { name: "添加资源库" })).toBeVisible();
+  await page.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "添加资源库" })).toHaveCount(
+    0,
+  );
+  expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
+});
+
+test("zero-library Active configuration renders the full-width empty state", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  await resetFakeResourceLibraries(page, "?empty=1");
+  await openFiles(page, VIEWER_TOKEN, "", false);
+
+  await expect(
+    page.getByText("尚未添加资源库。添加后即可在这里浏览和整理文件。"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "尚未添加资源库" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("请先添加一个资源库，选择存储位置和文件根路径。"),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: "+ 添加资源库" })).toHaveCount(
+    2,
+  );
+  await expect(page.getByRole("table")).toHaveCount(0);
+  await expect(page.getByLabel("目录", { exact: true })).toHaveCount(0);
+
+  // No ResourceLibrary-scoped request without an exact enabled library.
+  expect(
+    apiRequests.some((request) =>
+      /\/api\/v1\/resource-libraries\/[^/]+\/files/.test(request.url),
+    ),
+  ).toBe(false);
+});
+
+test("card strip fills the width, overflow popover promotes the selection", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?libraries=5");
+  await openFiles(page);
+
+  const strip = page.locator(".mf-library-strip");
+  for (const name of ["资源库A", "资源库B", "资源库C"]) {
+    await expect(
+      strip.getByRole("button", { name, exact: true }),
+    ).toBeVisible();
+  }
+  const more = page.getByRole("button", { name: "更多资源库" });
+  await expect(more).toBeVisible();
+  await more.click();
+
+  const popover = page.getByRole("dialog", { name: "更多资源库" });
+  await expect(popover).toBeVisible();
+  await expect(popover.getByRole("button", { name: /资源库D/ })).toBeVisible();
+  await popover.getByRole("button", { name: /资源库D/ }).click();
+  await expect(popover).toHaveCount(0);
+
+  // The overflow selection is promoted into the visible card row and the
+  // previously visible overflow candidate returns to the popover.
+  await expect(
+    page
+      .locator(".mf-library-strip")
+      .getByRole("button", { name: "资源库D", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByText("路径: /library-d")).toBeVisible();
+});
+
+test("create folder and rename complete through the direct command dialogs", async ({
+  page,
+}) => {
+  await openFiles(page);
+
+  await page.getByRole("button", { name: "新建文件夹" }).click();
+  await page.getByLabel("名称").fill("bad/name");
+  await page.getByRole("button", { name: "创建" }).click();
+  await expect(page.getByRole("alert")).toContainText("单个安全文件名");
+
+  await page.getByLabel("名称").fill("E2E 新目录");
+  await page.getByRole("button", { name: "创建" }).click();
+  await expect(page.getByRole("dialog", { name: "新建文件夹" })).toHaveCount(0);
+
+  const row = page.getByRole("row", { name: /readme\.txt/ });
+  await row.getByRole("button", { name: "更多操作 readme.txt" }).click();
+  await page.getByRole("menuitem", { name: "重命名" }).click();
+  const renameInput = page.getByLabel("新名称");
+  await expect(renameInput).toHaveValue("readme.txt");
+  await renameInput.fill("renamed-by-e2e.txt");
+  await page.getByRole("button", { name: "重命名", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "重命名" })).toHaveCount(0);
+});
+
+test("bounded text edit saves through the stale-safe editor", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?textStale=1");
+  await openFiles(page);
+
+  const row = page.getByRole("row", { name: /readme\.txt/ });
+  await row.getByRole("button", { name: "更多操作 readme.txt" }).click();
+  await page.getByRole("menuitem", { name: "编辑" }).click();
+  const editor = page.getByRole("dialog", { name: /编辑文本/ });
+  const textarea = editor.getByLabel(/编辑 readme\.txt/);
+  await expect(textarea).toHaveValue(/fake bounded text/);
+  await textarea.fill("operator edits");
+  await editor.getByRole("button", { name: "保存" }).click();
+
+  // The backend stale rejection keeps the edited content and explains the
+  // safe recovery without overwriting the newer server version.
+  await expect(page.getByText(/文件在打开后已发生变化/).first()).toBeVisible();
+  await expect(textarea).toHaveValue("operator edits");
+  await editor.getByRole("button", { name: "关闭", exact: true }).click();
+});
+
+test("bounded delete shows the impact summary and requires one confirmation", async ({
+  page,
+}) => {
+  const commandBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/commands")
+    ) {
+      commandBodies.push(request.postData() ?? "");
+    }
+  });
+  await openFiles(page);
+
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("button", { name: "删除", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "删除确认" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/即将永久删除/)).toBeVisible();
+  await expect(dialog.getByText(/2 个文件夹/)).toBeVisible();
+
+  await dialog.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "删除结果" })).toBeVisible();
+  await expect(page.getByText(/删除已完成/)).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "删除结果" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  expect(commandBodies).toHaveLength(1);
+  expect(commandBodies[0]).toContain(
+    '"confirmationDigest":"fake-scope-digest-Movies"',
+  );
+});
+
+test("unreferenced ResourceLibrary removal is confirmed and keeps Storage truth", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?libraries=1");
+  await openFiles(page);
+
+  await page.getByRole("button", { name: "资源库操作 资源库A" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const dialog = page.getByRole("dialog", { name: "删除资源库" });
+  await expect(
+    dialog.getByText(/未发现自动化任务或整理规则引用/),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText(
+      "只会删除 MediaFlow 中的资源库配置。不会删除 Storage 中的任何文件或文件夹。",
+    ),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+
+  await page.getByRole("button", { name: "资源库操作 资源库A" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  await dialog.getByRole("button", { name: "删除资源库", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "删除资源库" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "资源库A" })).toHaveCount(0);
+});
+
+test("referenced ResourceLibrary removal stays blocked with bounded evidence", async ({
+  page,
+}) => {
+  await openFiles(page);
+
+  // Two base libraries render the strip: select the `source` card, then open
+  // that card's own action menu.
+  await page
+    .locator(".mf-library-strip")
+    .getByRole("button", { name: "source", exact: true })
+    .click();
+  await expect(page.getByText("路径: /media/incoming")).toBeVisible();
+  await page.getByRole("button", { name: "资源库操作 source" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const dialog = page.getByRole("dialog", { name: "删除资源库" });
+  await expect(dialog.getByText(/仍被 1/)).toBeVisible();
+  await expect(dialog.getByText(/movie-library/)).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "删除资源库", exact: true }),
+  ).toBeDisabled();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
 });

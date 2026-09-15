@@ -13,16 +13,44 @@ import type {
   SystemResourceLibrary,
   SystemStorage,
 } from "../../entities/library/system-status";
+import {
+  isTextFileName,
+  type DirectFileCommandResult,
+  type RemovalPreviewModel,
+} from "../../entities/library/direct-files";
 import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
+import { CardActionMenu, LibraryCardStrip } from "./LibraryCardStrip";
+import { DeleteResourceLibraryDialog } from "./DeleteResourceLibraryDialog";
 import {
+  DeleteImpactDialog,
+  NamePromptDialog,
+  TextEditorDialog,
+  type TextEditorState,
+} from "./FileCommandDialogs";
+import {
+  fetchDeleteImpact,
+  fetchResourceLibraryRemovalPreview,
+  fetchTextFile,
+  removeResourceLibrary,
   saveResourceLibrary,
+  submitDirectFileCommand,
   submitServerBoundPreview,
   type AutomationMutationFailureDetails,
+  type DirectFileCommandOptions,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
 
 type FilesView = "list" | "grid";
+
+type FilesDialog =
+  | { readonly kind: "create_folder" }
+  | { readonly kind: "create_text" }
+  | { readonly kind: "rename"; readonly path: string; readonly name: string }
+  | { readonly kind: "delete"; readonly paths: readonly string[] }
+  | { readonly kind: "editor"; readonly path: string }
+  | { readonly kind: "remove_library"; readonly id: string }
+  | null;
 
 interface FilesRowVm {
   readonly name: string;
@@ -51,6 +79,7 @@ interface DirectoryNodeVm {
 interface InitialBrowseState {
   readonly path: string;
   readonly invalidPath: boolean;
+  readonly requestedLibraryId: string;
 }
 
 const DIRECTORY_PRESENTATION_ORDER = [
@@ -166,13 +195,128 @@ export function resourceLibrarySaveFailure(
   }
 }
 
+export function removalFailureMessage(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  if (details?.durableState === "active_winner_preserved") {
+    return "Active 已被其他变更替换，本次删除未执行；当前获胜的 Active 仍为权威。状态已刷新，请检查后重试。";
+  }
+  switch (code) {
+    case "configuration_object_referenced":
+      return "该资源库仍被整理规则或自动化任务引用，不能删除；请先处理这些引用后再删除。";
+    case "resource_library_not_found":
+      return "所选资源库不在当前 Active 配置中，可能已被删除或停用；请刷新后重试。";
+    case "forbidden":
+      return "当前账号没有删除资源库所需权限，请切换有权限的账号。";
+    case "configuration_conflict":
+    case "configuration_version_conflict":
+      return "Active 配置已被其他变更替换，本次删除未执行；请刷新后重试。";
+    case "resource_library_validation_failed":
+    case "resource_library_storage_check_failed":
+    case "resource_library_strategy_test_failed":
+    case "resource_library_destination_check_failed":
+    case "resource_library_evidence_failed":
+      return "删除未发布：移除该资源库后的配置未通过完整校验；原 Active 仍在使用，Storage 未被修改。";
+    case "resource_library_runtime_failed":
+    case "resource_library_persistence_failed":
+    case "configuration_unavailable":
+      return "删除未发布：配置服务暂不可用；原 Active 仍在使用，请稍后重试。";
+    default:
+      return "删除未执行，配置与 Storage 均未被修改；请刷新状态后重试。";
+  }
+}
+
 function readInitialBrowseState(): InitialBrowseState {
-  if (typeof window === "undefined") return { path: "", invalidPath: false };
-  const value = new URLSearchParams(window.location.search).get("path") ?? "";
+  if (typeof window === "undefined") {
+    return { path: "", invalidPath: false, requestedLibraryId: "" };
+  }
+  const search = new URLSearchParams(window.location.search);
+  const value = search.get("path") ?? "";
+  const requestedLibraryId = search.get("resourceLibraryId") ?? "";
   return {
     path: isSafeRelativePath(value) ? value : "",
     invalidPath: value !== "" && !isSafeRelativePath(value),
+    requestedLibraryId,
   };
+}
+
+/**
+ * Files-owned route state: keep the selected ResourceLibrary in the URL so an
+ * in-app revisit, deep link or reload followed by normal authentication
+ * recovery selects it again when it remains enabled.
+ */
+function updateLibraryRouteState(libraryId: string): void {
+  if (typeof window === "undefined") return;
+  const search = new URLSearchParams(window.location.search);
+  if (libraryId === "") search.delete("resourceLibraryId");
+  else search.set("resourceLibraryId", libraryId);
+  const query = search.toString();
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + (query === "" ? "" : `?${query}`),
+  );
+}
+
+function directFileCommandFailure(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  if (details?.durableState === "mutation_effect_uncertain") {
+    return "操作结果不确定，未自动重试；请刷新目录查看实际状态并在任务详情中核查。";
+  }
+  switch (code) {
+    case "files_direct_target_exists":
+      return "目标已存在，未替换任何内容；请换一个名称或刷新目录后重试。";
+    case "files_direct_stale_content":
+      return "文件在打开后已发生变化，本次编辑未保存；请重新加载最新内容后再保存。";
+    case "files_direct_stale_confirmation":
+      return "删除范围已变化，本次未执行；请重新确认最新影响摘要后再删除。";
+    case "files_direct_invalid_name":
+      return "名称不是单个安全文件名；请去除路径分隔符、保留字或结尾的点/空格后重试。";
+    case "files_direct_invalid_path":
+      return "路径不是安全的资源库相对路径，未做任何修改。";
+    case "files_direct_root_protected":
+      return "资源库根目录不能被重命名或删除。";
+    case "files_direct_capability_denied":
+      return "该资源库使用的存储为只读，不能执行该操作。";
+    case "files_direct_unsupported_text_type":
+      return "该扩展名不在可编辑的文本类型内。";
+    case "files_direct_text_too_large":
+      return "文本超过可编辑大小上限（512 KB），未保存。";
+    case "files_direct_text_not_decodable":
+      return "文件不是有效的 UTF-8 文本，无法在编辑器中打开。";
+    case "files_direct_symlink_not_supported":
+      return "链接文件不支持该操作。";
+    case "files_direct_resource_library_not_found":
+      return "所选资源库在当前 Active 配置中不可用；请选择其他已启用的资源库。";
+    case "files_direct_not_found":
+      return "目标不存在，可能已被删除或移动；请刷新目录后重试。";
+    case "files_direct_is_a_directory":
+      return "目标是一个文件夹，不能作为文本打开。";
+    case "files_direct_not_a_directory":
+      return "目标父目录不存在或不是文件夹；请选择现有目录后重试。";
+    case "files_direct_impact_entry_limit_exceeded":
+    case "files_direct_impact_depth_limit_exceeded":
+    case "files_direct_impact_size_limit_exceeded":
+      return "删除范围超出限制，未执行任何删除；请选择更小的范围分批删除。";
+    case "files_direct_invalid_confirmation":
+      return "缺少有效的影响确认证据；请重新获取影响摘要后再确认删除。";
+    case "files_direct_path_locked":
+      return "目标正被其他任务占用，未做修改；请稍后重试。";
+    case "files_direct_storage_unavailable":
+    case "files_direct_connection_failed":
+    case "files_direct_timeout":
+    case "files_direct_authentication_failed":
+    case "files_direct_rate_limited":
+    case "files_direct_storage_failure":
+      return "存储暂不可用或读取失败，未做任何修改；请等待存储恢复后重试。";
+    case "forbidden":
+      return "当前账号没有执行该操作所需权限，请切换有权限的账号。";
+    default:
+      return "命令未执行，当前数据未被修改；请根据原因修正后重试或刷新目录。";
+  }
 }
 
 function formatBytes(value: number): string {
@@ -537,25 +681,25 @@ function FileRowIcon({ row }: { readonly row: FilesRowVm }) {
 }
 
 function LibrarySummary({
+  libraryId,
   libraryName,
-  libraries,
-  selectedLibraryId,
-  onLibraryChange,
   enabled,
   storageName,
   rootPath,
   fileCount,
   totalSize,
+  onRemoveRequest,
+  removalBusy,
 }: {
+  readonly libraryId: string;
   readonly libraryName: string;
-  readonly libraries: readonly SystemResourceLibrary[];
-  readonly selectedLibraryId: string;
-  readonly onLibraryChange: (id: string) => void;
   readonly enabled: boolean;
   readonly storageName: string;
   readonly rootPath: string;
   readonly fileCount: number | null;
   readonly totalSize: number | null;
+  readonly onRemoveRequest?: (id: string) => void;
+  readonly removalBusy?: boolean;
 }) {
   const summary =
     fileCount !== null
@@ -571,21 +715,16 @@ function LibrarySummary({
       <div className="mf-summary-text">
         <div className="mf-summary-title">
           <strong>{libraryName}</strong>
-          {libraries.length > 1 ? (
-            <select
-              aria-label="选择资源库"
-              className="mf-summary-library-select"
-              value={selectedLibraryId}
-              onChange={(event) => onLibraryChange(event.target.value)}
-            >
-              {libraries.map((library) => (
-                <option key={library.id} value={library.id}>
-                  {library.name ?? library.id}
-                </option>
-              ))}
-            </select>
-          ) : null}
           {enabled && <span className="mf-pill mf-pill-enabled">已启用</span>}
+          {onRemoveRequest !== undefined && (
+            <CardActionMenu
+              libraryId={libraryId}
+              libraryName={libraryName}
+              triggerLabel={`资源库操作 ${libraryName}`}
+              onRemoveRequest={onRemoveRequest}
+              disabled={removalBusy === true}
+            />
+          )}
         </div>
         <span>存储: {storageName}</span>
         <span>路径: {rootPath === "" ? "/" : "/" + rootPath}</span>
@@ -635,8 +774,15 @@ function FileBrowseView({
   previewError,
   page,
   canPrev,
+  removalBusy,
   onViewChange,
   onLibraryChange,
+  onRemoveLibraryRequest,
+  onCreateFolder,
+  onCreateText,
+  onRename,
+  onEdit,
+  onDelete,
   onDiscoverDirectories,
   onToggle,
   onToggleAll,
@@ -660,8 +806,15 @@ function FileBrowseView({
   readonly previewError: string | null;
   readonly page: number;
   readonly canPrev: boolean;
+  readonly removalBusy: boolean;
   readonly onViewChange: (view: FilesView) => void;
   readonly onLibraryChange: (id: string) => void;
+  readonly onRemoveLibraryRequest: (id: string) => void;
+  readonly onCreateFolder: () => void;
+  readonly onCreateText: () => void;
+  readonly onRename: (path: string, name: string) => void;
+  readonly onEdit: (path: string) => void;
+  readonly onDelete: (paths: readonly string[]) => void;
   readonly onDiscoverDirectories: (paths: readonly string[]) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
@@ -688,6 +841,30 @@ function FileBrowseView({
       .map((entry) => entry.path);
     if (paths.length > 0) onDiscoverDirectories(paths);
   }, [model, onDiscoverDirectories]);
+  const [rowMenuPath, setRowMenuPath] = useState<string | null>(null);
+  useEffect(() => {
+    if (rowMenuPath === null) return undefined;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setRowMenuPath(null);
+      }
+    };
+    const handlePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (
+        target instanceof Element &&
+        target.closest(".mf-card-menu, .mf-row-more") === null
+      ) {
+        setRowMenuPath(null);
+      }
+    };
+    document.addEventListener("keydown", handleKey, true);
+    document.addEventListener("pointerdown", handlePointer, true);
+    return () => {
+      document.removeEventListener("keydown", handleKey, true);
+      document.removeEventListener("pointerdown", handlePointer, true);
+    };
+  }, [rowMenuPath]);
   const rows = useMemo(
     () => buildRows(model, selected, query),
     [model, selected, query],
@@ -701,7 +878,11 @@ function FileBrowseView({
     rows.length > 0 && rows.every((row) => selected.has(row.path));
   const library = model.resourceLibrary;
   const libraryName = library?.name ?? "资源库";
+  const libraryId = library?.id ?? selectedLibraryId;
   const hasNext = model.hasNext && model.nextCursor !== null;
+  const selectedPaths = model.entries
+    .filter((entry) => selected.has(entry.path))
+    .map((entry) => entry.path);
   return (
     <section className="mf-files" aria-label="文件浏览">
       <div className="mf-files-banner" role="note">
@@ -710,17 +891,28 @@ function FileBrowseView({
         </span>
         {FILES_BANNER}
       </div>
-      <LibrarySummary
-        libraryName={libraryName}
-        libraries={libraries}
-        selectedLibraryId={selectedLibraryId}
-        onLibraryChange={onLibraryChange}
-        enabled={library?.enabled === true}
-        storageName={model.storageName}
-        rootPath={library?.rootPath ?? ""}
-        fileCount={library?.fileCount ?? null}
-        totalSize={library?.totalSize ?? null}
-      />
+      {libraries.length > 1 ? (
+        <LibraryCardStrip
+          libraries={libraries}
+          selectedLibraryId={selectedLibraryId}
+          rootPath={library?.rootPath ?? ""}
+          onLibraryChange={onLibraryChange}
+          onRemoveRequest={onRemoveLibraryRequest}
+          removalBusy={removalBusy}
+        />
+      ) : (
+        <LibrarySummary
+          libraryId={libraryId}
+          libraryName={libraryName}
+          enabled={library?.enabled === true}
+          storageName={model.storageName}
+          rootPath={library?.rootPath ?? ""}
+          fileCount={library?.fileCount ?? null}
+          totalSize={library?.totalSize ?? null}
+          onRemoveRequest={onRemoveLibraryRequest}
+          removalBusy={removalBusy}
+        />
+      )}
       <div className="mf-files-workarea">
         <DirectoryTree
           libraryName={libraryName}
@@ -755,6 +947,20 @@ function FileBrowseView({
               )}
             </nav>
             <div className="mf-toolbar-controls">
+              <button
+                className="mf-button mf-button-secondary"
+                type="button"
+                onClick={onCreateFolder}
+              >
+                新建文件夹
+              </button>
+              <button
+                className="mf-button mf-button-secondary"
+                type="button"
+                onClick={onCreateText}
+              >
+                新建文本文件
+              </button>
               <button
                 className="mf-button mf-button-secondary"
                 type="button"
@@ -910,15 +1116,65 @@ function FileBrowseView({
                             查看
                           </button>
                         )}
-                        <button
-                          type="button"
-                          className="mf-row-more"
-                          aria-label={`更多操作 ${row.name}`}
-                          title="更多文件操作将在后续任务提供"
-                          disabled
-                        >
-                          <Icon name="more" />
-                        </button>
+                        <div className="mf-card-menu-anchor">
+                          <button
+                            type="button"
+                            className="mf-row-more"
+                            aria-label={`更多操作 ${row.name}`}
+                            aria-haspopup="menu"
+                            aria-expanded={rowMenuPath === row.path}
+                            onClick={() =>
+                              setRowMenuPath((current) =>
+                                current === row.path ? null : row.path,
+                              )
+                            }
+                          >
+                            <Icon name="more" />
+                          </button>
+                          {rowMenuPath === row.path && (
+                            <div
+                              className="mf-card-menu"
+                              role="menu"
+                              aria-label={`更多操作 ${row.name}`}
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onRename(row.path, row.name);
+                                }}
+                              >
+                                重命名
+                              </button>
+                              {!row.isDirectory && isTextFileName(row.name) && (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  className="mf-card-menu-item"
+                                  onClick={() => {
+                                    setRowMenuPath(null);
+                                    onEdit(row.path);
+                                  }}
+                                >
+                                  编辑
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item mf-card-menu-danger"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onDelete([row.path]);
+                                }}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -952,6 +1208,17 @@ function FileBrowseView({
           disabled={organizeCount === 0 || previewing}
         >
           批量整理
+        </button>
+        <button
+          className="mf-button mf-button-danger"
+          type="button"
+          onClick={() => onDelete(selectedPaths)}
+          disabled={selectedCount === 0 || selectedPaths.length > 50}
+          title={
+            selectedPaths.length > 50 ? "单次删除最多选择 50 项" : undefined
+          }
+        >
+          删除
         </button>
         <button
           className="mf-button mf-button-secondary"
@@ -1007,6 +1274,7 @@ function FilesHeader({
       </div>
       <div className="mf-files-header-actions">
         <button
+          id="mf-add-resource-library-button"
           className="mf-button mf-button-primary"
           type="button"
           onClick={onOpenDrawer}
@@ -1311,7 +1579,9 @@ export function StorageFilesPage() {
   const queryClient = useQueryClient();
   const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
-  const [selectedLibraryId, setSelectedLibraryId] = useState("");
+  const [selectedLibraryId, setSelectedLibraryId] = useState(
+    initialBrowse.requestedLibraryId,
+  );
   const [path, setPath] = useState(initialBrowse.path);
   const [invalidPath, setInvalidPath] = useState(initialBrowse.invalidPath);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -1327,8 +1597,17 @@ export function StorageFilesPage() {
     readonly string[]
   >([]);
   const [view, setView] = useState<FilesView>("list");
-  const [drawerOpen, setDrawerOpen] = useState(true);
+  // The Add ResourceLibrary drawer is an operator-invoked action state only:
+  // mount, re-entry, refresh and authentication recovery keep it closed.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<FilesDialog>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [commandResult, setCommandResult] =
+    useState<DirectFileCommandResult | null>(null);
+  const [editorStale, setEditorStale] = useState(false);
+  const [removalError, setRemovalError] = useState<string | null>(null);
   const statusQuery = useQuery(systemStatusQueryOptions(token));
   const status = statusQuery.data;
   const libraries = useMemo(
@@ -1339,13 +1618,15 @@ export function StorageFilesPage() {
     () => status?.storages.filter((item) => item.enabled) ?? [],
     [status?.storages],
   );
-  const defaultLibrary =
-    libraries.find((item) => item.id === "source") ?? libraries[0];
-  const effectiveLibraryId = selectedLibraryId || defaultLibrary?.id || "";
+  // Deterministic fallback: the URL-requested library when still enabled,
+  // otherwise the first eligible library; never a hard-coded default id.
+  const effectiveLibraryId = libraries.some(
+    (item) => item.id === selectedLibraryId,
+  )
+    ? selectedLibraryId
+    : (libraries[0]?.id ?? "");
   const activeLibrary =
-    libraries.find((item) => item.id === effectiveLibraryId) ??
-    libraries[0] ??
-    null;
+    libraries.find((item) => item.id === effectiveLibraryId) ?? null;
   const activeLibraryId = activeLibrary?.id ?? "";
   const effectivePath = invalidPath ? "" : path;
   const filesQuery = useQuery(
@@ -1415,6 +1696,25 @@ export function StorageFilesPage() {
     setQuery("");
   };
 
+  // A requested selection that no longer resolves is explained and
+  // deterministically re-pointed at a current eligible library entirely by
+  // render-time derivation; no lifecycle effect mutates the selection.
+  const libraryNotice = useMemo(() => {
+    if (
+      status?.configurationActive !== true ||
+      initialBrowse.requestedLibraryId === "" ||
+      libraries.length === 0 ||
+      libraries.some((item) => item.id === initialBrowse.requestedLibraryId)
+    ) {
+      return null;
+    }
+    return `资源库“${initialBrowse.requestedLibraryId}”不可用或已停用，已切换到“${libraries[0]?.name ?? libraries[0]?.id ?? ""}”。`;
+  }, [
+    status?.configurationActive,
+    initialBrowse.requestedLibraryId,
+    libraries,
+  ]);
+
   const openPath = (nextPath: string) => {
     if (!isSafeRelativePath(nextPath)) {
       setInvalidPath(true);
@@ -1439,6 +1739,21 @@ export function StorageFilesPage() {
     setVisitedDirectories([]);
     setKnownDirectoryPaths([]);
     resetBrowseState();
+    updateLibraryRouteState(id);
+  };
+
+  const openDrawer = (invokerId: string) => {
+    setDrawerInvokerId(invokerId);
+    setSaveError(null);
+    setDrawerOpen(true);
+  };
+
+  const closeDrawer = () => {
+    setSaveError(null);
+    setDrawerOpen(false);
+    if (drawerInvokerId !== null) {
+      document.getElementById(drawerInvokerId)?.focus();
+    }
   };
 
   const saveLibraryMutation = useMutation({
@@ -1457,12 +1772,14 @@ export function StorageFilesPage() {
       }
       setSaveError(null);
       setDrawerOpen(false);
-      setSelectedLibraryId(result.model.enabled ? result.model.id : "");
+      const savedId = result.model.enabled ? result.model.id : "";
+      setSelectedLibraryId(savedId);
       setInvalidPath(false);
       setPath("");
       setVisitedDirectories([]);
       setKnownDirectoryPaths([]);
       resetBrowseState();
+      updateLibraryRouteState(savedId);
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
@@ -1472,6 +1789,151 @@ export function StorageFilesPage() {
       );
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+    },
+  });
+
+  const commandMutation = useMutation({
+    mutationFn: ({ options }: { readonly options: DirectFileCommandOptions }) =>
+      submitDirectFileCommand(token, activeLibraryId, options),
+    retry: false,
+    onSuccess: (result, variables) => {
+      if (!result.ok) {
+        setCommandError(directFileCommandFailure(result.code, result.details));
+        return;
+      }
+      setCommandResult(result.model);
+      if (
+        result.model.status === "FAILED" ||
+        result.model.durableState === "mutation_effect_uncertain"
+      ) {
+        setCommandError(
+          directFileCommandFailure(result.model.errorCategory ?? "", {
+            durableState: result.model.durableState,
+          }),
+        );
+        if (variables.options.operation === "delete") {
+          void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+        }
+        return;
+      }
+      setCommandError(null);
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      if (dialog?.kind === "editor") {
+        // The exact saved version stays authoritative after a clean save.
+        setEditorStale(false);
+      }
+      if (dialog?.kind === "delete") {
+        // Keep the impact dialog open: it now shows the durable per-item
+        // outcome and recovery path.
+        return;
+      }
+      const createdFile =
+        dialog?.kind === "create_text" && result.model.target
+          ? {
+              path: result.model.target,
+              name: result.model.target.split("/").pop() ?? result.model.target,
+            }
+          : null;
+      setDialog(null);
+      if (createdFile !== null) {
+        setDialog({ kind: "editor", path: createdFile.path });
+      }
+    },
+    onError: () => {
+      setCommandError(
+        "命令结果未知，未自动重试；请刷新目录核实当前状态后再决定下一步。",
+      );
+    },
+  });
+
+  const editorPath = dialog?.kind === "editor" ? dialog.path : null;
+  const editorQuery = useQuery({
+    queryKey: ["files-text", activeLibraryId, editorPath],
+    queryFn: () => {
+      if (editorPath === null) throw new Error("unreachable");
+      return fetchTextFile(token, activeLibraryId, editorPath);
+    },
+    enabled: editorPath !== null && token !== null,
+    retry: false,
+  });
+  const editorState: TextEditorState = {
+    loading: editorQuery.isFetching,
+    loadError:
+      editorQuery.data !== undefined && !editorQuery.data.ok
+        ? directFileCommandFailure(editorQuery.data.code)
+        : null,
+    document:
+      editorQuery.data !== undefined && editorQuery.data.ok
+        ? editorQuery.data.model
+        : null,
+    saveError:
+      dialog?.kind === "editor"
+        ? (commandError ??
+          (commandResult !== null && commandResult.status !== "SUCCESS"
+            ? directFileCommandFailure(commandResult.errorCategory ?? "", {
+                durableState: commandResult.durableState,
+              })
+            : null))
+        : null,
+    stale: editorStale,
+  };
+
+  const deletePaths = dialog?.kind === "delete" ? dialog.paths : null;
+  const deletePathsKey = deletePaths === null ? "" : deletePaths.join("\n");
+  const impactQuery = useQuery({
+    queryKey: ["files-delete-impact", activeLibraryId, deletePathsKey],
+    queryFn: () => {
+      if (deletePaths === null) throw new Error("unreachable");
+      return fetchDeleteImpact(token, activeLibraryId, deletePaths);
+    },
+    enabled: deletePaths !== null && token !== null,
+    retry: false,
+  });
+
+  const removalTargetId = dialog?.kind === "remove_library" ? dialog.id : null;
+  const removalPreviewQuery = useQuery({
+    queryKey: ["resource-library-removal", removalTargetId],
+    queryFn: () => {
+      if (removalTargetId === null) throw new Error("unreachable");
+      return fetchResourceLibraryRemovalPreview(token, removalTargetId);
+    },
+    enabled: removalTargetId !== null && token !== null,
+    retry: false,
+  });
+  const removalPreview: RemovalPreviewModel | null =
+    removalPreviewQuery.data !== undefined && removalPreviewQuery.data.ok
+      ? removalPreviewQuery.data.model
+      : null;
+
+  const removalMutation = useMutation({
+    mutationFn: (libraryId: string) => removeResourceLibrary(token, libraryId),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setRemovalError(removalFailureMessage(result.code, result.details));
+        if (result.status >= 500 || result.code === "transport_unavailable") {
+          void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        }
+        return;
+      }
+      setRemovalError(null);
+      setDialog(null);
+      setSelectedLibraryId("");
+      setInvalidPath(false);
+      setPath("");
+      setVisitedDirectories([]);
+      setKnownDirectoryPaths([]);
+      resetBrowseState();
+      updateLibraryRouteState("");
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+    },
+    onError: () => {
+      setRemovalError(
+        "删除结果未知，未自动重试；该资源库配置可能仍存在。请刷新 Active 状态后核查。",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
     },
   });
 
@@ -1492,7 +1954,7 @@ export function StorageFilesPage() {
               ? null
               : "当前 Active 配置没有可用的已启用 Storage，请先启用 Storage"
         }
-        onOpenDrawer={() => setDrawerOpen(true)}
+        onOpenDrawer={() => openDrawer("mf-add-resource-library-button")}
       />
       <AuthorizedReadBoundary
         query={statusQuery}
@@ -1529,14 +1991,78 @@ export function StorageFilesPage() {
             currentLibraries[0] ??
             null;
           if (currentLibrary === null) {
+            // Full-width zero-ResourceLibrary state: no cards, paths, tree,
+            // breadcrumb, table rows or fabricated identity, and no
+            // ResourceLibrary-scoped Files request.
             return (
-              <FilesState title="没有已启用的资源库">
-                {currentEligibleStorages.length > 0
-                  ? "当前 Active 配置有可用 Storage，但没有已启用的 ResourceLibrary。请点击“+ 添加资源库”完成恢复。"
-                  : "当前 Active 配置没有已启用的 Storage。请先启用 Storage，再添加资源库。"}
-              </FilesState>
+              <div className="mf-library-empty-block">
+                <div className="mf-files-banner" role="note">
+                  <span className="mf-banner-icon" aria-hidden="true">
+                    i
+                  </span>
+                  尚未添加资源库。添加后即可在这里浏览和整理文件。
+                </div>
+                <section
+                  className="mf-card mf-library-empty"
+                  aria-label="尚未添加资源库"
+                >
+                  <span className="mf-library-empty-icon" aria-hidden="true">
+                    <Icon name="folder" />
+                  </span>
+                  <h3>尚未添加资源库</h3>
+                  <p>请先添加一个资源库，选择存储位置和文件根路径。</p>
+                  {currentEligibleStorages.length > 0 ? (
+                    <button
+                      id="mf-empty-add-resource-library-button"
+                      type="button"
+                      className="mf-button mf-button-primary"
+                      onClick={() =>
+                        openDrawer("mf-empty-add-resource-library-button")
+                      }
+                    >
+                      + 添加资源库
+                    </button>
+                  ) : (
+                    <p className="mf-library-empty-prerequisite">
+                      当前 Active 配置没有已启用的 Storage。请先启用
+                      Storage，再添加资源库。
+                    </p>
+                  )}
+                </section>
+              </div>
             );
           }
+          const requestRemoval = (id: string) => {
+            setRemovalError(null);
+            setDialog({ kind: "remove_library", id });
+          };
+          const renderLibraryHeader = () =>
+            currentLibraries.length > 1 ? (
+              <LibraryCardStrip
+                libraries={currentLibraries}
+                selectedLibraryId={activeLibraryId}
+                rootPath={currentLibrary.rootPath}
+                onLibraryChange={changeLibrary}
+                onRemoveRequest={requestRemoval}
+                removalBusy={removalMutation.isPending}
+              />
+            ) : (
+              <LibrarySummary
+                libraryId={currentLibrary.id}
+                libraryName={currentLibrary.name ?? currentLibrary.id}
+                enabled={currentLibrary.enabled}
+                storageName={
+                  currentStatus.storages.find(
+                    (storage) => storage.id === currentLibrary.storageId,
+                  )?.name ?? currentLibrary.storageId
+                }
+                rootPath={currentLibrary.rootPath}
+                fileCount={null}
+                totalSize={null}
+                onRemoveRequest={requestRemoval}
+                removalBusy={removalMutation.isPending}
+              />
+            );
           if (invalidPath) {
             return (
               <FilesState
@@ -1560,21 +2086,12 @@ export function StorageFilesPage() {
                     </span>
                     {FILES_BANNER}
                   </div>
-                  <LibrarySummary
-                    libraryName={currentLibrary.name ?? currentLibrary.id}
-                    libraries={currentLibraries}
-                    selectedLibraryId={activeLibraryId}
-                    onLibraryChange={changeLibrary}
-                    enabled={currentLibrary.enabled}
-                    storageName={
-                      currentStatus.storages.find(
-                        (storage) => storage.id === currentLibrary.storageId,
-                      )?.name ?? currentLibrary.storageId
-                    }
-                    rootPath={currentLibrary.rootPath}
-                    fileCount={null}
-                    totalSize={null}
-                  />
+                  {libraryNotice !== null && (
+                    <p className="mf-error" role="status">
+                      {libraryNotice}
+                    </p>
+                  )}
+                  {renderLibraryHeader()}
                   <FilesState title="正在读取文件">
                     正在读取{" "}
                     {effectivePath === ""
@@ -1591,21 +2108,12 @@ export function StorageFilesPage() {
                     </span>
                     {FILES_BANNER}
                   </div>
-                  <LibrarySummary
-                    libraryName={currentLibrary.name ?? currentLibrary.id}
-                    libraries={currentLibraries}
-                    selectedLibraryId={activeLibraryId}
-                    onLibraryChange={changeLibrary}
-                    enabled={currentLibrary.enabled}
-                    storageName={
-                      currentStatus.storages.find(
-                        (storage) => storage.id === currentLibrary.storageId,
-                      )?.name ?? currentLibrary.storageId
-                    }
-                    rootPath={currentLibrary.rootPath}
-                    fileCount={null}
-                    totalSize={null}
-                  />
+                  {libraryNotice !== null && (
+                    <p className="mf-error" role="status">
+                      {libraryNotice}
+                    </p>
+                  )}
+                  {renderLibraryHeader()}
                   <AuthorizedReadBoundary
                     query={filesQuery}
                     unavailableTitle="文件读取不可用"
@@ -1657,7 +2165,7 @@ export function StorageFilesPage() {
                     return (
                       <FileBrowseView
                         model={model}
-                        libraries={libraries}
+                        libraries={currentLibraries}
                         selectedLibraryId={activeLibraryId}
                         selected={selectedFiles}
                         tree={buildDirectoryTree(model, [
@@ -1674,8 +2182,34 @@ export function StorageFilesPage() {
                         previewError={previewError}
                         page={cursorHistory.length + 1}
                         canPrev={cursorHistory.length > 0}
+                        removalBusy={removalMutation.isPending}
                         onViewChange={setView}
                         onLibraryChange={changeLibrary}
+                        onRemoveLibraryRequest={requestRemoval}
+                        onCreateFolder={() => {
+                          setCommandError(null);
+                          setDialog({ kind: "create_folder" });
+                        }}
+                        onCreateText={() => {
+                          setCommandError(null);
+                          setDialog({ kind: "create_text" });
+                        }}
+                        onRename={(entryPath, name) => {
+                          setCommandError(null);
+                          setCommandResult(null);
+                          setDialog({ kind: "rename", path: entryPath, name });
+                        }}
+                        onEdit={(entryPath) => {
+                          setCommandError(null);
+                          setCommandResult(null);
+                          setEditorStale(false);
+                          setDialog({ kind: "editor", path: entryPath });
+                        }}
+                        onDelete={(paths) => {
+                          setCommandError(null);
+                          setCommandResult(null);
+                          setDialog({ kind: "delete", paths });
+                        }}
                         onDiscoverDirectories={(paths) => {
                           setKnownDirectoryPaths((current) => {
                             const next = new Set(current);
@@ -1766,10 +2300,7 @@ export function StorageFilesPage() {
           <AddResourceLibraryDrawer
             open={drawerOpen}
             storages={eligibleStorages}
-            onClose={() => {
-              setSaveError(null);
-              setDrawerOpen(false);
-            }}
+            onClose={closeDrawer}
             onSave={(candidate) => {
               setSaveError(null);
               saveLibraryMutation.mutate(candidate);
@@ -1778,6 +2309,170 @@ export function StorageFilesPage() {
             saveError={saveError}
           />
         )}
+      {dialog?.kind === "create_folder" && (
+        <NamePromptDialog
+          kind="create_folder"
+          initialValue=""
+          busy={commandMutation.isPending}
+          error={commandError}
+          onClose={() => {
+            setCommandError(null);
+            setDialog(null);
+          }}
+          onSubmit={(name) => {
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "create_directory",
+                parentPath: effectivePath,
+                name,
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "create_text" && (
+        <NamePromptDialog
+          kind="create_text"
+          initialValue=""
+          busy={commandMutation.isPending}
+          error={commandError}
+          onClose={() => {
+            setCommandError(null);
+            setDialog(null);
+          }}
+          onSubmit={(name) => {
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "create_text",
+                parentPath: effectivePath,
+                name,
+                content: "",
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "rename" && (
+        <NamePromptDialog
+          kind="rename"
+          initialValue={dialog.name}
+          busy={commandMutation.isPending}
+          error={commandError}
+          onClose={() => {
+            setCommandError(null);
+            setDialog(null);
+          }}
+          onSubmit={(name) => {
+            setCommandError(null);
+            commandMutation.mutate({
+              options: { operation: "rename", path: dialog.path, name },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "editor" && (
+        <TextEditorDialog
+          fileName={dialog.path.split("/").pop() ?? dialog.path}
+          state={editorState}
+          saving={commandMutation.isPending}
+          onClose={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setEditorStale(false);
+            setDialog(null);
+          }}
+          onReload={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setEditorStale(false);
+            void queryClient.invalidateQueries({
+              queryKey: ["files-text", activeLibraryId, dialog.path],
+            });
+          }}
+          onSave={(content, evidence) => {
+            setCommandError(null);
+            setCommandResult(null);
+            commandMutation.mutate({
+              options: {
+                operation: "save_text",
+                path: dialog.path,
+                content,
+                expected: { size: evidence.size, digest: evidence.digest },
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <DeleteImpactDialog
+          impact={
+            impactQuery.data !== undefined && impactQuery.data.ok
+              ? impactQuery.data.model
+              : null
+          }
+          loading={impactQuery.isFetching}
+          error={
+            impactQuery.data !== undefined && !impactQuery.data.ok
+              ? directFileCommandFailure(impactQuery.data.code)
+              : commandError
+          }
+          confirming={commandMutation.isPending}
+          result={
+            commandResult !== null && commandResult.operation === "delete"
+              ? commandResult
+              : null
+          }
+          onRefreshImpact={() => void impactQuery.refetch()}
+          onConfirm={() => {
+            const impact =
+              impactQuery.data !== undefined && impactQuery.data.ok
+                ? impactQuery.data.model
+                : null;
+            if (impact === null) return;
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "delete",
+                paths: dialog.paths,
+                confirmationDigest: impact.scopeDigest,
+              },
+            });
+          }}
+          onClose={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setDialog(null);
+            void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+          }}
+        />
+      )}
+      {dialog?.kind === "remove_library" && (
+        <DeleteResourceLibraryDialog
+          preview={removalPreview}
+          loading={removalPreviewQuery.isFetching}
+          error={
+            removalError ??
+            (removalPreviewQuery.data !== undefined &&
+            !removalPreviewQuery.data.ok
+              ? removalFailureMessage(
+                  removalPreviewQuery.data.code,
+                  removalPreviewQuery.data.details,
+                )
+              : null)
+          }
+          removing={removalMutation.isPending}
+          onCancel={() => {
+            setRemovalError(null);
+            setDialog(null);
+          }}
+          onConfirm={() => {
+            setRemovalError(null);
+            removalMutation.mutate(dialog.id);
+          }}
+        />
+      )}
     </div>
   );
 }

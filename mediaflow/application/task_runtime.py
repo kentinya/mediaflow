@@ -326,6 +326,68 @@ class PersistentTaskCoordinator:
         if callable(append):
             append(evidence)
 
+    def complete_direct_item(
+        self,
+        item: PersistentTaskItem,
+        *,
+        status: TaskItemStatus,
+        operation: str,
+        error: str | None = None,
+        effect_certainty: str = "none",
+        uncertain_effects: tuple[str, ...] = (),
+    ) -> None:
+        """Persist one direct Files command outcome and release its lock.
+
+        Direct commands carry no media identity or policy evidence: the
+        durable record is the bounded operation, status and executor-owned
+        effect evidence only.
+        """
+
+        now = datetime.now(UTC)
+        completed = replace(
+            item,
+            status=status,
+            stage="completed" if not status.retryable else "failed",
+            updated_at=now,
+            destination_storage_id=item.storage_id,
+            destination_path=item.source_path,
+            execution_status=(
+                ExecutionStatus.SUCCESS.value if status is TaskItemStatus.SUCCESS else None
+            ),
+            error=error,
+        )
+        record = PersistentResultRecord(
+            f"{item.item_id}:{item.attempts}",
+            item.task_id,
+            item.item_id,
+            item.storage_id,
+            item.source_path,
+            item.storage_id,
+            item.source_path,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            operation,
+            status.value,
+            now,
+            error=error,
+            effect_certainty=effect_certainty,
+            uncertain_effects=uncertain_effects,
+        )
+        try:
+            atomic = getattr(self.repository, "complete_item_with_evidence", None)
+            if callable(atomic):
+                atomic(completed, record, None)
+            else:
+                self.repository.append_result(record)
+                self.repository.upsert_item(completed)
+        finally:
+            self.locks.release(item.storage_id, item.source_path, item.task_id)
+
     def wait_for_confirmation(
         self,
         item: PersistentTaskItem,

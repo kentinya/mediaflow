@@ -24,6 +24,10 @@ from mediaflow.application.configuration_objects import ConfigurationObjectServi
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.conflict_resolution import ConfirmationService
 from mediaflow.application.dashboard import DashboardService
+from mediaflow.application.direct_file_commands import (
+    DirectFileCommandService,
+    DirectFileError,
+)
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
@@ -101,6 +105,7 @@ from mediaflow.domain.configuration_management import (
     RuntimeConfigurationNotConfigured,
     RuntimeSnapshotUnavailable,
 )
+from mediaflow.domain.direct_files import DirectFileOperation
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.file_lifecycle import (
     FileIndexLifecycleError,
@@ -243,6 +248,7 @@ class _ApiRuntimeBinding:
     metadata_policies: tuple
     dashboard: DashboardService
     files_browser: RuntimeFilesBrowserService | None = None
+    direct_files: DirectFileCommandService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
 
@@ -751,6 +757,24 @@ class MediaFlowApi:
                 "continuation_conflict",
                 str(error),
                 details=details,
+            )
+        except DirectFileError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "files-direct-command",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=error.details,
             )
         except ResourceLibrarySaveError as error:
             self._safe_audit(
@@ -4111,6 +4135,86 @@ class MediaFlowApi:
                     ),
                 },
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "removal-preview"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            self._require_empty_query(environ, "ResourceLibrary removal preview")
+            document = self._configuration_objects.resource_library_removal_evidence(parts[3])
+            return self._response(start_response, 200, document)
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and method == "DELETE"
+        ):
+            self._require_empty_query(environ, "ResourceLibrary removal")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                # Pin the process to the removal-time Active before any
+                # successor work begins; a failed removal must leave a usable
+                # old binding, and a competing winner is refreshed explicitly.
+                self._refresh_configuration_binding_locked()
+
+                def before_publish(revision) -> None:
+                    prepared.append(self._prepare_runtime_binding_for_revision(revision))
+
+                try:
+                    revision = self._configuration_objects.remove_resource_library(
+                        parts[3],
+                        actor=principal.principal_id,
+                        before_publish=before_publish,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "resource_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        revision_id=revision.revision_id,
+                        durable_state="active_preserved",
+                        next_action="refresh the current Active configuration and retry removal",
+                    )
+                self._publish_runtime_binding(prepared[0])
+            return self._response(
+                start_response,
+                200,
+                {
+                    "removed": {"id": parts[3]},
+                    "active": revision.summary(),
+                    "configuration": {
+                        "authority": "MANAGED",
+                        "revisionId": revision.revision_id,
+                        "version": revision.version,
+                        "digest": revision.digest,
+                    },
+                    "sideEffects": "configuration_only",
+                    "nextAction": (
+                        "refresh the Active ResourceLibrary list and select another enabled library"
+                    ),
+                },
+            )
         if parts == ["api", "v1", "system", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -4419,6 +4523,123 @@ class MediaFlowApi:
                 200,
                 binding.files_browser.browse(**query),
             )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "text"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_files is None:
+                return self._files_browser_unavailable(start_response)
+            path = self._files_direct_text_query(environ)
+            document = binding.direct_files.read_text(resource_library_id=parts[3], path=path)
+            return self._response(
+                start_response,
+                200,
+                {
+                    "resourceLibraryId": document.resource_library_id,
+                    "path": document.path,
+                    "content": document.content,
+                    "evidence": document.evidence.document(),
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                },
+            )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "delete-impact"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_files is None:
+                return self._files_browser_unavailable(start_response)
+            paths = self._files_delete_impact_query(environ)
+            document = binding.direct_files.delete_impact(resource_library_id=parts[3], paths=paths)
+            response = document.document()
+            response["sideEffects"] = "none"
+            response["retrySafe"] = True
+            response["nextAction"] = (
+                "confirm this exact impact to run the bounded Delete"
+                if document.entries
+                else "the selection is empty; refresh the directory and retry"
+            )
+            return self._response(start_response, 200, response)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "commands"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_files is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files direct command")
+            document = self._document(environ)
+            if not isinstance(document, dict) or "operation" not in document:
+                raise ValueError("a Files direct command requires an operation")
+            operation = document["operation"]
+            resource_library_id = parts[3]
+            if operation == DirectFileOperation.CREATE_DIRECTORY.value:
+                required = {"operation", "parentPath", "name"}
+                if set(document) != required:
+                    raise ValueError("Create Folder requires only operation, parentPath, and name")
+                result = binding.direct_files.create_directory(
+                    resource_library_id=resource_library_id,
+                    parent_path=document["parentPath"],
+                    name=document["name"],
+                )
+            elif operation == DirectFileOperation.CREATE_TEXT.value:
+                required = {"operation", "parentPath", "name", "content"}
+                if set(document) != required:
+                    raise ValueError(
+                        "Create Text File requires only operation, parentPath, name, and content"
+                    )
+                result = binding.direct_files.create_text(
+                    resource_library_id=resource_library_id,
+                    parent_path=document["parentPath"],
+                    name=document["name"],
+                    content=document["content"],
+                )
+            elif operation == DirectFileOperation.RENAME.value:
+                required = {"operation", "path", "name"}
+                if set(document) != required:
+                    raise ValueError("Rename requires only operation, path, and name")
+                result = binding.direct_files.rename(
+                    resource_library_id=resource_library_id,
+                    path=document["path"],
+                    name=document["name"],
+                )
+            elif operation == DirectFileOperation.SAVE_TEXT.value:
+                required = {"operation", "path", "content", "expected"}
+                if set(document) != required:
+                    raise ValueError(
+                        "Text Save requires only operation, path, content, and expected"
+                    )
+                result = binding.direct_files.save_text(
+                    resource_library_id=resource_library_id,
+                    path=document["path"],
+                    content=document["content"],
+                    expected=document["expected"],
+                )
+            elif operation == DirectFileOperation.DELETE.value:
+                required = {"operation", "paths", "confirmationDigest"}
+                if set(document) != required:
+                    raise ValueError(
+                        "Delete requires only operation, paths, and confirmationDigest"
+                    )
+                result = binding.direct_files.execute_delete(
+                    resource_library_id=resource_library_id,
+                    paths=document["paths"],
+                    confirmation_digest=document["confirmationDigest"],
+                )
+            else:
+                raise ValueError("the Files direct command operation is not supported")
+            return self._response(start_response, 200, result)
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -6906,6 +7127,7 @@ class MediaFlowApi:
         runtime_configuration=None,
     ) -> _ApiRuntimeBinding:
         files_browser = None
+        direct_files = None
         if runtime_revision is not None and runtime_configuration is not None:
             files_browser = RuntimeFilesBrowserService(
                 self._configuration_service,
@@ -6914,6 +7136,12 @@ class MediaFlowApi:
                 file_index=self._file_index,
                 storage_adapters=self._storage_adapters,
                 cursor_secret=self._storage_browser_cursor_secret,
+            )
+            direct_files = DirectFileCommandService(
+                active_revision=runtime_revision,
+                runtime_configuration=runtime_configuration,
+                task_repository=self._repository,
+                storage_adapters=self._storage_adapters,
             )
         manual_scans = self._manual_scans_override
         if (
@@ -7003,6 +7231,7 @@ class MediaFlowApi:
                 media_library_count=media_library_count,
             ),
             files_browser,
+            direct_files,
             manual_scans,
             runtime_settings,
         )
@@ -7210,6 +7439,15 @@ class MediaFlowApi:
             and parts[4] in {"preview", "previews"}
         ):
             return f"/api/v1/{parts[2]}/{{id}}/{parts[4]}"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "resource-libraries"]:
+            return "/api/v1/resource-libraries/{id}"
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] in {"text", "delete-impact", "commands"}
+        ):
+            return f"/api/v1/resource-libraries/{{id}}/files/{parts[5]}"
         if (
             len(parts) == 5
             and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
@@ -8267,6 +8505,28 @@ class MediaFlowApi:
         }
 
     @classmethod
+    def _files_direct_text_query(cls, environ: dict) -> str:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("Files text query contains unsupported or repeated fields")
+        path = query.get("path", [None])[0]
+        if not isinstance(path, str) or not path:
+            raise ValueError("Files text query requires a ResourceLibrary-relative path")
+        return path
+
+    @classmethod
+    def _files_delete_impact_query(cls, environ: dict) -> list[str]:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("Files Delete impact query contains unsupported or repeated fields")
+        paths = query.get("path", [])
+        if not paths:
+            raise ValueError("Files Delete impact query requires at least one selected path")
+        return paths
+
+    @classmethod
     def _runtime_files_query(cls, environ: dict) -> dict[str, object]:
         query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         allowed = {"storageId", "resourceLibrary", "path", "limit", "cursor"}
@@ -8537,6 +8797,12 @@ class MediaFlowApi:
                 len(parts) == 5
                 and parts[:3] == ["api", "v1", "resource-libraries"]
                 and parts[4] == "files"
+            )
+            or (
+                len(parts) == 6
+                and parts[:3] == ["api", "v1", "resource-libraries"]
+                and parts[4] == "files"
+                and parts[5] in {"text", "delete-impact"}
             )
         )
 
