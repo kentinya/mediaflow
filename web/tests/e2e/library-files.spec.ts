@@ -381,6 +381,65 @@ test("invalid URL path is rejected locally without a Storage browse request", as
   ).toBe(false);
 });
 
+test("ResourceLibrary Save keeps the old Active on failure and retries once safely", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/");
+  await page.evaluate(async () => {
+    const response = await fetch(
+      "/__test__/reset-resource-library?failOnce=1",
+      {
+        method: "POST",
+      },
+    );
+    if (!response.ok) throw new Error("resource-library fake reset failed");
+  });
+  const apiRequests = apiRequestsOf(page);
+  await openFiles(page);
+
+  await page.getByRole("button", { name: "+ 添加资源库" }).click();
+  await page.getByLabel("名称 *").fill("E2E New Library");
+  await page.getByLabel("资源库 ID *").fill("new-e2e-library");
+  await page.getByRole("button", { name: "下一步" }).click();
+  await page.getByLabel("资源库根路径 *").fill("media/new");
+  await page.getByRole("button", { name: "下一步" }).click();
+  await page.getByRole("button", { name: "保存" }).click();
+
+  // The checked-activation failure is recoverable: the same confirmation
+  // step and values remain, and the old Active is explicitly reported.
+  await expect(page.getByRole("heading", { name: "确认" })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("旧 Active 仍在使用");
+  await expect(page.getByText("E2E New Library")).toBeVisible();
+  await expect(page.getByText("new-e2e-library")).toBeVisible();
+  await expect(page.getByRole("button", { name: "保存" })).toBeEnabled();
+
+  // The explicit retry succeeds and then refreshes authoritative status and
+  // live Files state. No workflow or Storage mutation is fabricated.
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(page.getByRole("heading", { name: "添加资源库" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByLabel("选择资源库")).toHaveValue("new-e2e-library");
+  await expect(
+    page.getByRole("region", { name: "文件浏览" }).getByRole("strong"),
+  ).toHaveText("E2E New Library");
+  await expect(page.getByText("media/new")).toBeVisible();
+
+  const savePosts = apiRequests.filter(
+    (request) =>
+      request.method === "POST" &&
+      request.url.includes("/api/v1/resource-libraries"),
+  );
+  expect(savePosts).toHaveLength(2);
+  expect(
+    apiRequests.every(
+      (request) =>
+        request.method === "GET" ||
+        request.url.includes("/api/v1/resource-libraries"),
+    ),
+  ).toBe(true);
+});
+
 test("controlled 1536x1024 success-state evidence screenshot", async ({
   page,
 }) => {

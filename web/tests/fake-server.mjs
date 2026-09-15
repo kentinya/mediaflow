@@ -507,18 +507,21 @@ const SYSTEM_STATUS = {
         name: "Local media",
         type: "local",
         read_only: true,
+        enabled: true,
       },
       {
         id: "remote-media",
         name: "Remote media",
         type: "openlist",
         read_only: false,
+        enabled: true,
       },
       {
         id: "source-storage",
         name: "source-storage",
         type: "local",
         read_only: true,
+        enabled: true,
       },
     ],
   },
@@ -551,6 +554,36 @@ const SYSTEM_STATUS = {
   classification_policies: { total: 3, truncated: false, items: [] },
   organize_policies: { total: 3, truncated: false, items: [] },
 };
+
+const RESOURCE_LIBRARY_STATES = new Map();
+
+function resourceLibraryState(session) {
+  const key = session ?? "shared";
+  let value = RESOURCE_LIBRARY_STATES.get(key);
+  if (value === undefined) {
+    value = { saved: false, failOnce: false, failed: false, candidate: null };
+    RESOURCE_LIBRARY_STATES.set(key, value);
+  }
+  return value;
+}
+
+function resourceLibrarySystemStatus(session) {
+  const state = resourceLibraryState(session);
+  if (!state.saved) return SYSTEM_STATUS;
+  const document = JSON.parse(JSON.stringify(SYSTEM_STATUS));
+  document.system.configuration_snapshot_id = "rev-e2e-2";
+  document.system.configuration_snapshot_digest = "digest-e2e-2";
+  const candidate = state.candidate ?? {};
+  document.resource_libraries.items.push({
+    id: candidate.resourceLibraryId ?? "new-e2e-library",
+    name: candidate.name ?? "E2E 新资源库",
+    storage_id: candidate.storageId ?? "local-media",
+    root_path: candidate.storagePath ?? "",
+    enabled: candidate.enabled === true,
+  });
+  document.resource_libraries.total = document.resource_libraries.items.length;
+  return document;
+}
 
 const FILE_INDEX_ITEMS = [
   {
@@ -980,8 +1013,16 @@ function referenceDirectoryEntries(path) {
   return [];
 }
 
-function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
+function filesDocument(
+  path,
+  cursor,
+  storageId,
+  resourceLibraryId = null,
+  savedCandidate = null,
+) {
   const isReferenceLibrary = resourceLibraryId === "source";
+  const isSavedResourceLibrary = resourceLibraryId === "new-e2e-library";
+  const snapshotId = isSavedResourceLibrary ? "rev-e2e-2" : "rev-e2e-1";
   const storage =
     storageId === "remote-media"
       ? { id: "remote-media", name: "Remote media", type: "openlist" }
@@ -1016,13 +1057,17 @@ function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
   const hasNext =
     storage.id !== "remote-media" && (path === "" || Boolean(cursor));
   return {
-    revisionId: "rev-e2e-1",
-    revision: { revisionId: "rev-e2e-1", version: 1, digest: "digest-e2e-1" },
+    revisionId: snapshotId,
+    revision: {
+      revisionId: snapshotId,
+      version: isSavedResourceLibrary ? 2 : 1,
+      digest: isSavedResourceLibrary ? "digest-e2e-2" : "digest-e2e-1",
+    },
     configuration: {
       authority: "MANAGED",
-      revisionId: "rev-e2e-1",
-      version: 1,
-      digest: "digest-e2e-1",
+      revisionId: snapshotId,
+      version: isSavedResourceLibrary ? 2 : 1,
+      digest: isSavedResourceLibrary ? "digest-e2e-2" : "digest-e2e-1",
     },
     resourceLibrary: resourceLibraryId
       ? {
@@ -1030,9 +1075,13 @@ function filesDocument(path, cursor, storageId, resourceLibraryId = null) {
           // identity. The fake keeps the Active runtime identity coherent with
           // the SYSTEM_STATUS fixture other frozen-page specs assert on.
           id: resourceLibraryId,
-          name: isReferenceLibrary ? "source" : "Resources",
-          enabled: true,
-          rootPath: isReferenceLibrary ? "media/incoming" : "",
+          name: isReferenceLibrary
+            ? "source"
+            : (savedCandidate?.name ?? "Resources"),
+          enabled: savedCandidate?.enabled ?? true,
+          rootPath: isReferenceLibrary
+            ? "media/incoming"
+            : (savedCandidate?.storagePath ?? ""),
           storage: { ...storage, readOnly: false },
           ...(isReferenceLibrary
             ? { fileCount: 1248, totalSize: 324 * 1024 * 1024 * 1024 }
@@ -4525,7 +4574,102 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 200, SYSTEM_STATUS);
+    sendJson(res, 200, resourceLibrarySystemStatus(session));
+    return;
+  }
+  if (url.pathname === "/api/v1/resource-libraries" && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message:
+            "principal lacks configuration management and activation authority",
+        },
+      });
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const fields = parsed.document;
+    const allowed = new Set([
+      "resourceLibraryId",
+      "name",
+      "enabled",
+      "storageId",
+      "storagePath",
+    ]);
+    if (
+      Object.keys(fields).some((key) => !allowed.has(key)) ||
+      allowed.size !== Object.keys(fields).length ||
+      typeof fields.resourceLibraryId !== "string" ||
+      typeof fields.name !== "string" ||
+      typeof fields.enabled !== "boolean" ||
+      typeof fields.storageId !== "string" ||
+      typeof fields.storagePath !== "string"
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const state = resourceLibraryState(session);
+    if (state.saved || fields.resourceLibraryId === "resources") {
+      sendJson(res, 409, {
+        error: {
+          code: "resource_library_duplicate",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "choose a different ResourceLibrary ID, then retry",
+          },
+        },
+      });
+      return;
+    }
+    if (state.failOnce && !state.failed) {
+      state.failed = true;
+      sendJson(res, 409, {
+        error: {
+          code: "resource_library_storage_check_failed",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "read-only evidence only; Storage unchanged",
+            retrySafe: true,
+            nextAction: "correct Storage availability, then retry Save",
+          },
+        },
+      });
+      return;
+    }
+    state.saved = true;
+    state.candidate = { ...fields };
+    sendJson(res, 200, {
+      resourceLibrary: {
+        id: fields.resourceLibraryId,
+        name: fields.name,
+        storageId: fields.storageId,
+        storagePath: fields.storagePath,
+        enabled: fields.enabled,
+      },
+      active: {
+        revisionId: "rev-e2e-2",
+        status: "active",
+        version: 2,
+      },
+      configuration: {
+        authority: "MANAGED",
+        revisionId: "rev-e2e-2",
+        version: 2,
+      },
+      sideEffects: "configuration_only",
+      nextAction:
+        "refresh the Active ResourceLibrary list and browse the selected library",
+    });
     return;
   }
   if (url.pathname === "/api/v1/file-index") {
@@ -4589,6 +4733,7 @@ const server = createServer(async (req, res) => {
     const resourceLibraryId = resourceMatch
       ? decodeURIComponent(resourceMatch[1])
       : null;
+    const savedResourceLibrary = resourceLibraryState(session).saved;
     const storageId = resourceLibraryId
       ? resourceLibraryId === "source"
         ? "source-storage"
@@ -4596,7 +4741,11 @@ const server = createServer(async (req, res) => {
       : url.searchParams.get("storageId");
     if (
       resourceLibraryId !== null &&
-      !["resources", "source"].includes(resourceLibraryId)
+      ![
+        "resources",
+        "source",
+        ...(savedResourceLibrary ? ["new-e2e-library"] : []),
+      ].includes(resourceLibraryId)
     ) {
       sendJson(res, 404, {
         error: {
@@ -4743,7 +4892,13 @@ const server = createServer(async (req, res) => {
     sendJson(
       res,
       200,
-      filesDocument(path, cursor, storageId, resourceLibraryId),
+      filesDocument(
+        path,
+        cursor,
+        storageId,
+        resourceLibraryId,
+        resourceLibraryState(session).candidate,
+      ),
     );
     return;
   }
@@ -7574,6 +7729,26 @@ const server = createServer(async (req, res) => {
       executed: false,
       intentVersion: 1,
       itemVersion: 1,
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  if (
+    url.pathname === "/__test__/reset-resource-library" &&
+    req.method === "POST"
+  ) {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    RESOURCE_LIBRARY_STATES.set(sessionId, {
+      saved: false,
+      failOnce: url.searchParams.get("failOnce") === "1",
+      failed: false,
+      candidate: null,
     });
     res.setHeader(
       "Set-Cookie",

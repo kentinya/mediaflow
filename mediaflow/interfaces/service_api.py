@@ -6,7 +6,7 @@ import json
 import re
 import threading
 from collections.abc import Callable, Iterable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from urllib.parse import parse_qs
@@ -96,6 +96,8 @@ from mediaflow.domain.configuration_management import (
     ConfigurationObjectKind,
     ConfigurationObjectReferenced,
     ConfigurationVersionConflict,
+    ManagedConfigurationStatus,
+    ResourceLibrarySaveError,
     RuntimeConfigurationNotConfigured,
     RuntimeSnapshotUnavailable,
 )
@@ -749,6 +751,24 @@ class MediaFlowApi:
                 "continuation_conflict",
                 str(error),
                 details=details,
+            )
+        except ResourceLibrarySaveError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "resource-library-save",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=error.details,
             )
         except ConfigurationActivationConflict as error:
             self._safe_audit(
@@ -3954,6 +3974,102 @@ class MediaFlowApi:
                 "open the successor Draft, edit configuration objects, validate, and activate"
             )
             return self._response(start_response, 201, response)
+        if parts == ["api", "v1", "resource-libraries"] and method == "POST":
+            self._require_empty_query(environ, "Files ResourceLibrary Save")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {"resourceLibraryId", "name", "enabled", "storageId", "storagePath"}
+            if set(document) != allowed:
+                raise ValueError(
+                    "ResourceLibrary Save requires only resourceLibraryId, name, enabled, "
+                    "storageId, and storagePath"
+                )
+            candidate = {
+                "id": document["resourceLibraryId"],
+                "name": document["name"],
+                "enabled": document["enabled"],
+                "storageId": document["storageId"],
+                "storagePath": document["storagePath"],
+            }
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                # Pin the process to the same save-time Active before any
+                # successor work begins.  A failed Save must leave a usable
+                # old binding, while a competing winner can be refreshed
+                # explicitly below if publication loses the race.
+                self._refresh_configuration_binding_locked()
+
+                def before_publish(revision) -> None:
+                    prepared.append(self._prepare_runtime_binding_for_revision(revision))
+
+                try:
+                    revision = self._configuration_objects.save_resource_library(
+                        candidate,
+                        actor=principal.principal_id,
+                        before_publish=before_publish,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    # The repository has authoritative concurrency fencing;
+                    # if another Active won, make this process consume that
+                    # winner before returning the stale/conflict result.  The
+                    # successor-create path reports the same race as a version
+                    # conflict, while the publish path reports activation
+                    # conflict.
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "resource_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        revision_id=revision.revision_id,
+                        durable_state="active_preserved",
+                        next_action="refresh the current Active configuration and retry Save",
+                    )
+                self._publish_runtime_binding(prepared[0])
+            resource = next(
+                item
+                for item in self._configuration_objects._canonical_objects(
+                    revision.document, "resourceLibraries"
+                )
+                if item.get("id") == candidate["id"]
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "resourceLibrary": {
+                        "id": resource["id"],
+                        "name": resource["name"],
+                        "storageId": resource["storageId"],
+                        "storagePath": resource.get("storagePath", ""),
+                        "enabled": resource["enabled"],
+                    },
+                    "active": revision.summary(),
+                    "configuration": {
+                        "authority": "MANAGED",
+                        "revisionId": revision.revision_id,
+                        "version": revision.version,
+                        "digest": revision.digest,
+                    },
+                    "sideEffects": "configuration_only",
+                    "nextAction": (
+                        "refresh the Active ResourceLibrary list and browse the selected library"
+                        if resource["enabled"]
+                        else "refresh the Active ResourceLibrary list; this disabled library "
+                        "is not browseable"
+                    ),
+                },
+            )
         if parts == ["api", "v1", "system", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -6497,6 +6613,91 @@ class MediaFlowApi:
         if ApiPermission.EXECUTE_MANUAL_ORGANIZE not in principal.permissions:
             raise ApiPermissionDenied("principal lacks execute_manual_organize permission")
 
+    def _prepare_runtime_binding_for_revision(self, revision):
+        """Build a candidate runtime binding before publishing its Active pointer."""
+
+        if self._configuration_service is None:
+            return self._runtime_binding
+        from mediaflow.infrastructure.configuration_snapshot import build_configuration_snapshot
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        try:
+            self._configuration_service.verify_integrity(revision)
+            runtime = with_managed_snapshot(
+                load_managed_runtime_configuration(
+                    revision.document,
+                    bootstrap_database_path=(
+                        self._configuration_service.bootstrap_database_path
+                        or getattr(
+                            getattr(self._configuration_service, "_repository", None),
+                            "database_path",
+                            "",
+                        )
+                    ),
+                ),
+                snapshot_id=revision.revision_id,
+                digest=revision.digest,
+                version=revision.version,
+            )
+            system_status = build_configuration_snapshot(runtime)
+            maximum_active_jobs = (
+                self._maximum_active_jobs_override
+                if self._maximum_active_jobs_override is not None
+                else runtime.automation_maximum_active_jobs
+            )
+            # The repository will assign the persisted ACTIVE status after this
+            # callback.  RuntimeFilesBrowserService still needs the exact
+            # immutable identity and an Active lifecycle marker during preflight.
+            runtime_revision = replace(
+                revision,
+                status=ManagedConfigurationStatus.ACTIVE,
+                activated_at=revision.activated_at or datetime.now(UTC),
+            )
+            return self._build_runtime_binding(
+                snapshot_id=revision.revision_id,
+                snapshot_digest=revision.digest,
+                maximum_active_jobs=maximum_active_jobs,
+                remote_execution_enabled=runtime.remote_execution_enabled,
+                remote_execution_maximum_ttl_seconds=(
+                    runtime.remote_execution_maximum_ttl_seconds
+                ),
+                stale_job_age_seconds=runtime.automation_stale_job_age_seconds,
+                system_status=system_status,
+                schedules=runtime.automation_schedules,
+                metadata_policies=runtime.strategy.metadata_policies,
+                resource_library_count=sum(
+                    item.enabled for item in runtime.resource_libraries
+                ),
+                media_library_count=sum(item.enabled for item in runtime.media_libraries),
+                runtime_revision=runtime_revision,
+                runtime_configuration=runtime,
+            )
+        except ResourceLibrarySaveError:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "resource_library_runtime_failed",
+                "the successor configuration could not be bound to the runtime; the previous "
+                "Active remains in use",
+                status=503,
+                revision_id=getattr(revision, "revision_id", None),
+                durable_state="active_preserved",
+                side_effects=(
+                    "successor_draft_and_read_only_evidence_retained; Active pointer unchanged"
+                ),
+                next_action="correct the runtime configuration, refresh, and retry Save",
+            ) from error
+
+    def _publish_runtime_binding(self, binding: _ApiRuntimeBinding) -> None:
+        self._runtime_binding = binding
+        # Compatibility diagnostics only; request behavior uses the single
+        # immutable binding above rather than these individual attributes.
+        self._configuration_snapshot_id = binding.snapshot_id
+        self._configuration_snapshot_digest = binding.snapshot_digest
+
     def _refresh_configuration_binding(self) -> _ApiRuntimeBinding:
         with self._runtime_binding_lock:
             return self._refresh_configuration_binding_locked()
@@ -6827,6 +7028,7 @@ class MediaFlowApi:
             ("api", "v1", "logs"),
             ("api", "v1", "jobs"),
             ("api", "v1", "jobs", "stale"),
+            ("api", "v1", "resource-libraries"),
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
             ("api", "v1", "system", "status"),

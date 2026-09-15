@@ -261,6 +261,51 @@ class ConfigurationActivationConflict(RuntimeError):
         self.next_action = next_action
 
 
+class ResourceLibrarySaveError(RuntimeError):
+    """A bounded, recoverable failure from the Files ResourceLibrary Save action."""
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int = 409,
+        revision_id: str | None = None,
+        current_revision_id: str | None = None,
+        current_version: int | None = None,
+        durable_state: str = "active_preserved",
+        side_effects: str = "successor_draft_or_read_only_evidence_may_be_retained",
+        retry_safe: bool = True,
+        next_action: str = "correct the reported condition, then retry or refresh Active state",
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.status = status
+        self.revision_id = revision_id
+        self.current_revision_id = current_revision_id
+        self.current_version = current_version
+        self.durable_state = durable_state
+        self.side_effects = side_effects
+        self.retry_safe = retry_safe
+        self.next_action = next_action
+
+    @property
+    def details(self) -> dict[str, object]:
+        return {
+            key: value
+            for key, value in {
+                "revisionId": self.revision_id,
+                "currentRevisionId": self.current_revision_id,
+                "currentVersion": self.current_version,
+                "durableState": self.durable_state,
+                "sideEffects": self.side_effects,
+                "retrySafe": self.retry_safe,
+                "nextAction": self.next_action,
+            }.items()
+            if value is not None
+        }
+
+
 class RuntimeSnapshotUnavailable(RuntimeError):
     """The configured managed Active snapshot cannot safely be consumed."""
 

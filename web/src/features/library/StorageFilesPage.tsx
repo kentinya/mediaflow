@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -15,7 +15,11 @@ import type {
 } from "../../entities/library/system-status";
 import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
-import { submitServerBoundPreview } from "../../shared/api/api-client";
+import {
+  saveResourceLibrary,
+  submitServerBoundPreview,
+  type SaveResourceLibraryOptions,
+} from "../../shared/api/api-client";
 
 type FilesView = "list" | "grid";
 
@@ -76,6 +80,31 @@ function isSafeRelativePath(value: string): boolean {
   return value
     .split("/")
     .every((part) => part !== "" && part !== "." && part !== "..");
+}
+
+function resourceLibrarySaveFailure(code: string): string {
+  switch (code) {
+    case "invalid_request":
+      return "保存失败：请修正名称、ID、Storage 或根路径后重试。";
+    case "resource_library_duplicate":
+      return "保存失败：资源库 ID 已存在，请更换 ID 后重试。旧 Active 仍在使用。";
+    case "forbidden":
+      return "保存失败：当前账号没有保存并激活资源库所需权限，请切换有权限的账号。";
+    case "configuration_conflict":
+    case "configuration_version_conflict":
+      return "保存失败：Active 配置已变化，旧 Active 仍在使用；请刷新状态后重试。";
+    case "resource_library_storage_unavailable":
+    case "resource_library_storage_check_failed":
+    case "resource_library_strategy_test_failed":
+    case "resource_library_destination_check_failed":
+    case "resource_library_evidence_failed":
+      return "保存失败：Storage 或只读检查未通过，旧 Active 仍在使用；请修正后重试。";
+    case "resource_library_runtime_failed":
+    case "configuration_unavailable":
+      return "保存失败：新配置无法绑定运行时，旧 Active 仍在使用；请刷新后重试。";
+    default:
+      return "保存失败：旧 Active 仍在使用，请修正问题后重试或刷新状态。";
+  }
 }
 
 function readInitialBrowseState(): InitialBrowseState {
@@ -901,10 +930,12 @@ function FileBrowseView({
 }
 
 function FilesHeader({
-  libraries,
+  canAddResourceLibrary,
+  addDisabledReason,
   onOpenDrawer,
 }: {
-  readonly libraries: readonly SystemResourceLibrary[];
+  readonly canAddResourceLibrary: boolean;
+  readonly addDisabledReason: string | null;
   readonly onOpenDrawer: () => void;
 }) {
   return (
@@ -920,7 +951,8 @@ function FilesHeader({
           className="mf-button mf-button-primary"
           type="button"
           onClick={onOpenDrawer}
-          disabled={libraries.length === 0}
+          disabled={!canAddResourceLibrary}
+          title={addDisabledReason ?? undefined}
         >
           + 添加资源库
         </button>
@@ -929,14 +961,20 @@ function FilesHeader({
   );
 }
 
-function AddResourceLibraryDrawer({
+export function AddResourceLibraryDrawer({
   open,
   storages,
   onClose,
+  onSave,
+  saving,
+  saveError,
 }: {
   readonly open: boolean;
   readonly storages: readonly SystemStorage[];
   readonly onClose: () => void;
+  readonly onSave: (candidate: SaveResourceLibraryOptions) => void;
+  readonly saving: boolean;
+  readonly saveError: string | null;
 }) {
   const [step, setStep] = useState(1);
   const [name, setName] = useState("");
@@ -944,10 +982,83 @@ function AddResourceLibraryDrawer({
   const [storageId, setStorageId] = useState(storages[0]?.id ?? "");
   const [rootPath, setRootPath] = useState("media/incoming");
   const [enabled, setEnabled] = useState(true);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const selectedStorageId = storages.some((storage) => storage.id === storageId)
+    ? storageId
+    : (storages[0]?.id ?? "");
+
   if (!open) return null;
-  const selectedStorage = storages.find((storage) => storage.id === storageId);
+
+  const validateBasics = (): boolean => {
+    if (name.trim() === "") {
+      setValidationError("请输入资源库名称。");
+      return false;
+    }
+    if (
+      name.length > 120 ||
+      name.includes("\u0000") ||
+      name.includes("\r") ||
+      name.includes("\n")
+    ) {
+      setValidationError("资源库名称不能超过 120 个字符，且不能包含控制字符。");
+      return false;
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(resourceId)) {
+      setValidationError(
+        "资源库 ID 仅支持小写字母、数字和连字符，长度为 1-64。",
+      );
+      return false;
+    }
+    setValidationError(null);
+    return true;
+  };
+
+  const validateStorage = (): boolean => {
+    if (!storages.some((storage) => storage.id === selectedStorageId)) {
+      setValidationError("请选择当前 Active 配置中的可用 Storage。");
+      return false;
+    }
+    if (!isSafeRelativePath(rootPath)) {
+      setValidationError("根路径必须是 Storage 内安全的相对路径。");
+      return false;
+    }
+    setValidationError(null);
+    return true;
+  };
+
+  const goNext = () => {
+    if (step === 1 && !validateBasics()) return;
+    if (step === 2 && !validateStorage()) return;
+    setValidationError(null);
+    setStep((current) => Math.min(3, current + 1));
+  };
+
+  const goToStep = (target: number) => {
+    if (target <= step) {
+      setValidationError(null);
+      setStep(target);
+      return;
+    }
+    goNext();
+  };
+
+  const save = () => {
+    if (!validateBasics() || !validateStorage()) return;
+    onSave({
+      resourceLibraryId: resourceId.trim(),
+      name: name.trim(),
+      enabled,
+      storageId: selectedStorageId,
+      storagePath: rootPath.trim(),
+    });
+  };
+
+  const selectedStorage = storages.find(
+    (storage) => storage.id === selectedStorageId,
+  );
   const selectedStorageName =
-    selectedStorage?.name ?? (storageId === "" ? "未选择" : storageId);
+    selectedStorage?.name ??
+    (selectedStorageId === "" ? "未选择" : selectedStorageId);
   return (
     <aside className="mf-files-drawer" aria-label="添加资源库">
       <div className="mf-files-drawer-header">
@@ -973,13 +1084,23 @@ function AddResourceLibraryDrawer({
             key={number}
             className={step === index + 1 ? "is-active" : undefined}
           >
-            <button type="button" onClick={() => setStep(index + 1)}>
+            <button type="button" onClick={() => goToStep(index + 1)}>
               <span>{number}</span> {label}
             </button>
           </li>
         ))}
       </ol>
       <div className="mf-files-drawer-body">
+        {validationError !== null && (
+          <p className="mf-files-drawer-error" role="alert">
+            {validationError}
+          </p>
+        )}
+        {saveError !== null && (
+          <p className="mf-files-drawer-error" role="alert">
+            {saveError}
+          </p>
+        )}
         {step === 1 && (
           <div className="mf-files-drawer-panel">
             <h3>基本信息</h3>
@@ -988,16 +1109,24 @@ function AddResourceLibraryDrawer({
             <input
               id="mf-library-name"
               placeholder="例如：115电影"
+              maxLength={120}
               value={name}
-              onChange={(event) => setName(event.target.value)}
+              onChange={(event) => {
+                setValidationError(null);
+                setName(event.target.value);
+              }}
             />
             <small>请输入易于识别的名称</small>
             <label htmlFor="mf-library-id">资源库 ID *</label>
             <input
               id="mf-library-id"
               placeholder="例如：source"
+              maxLength={64}
               value={resourceId}
-              onChange={(event) => setResourceId(event.target.value)}
+              onChange={(event) => {
+                setValidationError(null);
+                setResourceId(event.target.value);
+              }}
             />
             <small>仅支持小写字母、数字、连字符，创建后不可修改</small>
             <label className="mf-files-toggle" htmlFor="mf-library-enabled">
@@ -1006,7 +1135,10 @@ function AddResourceLibraryDrawer({
                 id="mf-library-enabled"
                 type="checkbox"
                 checked={enabled}
-                onChange={(event) => setEnabled(event.target.checked)}
+                onChange={(event) => {
+                  setValidationError(null);
+                  setEnabled(event.target.checked);
+                }}
               />
               <span>{enabled ? "启用" : "停用"}</span>
             </label>
@@ -1022,9 +1154,15 @@ function AddResourceLibraryDrawer({
             <label htmlFor="mf-library-storage">Storage *</label>
             <select
               id="mf-library-storage"
-              value={storageId}
-              onChange={(event) => setStorageId(event.target.value)}
+              value={selectedStorageId}
+              onChange={(event) => {
+                setValidationError(null);
+                setStorageId(event.target.value);
+              }}
             >
+              {storages.length === 0 && (
+                <option value="">没有可用 Storage</option>
+              )}
               {storages.map((storage) => (
                 <option key={storage.id} value={storage.id}>
                   {storage.name}（{storage.id}）
@@ -1034,8 +1172,12 @@ function AddResourceLibraryDrawer({
             <label htmlFor="mf-library-root">资源库根路径 *</label>
             <input
               id="mf-library-root"
+              maxLength={4096}
               value={rootPath}
-              onChange={(event) => setRootPath(event.target.value)}
+              onChange={(event) => {
+                setValidationError(null);
+                setRootPath(event.target.value);
+              }}
             />
             <small>仅填写 Storage 内的相对路径，不会访问任意主机路径</small>
           </div>
@@ -1065,7 +1207,8 @@ function AddResourceLibraryDrawer({
               </div>
             </dl>
             <p className="mf-files-drawer-note">
-              保存和激活将在后续 Task 接入。当前面板不会写入配置或修改 Storage。
+              保存会验证并激活这个 ResourceLibrary。失败时旧 Active
+              仍在使用，Storage 不会被修改。
             </p>
           </div>
         )}
@@ -1082,7 +1225,7 @@ function AddResourceLibraryDrawer({
           <button
             type="button"
             className="mf-button mf-button-primary"
-            onClick={() => setStep(step + 1)}
+            onClick={goNext}
           >
             下一步
           </button>
@@ -1090,10 +1233,11 @@ function AddResourceLibraryDrawer({
           <button
             type="button"
             className="mf-button mf-button-primary"
-            disabled
-            title="保存和激活将在后续 Task 接入"
+            onClick={save}
+            disabled={saving}
+            aria-busy={saving}
           >
-            保存
+            {saving ? "保存中…" : "保存"}
           </button>
         )}
       </div>
@@ -1104,6 +1248,7 @@ function AddResourceLibraryDrawer({
 export function StorageFilesPage() {
   const token = useAuthToken();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
   const [selectedLibraryId, setSelectedLibraryId] = useState("");
@@ -1123,11 +1268,14 @@ export function StorageFilesPage() {
   >([]);
   const [view, setView] = useState<FilesView>("list");
   const [drawerOpen, setDrawerOpen] = useState(true);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const statusQuery = useQuery(systemStatusQueryOptions(token));
   const status = statusQuery.data;
   const libraries =
     status?.resourceLibraries.filter((item) => item.enabled) ?? [];
+  const eligibleStorages =
+    status?.storages.filter((item) => item.enabled) ?? [];
   const defaultLibrary =
     libraries.find((item) => item.id === "source") ?? libraries[0];
   const effectiveLibraryId = selectedLibraryId || defaultLibrary?.id || "";
@@ -1230,6 +1378,33 @@ export function StorageFilesPage() {
     resetBrowseState();
   };
 
+  const saveLibraryMutation = useMutation({
+    mutationFn: (candidate: SaveResourceLibraryOptions) =>
+      saveResourceLibrary(token, candidate),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setSaveError(resourceLibrarySaveFailure(result.code));
+        return;
+      }
+      setSaveError(null);
+      setDrawerOpen(false);
+      setSelectedLibraryId(result.model.enabled ? result.model.id : "");
+      setInvalidPath(false);
+      setPath("");
+      setVisitedDirectories([]);
+      setKnownDirectoryPaths([]);
+      resetBrowseState();
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+    },
+    onError: () => {
+      setSaveError(
+        "保存请求未完成。旧 Active 仍在使用；请检查连接后修正或重试。",
+      );
+    },
+  });
+
   useEffect(() => {
     return subscribeToQueryChange(() => setSelectedFiles(new Set()));
   }, [subscribeToQueryChange]);
@@ -1237,7 +1412,16 @@ export function StorageFilesPage() {
   return (
     <div className="mf-files-page">
       <FilesHeader
-        libraries={libraries}
+        canAddResourceLibrary={
+          Boolean(status?.configurationActive) && eligibleStorages.length > 0
+        }
+        addDisabledReason={
+          !status?.configurationActive
+            ? "当前没有 Active 配置，请先激活配置"
+            : eligibleStorages.length > 0
+              ? null
+              : "当前 Active 配置没有可用的已启用 Storage，请先启用 Storage"
+        }
         onOpenDrawer={() => setDrawerOpen(true)}
       />
       <AuthorizedReadBoundary
@@ -1259,10 +1443,14 @@ export function StorageFilesPage() {
           if (!currentStatus.configurationActive) {
             return (
               <FilesState title="没有 Active 配置">
-                请先在配置中激活托管配置，然后浏览资源库文件。
+                请先在配置中激活托管配置；激活后选择已启用的
+                Storage，再添加资源库。
               </FilesState>
             );
           }
+          const currentEligibleStorages = currentStatus.storages.filter(
+            (item) => item.enabled,
+          );
           const currentLibraries = currentStatus.resourceLibraries.filter(
             (item) => item.enabled,
           );
@@ -1273,7 +1461,9 @@ export function StorageFilesPage() {
           if (currentLibrary === null) {
             return (
               <FilesState title="没有已启用的资源库">
-                请在配置中创建或启用资源库后再浏览文件。
+                {currentEligibleStorages.length > 0
+                  ? "当前 Active 配置有可用 Storage，但没有已启用的 ResourceLibrary。请点击“+ 添加资源库”完成恢复。"
+                  : "当前 Active 配置没有已启用的 Storage。请先启用 Storage，再添加资源库。"}
               </FilesState>
             );
           }
@@ -1499,11 +1689,20 @@ export function StorageFilesPage() {
           );
         }}
       </AuthorizedReadBoundary>
-      {status?.configurationActive && activeLibrary !== null && (
+      {status?.configurationActive && eligibleStorages.length > 0 && (
         <AddResourceLibraryDrawer
           open={drawerOpen}
-          storages={status.storages}
-          onClose={() => setDrawerOpen(false)}
+          storages={eligibleStorages}
+          onClose={() => {
+            setSaveError(null);
+            setDrawerOpen(false);
+          }}
+          onSave={(candidate) => {
+            setSaveError(null);
+            saveLibraryMutation.mutate(candidate);
+          }}
+          saving={saveLibraryMutation.isPending}
+          saveError={saveError}
         />
       )}
     </div>

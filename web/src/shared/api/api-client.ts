@@ -21,6 +21,10 @@ import {
   type StorageFilesModel,
 } from "../../entities/library/storage-files";
 import {
+  normalizeResourceLibrarySave,
+  type ResourceLibrarySaveModel,
+} from "../../entities/library/resource-library";
+import {
   DashboardApiError,
   StorageFilesApiError,
   SystemStatusApiError,
@@ -1928,6 +1932,52 @@ async function submitAutomationMutation<T>(
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }
+}
+
+export interface SaveResourceLibraryOptions {
+  readonly resourceLibraryId: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly storageId: string;
+  readonly storagePath: string;
+}
+
+const RESOURCE_LIBRARY_SAVE_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+export async function saveResourceLibrary(
+  token: string | null,
+  options: SaveResourceLibraryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<ResourceLibrarySaveModel>> {
+  if (
+    !RESOURCE_LIBRARY_SAVE_ID.test(options.resourceLibraryId) ||
+    options.name.trim().length === 0 ||
+    options.name.length > 120 ||
+    typeof options.enabled !== "boolean" ||
+    options.storageId.trim().length === 0 ||
+    options.storageId.length > 64 ||
+    options.storageId.includes("/") ||
+    options.storageId.includes("\\") ||
+    options.storagePath.length > 4096 ||
+    options.name.includes("\u0000") ||
+    options.storagePath.includes("\u0000")
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    "/api/v1/resource-libraries",
+    {
+      resourceLibraryId: options.resourceLibraryId,
+      name: options.name,
+      enabled: options.enabled,
+      storageId: options.storageId,
+      storagePath: options.storagePath,
+    },
+    normalizeResourceLibrarySave,
+    fetchImpl,
+  );
 }
 
 export type AutomationDefinitionsRead =

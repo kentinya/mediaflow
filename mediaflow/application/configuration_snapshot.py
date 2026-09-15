@@ -429,6 +429,7 @@ class ManagedConfigurationService:
         expected_active_revision_id: str | None = None,
         expected_active_version: int | None = None,
         expected_active_digest: str | None = None,
+        verified_active: ManagedConfigurationRevision | None = None,
     ) -> ManagedConfigurationRevision:
         """Create a successor Draft seeded by the immutable Active document.
 
@@ -440,7 +441,7 @@ class ManagedConfigurationService:
         before a new Draft is published.
         """
 
-        active = self.active()
+        active = verified_active if verified_active is not None else self.active()
         if active is None:
             if self._has_managed_activation():
                 marker = self._last_known_active() or {}
@@ -718,6 +719,7 @@ class ManagedConfigurationService:
         *,
         expected_version: int,
         actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
     ) -> ManagedConfigurationRevision:
         revision = self.require(revision_id)
         if revision.status is not ManagedConfigurationStatus.VALIDATED:
@@ -754,6 +756,11 @@ class ManagedConfigurationService:
                 f"configuration revision is no longer valid: {_bounded_error(error)}",
                 revision_id=revision_id,
             ) from error
+        if before_publish is not None:
+            # Runtime consumers are constructed while the old Active pointer is
+            # still authoritative.  A failed preparation therefore cannot leave
+            # the persisted pointer ahead of the process binding.
+            before_publish(revision)
         try:
             active = self._repository.get_active_revision()
         except Exception:
