@@ -188,21 +188,115 @@ SMB/OpenList/S3/TMDB service, production credential or real media directory is p
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/application/configuration_snapshot.py`
+- `mediaflow/domain/configuration_management.py`
+- `mediaflow/infrastructure/configuration_snapshot.py`
+- `mediaflow/infrastructure/runtime_configuration.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_resource_library_activation.py`
+- `web/src/entities/library/resource-library.ts`
+- `web/src/entities/library/resource-library.test.ts`
+- `web/src/entities/library/system-status.ts`
+- `web/src/entities/library/system-status.test.ts`
+- `web/src/features/library/StorageFilesPage.tsx`
+- `web/src/features/library/StorageFilesPage.test.tsx`
+- `web/src/shared/api/api-client.ts`
+- `web/src/shared/api/library-api.test.ts`
+- `web/tests/e2e/library-files.spec.ts`
+- `web/tests/fake-server.mjs`
+- `TASK.md`
+
 ### Implemented
+
+- Added a single authenticated Files-page ResourceLibrary Save command with exact candidate
+  fields, server-side bounds/path/reference validation, both configuration permissions, and
+  bounded recoverable error categories.
+- Reused managed successor, validation, read-only Storage/Recognition/destination evidence and
+  checked activation. Runtime binding is prepared before the Active pointer is published; stale
+  Active races refresh the winning runtime binding.
+- Kept disabled ResourceLibraries truthful and non-browseable, exposed enabled Storage state in
+  the safe Active projection, and preserved the add-library recovery entry when Active has
+  eligible Storage but no enabled ResourceLibrary.
+- Completed the three-step drawer, exact one-shot mutation, pending/failure/retry behavior,
+  authoritative refresh and browse-state reset after success.
+- Added application/API, frontend model/API/component, fake-server and Playwright coverage for
+  success, malformed input, authorization, duplicate/storage/path failures, concurrency,
+  runtime-binding failure, retry and zero Storage mutation.
 
 ### Tests and Results
 
+- `python3 scripts/check_governance.py` — PASS.
+- `python3 -m unittest tests.test_resource_library_activation` — PASS (7 tests).
+- `python3 -m unittest tests.test_resource_library_activation tests.test_configuration_successor_draft tests.test_configuration_objects tests.test_configuration_destination_activation tests.test_runtime_files_browser tests.test_api_security` — PASS (125 tests).
+- `python3 -m unittest tests.test_release_security` — PASS (6 tests).
+- `python3 -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED: 1529 tests,
+  3 failures, 1 error, 7 skips. The error is the unavailable optional OpenList `httpx`
+  dependency. The failures are the pre-existing configuration-status `root_path` assertion and
+  two real Preview contract tests rejected by the Task-Base `fileId` allowlist omission.
+- `python3 -m compileall -q mediaflow tests scripts` — PASS.
+- `ruff format --check .` and `ruff check .` — UNAVAILABLE: `ruff` is not installed; the
+  `.venv/bin/ruff` variants are likewise unavailable.
+- `python3 -m pip check` — UNAVAILABLE: this Python environment has no `pip` module.
+- `mediaflow --config config/strategy.example.json config validate` and the phase 13.2 variant —
+  UNAVAILABLE: the `mediaflow` executable is not on PATH. Equivalent direct `final_main`
+  invocations for both files — PASS (`Configuration valid`).
+- `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` — PASS.
+- `cd web && npm run format:check` — PASS.
+- `cd web && npm run typecheck` — PASS.
+- `cd web && npm run lint` — PASS.
+- `cd web && npm run test -- --run` — PASS (32 files, 407 tests).
+- Focused frontend Vitest command for the changed model/API/component/status tests — PASS
+  (4 files, 44 tests).
+- `cd web && npm run build` — PASS; Vite emitted only the existing chunk-size warning.
+- `cd web && npm run test:e2e -- tests/e2e/library-files.spec.ts -g 'ResourceLibrary Save'` —
+  PASS (1 test).
+- `cd web && npm run test:e2e` — FAIL / PRE-EXISTING / UNRELATED: 92 passed, 10 failed;
+  failures are existing FileIndex/Preview/manual-operation journeys, including the same
+  `fileId` Preview boundary and existing page-state assertions. The ResourceLibrary Save test
+  passed.
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / PRE-EXISTING / UNRELATED:
+  the isolated script reached the existing manual Organize check, which returned HTTP 400 for
+  its `expectedVersion` contract; it did not fail in the ResourceLibrary Save scope.
+- `python3 -m pip wheel . --no-deps -w dist` — UNAVAILABLE: no `pip` module; wheel smoke test
+  was SKIP because no wheel was produced.
+- `python3 -m unittest tests.test_resource_library_activation tests.test_release_security`,
+  `git diff --check`, staged diff check and `python3 scripts/check_governance.py` — PASS after
+  final correction.
+
 ### Decisions
+
+- The browser submits only the five business candidate fields; revision, digest, checkpoint and
+  runtime identifiers remain server-managed.
+- Runtime construction happens in the managed activation callback before repository publication;
+  a failed preparation therefore leaves the prior Active authoritative.
+- A concurrent version or activation conflict refreshes the process binding to the repository's
+  winner before returning the conflict, without publishing the candidate.
+- All Save checks use read-only Storage/evidence paths and do not create jobs/tasks, invoke
+  providers or call OrganizerExecutor.
+- The pre-existing `docs/pics/文件页.png` modification was preserved and excluded from the
+  checkpoint.
 
 ### Remaining In-Slice Work
 
+No additional work was identified inside this Task. Other Slice outcomes remain for B to assess
+against the Slice Contract; no next Task is being defined here.
+
 ### Risks / Deviations
+
+- The required full Python and Playwright gates remain non-green only for the documented
+  pre-existing/unrelated Preview/FileIndex contract issues and the missing optional `httpx`
+  dependency; these were not changed or hidden.
+- Ruff, pip, wheel packaging and the equivalent `mediaflow` executable were unavailable in the
+  environment. The available compile, configuration, frontend, focused, related and release
+  security checks were run and recorded above.
+- Vite's bundle-size warning remains informational and unrelated to this Task.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 752920dbfcb96ea1989108474fa0e17bcefa9ea5
 ```
 
 ## B Review Result
