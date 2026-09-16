@@ -870,6 +870,58 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.keyboard("{Escape}");
   });
 
+  it("explains a folder Delete the Storage provider cannot verify", async () => {
+    const user = userEvent.setup();
+    // The backend refuses a folder Delete when the provider publishes no
+    // verifiable directory identity; the Files dialog must explain it and must
+    // never submit the command.
+    let commandSubmitted = false;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onImpact: () =>
+          jsonResponse(
+            {
+              error: {
+                code: "files_direct_directory_identity_unavailable",
+                message:
+                  "this Storage provider cannot verify the folder identity, so the folder Delete was not executed",
+                details: {
+                  category: "directory_identity_unavailable",
+                  durableState: "storage_unchanged",
+                  sideEffects: "none",
+                  retrySafe: true,
+                  nextAction:
+                    "delete the files inside this folder individually",
+                },
+              },
+            },
+            400,
+          ),
+        onCommand: () => {
+          commandSubmitted = true;
+          return jsonResponse({ operation: "delete", status: "SUCCESS" });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    await user.click(await screen.findByRole("menuitem", { name: "删除" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除确认" });
+    expect(
+      await within(dialog).findByText(/当前存储无法校验文件夹版本/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "删除" }),
+    ).toBeDisabled();
+    expect(commandSubmitted).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+  });
+
   it("removes the deleted selection and prunes the directory tree after Delete", async () => {
     const user = userEvent.setup();
     // A deleted directory must not survive in knownDirectoryPaths /

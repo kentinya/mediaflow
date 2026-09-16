@@ -988,21 +988,26 @@ class OrganizerExecutor:
                 ) != _directory_fingerprint_identity(entry_evidence.fingerprint):
                     return "entry changed since it was confirmed"
             if observed.entry_type is StorageEntryType.DIRECTORY:
-                # Directory without a provider fingerprint: the confirmed
-                # identity cannot be re-derived here, so the executor requires
-                # the directory to be empty before removing it.  A confirmed
-                # recursive scope always reaches this point empty (the service
-                # deletes confirmed children first); a same-name replacement
-                # containing new unconfirmed content refuses here.
-                if observed.fingerprint is None:
-                    try:
-                        if storage.list(path):
-                            return "entry changed since it was confirmed"
-                    except (StorageError, OSError):
-                        return "entry changed since it was confirmed"
-                # With a fingerprint the identity check above is authoritative;
-                # the mtime may legitimately have moved while confirmed
-                # children were deleted, so it is not re-compared.
+                # A Directory Delete is only safe when the provider exposes a
+                # stable per-directory identity that survives the confirmed
+                # deletion of the directory's own children (Local: the inode
+                # segment).  A provider that publishes no such token (SMB,
+                # OpenList and S3 directory entries carry no fingerprint) cannot
+                # distinguish the confirmed directory from a same-name
+                # replacement, and "it is still a directory" or "it is empty"
+                # are not identity.  The mutation fails closed here instead of
+                # deleting an unconfirmed replacement.
+                if (
+                    _directory_fingerprint_identity(entry_evidence.fingerprint) is None
+                    or _directory_fingerprint_identity(observed.fingerprint) is None
+                ):
+                    return (
+                        "directory delete requires a verifiable directory identity "
+                        "from this Storage provider"
+                    )
+                # With an identity the check above is authoritative; the mtime
+                # may legitimately have moved while confirmed children were
+                # deleted, so it is not re-compared.
             elif (
                 observed.size != entry_evidence.size
                 or observed.modified_at.isoformat() != entry_evidence.modified_at
@@ -1690,6 +1695,8 @@ def _execution_log_category(result: ExecutionResult) -> str | None:
     if "invalid destination" in text or "destination does not match" in text:
         return "invalid_destination"
     if "unsupported" in text or "not executable" in text or "cross storage link" in text:
+        return "unsupported_capability"
+    if "verifiable directory identity" in text:
         return "unsupported_capability"
     if (
         "capability denied" in text

@@ -343,32 +343,7 @@ class DirectFileCommandService:
         library = self._library(resource_library_id)
         targets = self._delete_targets(paths)
         storage = self._open_storage(library)
-        entries: list[DirectFileImpactEntry] = []
-        for relative in targets:
-            entry = self._stat_entry(library, storage, relative)
-            self._require_deletable_entry(library, relative, entry)
-            if entry.entry_type is StorageEntryType.DIRECTORY:
-                entries.append(
-                    DirectFileImpactEntry(
-                        path=relative,
-                        is_directory=True,
-                        size=0,
-                        modified_at=entry.modified_at.isoformat(),
-                        fingerprint=entry.fingerprint,
-                    )
-                )
-                self._enumerate_into(library, storage, relative, entries)
-            else:
-                entries.append(
-                    DirectFileImpactEntry(
-                        path=relative,
-                        is_directory=False,
-                        size=entry.size,
-                        modified_at=entry.modified_at.isoformat(),
-                        fingerprint=entry.fingerprint,
-                    )
-                )
-            self._enforce_impact_limits(library, entries)
+        entries = self._impact_entries(library, storage, targets)
         entries.sort(key=lambda entry: entry.path)
         file_count = sum(1 for entry in entries if not entry.is_directory)
         directory_count = len(entries) - file_count
@@ -398,32 +373,7 @@ class DirectFileCommandService:
                 next_action="request the Delete impact summary and confirm again",
             )
         storage = self._open_storage(library)
-        entries: list[DirectFileImpactEntry] = []
-        for relative in targets:
-            entry = self._stat_entry(library, storage, relative)
-            self._require_deletable_entry(library, relative, entry)
-            if entry.entry_type is StorageEntryType.DIRECTORY:
-                entries.append(
-                    DirectFileImpactEntry(
-                        path=relative,
-                        is_directory=True,
-                        size=0,
-                        modified_at=entry.modified_at.isoformat(),
-                        fingerprint=entry.fingerprint,
-                    )
-                )
-                self._enumerate_into(library, storage, relative, entries)
-            else:
-                entries.append(
-                    DirectFileImpactEntry(
-                        path=relative,
-                        is_directory=False,
-                        size=entry.size,
-                        modified_at=entry.modified_at.isoformat(),
-                        fingerprint=entry.fingerprint,
-                    )
-                )
-            self._enforce_impact_limits(library, entries)
+        entries = self._impact_entries(library, storage, targets)
         if self._scope_digest(library.library_id, entries) != confirmation_digest:
             raise DirectFileError(
                 "files_direct_stale_confirmation",
@@ -894,6 +844,69 @@ class DirectFileCommandService:
                 next_action="remove the link through its own provider instead",
             )
 
+    def _require_directory_identity(self, library: ResourceLibrary, relative: str, entry) -> None:
+        """Refuse a folder Delete this provider cannot verify.
+
+        Deleting a directory is admitted only when the provider exposes a
+        stable per-directory identity, because the confirmed scope must still be
+        provably the confirmed object at the mutation boundary.  A provider whose
+        entries carry no identity token (SMB, OpenList and S3 directory entries)
+        cannot tell the confirmed directory from a same-name replacement, so the
+        command is refused before any mutation with an actionable reason instead
+        of deleting an unconfirmed folder.
+        """
+
+        if entry.entry_type is not StorageEntryType.DIRECTORY:
+            return
+        if entry.fingerprint is None:
+            raise DirectFileError(
+                "files_direct_directory_identity_unavailable",
+                "directory_identity_unavailable",
+                "this Storage provider cannot verify the folder identity, so the "
+                "folder Delete was not executed",
+                status=400,
+                resource_library_id=library.library_id,
+                path=relative,
+                next_action=(
+                    "delete the files inside this folder individually, or use a Storage "
+                    "provider that verifies directory identity"
+                ),
+            )
+
+    def _impact_entries(
+        self, library: ResourceLibrary, storage: Storage, targets: tuple[str, ...]
+    ) -> list[DirectFileImpactEntry]:
+        """The bounded flattened effect of the confirmed top-level targets."""
+
+        entries: list[DirectFileImpactEntry] = []
+        for relative in targets:
+            entry = self._stat_entry(library, storage, relative)
+            self._require_deletable_entry(library, relative, entry)
+            self._require_directory_identity(library, relative, entry)
+            if entry.entry_type is StorageEntryType.DIRECTORY:
+                entries.append(
+                    DirectFileImpactEntry(
+                        path=relative,
+                        is_directory=True,
+                        size=0,
+                        modified_at=entry.modified_at.isoformat(),
+                        fingerprint=entry.fingerprint,
+                    )
+                )
+                self._enumerate_into(library, storage, relative, entries)
+            else:
+                entries.append(
+                    DirectFileImpactEntry(
+                        path=relative,
+                        is_directory=False,
+                        size=entry.size,
+                        modified_at=entry.modified_at.isoformat(),
+                        fingerprint=entry.fingerprint,
+                    )
+                )
+            self._enforce_impact_limits(library, entries)
+        return entries
+
     def _enumerate_into(
         self,
         library: ResourceLibrary,
@@ -918,6 +931,7 @@ class DirectFileCommandService:
             for child in children:
                 child_relative = posixpath.join(current, child.name)
                 self._require_deletable_entry(library, child_relative, child)
+                self._require_directory_identity(library, child_relative, child)
                 child_is_directory = child.entry_type is StorageEntryType.DIRECTORY
                 collected.append(
                     DirectFileImpactEntry(
@@ -1151,6 +1165,10 @@ def _result_error_category(result) -> str | None:
     if "capability denied" in text or "read only" in text:
         return "capability_denied"
     if "unsupported capability" in text:
+        return "unsupported_capability"
+    if "verifiable directory identity" in text:
+        # The executor's last-boundary refusal when the provider cannot verify
+        # the confirmed folder: an unsupported provider capability, not I/O.
         return "unsupported_capability"
     if "does not exist" in text:
         return "source_missing"
