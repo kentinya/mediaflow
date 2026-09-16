@@ -35,13 +35,11 @@ MAX_IMPACT_DEPTH = 32
 #: Largest total byte size one bounded Delete impact may cover.
 MAX_IMPACT_BYTES = 20 * 1024**3
 
-#: Most bytes of one file read when the server issues Rename version evidence.
-#: A file at most this size is hashed completely, so its evidence is its exact
-#: content; a larger file is anchored by this bounded prefix together with its
-#: size, modified time and the provider's fingerprint when the provider offers
-#: one.  Hashing the whole file would make a Rename read an arbitrary amount of
-#: user media, so the read stays bounded by construction.
-MAX_RENAME_SAMPLE_BYTES = 256 * 1024
+#: Chunk size of the complete streaming content digest one Rename evidence
+#: carries.  The digest covers the entire entry content — a prefix-only sample
+#: cannot prove the version of a file whose remaining bytes changed — while the
+#: read stays memory bounded by this constant.
+RENAME_DIGEST_CHUNK_BYTES = 1024 * 1024
 
 #: Reserved Windows device names that must never be created through a name
 #: field because SMB shares reject or dangerously reinterpret them.
@@ -149,12 +147,14 @@ class EntryVersionEvidence:
     the strongest fence available, including for directories where size is
     constant and mtime may legitimately move.
 
-    ``digest`` is the exact observed content digest of the bounded bytes this
-    evidence covers: the full loaded document for a bounded text Save, and the
-    bounded content sample (:data:`MAX_RENAME_SAMPLE_BYTES`, the whole content
-    for a file that small) for a Rename.  It is the fence that stays
+    ``digest`` is the exact observed content digest of the bytes this evidence
+    covers: the full loaded document for a bounded text Save, and the complete
+    streamed content of the entry for a Rename.  A Rename digest always covers
+    the whole file — a prefix-only sample cannot prove the version of a file
+    whose remaining bytes changed — and it is the fence that stays
     deterministic even where a provider's timestamps are too coarse to separate
-    two writes, so a same-size/same-mtime content replacement is still refused.
+    two writes, so a same-size/same-mtime content replacement is still refused
+    on a provider that offers no fingerprint at all.
     """
 
     size: int
@@ -170,10 +170,10 @@ class RenameEvidence:
 
     ``token`` binds the exact entry version the backend observed — Active
     ResourceLibrary, ResourceLibrary-relative path, entry type, size, modified
-    time, provider fingerprint and the bounded content digest — without
-    disclosing any of those implementation values to the browser.  Only the
-    backend can mint it, and an older token never matches a changed entry, so
-    replaying stale evidence fails closed instead of renaming a replacement.
+    time, the provider fingerprint and the complete streamed content digest —
+    without disclosing any of those implementation values to the browser.  Only
+    the backend can mint it, and an older token never matches a changed entry,
+    so replaying stale evidence fails closed instead of renaming a replacement.
     """
 
     resource_library_id: str
@@ -196,30 +196,26 @@ class RenameEvidence:
         }
 
 
-def rename_sample_size(size: int) -> int:
-    """Bytes one Rename evidence covers for an entry of this size."""
+def stream_content_digest(
+    stream, *, chunk_bytes: int = RENAME_DIGEST_CHUNK_BYTES
+) -> tuple[str, int]:
+    """The SHA-256 digest and byte count of one complete provider stream.
 
-    return min(max(size, 0), MAX_RENAME_SAMPLE_BYTES)
-
-
-def read_bounded_prefix(stream, wanted: int) -> bytes | None:
-    """Read exactly ``wanted`` bytes from one provider stream, or nothing.
-
-    Returns ``None`` when the stream ends before the observed amount is
-    available, which means the entry is no longer the observed version.  A
-    provider stream may legally return fewer bytes than requested, so a single
-    short read must never be read as "content changed".
+    The whole content is hashed in bounded chunks, so the evidence proves the
+    complete entry version while memory stays constant.  Short reads are
+    tolerated (the loop stops only at end of stream), and the byte count it
+    returns lets a caller prove the stream still had exactly the observed size.
     """
 
-    chunks = bytearray()
-    while len(chunks) < wanted:
-        chunk = stream.read(wanted - len(chunks))
+    digest = hashlib.sha256()
+    counted = 0
+    while True:
+        chunk = stream.read(chunk_bytes)
         if not chunk:
             break
-        chunks.extend(chunk)
-    if len(chunks) < wanted:
-        return None
-    return bytes(chunks)
+        digest.update(chunk)
+        counted += len(chunk)
+    return digest.hexdigest(), counted
 
 
 def entry_version_token(

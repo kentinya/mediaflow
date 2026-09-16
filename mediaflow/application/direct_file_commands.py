@@ -42,8 +42,7 @@ from mediaflow.domain.direct_files import (
     TextVersionEvidence,
     entry_version_token,
     is_text_file_name,
-    read_bounded_prefix,
-    rename_sample_size,
+    stream_content_digest,
     unsafe_direct_basename,
 )
 from mediaflow.domain.library import ResourceLibrary
@@ -937,11 +936,14 @@ class DirectFileCommandService:
     def _observed_entry_evidence(
         self, library: ResourceLibrary, storage: Storage, relative: str, entry
     ) -> EntryVersionEvidence:
-        """The bounded version evidence of one entry as it is observed right now.
+        """The complete version evidence of one entry as it is observed now.
 
         A file is anchored by its exact size, modified time, the provider
-        fingerprint (when the provider offers one) and the digest of its bounded
-        content sample.  A directory carries no content, so it is anchored by
+        fingerprint (when the provider offers one) and the digest of its
+        *complete* streamed content: a prefix-only sample cannot prove the
+        version of a file whose remaining bytes changed, and a provider whose
+        timestamps are too coarse to separate two writes cannot prove it from
+        metadata at all.  A directory carries no content, so it is anchored by
         the provider's stable directory identity; a provider that offers none
         cannot prove the confirmed folder is still the confirmed folder and the
         command fails closed instead of mutating an unverified replacement.
@@ -957,32 +959,34 @@ class DirectFileCommandService:
         return EntryVersionEvidence(
             size=entry.size,
             modified_at=entry.modified_at.isoformat(),
-            digest=self._content_sample_digest(library, storage, relative, entry.size),
+            digest=self._content_digest(library, storage, relative, entry.size),
             is_directory=False,
             fingerprint=entry.fingerprint,
         )
 
-    def _content_sample_digest(
+    def _content_digest(
         self, library: ResourceLibrary, storage: Storage, relative: str, size: int
     ) -> str:
-        """Digest the bounded content sample of one observed file."""
+        """Digest the complete content of one observed file.
+
+        Memory stays bounded by the chunk size while the whole content is hashed;
+        a stream that no longer holds exactly the observed amount of bytes means
+        the entry is not the observed version.
+        """
 
         full = _join_resource_library_path(library.root_path, relative)
-        wanted = rename_sample_size(size)
         try:
             with storage.read(full) as stream:
-                raw = read_bounded_prefix(stream, wanted)
+                digest, counted = stream_content_digest(stream)
         except StorageError as error:
             raise self._storage_admission_failure(library, relative, error) from None
         except OSError as error:
             raise self._storage_admission_failure(
                 library, relative, StorageError(StorageErrorCode.IO_ERROR, "read", full)
             ) from error
-        if raw is None:
-            # Fewer bytes were readable than the observed size promised: the
-            # entry is no longer the version that was observed.
+        if counted != size:
             raise self._stale_source_error(library, relative)
-        return hashlib.sha256(raw).hexdigest()
+        return digest
 
     def _entry_version_token(
         self, library: ResourceLibrary, relative: str, evidence: EntryVersionEvidence

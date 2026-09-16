@@ -6,11 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from mediaflow.domain.classification import ClassificationResult
-from mediaflow.domain.direct_files import (
-    EntryVersionEvidence,
-    read_bounded_prefix,
-    rename_sample_size,
-)
+from mediaflow.domain.direct_files import EntryVersionEvidence, stream_content_digest
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.metadata import MediaIdentity
@@ -1103,12 +1099,15 @@ class OrganizerExecutor:
         ):
             return "source changed since it was observed"
         if source_evidence.digest is not None:
+            # The complete streamed content is re-hashed here, not a sample: the
+            # last safe boundary must prove the whole observed version, including
+            # bytes a prefix-only digest could never cover.
             try:
                 with storage.read(source) as stream:
-                    raw = read_bounded_prefix(stream, rename_sample_size(observed.size))
+                    digest, counted = stream_content_digest(stream)
             except (StorageError, RuntimeError, OSError):
                 return "source could not be re-verified before the rename"
-            if raw is None or hashlib.sha256(raw).hexdigest() != source_evidence.digest:
+            if counted != observed.size or digest != source_evidence.digest:
                 return "source content changed since it was observed"
         return None
 
