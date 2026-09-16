@@ -1899,15 +1899,17 @@ export function StorageFilesPage() {
         result.model.durableState === "mutation_effect_uncertain";
       if (variables.options.operation === "delete") {
         // The response names the exact durable effect; refresh the live
-        // listing and prune only the successfully deleted paths.
+        // listing and prune only the top-level targets the backend confirms
+        // as fully deleted.  The knownEffects list is bounded by the confirmed
+        // selection (never truncated), so a >200-entry directory Delete still
+        // reconciles the selection and the directory tree; partial/failed
+        // targets keep their entries and their own outcomes.
         void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
         void queryClient.invalidateQueries({ queryKey: ["system-status"] });
-        pruneAffectedBrowseState(
-          (result.model.outcomes ?? [])
-            .filter((outcome) => outcome.status === "SUCCESS")
-            .map((outcome) => outcome.path),
-          null,
-        );
+        const deletedTargets = (result.model.knownEffects ?? [])
+          .filter((effect) => effect.effect === "deleted")
+          .map((effect) => effect.path);
+        pruneAffectedBrowseState(deletedTargets, null);
         if (knownEffectFailed) {
           setCommandError(
             directFileCommandFailure(result.model.errorCategory ?? "", {

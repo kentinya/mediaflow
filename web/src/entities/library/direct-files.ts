@@ -162,6 +162,18 @@ export interface DirectFileItemOutcome {
   readonly errorCategory: string | null;
 }
 
+/**
+ * The bounded, never-truncated known-effect entry for one confirmed top-level
+ * Delete target.  The backend emits exactly one per confirmed target (at most
+ * MAX_DELETE_PATHS), so the Web can reconcile selection/tree state even when
+ * the per-item diagnostic outcomes are truncated for very large directories.
+ */
+export interface DirectFileKnownEffect {
+  readonly path: string;
+  readonly effect: string;
+  readonly status: string;
+}
+
 export interface DirectFileCommandResult {
   readonly operation: string;
   readonly status: string;
@@ -174,6 +186,7 @@ export interface DirectFileCommandResult {
   readonly durableState?: string;
   readonly nextAction?: string;
   readonly topLevelPaths?: readonly string[];
+  readonly knownEffects?: readonly DirectFileKnownEffect[];
   readonly totalItems?: number;
   readonly succeededItems?: number;
   readonly failedItems?: number;
@@ -203,6 +216,16 @@ export function normalizeDirectFileCommandResult(
               ? outcome.errorCategory
               : null,
         } satisfies DirectFileItemOutcome;
+      })
+    : undefined;
+  const knownEffects = Array.isArray(record.knownEffects)
+    ? record.knownEffects.map((item) => {
+        const effect = expectObject(item);
+        return {
+          path: expectString(effect, "path"),
+          effect: expectString(effect, "effect"),
+          status: expectString(effect, "status"),
+        } satisfies DirectFileKnownEffect;
       })
     : undefined;
   return {
@@ -239,6 +262,7 @@ export function normalizeDirectFileCommandResult(
       ? { outcomesTruncated: record.outcomesTruncated }
       : {}),
     ...(topLevelPaths === undefined ? {} : { topLevelPaths }),
+    ...(knownEffects === undefined ? {} : { knownEffects }),
     ...(outcomes === undefined ? {} : { outcomes }),
   };
 }

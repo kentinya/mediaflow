@@ -965,15 +965,46 @@ class OrganizerExecutor:
             return "source does not exist"
         if entry_evidence is not None:
             observed = storage.stat(path)
-            # A directory's mtime legitimately changes while its confirmed
-            # children are deleted, so directories fence on the entry type
-            # only; files fence on the exact observed size and mtime.
-            if observed.entry_type is StorageEntryType.DIRECTORY:
-                if entry_evidence.is_directory is False:
+            if (
+                entry_evidence.is_directory is not None
+                and (observed.entry_type is StorageEntryType.DIRECTORY)
+                != entry_evidence.is_directory
+            ):
+                return "entry changed since it was confirmed"
+            # A provider fingerprint (inode+ctime, ETag, ...) is the provider's
+            # stable identity.  For files the full token fences this last safe
+            # boundary.  For directories the inode segment is the stable
+            # identity: a same-name replacement (rmdir + mkdir) always yields a
+            # new inode and fails closed here, while the confirmed deletion of
+            # the directory's own children legitimately moves its ctime (and
+            # therefore the full token) without changing its inode.
+            if entry_evidence.fingerprint is not None and (
+                observed.fingerprint != entry_evidence.fingerprint
+            ):
+                if entry_evidence.is_directory is not True:
                     return "entry changed since it was confirmed"
+                if _directory_fingerprint_identity(
+                    observed.fingerprint
+                ) != _directory_fingerprint_identity(entry_evidence.fingerprint):
+                    return "entry changed since it was confirmed"
+            if observed.entry_type is StorageEntryType.DIRECTORY:
+                # Directory without a provider fingerprint: the confirmed
+                # identity cannot be re-derived here, so the executor requires
+                # the directory to be empty before removing it.  A confirmed
+                # recursive scope always reaches this point empty (the service
+                # deletes confirmed children first); a same-name replacement
+                # containing new unconfirmed content refuses here.
+                if observed.fingerprint is None:
+                    try:
+                        if storage.list(path):
+                            return "entry changed since it was confirmed"
+                    except (StorageError, OSError):
+                        return "entry changed since it was confirmed"
+                # With a fingerprint the identity check above is authoritative;
+                # the mtime may legitimately have moved while confirmed
+                # children were deleted, so it is not re-compared.
             elif (
-                entry_evidence.is_directory is True
-                or observed.size != entry_evidence.size
+                observed.size != entry_evidence.size
                 or observed.modified_at.isoformat() != entry_evidence.modified_at
             ):
                 return "entry changed since it was confirmed"
@@ -1606,6 +1637,24 @@ class OrganizerExecutor:
                 error_category=_execution_log_category(result),
             )
         return result
+
+
+def _directory_fingerprint_identity(fingerprint: str | None) -> str | None:
+    """The provider's stable per-directory identity segment.
+
+    Local Storage fingerprints look like ``inode:<ino>:ctime:<ns>``.  The inode
+    identifies the directory itself across the confirmed deletion of its
+    children; the ctime segment moves whenever a child is added or removed and
+    therefore must not participate in the delete fence.  Providers that use a
+    different scheme return their whole token, which is still a stronger
+    identity than nothing.
+    """
+
+    if fingerprint is None:
+        return None
+    if fingerprint.startswith("inode:"):
+        return fingerprint.split(":ctime:", 1)[0]
+    return fingerprint
 
 
 def _bounded_error(error: Exception) -> str:

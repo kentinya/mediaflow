@@ -201,6 +201,16 @@ export interface TextEditorState {
   readonly saved: boolean;
 }
 
+/**
+ * The bounded text editor.
+ *
+ * The operator's local draft is kept separately from the loaded server version
+ * and is never overwritten silently.  On a stale Save the draft survives; the
+ * explicit reload fetches the authoritative content/evidence, and after the
+ * reload the dialog offers both the reloaded server content and the preserved
+ * draft so the operator can reapply their edits before saving with the fresh
+ * evidence.
+ */
 export function TextEditorDialog({
   fileName,
   state,
@@ -221,11 +231,16 @@ export function TextEditorDialog({
 }) {
   const digest = state.document?.evidence.digest ?? null;
   const [content, setContent] = useState<string | null>(null);
+  // The local draft at the moment the operator requests a reload; it stays
+  // available (and restorable) until the operator explicitly discards it by
+  // continuing from the reloaded version.
+  const [draftBackup, setDraftBackup] = useState<string | null>(null);
   const [discardRequested, setDiscardRequested] = useState(false);
   const appliedDigestRef = useRef<string | null>(null);
   useEffect(() => {
     // Adopt the loaded (or reloaded) server version only when its exact
-    // digest changes, so the operator's edits are kept on stale failures.
+    // digest changes.  A stale Save never changes the digest, so the local
+    // edits survive a stale failure untouched.
     if (state.document !== null && appliedDigestRef.current !== digest) {
       appliedDigestRef.current = digest;
       setContent(state.document.content);
@@ -235,6 +250,21 @@ export function TextEditorDialog({
   const edited = content ?? "";
   const oversized = new TextEncoder().encode(edited).length > MAX_TEXT_BYTES;
   const title = "编辑文本 — " + fileName;
+  const reload = () => {
+    // Preserve the local draft: after the reloaded authoritative content is
+    // adopted, the dialog still offers to reapply it before the next save.
+    if (content !== null) {
+      setDraftBackup(content);
+    }
+    setDiscardRequested(false);
+    onReload();
+  };
+  const reapplyDraft = () => {
+    if (draftBackup !== null) {
+      setContent(draftBackup);
+      setDraftBackup(null);
+    }
+  };
   return (
     <ModalDialog
       title={title}
@@ -256,8 +286,7 @@ export function TextEditorDialog({
               className="mf-button mf-button-secondary"
               onClick={() => {
                 if (discardRequested) {
-                  setDiscardRequested(false);
-                  onReload();
+                  reload();
                 } else {
                   setDiscardRequested(true);
                 }
@@ -303,6 +332,18 @@ export function TextEditorDialog({
       {discardRequested && (
         <p className="mf-dialog-hint" role="status">
           再次点击“重新加载”将放弃本地修改并载入服务器最新内容。
+        </p>
+      )}
+      {draftBackup !== null && !state.loading && (
+        <p className="mf-dialog-hint" role="status">
+          已载入服务器最新内容，您的本地编辑仍保留，可重新应用后再保存。
+          <button
+            type="button"
+            className="mf-link-button"
+            onClick={reapplyDraft}
+          >
+            重新应用我的编辑
+          </button>
         </p>
       )}
       {oversized && (
