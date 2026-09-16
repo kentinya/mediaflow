@@ -354,6 +354,7 @@ class DirectFileCommandService:
                         is_directory=True,
                         size=0,
                         modified_at=entry.modified_at.isoformat(),
+                        fingerprint=entry.fingerprint,
                     )
                 )
                 self._enumerate_into(library, storage, relative, entries)
@@ -364,6 +365,7 @@ class DirectFileCommandService:
                         is_directory=False,
                         size=entry.size,
                         modified_at=entry.modified_at.isoformat(),
+                        fingerprint=entry.fingerprint,
                     )
                 )
             self._enforce_impact_limits(library, entries)
@@ -407,6 +409,7 @@ class DirectFileCommandService:
                         is_directory=True,
                         size=0,
                         modified_at=entry.modified_at.isoformat(),
+                        fingerprint=entry.fingerprint,
                     )
                 )
                 self._enumerate_into(library, storage, relative, entries)
@@ -417,6 +420,7 @@ class DirectFileCommandService:
                         is_directory=False,
                         size=entry.size,
                         modified_at=entry.modified_at.isoformat(),
+                        fingerprint=entry.fingerprint,
                     )
                 )
             self._enforce_impact_limits(library, entries)
@@ -475,6 +479,7 @@ class DirectFileCommandService:
                     size=entry.size,
                     modified_at=entry.modified_at,
                     is_directory=entry.is_directory,
+                    fingerprint=entry.fingerprint,
                 ),
                 execute=True,
             )
@@ -495,6 +500,32 @@ class DirectFileCommandService:
         items = self._tasks.repository.list_items(task.task_id)
         succeeded = sum(1 for item in items if item.status is TaskItemStatus.SUCCESS)
         failed = sum(1 for item in items if item.status in _FAILED_ITEM_STATUSES)
+        # The bounded, never-truncated known-effect contract: for each of the
+        # confirmed top-level targets the response names the exact durable
+        # effect, so the Web can reconcile selection/tree state even when the
+        # per-item diagnostic outcomes list is truncated for very large
+        # directories.
+        outcome_by_path: dict[str, str] = {}
+        for outcome in outcomes:
+            outcome_by_path.setdefault(str(outcome["path"]), str(outcome["status"]))
+        known_effects: list[dict[str, object]] = []
+        for target in targets:
+            # A top-level target is fully deleted only when every confirmed
+            # entry under it (including itself) succeeded.
+            affected = [
+                entry
+                for entry in entries
+                if entry.path == target or entry.path.startswith(f"{target}/")
+            ]
+            statuses = {outcome_by_path.get(entry.path, "FAILED") for entry in affected}
+            if statuses == {"SUCCESS"} and affected:
+                known_effects.append({"path": target, "effect": "deleted", "status": "SUCCESS"})
+            elif "UNCERTAIN" in statuses or uncertain:
+                known_effects.append({"path": target, "effect": "uncertain", "status": "UNCERTAIN"})
+            elif "SUCCESS" in statuses:
+                known_effects.append({"path": target, "effect": "partial", "status": "PARTIAL"})
+            else:
+                known_effects.append({"path": target, "effect": "retained", "status": "FAILED"})
         document: dict[str, object] = {
             "operation": DirectFileOperation.DELETE.value,
             # The stable command result contract: every terminal state names
@@ -511,6 +542,9 @@ class DirectFileCommandService:
             "taskId": task.task_id,
             "taskStatus": final.status.value,
             "topLevelPaths": targets,
+            # At most MAX_DELETE_PATHS top-level targets exist by admission, so
+            # this list is bounded by construction and never truncated.
+            "knownEffects": known_effects,
             "totalItems": len(items),
             "succeededItems": succeeded,
             "failedItems": failed,
@@ -891,6 +925,7 @@ class DirectFileCommandService:
                         is_directory=child_is_directory,
                         size=0 if child_is_directory else child.size,
                         modified_at=child.modified_at.isoformat(),
+                        fingerprint=child.fingerprint,
                     )
                 )
                 if child.entry_type is StorageEntryType.DIRECTORY:
@@ -1043,6 +1078,7 @@ class DirectFileCommandService:
                         "d" if entry.is_directory else "f",
                         entry.size,
                         entry.modified_at,
+                        entry.fingerprint,
                     ]
                     for entry in sorted(entries, key=lambda entry: entry.path)
                 ],

@@ -133,27 +133,37 @@ class EntryVersionEvidence:
     executor re-verifies it at the last safe boundary before the mutating
     Storage call, so a source replaced after it was observed is never
     destroyed or overwritten.
+
+    ``fingerprint`` is the provider's optional stable identity token (e.g.
+    inode+ctime for Local, ETag for S3).  When the provider offers one it is
+    the strongest fence available, including for directories where size is
+    constant and mtime may legitimately move.
     """
 
     size: int
     modified_at: str
     digest: str | None = None
     is_directory: bool | None = None
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
 class DirectFileImpactEntry:
     """One bounded entry of a Delete impact enumeration.
 
-    ``modified_at`` participates in the scope digest so a same-size source
-    replacement between the impact preview and the confirmation is rejected
-    as stale instead of deleting the replaced content.
+    ``modified_at`` and ``fingerprint`` participate in the scope digest so a
+    same-size source replacement (or a same-name directory replacement) between
+    the impact preview and the confirmation is rejected as stale instead of
+    deleting the replaced content.  ``fingerprint`` carries the provider's
+    stable identity token when the provider offers one (Local: inode+ctime,
+    S3: ETag); providers without one fall back to mtime fencing.
     """
 
     path: str
     is_directory: bool
     size: int
     modified_at: str
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)
@@ -183,6 +193,10 @@ class DeleteImpact:
                     "isDirectory": entry.is_directory,
                     "size": entry.size,
                     "modifiedAt": entry.modified_at,
+                    # The provider identity participates in the scope digest
+                    # (see the application service) but is deliberately not
+                    # disclosed to the browser: the client only needs the
+                    # bounded path/size/mtime summary plus the digest.
                 }
                 for entry in self.entries
             ],

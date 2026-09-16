@@ -19,6 +19,7 @@ const REAL_DELETE_SUCCESS = {
   taskId: "task-1",
   taskStatus: "completed",
   topLevelPaths: ["victim.txt"],
+  knownEffects: [{ path: "victim.txt", effect: "deleted", status: "SUCCESS" }],
   totalItems: 1,
   succeededItems: 1,
   failedItems: 0,
@@ -35,6 +36,7 @@ const REAL_DELETE_PARTIAL = {
   taskId: "task-2",
   taskStatus: "partial_success",
   topLevelPaths: ["batch"],
+  knownEffects: [{ path: "batch", effect: "partial", status: "PARTIAL" }],
   totalItems: 3,
   succeededItems: 1,
   failedItems: 2,
@@ -60,6 +62,7 @@ const REAL_DELETE_PAUSED = {
   taskId: "task-3",
   taskStatus: "paused",
   topLevelPaths: ["big-dir"],
+  knownEffects: [{ path: "big-dir", effect: "partial", status: "PARTIAL" }],
   totalItems: 4,
   succeededItems: 2,
   failedItems: 0,
@@ -139,6 +142,24 @@ describe("real Delete response contract", () => {
     });
     const uncertain = normalizeDirectFileCommandResult(REAL_DELETE_UNCERTAIN);
     expect(uncertain.durableState).toBe("mutation_effect_uncertain");
+  });
+
+  it("carries the bounded known-effect contract for reconciliation", () => {
+    // A fully deleted large directory: per-item outcomes may be truncated, but
+    // the known effect still names the confirmed top-level target as deleted.
+    const largeDirectory = normalizeDirectFileCommandResult({
+      ...REAL_DELETE_SUCCESS,
+      topLevelPaths: ["big-dir"],
+      knownEffects: [{ path: "big-dir", effect: "deleted", status: "SUCCESS" }],
+      outcomesTruncated: true,
+    });
+    expect(largeDirectory.knownEffects).toEqual([
+      { path: "big-dir", effect: "deleted", status: "SUCCESS" },
+    ]);
+    const partial = normalizeDirectFileCommandResult(REAL_DELETE_PARTIAL);
+    expect(partial.knownEffects).toEqual([
+      { path: "batch", effect: "partial", status: "PARTIAL" },
+    ]);
   });
 
   it("fails closed when a backend response omits the required status", () => {

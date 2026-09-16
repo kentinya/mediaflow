@@ -19,6 +19,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
 )
+from mediaflow.domain.direct_files import EntryVersionEvidence
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -195,16 +196,18 @@ class _CountingExecutor(OrganizerExecutor):
 
 
 class _LateSwapExecutor(OrganizerExecutor):
-    """Executor double that swaps the source after admission, before mutation.
+    """Executor double that swaps the source inside its own preflight.
 
-    This simulates a pre-mutation race: the operator's evidence was valid at
-    admission, but the content changes between admission and the last safe
-    boundary.  The executor fence must refuse the mutation.
+    This simulates a true pre-mutation race: the file still matches the
+    admitted evidence when the application admission digest check runs, then a
+    concurrent writer replaces it just before the executor's mutating Storage
+    call.  Re-running the executor's own preflight (which closes over the
+    admitted data/evidence) re-verifies the digest at the last safe boundary
+    and refuses the mutation.
     """
 
-    def __init__(self, service, root: Path, relative: str, content: str) -> None:
+    def __init__(self, root: Path, relative: str, content: str) -> None:
         super().__init__()
-        self._service = service
         self._root = root
         self._relative = relative
         self._content = content
@@ -222,11 +225,16 @@ class _LateSwapExecutor(OrganizerExecutor):
         mutate,
         verify,
     ):
-        def swapping_preflight():
+        def swap_then_preflight():
             reason = preflight()
             if reason is None:
-                # Replace the source after admission but before mutation.
+                # The admitted evidence just passed the regular preflight; a
+                # concurrent writer now replaces the file before the mutating
+                # Storage call.
                 (self._root / "source" / self._relative).write_text(self._content, encoding="utf-8")
+                # Re-run the same preflight: the digest/size fence re-checks the
+                # swapped content against the admitted evidence and refuses.
+                return preflight()
             return reason
 
         return super()._execute_direct(
@@ -236,7 +244,7 @@ class _LateSwapExecutor(OrganizerExecutor):
             target,
             execute=execute,
             mutation_authority=mutation_authority,
-            preflight=swapping_preflight,
+            preflight=swap_then_preflight,
             mutate=mutate,
             verify=verify,
         )
@@ -612,11 +620,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
 
     def test_save_is_refused_at_the_mutation_boundary_after_a_same_size_swap(self) -> None:
-        """A same-size replacement between load and Save must fail stale.
+        """A same-size replacement between admission and the write must fail.
 
-        The admission digest check alone is not the fence: the executor
-        re-verifies the loaded digest immediately before the write, so a
-        version swapped in after admission is never overwritten.
+        The swap happens exactly inside the executor's admission→preflight
+        window: the file matches the loaded evidence when the application
+        digest check runs, then a concurrent writer replaces it before the
+        executor's last safe boundary.  The executor digest fence refuses the
+        write, so the admitted editor content never replaces the newer file.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -626,21 +636,23 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "a.txt").write_text("v1!", encoding="utf-8")
             loaded = service.read_text(resource_library_id="source", path="a.txt")
             evidence = loaded.evidence.document()
-            # Same size, different content: admission passes, the executor fence fires.
-            (root / "source" / "a.txt").write_text("v2!", encoding="utf-8")
-            with patch(
-                "mediaflow.application.direct_file_commands.OrganizerExecutor",
-                lambda: _LateSwapExecutor(service, root, "a.txt", "vX!"),
-            ):
-                with self.assertRaises(DirectFileError) as stale:
-                    service.save_text(
-                        resource_library_id="source",
-                        path="a.txt",
-                        content="editor edits",
-                        expected=evidence,
-                    )
-            self.assertEqual(stale.exception.category, "stale_changed")
-            self.assertEqual((root / "source" / "a.txt").read_text(encoding="utf-8"), "v2!")
+            # The file still matches the loaded evidence at admission time; the
+            # same-size replacement happens only inside the executor's
+            # preflight window.
+            swapper = _LateSwapExecutor(root, "a.txt", "vX!")
+            with patch.object(service, "_executor", swapper):
+                outcome = service.save_text(
+                    resource_library_id="source",
+                    path="a.txt",
+                    content="editor edits",
+                    expected=evidence,
+                )
+            self.assertEqual(outcome["status"], "FAILED")
+            self.assertEqual(outcome["errorCategory"], "source_changed")
+            self.assertEqual(outcome["effectCertainty"], "none")
+            # The pre-mutation replacement content survives; the editor's
+            # admitted content was never written.
+            self.assertEqual((root / "source" / "a.txt").read_text(encoding="utf-8"), "vX!")
 
     def test_rename_binds_observed_source_evidence_and_refuses_swaps(self) -> None:
         """Rename requires and re-verifies server-issued source evidence."""
@@ -680,6 +692,75 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(results[0].destination_path, "renamed.txt")
             self.assertNotIn(str(root / "source"), json.dumps(results[0].__dict__, default=str))
 
+    def test_rename_is_refused_at_the_mutation_boundary_after_a_same_size_swap(self) -> None:
+        """A rename whose source is swapped inside the preflight window fails.
+
+        The source matches the observed evidence at admission; a concurrent
+        writer replaces it inside the executor's preflight window, and the
+        executor's own size+mtime fence refuses to rename the replaced entry.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "race.txt").write_text("v1", encoding="utf-8")
+
+            class SwapInPreflight(OrganizerExecutor):
+                def __init__(self, base: Path) -> None:
+                    super().__init__()
+                    self._base = base
+
+                def _execute_direct(
+                    self,
+                    storage,
+                    operation,
+                    source,
+                    target,
+                    *,
+                    execute,
+                    mutation_authority,
+                    preflight,
+                    mutate,
+                    verify,
+                ):
+                    def swap_then_preflight():
+                        reason = preflight()
+                        if reason is None:
+                            # Same size, different content: only the executor's
+                            # size+mtime fence can still refuse this rename.
+                            (self._base / "source" / "race.txt").write_text("v2", encoding="utf-8")
+                            return preflight()
+                        return reason
+
+                    return super()._execute_direct(
+                        storage,
+                        operation,
+                        source,
+                        target,
+                        execute=execute,
+                        mutation_authority=mutation_authority,
+                        preflight=swap_then_preflight,
+                        mutate=mutate,
+                        verify=verify,
+                    )
+
+            swapper = SwapInPreflight(root)
+            evidence = _entry_evidence(api, active, "source", "race.txt")
+            with patch.object(service, "_executor", swapper):
+                outcome = service.rename(
+                    resource_library_id="source",
+                    path="race.txt",
+                    name="raced.txt",
+                    expected=evidence,
+                )
+            self.assertEqual(outcome["status"], "FAILED")
+            self.assertEqual(outcome["errorCategory"], "source_changed")
+            # The replaced entry keeps its name; no rename happened.
+            self.assertTrue((root / "source" / "race.txt").exists())
+            self.assertFalse((root / "source" / "raced.txt").exists())
+            self.assertEqual((root / "source" / "race.txt").read_text(encoding="utf-8"), "v2")
+
     def test_confirmed_delete_refuses_a_same_size_scope_swap(self) -> None:
         """A same-size source swap after the impact preview fails stale."""
 
@@ -704,6 +785,201 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(stale.exception.category, "stale_confirmation")
             self.assertEqual(stale.exception.status, 409)
             self.assertEqual((root / "source" / "victim.txt").read_text(encoding="utf-8"), "v2")
+
+    def test_delete_is_refused_at_the_mutation_boundary_after_a_same_size_swap(self) -> None:
+        """A scope file swapped inside the executor's preflight survives.
+
+        The scope digest passes at admission (the file still matches the
+        enumerated evidence); a concurrent writer then replaces it with
+        same-size/different-mtime content before the executor's mutating
+        Storage call.  The executor's size+mtime fence refuses the delete.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "race-victim.txt").write_text("v1", encoding="utf-8")
+
+            class SwapInDeletePreflight(OrganizerExecutor):
+                def __init__(self, base: Path) -> None:
+                    super().__init__()
+                    self._base = base
+
+                def _execute_direct(
+                    self,
+                    storage,
+                    operation,
+                    source,
+                    target,
+                    *,
+                    execute,
+                    mutation_authority,
+                    preflight,
+                    mutate,
+                    verify,
+                ):
+                    def swap_then_preflight():
+                        reason = preflight()
+                        if reason is None:
+                            # Same size, later mtime: only the executor's
+                            # per-entry fence can still refuse this delete.
+                            target_file = self._base / "source" / "race-victim.txt"
+                            target_file.write_text("v2", encoding="utf-8")
+                            later = datetime.now(UTC) + timedelta(seconds=120)
+                            os.utime(target_file, (later.timestamp(), later.timestamp()))
+                            return preflight()
+                        return reason
+
+                    return super()._execute_direct(
+                        storage,
+                        operation,
+                        source,
+                        target,
+                        execute=execute,
+                        mutation_authority=mutation_authority,
+                        preflight=swap_then_preflight,
+                        mutate=mutate,
+                        verify=verify,
+                    )
+
+            impact = service.delete_impact(resource_library_id="source", paths=["race-victim.txt"])
+            with patch.object(service, "_executor", SwapInDeletePreflight(root)):
+                outcome = service.execute_delete(
+                    resource_library_id="source",
+                    paths=["race-victim.txt"],
+                    confirmation_digest=impact.scope_digest,
+                )
+            self.assertEqual(outcome["status"], "FAILED")
+            self.assertEqual(outcome["failedItems"], 1)
+            self.assertEqual(outcome["succeededItems"], 0)
+            # The pre-mutation replacement survives the refused delete.
+            self.assertEqual(
+                (root / "source" / "race-victim.txt").read_text(encoding="utf-8"), "v2"
+            )
+
+    def test_delete_impact_document_stays_bounded_and_secret_free(self) -> None:
+        """The browser-facing impact never discloses provider identity tokens."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "victim").mkdir()
+            (root / "source" / "victim" / "a.txt").write_text("a", encoding="utf-8")
+            impact = service.delete_impact(resource_library_id="source", paths=["victim"])
+            document = impact.document()
+            rendered = json.dumps(document)
+            self.assertNotIn("inode:", rendered)
+            self.assertNotIn(str(root / "source"), rendered)
+            self.assertTrue(document["scopeDigest"])
+            for entry in document["entries"]:
+                self.assertEqual(
+                    set(entry), {"path", "isDirectory", "size", "modifiedAt"}
+                )
+
+    def test_confirmed_delete_refuses_a_replaced_empty_directory(self) -> None:
+        """A same-name directory replacement after the confirmation fails closed.
+
+        The executor fence uses the provider's stable directory identity (the
+        inode segment of the Local fingerprint), so the replacement directory
+        created after the operator confirmed the original survives.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            binding = api._prepare_runtime_binding_for_revision(active)
+            service = binding.direct_files
+            library = service._library("source")
+            storage = service._open_storage(library)
+            (root / "source" / "victim").mkdir()
+            observed = storage.stat("victim")
+            evidence = EntryVersionEvidence(
+                size=0,
+                modified_at=observed.modified_at.isoformat(),
+                is_directory=True,
+                fingerprint=observed.fingerprint,
+            )
+            # Same-name replacement: rmdir + mkdir yields a new inode/ctime.
+            storage.delete("victim")
+            (root / "source" / "victim").mkdir()
+            result = OrganizerExecutor().execute_direct_delete(
+                storage, "victim", entry_evidence=evidence
+            )
+            self.assertEqual(result.status.value, "FAILED")
+            self.assertTrue(
+                any("entry changed since it was confirmed" in error for error in result.errors)
+            )
+            self.assertTrue((root / "source" / "victim").is_dir())
+
+    def test_confirmed_recursive_delete_tolerates_confirmed_child_removals(self) -> None:
+        """Deleting confirmed children must not break the parent directory fence.
+
+        A confirmed recursive scope legitimately removes children first; the
+        parent's provider identity (inode) stays stable across those removals
+        and the confirmed parent directory is still deleted.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "season").mkdir()
+            (root / "source" / "season" / "inner").mkdir()
+            (root / "source" / "season" / "inner" / "e1.mkv").write_bytes(b"01")
+            (root / "source" / "season" / "e0.mkv").write_bytes(b"0")
+            impact = service.delete_impact(resource_library_id="source", paths=["season"])
+            outcome = service.execute_delete(
+                resource_library_id="source",
+                paths=["season"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertEqual(outcome["failedItems"], 0)
+            self.assertFalse((root / "source" / "season").exists())
+
+    def test_confirmed_recursive_delete_refuses_a_replaced_parent_directory(
+        self,
+    ) -> None:
+        """A recursive parent replaced after confirmation keeps its new content.
+
+        The replacement directory contains an unconfirmed child, so both the
+        executor's empty-check and the provider identity refuse the delete.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            (root / "source" / "parent").mkdir()
+            (root / "source" / "parent" / "old.txt").write_text("old", encoding="utf-8")
+            binding = api._prepare_runtime_binding_for_revision(active)
+            direct = binding.direct_files
+            library = direct._library("source")
+            storage = direct._open_storage(library)
+            observed = storage.stat("parent")
+            evidence = EntryVersionEvidence(
+                size=0,
+                modified_at=observed.modified_at.isoformat(),
+                is_directory=True,
+                fingerprint=observed.fingerprint,
+            )
+            # Replace the whole directory with different unconfirmed content.
+            import shutil
+
+            shutil.rmtree(root / "source" / "parent")
+            (root / "source" / "parent").mkdir()
+            (root / "source" / "parent" / "new.txt").write_text("new", encoding="utf-8")
+            result = OrganizerExecutor().execute_direct_delete(
+                storage, "parent", entry_evidence=evidence
+            )
+            self.assertEqual(result.status.value, "FAILED")
+            self.assertTrue(
+                any("entry changed since it was confirmed" in error for error in result.errors)
+            )
+            self.assertEqual(
+                (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"), "new"
+            )
 
     def test_delete_result_status_names_the_known_durable_effect(self) -> None:
         """Every terminal Delete response carries the strict frontend status."""
@@ -749,6 +1025,53 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(partial["status"], "PARTIAL")
             self.assertEqual(partial["failedItems"], 1)
             self.assertEqual(partial["succeededItems"], 1)
+            # One bounded known-effect entry per confirmed top-level target,
+            # in the deterministic sorted target order.
+            self.assertEqual(
+                partial["knownEffects"],
+                [
+                    {"path": "four.txt", "effect": "retained", "status": "FAILED"},
+                    {"path": "three.txt", "effect": "deleted", "status": "SUCCESS"},
+                ],
+            )
+
+    def test_large_directory_delete_reports_a_never_truncated_known_effect(self) -> None:
+        """A >200-entry directory Delete still names its top-level effect.
+
+        The per-item diagnostic outcomes are truncated for very large
+        directories, but the bounded known-effect contract (one entry per
+        confirmed top-level target) always identifies whether the selected
+        directory itself was fully deleted, so the Web can reconcile the
+        selection and the directory tree.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            big = root / "source" / "big-dir"
+            big.mkdir()
+            for index in range(201):
+                (big / f"file-{index:03}.txt").write_text("x", encoding="utf-8")
+            impact = service.delete_impact(resource_library_id="source", paths=["big-dir"])
+            # 201 files + the directory itself.
+            self.assertEqual(len(impact.entries), 202)
+            outcome = service.execute_delete(
+                resource_library_id="source",
+                paths=["big-dir"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertEqual(outcome["succeededItems"], 202)
+            # The diagnostic outcomes are truncated…
+            self.assertTrue(outcome["outcomesTruncated"])
+            self.assertLessEqual(len(outcome["outcomes"]), 200)
+            # …but the known effect still names the confirmed top-level target.
+            self.assertEqual(
+                outcome["knownEffects"],
+                [{"path": "big-dir", "effect": "deleted", "status": "SUCCESS"}],
+            )
+            self.assertFalse(big.exists())
 
     def test_delete_impact_enumerates_bounded_scope_and_refuses_roots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

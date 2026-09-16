@@ -4868,6 +4868,11 @@ const server = createServer(async (req, res) => {
           taskId: "task-e2e-delete",
           taskStatus: "completed",
           topLevelPaths: fields.paths ?? [],
+          knownEffects: (fields.paths ?? []).map((path) => ({
+            path,
+            effect: "deleted",
+            status: "SUCCESS",
+          })),
           totalItems: outcomes.length,
           succeededItems: outcomes.length,
           failedItems: 0,
