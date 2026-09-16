@@ -414,6 +414,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onText?: () => Response;
     onImpact?: () => Response;
     onFiles?: () => Response;
+    onRenameEvidence?: () => Response;
   }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -493,6 +494,20 @@ describe("Files entry state and ResourceLibrary strip", () => {
               },
               sideEffects: "none",
             });
+      }
+      if (url.includes("/files/rename-evidence")) {
+        if (options.onRenameEvidence) return options.onRenameEvidence();
+        const path = new URL(url, "http://x").searchParams.get("path") ?? "";
+        return jsonResponse({
+          resourceLibraryId: "lib-a",
+          path,
+          isDirectory: false,
+          size: 32,
+          modifiedAt: "2026-08-23T11:15:00Z",
+          evidence: `v1.evidence-${path}`,
+          sideEffects: "none",
+          retrySafe: true,
+        });
       }
       if (url.includes("/files/delete-impact")) {
         return options.onImpact
@@ -915,9 +930,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       await within(dialog).findByText(/当前存储无法校验文件夹版本/),
     ).toBeVisible();
-    expect(
-      within(dialog).getByRole("button", { name: "删除" }),
-    ).toBeDisabled();
+    expect(within(dialog).getByRole("button", { name: "删除" })).toBeDisabled();
     expect(commandSubmitted).toBe(false);
     await user.click(within(dialog).getByRole("button", { name: "取消" }));
   });
@@ -1282,6 +1295,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       operation: "rename",
       path: "Season",
       name: "Seasons",
+      expected: { evidence: "v1.evidence-Season" },
     });
     // The renamed target is remapped: the selection follows the new identity.
     await waitFor(() => {
@@ -1292,6 +1306,107 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       screen.getByRole("checkbox", { name: "选择 Seasons" }),
     ).toBeChecked();
+  });
+
+  it("explains a Rename the Storage provider cannot verify", async () => {
+    const user = userEvent.setup();
+    // The backend refuses to issue version evidence for an entry it cannot
+    // verify; the Rename dialog must explain it and must never submit.
+    let commandSubmitted = false;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onRenameEvidence: () =>
+          jsonResponse(
+            {
+              error: {
+                code: "files_direct_entry_identity_unavailable",
+                message:
+                  "this Storage provider cannot verify the folder identity, so the folder Rename was not executed",
+                details: {
+                  category: "entry_identity_unavailable",
+                  durableState: "storage_unchanged",
+                  sideEffects: "none",
+                  retrySafe: true,
+                  nextAction: "refresh the directory and retry",
+                },
+              },
+            },
+            400,
+          ),
+        onCommand: () => {
+          commandSubmitted = true;
+          return jsonResponse({ operation: "rename", status: "SUCCESS" });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
+    const dialog = await screen.findByRole("dialog", { name: "重命名" });
+    expect(
+      await within(dialog).findByText(/当前存储无法校验该文件夹的版本身份/),
+    ).toBeVisible();
+    expect(
+      within(dialog).getByRole("button", { name: "重命名" }),
+    ).toBeDisabled();
+    expect(commandSubmitted).toBe(false);
+    await user.click(within(dialog).getByRole("button", { name: "取消" }));
+  });
+
+  it("keeps the entered name and explains a stale Rename refusal", async () => {
+    const user = userEvent.setup();
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onCommand: () =>
+        jsonResponse(
+          {
+            error: {
+              code: "files_direct_stale_source",
+              message:
+                "the entry changed since it was observed; nothing was renamed",
+              details: {
+                category: "stale_source",
+                durableState: "storage_unchanged",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "refresh the directory and rename the current entry again",
+              },
+            },
+          },
+          409,
+        ),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
+    const dialog = await screen.findByRole("dialog", { name: "重命名" });
+    const nameInput = within(dialog).getByLabelText("新名称");
+    await user.clear(nameInput);
+    await user.type(nameInput, "Seasons");
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("files/rename-evidence?path=Season"),
+      ),
+    ).toBe(true);
+    await user.click(within(dialog).getByRole("button", { name: "重命名" }));
+    // The refusal keeps the dialog, the entered name and an actionable reason.
+    expect(
+      await within(dialog).findByText(/目标在操作前已发生变化/),
+    ).toBeVisible();
+    expect(within(dialog).getByLabelText("新名称")).toHaveValue("Seasons");
+    expect(
+      directoryTree().getByRole("button", { name: "Season" }),
+    ).toBeVisible();
   });
 
   it("opens the bounded text editor and saves the exact loaded version", async () => {

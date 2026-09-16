@@ -4592,6 +4592,26 @@ class MediaFlowApi:
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "files"
+            and parts[5] == "rename-evidence"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_files is None:
+                return self._files_browser_unavailable(start_response)
+            path = self._files_direct_rename_evidence_query(environ)
+            evidence = binding.direct_files.rename_evidence(resource_library_id=parts[3], path=path)
+            response = evidence.document()
+            response["sideEffects"] = "none"
+            response["retrySafe"] = True
+            response["nextAction"] = (
+                "submit the Rename with this exact evidence, or refresh the directory "
+                "if the entry changed in the meantime"
+            )
+            return self._response(start_response, 200, response)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
             and parts[5] == "commands"
             and method == "POST"
         ):
@@ -8546,6 +8566,17 @@ class MediaFlowApi:
         if not paths:
             raise ValueError("Files Delete impact query requires at least one selected path")
         return paths
+
+    @classmethod
+    def _files_direct_rename_evidence_query(cls, environ: dict) -> str:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("Files Rename evidence query contains unsupported or repeated fields")
+        path = query.get("path", [None])[0]
+        if not isinstance(path, str) or not path:
+            raise ValueError("Files Rename evidence requires one ResourceLibrary-relative path")
+        return path
 
     @classmethod
     def _runtime_files_query(cls, environ: dict) -> dict[str, object]:

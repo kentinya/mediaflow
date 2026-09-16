@@ -98,6 +98,7 @@ export function NamePromptDialog({
   initialValue,
   busy,
   error,
+  submitDisabled = false,
   onSubmit,
   onClose,
 }: {
@@ -105,6 +106,12 @@ export function NamePromptDialog({
   readonly initialValue: string;
   readonly busy: boolean;
   readonly error: string | null;
+  /**
+   * Blocks the submission while a required server-issued input (such as the
+   * Rename version evidence) is unavailable.  Cancel/close stay usable so the
+   * operator is never trapped in the dialog.
+   */
+  readonly submitDisabled?: boolean;
   readonly onSubmit: (name: string) => void;
   readonly onClose: () => void;
 }) {
@@ -153,7 +160,7 @@ export function NamePromptDialog({
             type="button"
             className="mf-button mf-button-primary"
             onClick={submit}
-            disabled={busy}
+            disabled={busy || submitDisabled}
             aria-busy={busy}
           >
             {busy ? "提交中…" : kind === "rename" ? "重命名" : "创建"}

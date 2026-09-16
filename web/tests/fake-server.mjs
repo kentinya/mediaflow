@@ -1014,6 +1014,32 @@ function fileEntry(name, path, size, modifiedAt, options = {}) {
   };
 }
 
+function renameFixtureToken(entry) {
+  // Deterministic stand-in for the server-issued version token: the fake only
+  // accepts the evidence it issued for the same fixture entry version.
+  return `v1.e2e-${entry.path}-${entry.size}-${entry.modifiedAt}`;
+}
+
+function fixtureEntry(storageId, path) {
+  if (!path) return undefined;
+  const separator = path.lastIndexOf("/");
+  const parent = separator === -1 ? "" : path.slice(0, separator);
+  const entries =
+    storageId === "remote-media"
+      ? parent === ""
+        ? [
+            fileEntry(
+              "remote.mkv",
+              "remote.mkv",
+              1024,
+              REFERENCE_MODIFIED_LATEST,
+            ),
+          ]
+        : []
+      : referenceDirectoryEntries(parent);
+  return entries.find((entry) => entry.path === path);
+}
+
 function directoryEntry(name, path, modifiedAt) {
   return {
     name,
@@ -4816,7 +4842,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const directCommandMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact)$/,
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence)$/,
   );
   if (directCommandMatch) {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -4834,11 +4860,70 @@ const server = createServer(async (req, res) => {
     const resourceLibraryId = decodeURIComponent(directCommandMatch[1]);
     const action = directCommandMatch[2];
     const state = resourceLibraryState(session);
+    if (action === "rename-evidence" && req.method === "GET") {
+      const path = url.searchParams.get("path") ?? "";
+      const entry = fixtureEntry(resourceLibraryId, path);
+      if (!entry) {
+        sendJson(res, 404, {
+          error: {
+            code: "files_direct_not_found",
+            details: {
+              category: "not_found",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "refresh the directory and retry",
+            },
+          },
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        resourceLibraryId,
+        path,
+        isDirectory: entry.isDirectory,
+        size: entry.size,
+        modifiedAt: entry.modifiedAt,
+        evidence: renameFixtureToken(entry),
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction:
+          "submit the Rename with this exact evidence, or refresh the directory if the entry changed in the meantime",
+      });
+      return;
+    }
     if (action === "commands" && req.method === "POST") {
       const parsed = await readBoundedJsonBody(req, res);
       if (!parsed.ok) return;
       const fields = parsed.document;
       state.commandLog.push({ ...fields });
+      if (fields.operation === "rename") {
+        const entry = fixtureEntry(
+          fields.resourceLibraryId ?? resourceLibraryId,
+          fields.path ?? "",
+        );
+        const expectedEvidence =
+          entry === undefined ? null : renameFixtureToken(entry);
+        if (
+          expectedEvidence === null ||
+          (fields.expected ?? {}).evidence !== expectedEvidence
+        ) {
+          sendJson(res, 409, {
+            error: {
+              code: "files_direct_stale_source",
+              details: {
+                category: "stale_source",
+                durableState: "storage_unchanged",
+                sideEffects: "none",
+                retrySafe: true,
+                nextAction:
+                  "refresh the directory and rename the current entry again",
+              },
+            },
+          });
+          return;
+        }
+      }
       if (fields.operation === "delete") {
         const digest = `fake-scope-digest-${(fields.paths ?? []).join(",")}`;
         if (fields.confirmationDigest !== digest) {
