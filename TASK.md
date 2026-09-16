@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.3
 Parent Slice: 37
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: e33a030055a81011a32de507bef6758d48607c9a
 Difficulty: High
 Test Level: T4
@@ -625,75 +625,8 @@ no credential or private-path file is staged or committed)
 ## B Review Result
 
 ```text
-Reviewed: e33a030055a81011a32de507bef6758d48607c9a..0a441b49004760e223efb3322eae55089d77cbbf
-Decision: FIX REQUIRED
+Reviewed: e33a030055a81011a32de507bef6758d48607c9a..f7fe4b02c94627de6b1db7d6d0fca9dc3ebf876b
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
-
-- Rename 和 Delete 的 exact-version 安全边界仍未同时满足，且不得通过完整读取/哈希
-  媒体文件来修复。Rename 当前在 evidence 签发、应用准入和 OrganizerExecutor 最后边界
-  均调用 `stream_content_digest()` 扫描完整文件；这不满足本 Task 新明确的有界、低摩擦
-  要求。Delete 则在无 provider fingerprint 时仍只复验 path、type、size 和 `mtime`；
-  独立 `_FingerprintlessStorage` 探针在 impact 后将 `old-version` 替换为同尺寸、同
-  `mtime` 的 `new-version`，使用旧 `scope_digest` 仍得到
-  `status='SUCCESS', victim_exists=False, storage.delete=['victim.bin']`。修正方向：删除
-  Rename 的完整内容 digest 证据链；Rename/Delete 统一改用 provider 可验证的稳定
-  entry/version evidence 或 provider-native conditional operation，无法证明 exact version 时在创建
-  Task 或调用 mutation 前 fail closed。增加 read-spy 回归，证明两个操作的 evidence、
-  admission、confirmation 和执行器边界都不调用 `Storage.read()`；同时保留同尺寸同
-  `mtime` 替换必须拒绝、零 Task、零 mutation 的确定性断言。
-
-## B Fix Implementation Direction
-
-下面是当前 `SAME TASK FIX LOOP` 的推荐实现路径，用于消除上述唯一 blocker；它不改变
-Task ID、Task Base、Goal、Implementation Scope 或 Slice Contract，也不授权 Copy、Move、
-duplicate `FULL` Hash 或 Storage redesign。
-
-1. **移除 Rename 的完整内容证据链。** 删除 Rename evidence、Rename admission 和
-   `OrganizerExecutor` Rename preflight 对 `stream_content_digest()`、`_content_digest()` 和
-   `Storage.read()` 的调用；Rename 生成 token 时传入 `content_digest=None`。如果
-   `stream_content_digest()` 和 Rename digest 常量不再有其他合法调用，应一并删除，防止以后
-   误用。`EntryVersionEvidence.digest` 可以继续只服务于受 `MAX_TEXT_BYTES` 限制的文本 Save，
-   不得再作为 Rename/Delete 的证据。
-2. **统一使用 metadata-only provider validator。** 复用现有可选
-   `StorageEntry.fingerprint` 作为本 Task 的 provider entry/version evidence 槽位。Rename token
-   与 Delete `scopeDigest` 必须至少绑定 Active ResourceLibrary、规范化相对路径、entry type、
-   size、`modified_at` 和非空 fingerprint；fingerprint 不返回给浏览器，只进入服务端 evidence。
-   `size + mtime`、单独 ETag 文本、路径存在性或文件内容前缀都不能在缺少可信 provider
-   validator 时充当降级证据。
-3. **在准入阶段 fail closed。** 抽取一个 Rename/Delete 共用的 exact-entry-evidence 校验。
-   Rename evidence 请求遇到空 fingerprint 时立即返回稳定的
-   `files_direct_entry_identity_unavailable`（或等价稳定分类）。Delete impact 枚举出的每个文件
-   和目录都必须通过相同校验；任一项没有可信 fingerprint，整次 impact/confirmation 失败，且
-   不创建 Task、不调用 `OrganizerExecutor`、不执行 Storage mutation。错误要说明当前 Storage
-   无法验证该 entry 的版本，并给出更换/完善支持该 validator 的 Storage provider 等安全下一步。
-4. **在所有安全边界只重新 `stat/list`。** Rename 在 evidence 签发、提交 admission 和
-   `execute_direct_rename()` 调用 `Storage.move()` 前重新 `stat()` 并比较上述完整 metadata
-   evidence。Delete 在 impact、确认提交时的全 scope 重枚举，以及每个
-   `execute_direct_delete()` mutation 的最后边界重新 `stat/list`；fingerprint、type、路径或其他
-   被绑定字段不一致即 stale。证据缺失与 stale 都不能触发内容读取、prefix sampling、duplicate
-   hashing 或 mutation。
-5. **按现有 adapter 事实决定是否可用，不伪造支持。** Local 当前提供
-   `inode + ctime_ns` fingerprint，可以走无内容读取的验证路径。S3/R2 当前把对象 validator
-   放入 fingerprint；只有该 validator 满足 adapter 已声明并由测试证明的版本变化语义时才能
-   使用，若需要严格对象世代而现有 token 无法证明，则同样 fail closed，未来可另行采用
-   VersionId/native conditional operation。SMB 和 OpenList 当前没有 fingerprint，必须暂时走
-   actionable fail-closed 路径；不得用完整读取、size/mtime 或自行拼接弱 token 来“恢复”按钮。
-   后续 provider 若能从 metadata/API 暴露可信 file ID、change token、VersionId 或原生条件
-   Rename/Delete，才可在不读取内容的前提下启用。
-6. **保持 Web/API 行为一致。** 无 validator 时，API 返回上述稳定错误和恢复动作；Web 在
-   evidence/impact 请求失败后保留当前选择和目录状态，展示同一可执行说明，不进入确认或伪造
-   成功状态。浏览器仍只持有 opaque Rename evidence / Delete `scopeDigest`，不暴露 provider
-   token。
-7. **增加确定性回归。** 使用一个 `read()` 会立即使测试失败的 read-spy Storage，分别证明
-   Rename evidence/admission/execution 和 Delete impact/confirmation/execution 的成功及失败
-   路径均为零内容读取，并证明 duplicate `FULL` Hash 入口调用次数为零。稳定 fingerprint 路径
-   应成功；空 fingerprint 应为零 Task、零 mutation；在保持 size、`mtime` 不变时将 fingerprint
-   从 v1 换为 v2，旧 Rename evidence 和旧 Delete scope 必须失效。还要覆盖 admission 后、
-   executor mutation 前发生版本变化的最后边界拒绝，并断言原 entry 未被 Rename/Delete。
-
-实现后的预期成本只与 metadata 查询和 Delete 的有界目录枚举有关，不与单个文件字节大小
-相关；因此 1 KB 与 100 GB 文件的 Rename/Delete 版本验证都不读取文件内容。Copy/Move 自身的
-传输 I/O、bounded text open/save 和显式配置的 duplicate `FULL` Hash 仍按各自独立语义处理，
-不属于这个 blocker 的实现范围。
