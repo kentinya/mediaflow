@@ -345,98 +345,85 @@ SMB/OpenList/S3/TMDB service, production credential or real media directory is p
   hard-coded sample library records, a fixed four/five-library maximum, or committing/generated
   rewriting of the local `web/test-results/` interaction references.
 
-## Developer Completion Report — FOURTH CORRECTION LOOP (Task 37.3 FIX REQUIRED)
+## Developer Completion Report — FIFTH CORRECTION LOOP (Task 37.3 FIX REQUIRED)
 
-This is the fourth correction-loop report for the same Task 37.3 (Task Base, Goal and Scope
-unchanged). Only the two blockers listed in the current B review result and their direct root causes
-were fixed, plus the tests those fixes require. The review result section below is B-owned and was
-left untouched.
+This is the fifth correction-loop report for the same Task 37.3 (Task Base, Goal and Scope
+unchanged). Only the blocker listed in the current B review result and its direct root cause were
+fixed, plus the tests that fix requires. The review result section below is B-owned and was left
+untouched.
 
 ### Changed Files
 
-Correction-loop changes on top of `ca8ee67`:
+Correction-loop changes on top of `c8c0ac2`:
 
 Backend:
 
-- `mediaflow/domain/direct_files.py` — bounded Rename-evidence vocabulary: `RenameEvidence`,
-  `entry_version_token()`, `rename_sample_size()`, `read_bounded_prefix()` and
-  `MAX_RENAME_SAMPLE_BYTES`; `EntryVersionEvidence.digest` now documents that it covers the full
-  loaded document for a text Save and the bounded content sample for a Rename.
-- `mediaflow/application/direct_file_commands.py` — `rename()` now requires the server-issued
-  evidence and re-derives it from a fresh observation at admission; new zero-mutation
-  `rename_evidence()`; shared `_observed_entry_evidence()` / `_content_sample_digest()` /
-  `_require_renamable_entry()`; the folder-Delete identity rule was factored into
-  `_entry_has_directory_identity()` without changing its code, message or behaviour.
-- `mediaflow/application/organizer.py` — `_direct_rename_preflight()` re-verifies entry type, size,
-  modified time, provider fingerprint and the bounded content digest at the last safe boundary, and
-  refuses a folder whose provider identity cannot be verified.
-- `mediaflow/interfaces/service_api.py` — new authenticated zero-mutation
-  `GET /api/v1/resource-libraries/{id}/files/rename-evidence?path=…` plus its strict query helper.
+- `mediaflow/domain/direct_files.py` — the bounded-prefix evidence helpers
+  (`MAX_RENAME_SAMPLE_BYTES`, `rename_sample_size()`, `read_bounded_prefix()`) are removed and
+  replaced by `RENAME_DIGEST_CHUNK_BYTES` plus `stream_content_digest()`, which returns the SHA-256
+  digest **and the byte count** of one complete provider stream; the `EntryVersionEvidence.digest`
+  and `RenameEvidence` contracts now state that a Rename digest always covers the complete content.
+- `mediaflow/application/direct_file_commands.py` — `_content_digest()` hashes the complete content
+  of the observed file and refuses a stream whose byte count no longer matches the observed size;
+  the evidence route and the command admission both use it.
+- `mediaflow/application/organizer.py` — the last-safe-boundary `_direct_rename_preflight()` re-hashes
+  the complete content and compares both the digest and the byte count against the evidence.
 
 Tests:
 
-- `tests/test_direct_file_operations.py` — the deterministic same-size/same-mtime swap regressions,
-  the last-boundary swap regression, the provider-without-folder-identity journey, the
-  evidence-binding/tamper regression and the API-level evidence journeys.
+- `tests/test_direct_file_operations.py` — two deterministic large-file regressions on a provider
+  that publishes no fingerprint: a swap beyond the evidence prefix refused at admission, and the
+  same swap refused at the executor's last safe boundary.
 
-Web:
-
-- `web/src/entities/library/direct-files.ts` (+ `direct-files.test.ts`) — strict secret-free
-  `RenameEvidenceModel` / `normalizeRenameEvidence()` with normalizer contract tests.
-- `web/src/shared/api/api-client.ts` — `fetchRenameEvidence()` and the Rename command body now
-  carries `expected.evidence`.
-- `web/src/features/library/StorageFilesPage.tsx`, `FileCommandDialogs.tsx`
-  (+ `StorageFilesPage.test.tsx`) — the Rename dialog loads the exact entry evidence before it can
-  submit, blocks submission when the backend refuses to issue it, keeps the entered name on a stale
-  refusal and explains the actionable reason; two focused regressions.
-- `web/tests/fake-server.mjs` — serves the new evidence route and accepts only the evidence it
-  issued for the same fixture entry.
+No Web file changed in this loop: the evidence contract shape is unchanged, and the browser still
+only echoes the opaque token the backend issued.
 
 ### Implemented
 
-- **Blocker 1 — Rename is bound to one exact source version.** The observed version is now carried
-  by a server-issued opaque token and re-verified at three layers:
-  - **API evidence layer.** A new authenticated, zero-mutation route observes the entry (stat plus a
-    bounded content read for a file) and issues `evidence = "v1." + sha256(payload)[:32]` over the
-    Active ResourceLibrary, the ResourceLibrary-relative path, the entry type, size, modified time,
-    the provider fingerprint and the bounded content digest. Fingerprints, digests and host paths
-    are never disclosed: the response contains only `resourceLibraryId`, `path`, `isDirectory`,
-    `size`, `modifiedAt`, `evidence`, `sideEffects: none`, `retrySafe` and a `nextAction`.
-  - **Application admission.** `rename()` requires `{size, modifiedAt, evidence}`, re-observes the
-    entry, re-derives the token and refuses a mismatch with `files_direct_stale_source` / `409` /
-    `storage_unchanged` before a Task is created and before any Storage mutation. The row's observed
-    `size`/`modifiedAt` are compared as well, so an entry that changed since the listing is refused
-    too. An entry whose identity the provider cannot verify (a folder on a provider without a
-    directory fingerprint) is refused with the actionable
-    `files_direct_entry_identity_unavailable` / `entry_identity_unavailable` / `400` and zero
-    mutation, instead of probing with weak evidence.
-  - **OrganizerExecutor last safe boundary.** `_direct_rename_preflight()` re-verifies the type,
-    size, modified time and full provider fingerprint, then re-reads the same bounded content sample
-    and compares its digest immediately before `storage.move()`; a folder without a verifiable
-    provider directory identity is refused with `rename requires a verifiable directory identity
-    from this Storage provider`. The record is `FAILED` with `effect_certainty=NONE`, i.e. the
-    mutating call never runs.
-  - **Why the content digest is part of the evidence.** On this filesystem the timestamp granularity
-    cannot separate two writes: an in-place same-size rewrite followed by a restored `mtime` leaves
-    `size`, `mtime` *and* `ctime` identical, so no metadata-only evidence (including Local's
-    `inode:…:ctime:…` fingerprint) can prove the observed version. The bounded content digest does
-    it deterministically — the whole content for files up to `MAX_RENAME_SAMPLE_BYTES` (256 KiB),
-    the bounded prefix above that — so the regression no longer depends on timing. The read stays
-    bounded by construction: a Rename never reads an unbounded amount of user media, and
-    `read_bounded_prefix()` tolerates provider short reads instead of misreporting them as a change.
-- **Blocker 2 — truthful gates.** `web/src/features/library/StorageFilesPage.test.tsx` was
-  reformatted with the project Prettier (whitespace only: the `-w` diff shows no assertion changed,
-  weakened or removed), and every result below is one this loop actually observed, including the
-  environment-specific facts.
+- **Blocker — large-file Rename evidence did not bind the exact source version.** The evidence,
+  admission and last-boundary fences all hashed only the leading 256 KiB of a file, so on a provider
+  without a fingerprint a same-size change *beyond* that prefix, with the modification time restored,
+  left the evidence matching and the replacement was renamed away.
+  - **Complete streamed digest.** Every renamable file is now anchored by the SHA-256 digest of its
+    complete content at all three layers (server-issued evidence, application admission, executor
+    last safe boundary). Nothing about a version can change outside the evidence any more; the read
+    is streamed in 1 MiB chunks, so memory stays constant and no prefix, offset or size is excluded.
+  - **Byte-count invariant.** `stream_content_digest()` also returns the number of bytes it hashed,
+    and both the admission and the last boundary require that count to equal the observed size, so a
+    file that grows or shrinks while it is being read is refused as a changed source instead of being
+    hashed into an ambiguous value. `rename_sample_size()`/`MAX_RENAME_SAMPLE_BYTES` and the
+    prefix-reader helper are deleted rather than left unused.
+  - **Uniform for every provider.** The complete-content fence is applied whether or not the provider
+    publishes a fingerprint: Local's `inode:…:ctime:…` token does not change when a file is rewritten
+    in place inside the same timestamp tick either, so a fingerprint-only path would keep the same
+    hole. Providers without a fingerprint keep a working Rename instead of failing closed.
+  - **Regressions** (`tests/test_direct_file_operations.py`): a >256 KiB file whose leading block,
+    size and mtime are all kept identical while only bytes beyond the block change is refused with
+    `files_direct_stale_source` / 409, zero Tasks and zero mutations at admission, and refused as
+    `FAILED` / `source_changed` when the same swap happens inside the executor's preflight window.
+    Both run on the provider-neutral fingerprint-less fake, so they are deterministic on any
+    filesystem timestamp granularity.
+  - **Independent probe (B's exact scenario).** A provider-neutral adapter around Local that drops
+    every fingerprint, a 320 KiB file, evidence obtained from the API, then only the bytes beyond the
+    256 KiB prefix replaced with same-size content and the original `mtime` restored via
+    `os.utime(..., ns=…)`:
+    - Before (`c8c0ac2`, the reviewed checkpoint): `rejected=false`, `http_status=200`,
+      `status='SUCCESS'`, `source_exists=false`, `target_exists=true`, `target_tail='new-tail'`,
+      `storage_moves=1` — B's reported evidence reproduces exactly.
+    - After (this checkpoint): `rejected=true`, `http_status=409`,
+      `error_code='files_direct_stale_source'`, `source_exists=true`, `target_exists=false`,
+      `source_tail='new-tail'`, `storage_moves=0`, with `head_unchanged=true` (the whole leading
+      block is byte-identical), so only the complete-content digest can be what refused it.
+    - The small-file probe from the previous loop still refuses the same-size/same-mtime swap with
+      `409 files_direct_stale_source`, so the earlier determinism is preserved.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/ruff format --check .` — PASS (exit 0, `304 files already formatted`).
 - `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (51 tests: the 48 previous
-  plus the 3 new regressions). The swap regressions were re-run five times to confirm they no longer
-  depend on filesystem timing.
+- `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (53 tests: the 51 previous
+  plus the 2 new large-file regressions).
 - `.venv/bin/python -m unittest tests.test_resource_library_activation tests.test_configuration_objects`
   — PASS (85 tests).
 - `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority
@@ -444,23 +431,16 @@ Web:
   (64 tests).
 - `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage
   tests.test_openlist_storage tests.test_s3_storage` — PASS (93 tests).
-- `.venv/bin/python -m unittest discover -s tests` — 1588 tests: 3 failures, 7 skips (the 7 skips are
+- `.venv/bin/python -m unittest discover -s tests` — 1590 tests: 3 failures, 7 skips (the 7 skips are
   the pre-existing real-service acceptance skips). The three failures are the same
   `test_configuration_status.ConfigurationSnapshotTests.test_hostile_configuration_content_is_never_exposed`,
   `test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_carry_no_forbidden_evidence`
   and `test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture`
-  documented before; re-verified this round against a pristine detached worktree of `ca8ee67`
-  (`git worktree add --detach /tmp/pristine37ca8 ca8ee67` → `.venv/bin/python -m unittest
+  documented before; re-verified this round against a pristine detached worktree of this Task's base
+  (`git worktree add --detach /tmp/pristine37_base e33a0300` → `.venv/bin/python -m unittest
   tests.test_configuration_status tests.test_manual_operations_contract` → `Ran 10 tests ... FAILED
   (failures=3)`) → `FAIL / PRE-EXISTING / UNRELATED`.
-- Independent provider-neutral probe (not a repository test, run against the real Local Storage
-  journey): obtain the entry evidence, replace the content with same-size `v2` and restore the exact
-  `mtime` (`os.utime(..., ns=…)`), then submit the Rename.
-  - Before (`ca8ee67`): `rejected=false`, `http_status=200`, `status='SUCCESS'`,
-    `source_exists=false`, `target_content='v2'` — B's reported evidence reproduces exactly.
-  - After (this checkpoint): `rejected=true`, `http_status=409`,
-    `error_code='files_direct_stale_source'`, `source_exists=true`, `target_exists=false`,
-    `source_content='v2'` — the replacement survives untouched.
+- Independent provider-neutral large-file probe (see above) — before/after evidence recorded.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m pip check` — PASS (`No broken requirements found`).
 - `test -z "$(grep -rn -i -E 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` — PASS (empty match
@@ -468,64 +448,55 @@ Web:
 - `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE in this environment. The
   script's own build/config stages complete; `docker compose up` fails at mount time with
   `invalid mount config for type "bind": bind source path does not exist:
-  /tmp/mediaflow-smoke-security-u8yy4xii/mediaflow.json` (and the sibling mounts), the same daemon
+  /tmp/mediaflow-smoke-security-tf_uqg_8/mediaflow.json` (and the sibling mounts), the same daemon
   bind-mount visibility limitation recorded in the previous reports. Not a code change; reported as
   UNAVAILABLE rather than PASS.
-- `cd web && npm run format:check` — PASS (`All matched files use Prettier code style!`). This is the
-  gate B reported as failing; before this loop's fix it exited non-zero on
-  `src/features/library/StorageFilesPage.test.tsx`.
+- `cd web && npm run format:check` — PASS (`All matched files use Prettier code style!`).
 - `cd web && npm run typecheck` / `npm run lint` — PASS.
-- `cd web && npx vitest run src/features/library/StorageFilesPage.test.tsx` — PASS (25 tests,
-  including the two new rename regressions) when run with `NODE_ENV=test`. Truthfulness note: run
-  verbatim in this session's shell the command fails 25/25 with `TypeError: React.act is not a
-  function`, because the harness exports `NODE_ENV=production` and react-dom then resolves its
-  production build; the same failure reproduces identically on an untouched spec
-  (`src/features/dashboard/DashboardPage.test.tsx`). It is an environment artifact of this shell,
-  not a Task regression; `npm run test` sets `NODE_ENV=test` itself, which is why the suite command
-  below is green.
+- `cd web && NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx
+  src/entities/library/direct-files.test.ts` — PASS (38 tests / 2 files). Truthfulness note: run
+  verbatim without `NODE_ENV=test` in this shell the command fails (`TypeError: React.act is not a
+  function`) because the harness exports `NODE_ENV=production` and react-dom then resolves its
+  production build; the same failure reproduces on an untouched spec
+  (`src/features/dashboard/DashboardPage.test.tsx`, 9/9). It is an environment artifact, not a Task
+  regression; `npm run test` sets `NODE_ENV=test` itself.
 - `cd web && npm run test -- --run` — PASS (443 tests / 33 files).
 - `cd web && npm run build` — PASS.
 - `cd web && npx playwright test tests/e2e/library-files.spec.ts --project=chromium` — PASS
-  (23 tests, including the create-folder-and-rename journey, which now drives the evidence route).
-- `cd web && npm run test:e2e` — 101 PASS; 10 failures, all in `library-file-detail.spec.ts` (7) and
-  `manual-operations.spec.ts` (3). These specs navigate to `/ui-v2/library/file-index*`; those
-  destinations no longer exist in the navigation model
-  (`destinationForPath("/library/file-index")` is asserted `undefined` in
-  `destination-model.test.ts`) because the FileIndex detail routes were removed in `b507edb`, which
-  is an ancestor of this Task's base `e33a030`. This loop's diff touches no route, router or
-  FileIndex file, so they are `FAIL / PRE-EXISTING / UNRELATED`.
+  (23 tests).
+- `cd web && npm run test:e2e` — 101 PASS; the same 10 pre-existing failures, all in
+  `library-file-detail.spec.ts` (7) and `manual-operations.spec.ts` (3). Those specs navigate to
+  `/ui-v2/library/file-index*`, whose destinations no longer exist in the navigation model because
+  the FileIndex detail routes were removed in `b507edb` (an ancestor of this Task's base). This
+  loop's diff touches no route, router or FileIndex file, so they are
+  `FAIL / PRE-EXISTING / UNRELATED`.
 - `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` +
   `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS (backup SHA-256
-  `27225bd2c66d0246a3e08212f3807b37929f66909e266f2bd2e9fd04ff3c9a37`); `dist/` was removed afterwards
-  and is not committed.
-- `git diff --check` — PASS. The implementation commit contains only the twelve files listed above;
+  `27225bd2c66d0246a3e08212f3807b37929f66909e266f2bd2e9fd04ff3c9a37`); `dist/` was removed
+  afterwards and is not committed.
+- `git diff --check` — PASS. The implementation commit contains only the four files listed above;
   `config/alist.json`, credentials, the dirty `docs/pics/文件页.png`, `web/test-results/` references
   and unrelated files are absent.
 
 ### Decisions
 
-- **Bind the version, do not guess it.** The Rename command cannot prove an observed version from
-  provider metadata alone on a filesystem whose timestamps are too coarse to separate two writes, so
-  the evidence carries a bounded content digest in addition to size/modified time/fingerprint. That
-  digest is what makes both the admission refusal and the last-boundary refusal deterministic, and
-  it keeps the existing `EntryVersionEvidence`/`OrganizerExecutor` fencing model instead of adding a
-  provider-conditional delete capability that this Task explicitly defers.
-- **A dedicated evidence route, mirroring Delete.** `rename-evidence` follows the already-accepted
-  `delete-impact` model: a bounded zero-mutation read that returns server-issued evidence bound to
-  the exact object and version the operator is about to act on. The evidence is minted when the
-  operator opens the Rename dialog — the tightest window the journey can observe without hashing
-  every entry during browsing — and is re-verified at admission and again at the last safe boundary.
-- **Server-issued token, not raw implementation data.** The browser never receives the provider
-  fingerprint, the content digest or an internal path: it only echoes the token the backend issued
-  for that exact entry version, and a foreign, replayed or tampered token fails closed as
-  `stale_source`.
-- **Folder Rename where identity cannot be verified fails closed**, exactly like folder Delete in
-  the previous loop: without a provider directory identity a same-name replacement folder cannot be
-  told apart from the confirmed one. File Rename keeps working on those providers because its
-  evidence is content-anchored, so the refusal stays bounded to the case that cannot be proven.
-- **Symlinks are excluded from Rename.** The evidence read must never follow a link outside the
-  confirmed root, so the journey reuses the same refusal the bounded text read and Delete already
-  apply to links.
+- **Complete content, not a sample.** B's blocker is correct: no prefix can prove the version of a
+  file whose remaining bytes changed, and on a provider without a fingerprint nothing else in the
+  evidence moves. The fix is the complete streamed digest B listed first among the acceptable
+  directions, applied uniformly, rather than a fail-closed restriction that would remove Rename from
+  SMB/OpenList-backed libraries entirely.
+- **Streaming keeps the read memory-bounded.** The digest is computed chunk by chunk
+  (`RENAME_DIGEST_CHUNK_BYTES`), so a Rename never buffers a file in memory; the byte count returned
+  by the same pass adds a cheap growth/shrink invariant the prefix reader could not express.
+- **One rule, three layers, unchanged shape.** The evidence token, the API document, the
+  `expected.{size, modifiedAt, evidence}` request and the Web dialog are all unchanged, so this
+  correction narrows the fence without changing the contract B reviewed.
+- **Folder Rename keeps its existing fail-closed rule** (a directory has no content to hash; a
+  provider without a directory identity cannot prove the folder), exactly as in the previous loop.
+- **Delete was not changed.** B's blocker is scoped to Rename. The bounded Delete impact enumerates
+  up to 5000 entries, so hashing every selected file's complete content there would change that
+  journey's cost model materially; that is B's/A's call, and it is recorded under Risks instead of
+  being changed unrequested.
 
 ### Remaining In-Slice Work
 
@@ -533,7 +504,7 @@ Web:
 - Upload and Download bounded journeys.
 - Folder Rename and folder Delete on SMB/OpenList/S3-backed ResourceLibraries stay unavailable until
   those adapters expose a comparable stable directory identity. File Rename and file Delete work
-  there. This is a provider-capability gap, not a new Task here.
+  there.
 - Multi-item media Organize execution from the Files selection footer and broader FileIndex
   reconciliation.
 - The pre-existing `library-file-detail` / `manual-operations` e2e divergence predates this Task and
@@ -543,17 +514,18 @@ Web:
 
 ### Risks / Deviations
 
-- The Rename evidence covers the whole file only up to 256 KiB; above that the fence is the bounded
-  prefix plus size, modified time and the provider fingerprint. A same-size in-place rewrite that
-  changed only bytes beyond the prefix and restored the modification time would not be separable —
-  closing that fully would require hashing unbounded user media, which this Task's bounded-read
-  contract forbids. The residual is bounded, documented and far narrower than the reported defect.
-- Folder Rename is now refused with an actionable reason and zero mutation on Storage providers that
-  publish no directory identity (SMB, OpenList, S3 directory entries). If B/A prefer a weaker fence
-  there, the resolution requires the provider identity/capability work this Task explicitly defers.
+- **Cost of the complete-content fence.** Issuing, admitting and last-boundary-verifying one Rename
+  now reads the file three times end to end (bounded memory, I/O proportional to file size), which
+  is noticeable for very large media on remote Storage. That is the price of provable version binding
+  while no provider exposes a conditional move or a stable per-version token; if one is added later,
+  the digest can be replaced by that evidence without changing the surrounding contract.
+- **File-level Delete evidence on fingerprint-less providers is still size + mtime** (the design B
+  accepted in the earlier loops); this Task's Rename is now stricter than Delete for the same file.
+  Flagged for B's judgment; not changed here because the blocker was scoped to Rename and the bounded
+  Delete impact has a different cost model.
 - The three pre-existing Python failures and the ten pre-existing non-Files e2e failures are
-  documented with this round's reproduction; the judgment about their impact on Task PASS belongs
-  to B.
+  documented with the base-worktree reproduction; the judgment about their impact on Task PASS
+  belongs to B.
 - The docker release security smoke test could not run to completion in this environment (daemon
   bind-mount visibility); it is reported UNAVAILABLE with evidence rather than PASS.
 - The literal `npx vitest` gate from the Required Tests list is sensitive to this shell's exported
@@ -566,8 +538,8 @@ Web:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d3caebc5b3a720e05fe30f7014f2c6d7bf2c0fdd
-Commit: d3caebc fix(files): bind rename to server-issued entry version evidence
+Head SHA: 0a441b49004760e223efb3322eae55089d77cbbf
+Commit: fix(files): prove the complete rename source version
 Working tree: clean except the pre-existing dirty docs/pics/文件页.png and the ignored build/test
 artifacts web/dist/ and web/test-results/ (config/alist.json does not exist in this environment;
 no credential or private-path file is staged or committed)
@@ -576,25 +548,20 @@ no credential or private-path file is staged or committed)
 ## B Review Result
 
 ```text
-Reviewed: e33a030055a81011a32de507bef6758d48607c9a..ca8ee67416092f815a8b21ecfe62a04e29f889b5
+Reviewed: e33a030055a81011a32de507bef6758d48607c9a..d3caebc5b3a720e05fe30f7014f2c6d7bf2c0fdd
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Rename 仍未绑定 exact source/version，同尺寸且同 `mtime` 的内容替换可被当作原文件重命名，
-  未满足 changed-source fail-closed 和 Task 的 stale-source Acceptance。证据：独立运行
-  `.venv/bin/python -m unittest tests.test_direct_file_operations
-  tests.test_resource_library_activation tests.test_configuration_objects` 在 133 个测试中失败 1 个，
-  `test_rename_binds_observed_source_evidence_and_refuses_swaps` 未抛出 `DirectFileError`。确定性探针在取得
-  `v1` evidence 后写入同尺寸 `v2`、恢复原 `mtime`，再提交 Rename；实际结果为
-  `rejected=False, status='SUCCESS', source_exists=False, target_content='v2'`。当前 `rename()` 及执行器只比较
-  `size + modifiedAt`，并丢弃 Local 已提供的 fingerprint。修正方向：在列表/API evidence、应用入口与
-  OrganizerExecutor 最后安全边界绑定并复验足以证明同一条目版本的稳定 evidence（provider
-  fingerprint、digest/条件操作，或无法可靠验证时 fail closed）；将同尺寸、同 `mtime` 替换回归改为
-  确定性测试，证明旧 evidence 不会重命名新对象，不得删除或放宽 stale 断言。
-- Web 格式 gate 未通过，Developer Completion Report 的 PASS 记录不实。证据：独立运行
-  `cd web && npm run format:check` 返回非零，Prettier 明确报告本轮修改的
-  `src/features/library/StorageFilesPage.test.tsx` 存在 code style issues；报告将同一 gate 记为 PASS。修正方向：
-  只对该文件应用项目 Prettier 格式，不改变或放宽断言；重跑 `npm run format:check`、Files 聚焦测试与
-  相关 Web gates，并如实记录实际结果。
+- Rename 的大文件 evidence 仍未绑定 exact source/version，未满足 changed-source
+  fail-closed 和 Task 的 stale-source Acceptance。证据：独立 provider-neutral 探针使用不提供
+  fingerprint 的 Storage，对大于 256 KiB 的文件取得 Rename evidence 后，仅将前缀之后的
+  `old-tail` 改为同尺寸 `new-tail` 并恢复原 `mtime`；旧 evidence 仍被接受，实际结果为
+  `status='SUCCESS', source_exists=False, target_exists=True, target_tail='new-tail'`。根因是
+  `MAX_RENAME_SAMPLE_BYTES = 256 * 1024` 且 `rename_sample_size()` 只哈希文件前缀；当 provider
+  无 fingerprint 时，后续内容不在 admission 或 OrganizerExecutor 的最后安全边界证据中。
+  修正方向：对所有可 Rename 的文件绑定并复验能证明完整条目版本的服务端 evidence
+  （完整流式 digest、provider 条件操作/稳定版本证据，或在无法可靠验证时 fail closed）；
+  增加超过 256 KiB、改变前缀之后内容、同尺寸同 `mtime` 且无 provider fingerprint 的
+  确定性 admission 与最后边界回归，证明旧 evidence 不会移动新版本，不得放宽 stale 断言。
