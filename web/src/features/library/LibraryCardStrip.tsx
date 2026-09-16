@@ -13,7 +13,6 @@ import type { SystemResourceLibrary } from "../../entities/library/system-status
 
 const CARD_MIN_WIDTH = 232;
 const CARD_GAP = 16;
-const POPOVER_MAX_ITEMS = 12;
 
 function libraryLabel(library: SystemResourceLibrary): string {
   return library.name ?? library.id;
@@ -307,32 +306,27 @@ export function LibraryCardStrip({
                   />
                 </div>
                 <ul className="mf-more-list">
-                  {filteredOverflow
-                    .slice(0, POPOVER_MAX_ITEMS)
-                    .map((library) => (
-                      <li key={library.id}>
-                        <button
-                          type="button"
-                          className={
-                            library.id === selectedLibraryId
-                              ? "mf-more-item is-selected"
-                              : "mf-more-item"
-                          }
-                          onClick={() => {
-                            onLibraryChange(library.id);
-                            closeMore();
-                          }}
-                        >
-                          <span
-                            className="mf-more-item-icon"
-                            aria-hidden="true"
-                          >
-                            <Icon name="folder" />
-                          </span>
-                          {libraryLabel(library)}
-                        </button>
-                      </li>
-                    ))}
+                  {filteredOverflow.map((library) => (
+                    <li key={library.id}>
+                      <button
+                        type="button"
+                        className={
+                          library.id === selectedLibraryId
+                            ? "mf-more-item is-selected"
+                            : "mf-more-item"
+                        }
+                        onClick={() => {
+                          onLibraryChange(library.id);
+                          closeMore();
+                        }}
+                      >
+                        <span className="mf-more-item-icon" aria-hidden="true">
+                          <Icon name="folder" />
+                        </span>
+                        {libraryLabel(library)}
+                      </button>
+                    </li>
+                  ))}
                   {filteredOverflow.length === 0 && (
                     <li className="mf-more-empty">没有匹配的资源库。</li>
                   )}

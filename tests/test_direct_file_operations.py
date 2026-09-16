@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -54,6 +54,35 @@ def request(
     }
     result = b"".join(api(environ, lambda status, headers: statuses.append(status)))
     return int(statuses[0].split()[0]), json.loads(result)
+
+
+def _removal_confirmation(preview: dict) -> dict[str, object]:
+    """The exact previewed Active revision identity bound to one confirmation."""
+
+    active = preview["active"]
+    return {
+        "expectedRevisionId": active["revisionId"],
+        "expectedVersion": active["version"],
+        "expectedDigest": active["digest"],
+        "expectedLibraryId": preview["resourceLibrary"]["id"],
+    }
+
+
+def _entry_evidence(api, active, resource_library_id: str, relative: str) -> dict:
+    """The server-issued observed evidence for one entry, as the API issues it."""
+
+    binding = api._prepare_runtime_binding_for_revision(active)
+    service = binding.direct_files
+    library = service._library(resource_library_id)
+    storage = service._open_storage(library)
+    entry = service._stat_entry(library, storage, relative)
+    return {"size": entry.size, "modifiedAt": entry.modified_at.isoformat()}
+
+
+def _loaded_evidence(service: DirectFileCommandService, resource_library_id: str, path: str):
+    """The exact loaded text-version evidence the API issues for a read."""
+
+    return service.read_text(resource_library_id=resource_library_id, path=path).evidence.document()
 
 
 def _unreference_source(document: dict[str, object]) -> None:
@@ -161,6 +190,54 @@ class _CountingExecutor(OrganizerExecutor):
             mutation_authority=mutation_authority,
             preflight=preflight,
             mutate=observed_mutate,
+            verify=verify,
+        )
+
+
+class _LateSwapExecutor(OrganizerExecutor):
+    """Executor double that swaps the source after admission, before mutation.
+
+    This simulates a pre-mutation race: the operator's evidence was valid at
+    admission, but the content changes between admission and the last safe
+    boundary.  The executor fence must refuse the mutation.
+    """
+
+    def __init__(self, service, root: Path, relative: str, content: str) -> None:
+        super().__init__()
+        self._service = service
+        self._root = root
+        self._relative = relative
+        self._content = content
+
+    def _execute_direct(
+        self,
+        storage,
+        operation,
+        source,
+        target,
+        *,
+        execute,
+        mutation_authority,
+        preflight,
+        mutate,
+        verify,
+    ):
+        def swapping_preflight():
+            reason = preflight()
+            if reason is None:
+                # Replace the source after admission but before mutation.
+                (self._root / "source" / self._relative).write_text(self._content, encoding="utf-8")
+            return reason
+
+        return super()._execute_direct(
+            storage,
+            operation,
+            source,
+            target,
+            execute=execute,
+            mutation_authority=mutation_authority,
+            preflight=swapping_preflight,
+            mutate=mutate,
             verify=verify,
         )
 
@@ -397,7 +474,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(outcome["status"], "SUCCESS")
             self.assertEqual(outcome["effectCertainty"], "verified_complete")
             self.assertTrue((root / "source" / "movies" / "2024").is_dir())
-            rename = service.rename(resource_library_id="source", path="movies/2024", name="2025")
+            rename = service.rename(
+                resource_library_id="source",
+                path="movies/2024",
+                name="2025",
+                expected=_entry_evidence(api, active, "source", "movies/2024"),
+            )
             self.assertEqual(rename["status"], "SUCCESS")
             self.assertTrue((root / "source" / "movies" / "2025").is_dir())
             self.assertFalse((root / "source" / "movies" / "2024").exists())
@@ -528,6 +610,145 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(
                 (root / "source" / "a.txt").read_text(encoding="utf-8"), "editor edits"
             )
+
+    def test_save_is_refused_at_the_mutation_boundary_after_a_same_size_swap(self) -> None:
+        """A same-size replacement between load and Save must fail stale.
+
+        The admission digest check alone is not the fence: the executor
+        re-verifies the loaded digest immediately before the write, so a
+        version swapped in after admission is never overwritten.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "a.txt").write_text("v1!", encoding="utf-8")
+            loaded = service.read_text(resource_library_id="source", path="a.txt")
+            evidence = loaded.evidence.document()
+            # Same size, different content: admission passes, the executor fence fires.
+            (root / "source" / "a.txt").write_text("v2!", encoding="utf-8")
+            with patch(
+                "mediaflow.application.direct_file_commands.OrganizerExecutor",
+                lambda: _LateSwapExecutor(service, root, "a.txt", "vX!"),
+            ):
+                with self.assertRaises(DirectFileError) as stale:
+                    service.save_text(
+                        resource_library_id="source",
+                        path="a.txt",
+                        content="editor edits",
+                        expected=evidence,
+                    )
+            self.assertEqual(stale.exception.category, "stale_changed")
+            self.assertEqual((root / "source" / "a.txt").read_text(encoding="utf-8"), "v2!")
+
+    def test_rename_binds_observed_source_evidence_and_refuses_swaps(self) -> None:
+        """Rename requires and re-verifies server-issued source evidence."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "rename-me.txt").write_text("v1", encoding="utf-8")
+            evidence = _entry_evidence(api, active, "source", "rename-me.txt")
+            # Same size, different content after observation: refused stale.
+            (root / "source" / "rename-me.txt").write_text("v2", encoding="utf-8")
+            with self.assertRaises(DirectFileError) as stale:
+                service.rename(
+                    resource_library_id="source",
+                    path="rename-me.txt",
+                    name="renamed.txt",
+                    expected=evidence,
+                )
+            self.assertEqual(stale.exception.category, "stale_source")
+            self.assertEqual(stale.exception.status, 409)
+            self.assertTrue((root / "source" / "rename-me.txt").exists())
+            self.assertFalse((root / "source" / "renamed.txt").exists())
+            # Fresh evidence succeeds and the durable record carries the target.
+            fresh = _entry_evidence(api, active, "source", "rename-me.txt")
+            outcome = service.rename(
+                resource_library_id="source",
+                path="rename-me.txt",
+                name="renamed.txt",
+                expected=fresh,
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertEqual(outcome["target"], "renamed.txt")
+            results = runtime.list_results(outcome["taskId"])
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0].source_path, "rename-me.txt")
+            self.assertEqual(results[0].destination_path, "renamed.txt")
+            self.assertNotIn(str(root / "source"), json.dumps(results[0].__dict__, default=str))
+
+    def test_confirmed_delete_refuses_a_same_size_scope_swap(self) -> None:
+        """A same-size source swap after the impact preview fails stale."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "victim.txt").write_text("v1", encoding="utf-8")
+            impact = service.delete_impact(resource_library_id="source", paths=["victim.txt"])
+            # Same size, different content and a later mtime: the modifiedAt in
+            # the scope digest makes the old confirmation stale instead of
+            # deleting the new file.
+            (root / "source" / "victim.txt").write_text("v2", encoding="utf-8")
+            later = datetime.now(UTC) + timedelta(seconds=120)
+            os.utime(root / "source" / "victim.txt", (later.timestamp(), later.timestamp()))
+            with self.assertRaises(DirectFileError) as stale:
+                service.execute_delete(
+                    resource_library_id="source",
+                    paths=["victim.txt"],
+                    confirmation_digest=impact.scope_digest,
+                )
+            self.assertEqual(stale.exception.category, "stale_confirmation")
+            self.assertEqual(stale.exception.status, 409)
+            self.assertEqual((root / "source" / "victim.txt").read_text(encoding="utf-8"), "v2")
+
+    def test_delete_result_status_names_the_known_durable_effect(self) -> None:
+        """Every terminal Delete response carries the strict frontend status."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "one.txt").write_text("1", encoding="utf-8")
+            (root / "source" / "two.txt").write_text("2", encoding="utf-8")
+            impact = service.delete_impact(
+                resource_library_id="source", paths=["one.txt", "two.txt"]
+            )
+            outcome = service.execute_delete(
+                resource_library_id="source",
+                paths=["one.txt", "two.txt"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertTrue(outcome["succeededItems"] >= 1)
+            # A frontend normalizer requiring `status` succeeds on the real shape.
+            self.assertIsInstance(outcome["status"], str)
+            self.assertTrue(outcome["status"])
+
+            real_delete = LocalStorage.delete
+
+            def failing_delete(storage_self, path, *args, **kwargs):
+                if path.endswith("four.txt"):
+                    raise RuntimeError("provider refused four.txt")
+                return real_delete(storage_self, path, *args, **kwargs)
+
+            (root / "source" / "three.txt").write_text("3", encoding="utf-8")
+            (root / "source" / "four.txt").write_text("4", encoding="utf-8")
+            impact = service.delete_impact(
+                resource_library_id="source", paths=["three.txt", "four.txt"]
+            )
+            with patch.object(LocalStorage, "delete", failing_delete):
+                partial = service.execute_delete(
+                    resource_library_id="source",
+                    paths=["three.txt", "four.txt"],
+                    confirmation_digest=impact.scope_digest,
+                )
+            self.assertEqual(partial["status"], "PARTIAL")
+            self.assertEqual(partial["failedItems"], 1)
+            self.assertEqual(partial["succeededItems"], 1)
 
     def test_delete_impact_enumerates_bounded_scope_and_refuses_roots(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -683,7 +904,12 @@ class DirectFileOperationsTests(unittest.TestCase):
             service.create_text(
                 resource_library_id="source", parent_path="", name="n.txt", content="x"
             )
-            service.rename(resource_library_id="source", path="n.txt", name="m.txt")
+            service.rename(
+                resource_library_id="source",
+                path="n.txt",
+                name="m.txt",
+                expected=_entry_evidence(api, active, "source", "n.txt"),
+            )
             loaded = service.read_text(resource_library_id="source", path="m.txt")
             service.save_text(
                 resource_library_id="source",
@@ -725,13 +951,78 @@ class DirectFileOperationsTests(unittest.TestCase):
                 lambda: service.create_text(
                     resource_library_id="source", parent_path="", name="a.txt", content=""
                 ),
-                lambda: service.rename(resource_library_id="source", path="a.txt", name="b.txt"),
+                lambda: service.rename(
+                    resource_library_id="source",
+                    path="a.txt",
+                    name="b.txt",
+                    expected={"size": 1, "modifiedAt": "1970-01-01T00:00:00+00:00"},
+                ),
             ):
                 with self.assertRaises(DirectFileError) as caught:
                     call()
                 self.assertEqual(caught.exception.category, "capability_denied")
                 self.assertEqual(caught.exception.status, 403)
             self.assertEqual(fake.mutations, [])
+
+    def test_commands_persist_exact_logical_source_and_target(self) -> None:
+        """Every command's durable record names its bounded logical paths."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            service = self._service(api, active)
+            created = service.create_directory(
+                resource_library_id="source", parent_path="", name="created-dir"
+            )
+            results = runtime.list_results(created["taskId"])
+            self.assertEqual(results[0].source_path, "created-dir")
+            self.assertEqual(results[0].destination_path, "created-dir")
+
+            text = service.create_text(
+                resource_library_id="source", parent_path="", name="file.txt", content="x"
+            )
+            results = runtime.list_results(text["taskId"])
+            self.assertEqual(results[0].source_path, "file.txt")
+            self.assertEqual(results[0].destination_path, "file.txt")
+
+            renamed = service.rename(
+                resource_library_id="source",
+                path="file.txt",
+                name="moved.txt",
+                expected=_entry_evidence(api, active, "source", "file.txt"),
+            )
+            results = runtime.list_results(renamed["taskId"])
+            self.assertEqual(results[0].source_path, "file.txt")
+            self.assertEqual(results[0].destination_path, "moved.txt")
+
+            saved = service.save_text(
+                resource_library_id="source",
+                path="moved.txt",
+                content="y",
+                expected=_loaded_evidence(service, "source", "moved.txt"),
+            )
+            results = runtime.list_results(saved["taskId"])
+            self.assertEqual(results[0].source_path, "moved.txt")
+            self.assertEqual(results[0].destination_path, "moved.txt")
+
+            impact = service.delete_impact(resource_library_id="source", paths=["moved.txt"])
+            deleted = service.execute_delete(
+                resource_library_id="source",
+                paths=["moved.txt"],
+                confirmation_digest=impact.scope_digest,
+            )
+            results = runtime.list_results(deleted["taskId"])
+            self.assertEqual(results[0].source_path, "moved.txt")
+            self.assertEqual(results[0].destination_path, "moved.txt")
+            # Host roots never enter the durable identity.
+            for record in (
+                *runtime.list_results(created["taskId"]),
+                *runtime.list_results(text["taskId"]),
+                *runtime.list_results(renamed["taskId"]),
+                *runtime.list_results(saved["taskId"]),
+                *runtime.list_results(deleted["taskId"]),
+            ):
+                self.assertNotIn(str(root / "source"), json.dumps(record.__dict__, default=str))
 
     def test_commands_never_persist_text_contents_or_secrets(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -850,6 +1141,66 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertIn("nextAction", stale[1]["error"]["details"])
             self.assertEqual((root / "source" / "doc.txt").read_text(encoding="utf-8"), "v2")
 
+    def test_api_rename_requires_and_enforces_observed_evidence(self) -> None:
+        """The API rejects Rename without observed evidence and stale swaps."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            (root / "source" / "before.txt").write_text("v1", encoding="utf-8")
+            missing_evidence = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={"operation": "rename", "path": "before.txt", "name": "after.txt"},
+            )
+            self.assertEqual(missing_evidence[0], 400, missing_evidence[1])
+            self.assertEqual(missing_evidence[1]["error"]["code"], "invalid_request")
+            self.assertTrue((root / "source" / "before.txt").exists())
+            status, listing = request(
+                api,
+                "/api/v1/resource-libraries/source/files?path=",
+            )
+            self.assertEqual(status, 200, listing)
+            entry = next(item for item in listing["entries"] if item["name"] == "before.txt")
+            (root / "source" / "before.txt").write_text("v2", encoding="utf-8")
+            later = datetime.now(UTC) + timedelta(seconds=120)
+            os.utime(root / "source" / "before.txt", (later.timestamp(), later.timestamp()))
+            stale = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={
+                    "operation": "rename",
+                    "path": "before.txt",
+                    "name": "after.txt",
+                    "expected": {
+                        "size": entry["size"],
+                        "modifiedAt": entry["modifiedAt"],
+                    },
+                },
+            )
+            self.assertEqual(stale[0], 409, stale[1])
+            self.assertEqual(stale[1]["error"]["code"], "files_direct_stale_source")
+            self.assertTrue((root / "source" / "before.txt").exists())
+            self.assertFalse((root / "source" / "after.txt").exists())
+            fresh = _entry_evidence(api, active, "source", "before.txt")
+            ok = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={
+                    "operation": "rename",
+                    "path": "before.txt",
+                    "name": "after.txt",
+                    "expected": fresh,
+                },
+            )
+            self.assertEqual(ok[0], 200, ok[1])
+            self.assertEqual(ok[1]["status"], "SUCCESS")
+            self.assertEqual(ok[1]["target"], "after.txt")
+            self.assertTrue((root / "source" / "after.txt").exists())
+
     # ------------------------------------------------------------------
     # ResourceLibrary removal journey
     # ------------------------------------------------------------------
@@ -889,10 +1240,16 @@ class DirectFileOperationsTests(unittest.TestCase):
             root = Path(directory)
             api, _objects, _active, _tasks = self._activate(root)
             (root / "source" / "keep.txt").write_text("keep", encoding="utf-8")
+            status, preview = request(
+                api,
+                "/api/v1/resource-libraries/source/removal-preview",
+            )
+            self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
                 "/api/v1/resource-libraries/source",
                 method="DELETE",
+                body=_removal_confirmation(preview),
             )
             self.assertEqual(status, 409, body)
             self.assertEqual(body["error"]["code"], "configuration_object_referenced")
@@ -917,10 +1274,16 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "nested").mkdir()
             (root / "source" / "nested" / "deep.txt").write_text("deep", encoding="utf-8")
             before = self._tree_bytes(root / "source")
+            status, preview = request(
+                api,
+                "/api/v1/resource-libraries/second/removal-preview",
+            )
+            self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
                 "/api/v1/resource-libraries/second",
                 method="DELETE",
+                body=_removal_confirmation(preview),
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(body["removed"]["id"], "second")
@@ -942,10 +1305,16 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             (root / "source" / "still-here.txt").write_text("data", encoding="utf-8")
             before = self._tree_bytes(root / "source")
+            status, preview = request(
+                api,
+                "/api/v1/resource-libraries/source/removal-preview",
+            )
+            self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
                 "/api/v1/resource-libraries/source",
                 method="DELETE",
+                body=_removal_confirmation(preview),
             )
             self.assertEqual(status, 200, body)
             self.assertEqual(self._tree_bytes(root / "source"), before)
@@ -966,10 +1335,16 @@ class DirectFileOperationsTests(unittest.TestCase):
                 document_overrides=_unreference_source,
             )
             with patch.object(OrganizerExecutor, "execute") as execute:
+                status, preview = request(
+                    api,
+                    "/api/v1/resource-libraries/source/removal-preview",
+                )
+                self.assertEqual(status, 200, preview)
                 status, body = request(
                     api,
                     "/api/v1/resource-libraries/source",
                     method="DELETE",
+                    body=_removal_confirmation(preview),
                 )
                 self.assertEqual(status, 200, body)
                 execute.assert_not_called()
@@ -979,11 +1354,17 @@ class DirectFileOperationsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, _objects, _active, _tasks = self._activate(root)
+            status, preview = request(
+                api,
+                "/api/v1/resource-libraries/source/removal-preview",
+            )
+            self.assertEqual(status, 200, preview)
             status, body = request(
                 api,
                 "/api/v1/resource-libraries/source",
                 method="DELETE",
                 token="viewer-token",
+                body=_removal_confirmation(preview),
             )
             self.assertEqual(status, 403, body)
             self.assertEqual(body["error"]["code"], "forbidden")
@@ -992,13 +1373,158 @@ class DirectFileOperationsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, _objects, _active, _tasks = self._activate(root)
+            self._save_library(api, "does-not-exist-target")
+            status, preview = request(
+                api,
+                "/api/v1/resource-libraries/source/removal-preview",
+            )
+            self.assertEqual(status, 200, preview)
+            confirmation = _removal_confirmation(preview)
+            confirmation["expectedLibraryId"] = "does-not-exist"
             status, body = request(
                 api,
                 "/api/v1/resource-libraries/does-not-exist",
                 method="DELETE",
+                body=confirmation,
             )
             self.assertEqual(status, 404, body)
             self.assertEqual(body["error"]["code"], "resource_library_not_found")
+
+    def test_stale_active_revision_refuses_removal(self) -> None:
+        """A confirmation previewed against an older Active cannot remove."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, _tasks = self._activate(
+                root,
+                document_overrides=_unreference_source,
+            )
+            self._save_library(api, "second")
+            self._save_library(api, "third")
+            _status, preview = request(
+                api,
+                "/api/v1/resource-libraries/third/removal-preview",
+            )
+            stale_confirmation = _removal_confirmation(preview)
+            # The Active revision advances after the operator previewed.
+            self._save_library(api, "fourth")
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/third",
+                method="DELETE",
+                body=stale_confirmation,
+            )
+            self.assertEqual(status, 409, body)
+            self.assertEqual(body["error"]["code"], "resource_library_removal_stale")
+            self.assertEqual(body["error"]["details"]["durableState"], "active_preserved")
+            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                sorted(item["id"] for item in libraries["items"]),
+                ["fourth", "second", "source", "third"],
+            )
+
+    def test_mismatched_library_identity_refuses_removal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, _tasks = self._activate(
+                root,
+                document_overrides=_unreference_source,
+            )
+            self._save_library(api, "second")
+            _status, preview = request(
+                api,
+                "/api/v1/resource-libraries/second/removal-preview",
+            )
+            confirmation = _removal_confirmation(preview)
+            confirmation["expectedLibraryId"] = "source"
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/second",
+                method="DELETE",
+                body=confirmation,
+            )
+            self.assertEqual(status, 409, body)
+            self.assertEqual(body["error"]["code"], "resource_library_removal_stale")
+            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                sorted(item["id"] for item in libraries["items"]),
+                ["second", "source"],
+            )
+
+    def test_disabled_library_cannot_be_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, _tasks = self._activate(
+                root,
+                document_overrides=lambda doc: (
+                    _unreference_source(doc),
+                    doc["resourceLibraries"].append(
+                        {
+                            "id": "disabled-lib",
+                            "name": "Disabled library",
+                            "enabled": False,
+                            "storageId": "source-storage",
+                            "storagePath": "incoming/disabled",
+                        }
+                    ),
+                ),
+            )
+            status, preview = request(
+                api,
+                "/api/v1/resource-libraries/disabled-lib/removal-preview",
+            )
+            self.assertEqual(status, 200, preview)
+            self.assertEqual(preview["resourceLibrary"]["enabled"], False)
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/disabled-lib",
+                method="DELETE",
+                body=_removal_confirmation(preview),
+            )
+            self.assertEqual(status, 409, body)
+            self.assertEqual(body["error"]["code"], "resource_library_disabled")
+            self.assertEqual(body["error"]["details"]["durableState"], "active_preserved")
+            # The disabled library stays configured: the preview still resolves
+            # it and still refuses removal.
+            status, preview_again = request(
+                api,
+                "/api/v1/resource-libraries/disabled-lib/removal-preview",
+            )
+            self.assertEqual(status, 200, preview_again)
+            self.assertEqual(preview_again["resourceLibrary"]["enabled"], False)
+
+    def test_removal_confirmation_requires_the_previewed_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, _tasks = self._activate(
+                root,
+                document_overrides=_unreference_source,
+            )
+            self._save_library(api, "second")
+            for incomplete in (
+                {},
+                {"expectedRevisionId": "r"},
+                {
+                    "expectedRevisionId": "r",
+                    "expectedVersion": 1,
+                    "expectedDigest": "d",
+                },
+            ):
+                status, body = request(
+                    api,
+                    "/api/v1/resource-libraries/second",
+                    method="DELETE",
+                    body=incomplete,
+                )
+                self.assertEqual(status, 400, body)
+            status, libraries = request(api, "/api/v1/resource-libraries/files")
+            self.assertEqual(status, 200)
+            self.assertEqual(
+                sorted(item["id"] for item in libraries["items"]),
+                ["second", "source"],
+            )
 
     @staticmethod
     def _tree_bytes(base: Path) -> dict[str, bytes]:

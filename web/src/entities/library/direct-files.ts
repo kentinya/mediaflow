@@ -249,6 +249,12 @@ export interface RemovalReferenceItem {
   readonly field: string;
 }
 
+export interface RemovalActiveIdentity {
+  readonly revisionId: string;
+  readonly version: number;
+  readonly digest: string;
+}
+
 export interface RemovalPreviewModel {
   readonly resourceLibrary: {
     readonly id: string;
@@ -268,6 +274,8 @@ export interface RemovalPreviewModel {
     readonly items: readonly RemovalReferenceItem[];
     readonly truncated: boolean;
   };
+  /** The exact Active revision this preview was computed against. */
+  readonly active: RemovalActiveIdentity;
 }
 
 export function normalizeRemovalPreview(payload: unknown): RemovalPreviewModel {
@@ -291,6 +299,9 @@ export function normalizeRemovalPreview(payload: unknown): RemovalPreviewModel {
             enabled: storageRecord.enabled !== false,
           };
         })();
+  // The confirmation must bind to the exact previewed Active revision, so the
+  // active identity is mandatory in the preview document.
+  const active = expectObject(record.active);
   return {
     resourceLibrary: {
       id: expectString(library, "id"),
@@ -311,6 +322,11 @@ export function normalizeRemovalPreview(payload: unknown): RemovalPreviewModel {
         };
       }),
       truncated: rawReferences.truncated === true,
+    },
+    active: {
+      revisionId: expectString(active, "revisionId"),
+      version: expectNumber(active, "version"),
+      digest: expectString(active, "digest"),
     },
   };
 }

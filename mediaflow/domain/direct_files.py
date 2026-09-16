@@ -126,12 +126,34 @@ class DirectFileTextDocument:
 
 
 @dataclass(frozen=True)
+class EntryVersionEvidence:
+    """Server-issued observed state of one entry, used as mutation fencing.
+
+    The Rename/Delete/Save commands bind this evidence at admission and the
+    executor re-verifies it at the last safe boundary before the mutating
+    Storage call, so a source replaced after it was observed is never
+    destroyed or overwritten.
+    """
+
+    size: int
+    modified_at: str
+    digest: str | None = None
+    is_directory: bool | None = None
+
+
+@dataclass(frozen=True)
 class DirectFileImpactEntry:
-    """One bounded entry of a Delete impact enumeration."""
+    """One bounded entry of a Delete impact enumeration.
+
+    ``modified_at`` participates in the scope digest so a same-size source
+    replacement between the impact preview and the confirmation is rejected
+    as stale instead of deleting the replaced content.
+    """
 
     path: str
     is_directory: bool
     size: int
+    modified_at: str
 
 
 @dataclass(frozen=True)
@@ -156,7 +178,12 @@ class DeleteImpact:
             "resourceLibraryId": self.resource_library_id,
             "topLevelPaths": list(self.top_level_paths),
             "entries": [
-                {"path": entry.path, "isDirectory": entry.is_directory, "size": entry.size}
+                {
+                    "path": entry.path,
+                    "isDirectory": entry.is_directory,
+                    "size": entry.size,
+                    "modifiedAt": entry.modified_at,
+                }
                 for entry in self.entries
             ],
             "fileCount": self.file_count,

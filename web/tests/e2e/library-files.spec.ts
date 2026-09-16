@@ -709,3 +709,55 @@ test("referenced ResourceLibrary removal stays blocked with bounded evidence", a
   await dialog.getByRole("button", { name: "取消", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
+
+test("a stale removal confirmation keeps the dialog open with a re-review action", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?libraries=1");
+  await openFiles(page);
+
+  await page.getByRole("button", { name: "资源库操作 资源库A" }).click();
+  await page.getByRole("menuitem", { name: "删除资源库" }).click();
+  const dialog = page.getByRole("dialog", { name: "删除资源库" });
+  await expect(
+    dialog.getByText(/未发现自动化任务或整理规则引用/),
+  ).toBeVisible();
+  // Submit a confirmation bound to a stale revision identity: the backend
+  // refuses it, the prior Active stays authoritative and the dialog offers
+  // the explicit re-preview action instead of closing as a success.
+  await page.evaluate(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (
+        init?.method === "DELETE" &&
+        String(input).endsWith("/api/v1/resource-libraries/lib-a")
+      ) {
+        const body = JSON.parse(String(init.body));
+        return originalFetch(input, {
+          ...init,
+          body: JSON.stringify({
+            ...body,
+            expectedRevisionId: "rev-e2e-stale",
+            expectedVersion: 1,
+            expectedDigest: "digest-e2e-stale",
+          }),
+        });
+      }
+      return originalFetch(input, init);
+    };
+  });
+  await dialog.getByRole("button", { name: "删除资源库", exact: true }).click();
+  await expect(dialog.getByText(/删除确认已过期|本次删除未执行/)).toBeVisible();
+  await expect(
+    dialog.getByRole("button", { name: "重新获取预览并重审" }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByText(/未发现自动化任务或整理规则引用/),
+  ).toBeVisible();
+  await dialog.getByRole("button", { name: "取消", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  // The refused removal keeps the library configured.
+  await expect(
+    page.getByRole("button", { name: "资源库A" }).first(),
+  ).toBeVisible();
+});

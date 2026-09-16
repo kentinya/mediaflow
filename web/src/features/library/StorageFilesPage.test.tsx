@@ -441,6 +441,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
                 enabled: true,
               },
               references: { total: 0, items: [], truncated: false },
+              active: {
+                revisionId: "active-1",
+                version: 1,
+                digest: "digest-1",
+              },
               sideEffects: "none",
             });
       }
@@ -586,6 +591,50 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(await screen.findAllByText("notes.txt")).not.toHaveLength(0);
   });
 
+  it("keeps every overflow library discoverable in the searchable 更多 list", async () => {
+    const user = userEvent.setup();
+    // Thirteen enabled libraries: two visible cards plus eleven overflow
+    // entries — every one of them must remain reachable without pagination.
+    const libraries = [
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+      "h",
+      "i",
+      "j",
+      "k",
+      "l",
+      "m",
+    ].map((suffix) => libraryItem(`lib-${suffix}`, "local-1"));
+    vi.stubGlobal("fetch", stripFetchMock({ status: activeStatus(libraries) }));
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    const more = screen.getByRole("button", { name: "更多资源库" });
+    await user.click(more);
+    const popover = await screen.findByRole("dialog", { name: "更多资源库" });
+    for (const name of ["资源库C", "资源库H", "资源库M"]) {
+      expect(
+        within(popover).getByRole("button", { name: new RegExp(name) }),
+      ).toBeVisible();
+    }
+    // The thirteenth library (beyond the old hard-coded 12-item cap) is
+    // reachable, searchable and selectable.
+    await user.click(within(popover).getByRole("button", { name: /资源库M/ }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "更多资源库" })).toBeNull(),
+    );
+    const promotedCard = screen
+      .getAllByRole("button", { name: "资源库M" })
+      .filter((button) => button.closest(".mf-library-card-select") !== null);
+    expect(promotedCard).toHaveLength(1);
+  });
+
   it("removes an unreferenced ResourceLibrary through the explicit confirmation and selects a fallback", async () => {
     const user = userEvent.setup();
     const libraries = [
@@ -678,6 +727,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
                 },
               ],
               truncated: false,
+            },
+            active: {
+              revisionId: "active-1",
+              version: 1,
+              digest: "digest-1",
             },
             sideEffects: "none",
           }),
@@ -795,6 +849,83 @@ describe("Files entry state and ResourceLibrary strip", () => {
       await screen.findByRole("dialog", { name: "删除结果" }),
     ).toBeVisible();
     expect(screen.getByText("已删除")).toBeVisible();
+    // The deleted path no longer lingers as hidden selection state.
+    await user.click(
+      screen.getByRole("button", { name: "更多操作 notes.txt" }),
+    );
+    expect(await screen.findByRole("menuitem", { name: "删除" })).toBeVisible();
+    await user.keyboard("{Escape}");
+  });
+
+  it("removes the deleted selection and prunes the directory tree after Delete", async () => {
+    const user = userEvent.setup();
+    // A deleted directory must not survive in knownDirectoryPaths /
+    // visitedDirectories, while the row menu for the surviving sibling stays.
+    let commandBody: Record<string, unknown> | null = null;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onImpact: () =>
+          jsonResponse({
+            resourceLibraryId: "lib-a",
+            topLevelPaths: ["Season"],
+            entries: [
+              { path: "Season", isDirectory: true, size: 0 },
+              { path: "Season/e1.mkv", isDirectory: false, size: 12 },
+            ],
+            fileCount: 1,
+            directoryCount: 1,
+            totalBytes: 12,
+            truncated: false,
+            scopeDigest: "scope-digest-2",
+          }),
+        onCommand: (body) => {
+          commandBody = body;
+          return jsonResponse({
+            operation: "delete",
+            status: "PARTIAL",
+            taskId: "task-9",
+            taskStatus: "partial_success",
+            topLevelPaths: ["Season"],
+            totalItems: 2,
+            succeededItems: 1,
+            failedItems: 1,
+            outcomes: [
+              { path: "Season/e1.mkv", status: "SUCCESS", errorCategory: null },
+              {
+                path: "Season",
+                status: "FAILED",
+                errorCategory: "target_not_empty",
+              },
+            ],
+            sideEffects: "storage_mutations",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    await user.click(await screen.findByRole("menuitem", { name: "删除" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除确认" });
+    await user.click(within(dialog).getByRole("button", { name: "删除" }));
+    expect(commandBody).toMatchObject({
+      operation: "delete",
+      paths: ["Season"],
+      confirmationDigest: "scope-digest-2",
+    });
+    const resultDialog = await screen.findByRole("dialog", {
+      name: "删除结果",
+    });
+    expect(within(resultDialog).getByText(/删除已完成 1 项/)).toBeVisible();
+    // The partial failure stays visible with its durable per-item outcome.
+    expect(within(resultDialog).getByText(/失败 1 项/)).toBeVisible();
+    expect(
+      within(resultDialog).getByText(/部分项目删除失败且未自动重试/),
+    ).toBeVisible();
   });
 
   it("opens the bounded text editor and saves the exact loaded version", async () => {
@@ -836,6 +967,150 @@ describe("Files entry state and ResourceLibrary strip", () => {
       path: "notes.txt",
       content: "hello world",
       expected: { size: 5, digest: "digest-1" },
+    });
+  });
+
+  it("keeps local edits on a stale save and reloads only after explicit confirmation", async () => {
+    const user = userEvent.setup();
+    const saveBodies: Array<Record<string, unknown>> = [];
+    let saveCount = 0;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onCommand: (body) => {
+          saveBodies.push(body);
+          saveCount += 1;
+          if (saveCount === 1) {
+            return jsonResponse(
+              {
+                error: {
+                  code: "files_direct_stale_content",
+                  message: "the file changed since it was loaded",
+                  details: {
+                    category: "stale_changed",
+                    durableState: "storage_unchanged",
+                    nextAction: "reload the current content and save again",
+                  },
+                },
+              },
+              409,
+            );
+          }
+          return jsonResponse({
+            operation: "save_text",
+            status: "SUCCESS",
+            effectCertainty: "verified_complete",
+            sideEffects: "storage_mutations",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "更多操作 notes.txt" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "编辑" }));
+    const editor = await screen.findByRole("dialog", {
+      name: "编辑文本 — notes.txt",
+    });
+    const textarea = within(editor).getByLabelText("编辑 notes.txt");
+    await user.type(textarea, " kept");
+    await user.click(within(editor).getByRole("button", { name: "保存" }));
+    // The stale save keeps the local edits and exposes the reload path.
+    expect(await within(editor).findByText(/本地编辑内容仍保留/)).toBeVisible();
+    expect(within(editor).getByLabelText("编辑 notes.txt")).toHaveValue(
+      "hello kept",
+    );
+    const reload = within(editor).getByRole("button", {
+      name: "重新加载最新内容",
+    });
+    await user.click(reload);
+    expect(
+      within(editor).getByRole("button", {
+        name: "确认放弃本地修改并重新加载",
+      }),
+    ).toBeVisible();
+    // A retry with the same evidence succeeds once the server accepts it.
+    await user.click(within(editor).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveBodies.length).toBe(2));
+    expect(saveBodies[1]).toMatchObject({
+      operation: "save_text",
+      content: "hello kept",
+      expected: { size: 5, digest: "digest-1" },
+    });
+  });
+
+  it("refreshes the editor evidence after a successful save for the next save", async () => {
+    const user = userEvent.setup();
+    const saveBodies: Array<Record<string, unknown>> = [];
+    let textReads = 0;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onText: () => {
+          textReads += 1;
+          return jsonResponse({
+            resourceLibraryId: "lib-a",
+            path: "notes.txt",
+            // After the first save the authoritative content changes.
+            content: textReads === 1 ? "hello" : "hello v2",
+            evidence:
+              textReads === 1
+                ? {
+                    size: 5,
+                    modifiedAt: "2026-08-23T11:15:00Z",
+                    digest: "digest-1",
+                  }
+                : {
+                    size: 8,
+                    modifiedAt: "2026-08-23T12:00:00Z",
+                    digest: "digest-2",
+                  },
+            sideEffects: "none",
+          });
+        },
+        onCommand: (body) => {
+          saveBodies.push(body);
+          return jsonResponse({
+            operation: "save_text",
+            status: "SUCCESS",
+            effectCertainty: "verified_complete",
+            sideEffects: "storage_mutations",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "更多操作 notes.txt" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "编辑" }));
+    const editor = await screen.findByRole("dialog", {
+      name: "编辑文本 — notes.txt",
+    });
+    const textarea = within(editor).getByLabelText("编辑 notes.txt");
+    await user.type(textarea, "!");
+    await user.click(within(editor).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveBodies.length).toBe(1));
+    expect(saveBodies[0]).toMatchObject({
+      expected: { size: 5, digest: "digest-1" },
+    });
+    // The success refreshes the authoritative evidence, so a consecutive save
+    // submits the new version instead of the stale pre-save digest.
+    await waitFor(() => expect(textReads).toBeGreaterThanOrEqual(2));
+    await user.type(within(editor).getByLabelText("编辑 notes.txt"), "!");
+    await user.click(within(editor).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(saveBodies.length).toBe(2));
+    expect(saveBodies[1]).toMatchObject({
+      expected: { size: 8, digest: "digest-2" },
     });
   });
 });
