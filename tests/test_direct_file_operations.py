@@ -326,6 +326,25 @@ class _FingerprintlessStorage(LocalStorage):
         return super().delete(path)
 
 
+#: Content shape of the large-file Rename regressions.  Every version shares an
+#: identical leading block and differs only in the tail beyond it, so the two
+#: versions have the same size, the same mtime and the same leading bytes: only
+#: a digest of the complete content can tell them apart.
+_LARGE_HEAD_BYTES = 256 * 1024
+_LARGE_TAIL_BYTES = 64 * 1024
+
+
+def _large_file_content(tail: bytes) -> bytes:
+    assert len(tail) <= _LARGE_TAIL_BYTES
+    return b"P" * _LARGE_HEAD_BYTES + tail.ljust(_LARGE_TAIL_BYTES, b"x")
+
+
+def _large_file_tail(content: bytes) -> bytes:
+    """The distinguishing bytes that sit beyond the leading block."""
+
+    return content[_LARGE_HEAD_BYTES : _LARGE_HEAD_BYTES + 8]
+
+
 class DirectFileExecutorTests(unittest.TestCase):
     """Executor-level evidence: the direct boundary is narrow and safe."""
 
@@ -827,6 +846,140 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertTrue((root / "source" / "race.txt").exists())
             self.assertFalse((root / "source" / "raced.txt").exists())
             self.assertEqual((root / "source" / "race.txt").read_text(encoding="utf-8"), "v2")
+
+    def test_rename_refuses_a_swap_beyond_the_head_without_provider_identity(self) -> None:
+        """A large file version is proven by its complete content, not a prefix.
+
+        The provider publishes no fingerprint, and the replacement keeps the
+        file size, its modification time and its entire leading block identical,
+        changing only bytes beyond that block.  A prefix-only digest would accept
+        the stale evidence; the complete streamed digest refuses it before any
+        Task exists and before any Storage mutation.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _FingerprintlessStorage("source-storage", root / "source")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            big = root / "source" / "big.bin"
+            big.write_bytes(_large_file_content(b"old-tail"))
+            observed = big.stat()
+            self.assertGreater(observed.st_size, _LARGE_HEAD_BYTES)
+            self.assertIsNone(storage.stat("big.bin").fingerprint)
+            evidence = _entry_evidence(api, active, "source", "big.bin")
+            # Same size, same mtime, same leading block: only the tail moves.
+            big.write_bytes(_large_file_content(b"new-tail"))
+            os.utime(big, ns=(observed.st_atime_ns, observed.st_mtime_ns))
+            swapped = big.stat()
+            self.assertEqual(swapped.st_size, observed.st_size)
+            self.assertEqual(swapped.st_mtime_ns, observed.st_mtime_ns)
+            self.assertEqual(
+                big.read_bytes()[:_LARGE_HEAD_BYTES],
+                _large_file_content(b"old-tail")[:_LARGE_HEAD_BYTES],
+            )
+            with self.assertRaises(DirectFileError) as stale:
+                service.rename(
+                    resource_library_id="source",
+                    path="big.bin",
+                    name="moved.bin",
+                    expected=evidence,
+                )
+            self.assertEqual(stale.exception.category, "stale_source")
+            self.assertEqual(stale.exception.status, 409)
+            self.assertEqual(runtime.list_tasks(), ())
+            self.assertTrue(big.exists())
+            self.assertFalse((root / "source" / "moved.bin").exists())
+            self.assertEqual(_large_file_tail(big.read_bytes()), b"new-tail")
+
+    def test_rename_is_refused_at_the_last_boundary_beyond_the_head(self) -> None:
+        """The last safe boundary re-verifies the complete content, not a prefix.
+
+        The file matches its evidence at admission; a concurrent writer then
+        replaces only the bytes beyond the leading block, keeping the size and
+        the modification time.  The executor's own complete-content fence refuses
+        the rename before the mutating Storage call.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _FingerprintlessStorage("source-storage", root / "source")
+            api, _objects, active, _tasks = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            big = root / "source" / "big-race.bin"
+            big.write_bytes(_large_file_content(b"old-tail"))
+            observed = big.stat()
+
+            class SwapTailInPreflight(OrganizerExecutor):
+                def __init__(self, base: Path, original) -> None:
+                    super().__init__()
+                    self._base = base
+                    self._original = original
+
+                def _execute_direct(
+                    self,
+                    storage,
+                    operation,
+                    source,
+                    target,
+                    *,
+                    execute,
+                    mutation_authority,
+                    preflight,
+                    mutate,
+                    verify,
+                ):
+                    def swap_then_preflight():
+                        reason = preflight()
+                        if reason is None:
+                            target_file = self._base / "source" / "big-race.bin"
+                            target_file.write_bytes(_large_file_content(b"new-tail"))
+                            os.utime(
+                                target_file,
+                                ns=(
+                                    self._original.st_atime_ns,
+                                    self._original.st_mtime_ns,
+                                ),
+                            )
+                            return preflight()
+                        return reason
+
+                    return super()._execute_direct(
+                        storage,
+                        operation,
+                        source,
+                        target,
+                        execute=execute,
+                        mutation_authority=mutation_authority,
+                        preflight=swap_then_preflight,
+                        mutate=mutate,
+                        verify=verify,
+                    )
+
+            evidence = _entry_evidence(api, active, "source", "big-race.bin")
+            self.assertEqual(big.stat().st_mtime_ns, observed.st_mtime_ns)
+            with patch.object(service, "_executor", SwapTailInPreflight(root, observed)):
+                outcome = service.rename(
+                    resource_library_id="source",
+                    path="big-race.bin",
+                    name="big-raced.bin",
+                    expected=evidence,
+                )
+            self.assertEqual(outcome["status"], "FAILED")
+            self.assertEqual(outcome["errorCategory"], "source_changed")
+            self.assertTrue(big.exists())
+            self.assertFalse((root / "source" / "big-raced.bin").exists())
+            self.assertEqual(_large_file_tail(big.read_bytes()), b"new-tail")
+            self.assertEqual(
+                big.read_bytes()[:_LARGE_HEAD_BYTES],
+                _large_file_content(b"old-tail")[:_LARGE_HEAD_BYTES],
+            )
 
     def test_confirmed_delete_refuses_a_same_size_scope_swap(self) -> None:
         """A same-size source swap after the impact preview fails stale."""
