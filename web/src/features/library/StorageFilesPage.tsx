@@ -299,6 +299,10 @@ function directFileCommandFailure(
       return "资源库根目录不能被重命名或删除。";
     case "files_direct_capability_denied":
       return "该资源库使用的存储为只读，不能执行该操作。";
+    case "files_direct_directory_identity_unavailable":
+      return "当前存储无法校验文件夹版本，为避免删除被替换的文件夹，本次删除未执行；请改为逐个删除其中的文件，或改用支持该能力的存储。";
+    case "unsupported_capability":
+      return "当前存储不支持该操作，未做任何修改；请改用支持该能力的存储后重试。";
     case "files_direct_unsupported_text_type":
       return "该扩展名不在可编辑的文本类型内。";
     case "files_direct_text_too_large":

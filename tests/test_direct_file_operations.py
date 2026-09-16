@@ -287,6 +287,41 @@ class _RecordingStorage(LocalStorage):
         return super().soft_link(*args, **kwargs)
 
 
+class _FingerprintlessStorage(LocalStorage):
+    """Storage whose entries publish no provider identity token.
+
+    SMB and OpenList entries and S3 directory entries carry no fingerprint, so
+    this provider-neutral fake is the stand-in used to prove that a folder
+    Delete without a verifiable directory identity fails closed.  Every delete
+    that does reach the Storage is recorded.
+    """
+
+    def __init__(self, storage_id: str, root: Path) -> None:
+        super().__init__(storage_id, root)
+        self.deleted: list[str] = []
+
+    @staticmethod
+    def _anonymous(entry: StorageEntry) -> StorageEntry:
+        return StorageEntry(
+            name=entry.name,
+            path=entry.path,
+            entry_type=entry.entry_type,
+            size=entry.size,
+            modified_at=entry.modified_at,
+            fingerprint=None,
+        )
+
+    def stat(self, path: str) -> StorageEntry:
+        return self._anonymous(super().stat(path))
+
+    def list(self, path: str):
+        return [self._anonymous(entry) for entry in super().list(path)]
+
+    def delete(self, path: str) -> None:
+        self.deleted.append(path)
+        return super().delete(path)
+
+
 class DirectFileExecutorTests(unittest.TestCase):
     """Executor-level evidence: the direct boundary is narrow and safe."""
 
@@ -874,9 +909,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertNotIn(str(root / "source"), rendered)
             self.assertTrue(document["scopeDigest"])
             for entry in document["entries"]:
-                self.assertEqual(
-                    set(entry), {"path", "isDirectory", "size", "modifiedAt"}
-                )
+                self.assertEqual(set(entry), {"path", "isDirectory", "size", "modifiedAt"})
 
     def test_confirmed_delete_refuses_a_replaced_empty_directory(self) -> None:
         """A same-name directory replacement after the confirmation fails closed.
@@ -944,8 +977,8 @@ class DirectFileOperationsTests(unittest.TestCase):
     ) -> None:
         """A recursive parent replaced after confirmation keeps its new content.
 
-        The replacement directory contains an unconfirmed child, so both the
-        executor's empty-check and the provider identity refuse the delete.
+        The replacement directory has a new provider identity, so the executor's
+        directory-identity fence refuses the delete.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -980,6 +1013,110 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(
                 (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"), "new"
             )
+
+    def test_confirmed_delete_refuses_a_replaced_directory_without_provider_identity(
+        self,
+    ) -> None:
+        """No verifiable directory identity means no folder Delete.
+
+        The provider-neutral probe strips Local's identity token, standing in for
+        SMB/OpenList entries and S3 directory entries.  The operator's confirmed
+        evidence of the original empty directory is submitted after that
+        directory was replaced by a new empty directory at the same path: "it is
+        still a directory" and "it is empty" are not identity, so the executor
+        fails closed and the replacement survives.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage = _FingerprintlessStorage("storage", root)
+            (root / "victim").mkdir()
+            observed = storage.stat("victim")
+            self.assertIsNone(observed.fingerprint)
+            evidence = EntryVersionEvidence(
+                size=0,
+                modified_at=observed.modified_at.isoformat(),
+                is_directory=True,
+                fingerprint=observed.fingerprint,
+            )
+            # Same-name replacement: rmdir + mkdir of a fresh empty directory.
+            storage.delete("victim")
+            (root / "victim").mkdir()
+            result = OrganizerExecutor().execute_direct_delete(
+                storage, "victim", entry_evidence=evidence
+            )
+            self.assertEqual(result.status.value, "FAILED")
+            self.assertEqual(tuple(result.uncertain_effects), ())
+            self.assertTrue(
+                any("verifiable directory identity" in error for error in result.errors)
+            )
+            # The replacement survives; the only delete ever issued was the
+            # probe's own removal of the original directory.
+            self.assertTrue((root / "victim").is_dir())
+            self.assertEqual(storage.deleted, ["victim"])
+
+    def test_folder_delete_requires_provider_directory_identity(self) -> None:
+        """A provider without folder identity refuses Delete before any mutation.
+
+        The same provider-neutral fake refuses the folder journey with an
+        actionable reason, keeps the folder and its files untouched, creates no
+        Task, and still deletes plain files, so the refusal is bounded to folders
+        whose identity cannot be verified.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _FingerprintlessStorage("source-storage", root / "source")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            (root / "source" / "folder").mkdir()
+            (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
+            (root / "source" / "single.txt").write_text("s", encoding="utf-8")
+
+            with self.assertRaises(DirectFileError) as preview:
+                service.delete_impact(resource_library_id="source", paths=["folder"])
+            self.assertEqual(preview.exception.code, "files_direct_directory_identity_unavailable")
+            self.assertEqual(preview.exception.category, "directory_identity_unavailable")
+            self.assertEqual(preview.exception.status, 400)
+            self.assertTrue(preview.exception.next_action)
+
+            # The confirmed command refuses as well, including for a mixed
+            # selection: nothing is deleted and no Task is created.
+            with self.assertRaises(DirectFileError):
+                service.execute_delete(
+                    resource_library_id="source",
+                    paths=["folder", "single.txt"],
+                    confirmation_digest="0" * 64,
+                )
+            self.assertEqual(storage.deleted, [])
+            self.assertEqual(runtime.list_tasks(), ())
+            self.assertTrue((root / "source" / "folder" / "keep.txt").is_file())
+            self.assertTrue((root / "source" / "single.txt").is_file())
+
+            # The API shares the exact application refusal.
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/source/files/delete-impact?path=folder",
+            )
+            self.assertEqual(status, 400, body)
+            self.assertEqual(body["error"]["code"], "files_direct_directory_identity_unavailable")
+            self.assertEqual(body["error"]["details"]["category"], "directory_identity_unavailable")
+            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+
+            # Plain file Delete still works on the same provider: the refusal is
+            # bounded to folders without a verifiable identity.
+            impact = service.delete_impact(resource_library_id="source", paths=["single.txt"])
+            outcome = service.execute_delete(
+                resource_library_id="source",
+                paths=["single.txt"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertFalse((root / "source" / "single.txt").exists())
+            self.assertEqual(storage.deleted, ["single.txt"])
 
     def test_delete_result_status_names_the_known_durable_effect(self) -> None:
         """Every terminal Delete response carries the strict frontend status."""
