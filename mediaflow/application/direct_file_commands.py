@@ -34,6 +34,7 @@ from mediaflow.domain.direct_files import (
     MAX_IMPACT_ENTRIES,
     MAX_TEXT_BYTES,
     DeleteImpact,
+    DirectEntryEvidence,
     DirectFileImpactEntry,
     DirectFileOperation,
     DirectFileTextDocument,
@@ -42,7 +43,6 @@ from mediaflow.domain.direct_files import (
     TextVersionEvidence,
     entry_version_token,
     is_text_file_name,
-    stream_content_digest,
     unsafe_direct_basename,
 )
 from mediaflow.domain.library import ResourceLibrary
@@ -301,11 +301,11 @@ class DirectFileCommandService:
         if entry.size != expected_size or entry.modified_at.isoformat() != expected_modified:
             raise self._stale_source_error(library, source)
         # The version the operator holds is re-verified against the entry as it
-        # is right now.  The token covers type, size, modified time, the
-        # provider fingerprint and the bounded content digest, so a source
-        # replaced after the evidence was issued — including a same-size,
-        # same-mtime content swap — is refused with zero mutation.
-        source_evidence = self._observed_entry_evidence(library, storage, source, entry)
+        # is right now, from provider metadata only: the token covers type,
+        # size, modified time and the provider's verifiable entry identity, so a
+        # source replaced after the evidence was issued is refused with zero
+        # mutation — without reading a single byte of the file.
+        source_evidence = self._observed_entry_evidence(library, source, entry)
         if self._entry_version_token(library, source, source_evidence) != expected_token:
             raise self._stale_source_error(library, source)
         self._require_target_free(library, storage, target)
@@ -328,8 +328,8 @@ class DirectFileCommandService:
     def rename_evidence(self, *, resource_library_id: str, path: str) -> RenameEvidence:
         """Issue the version evidence one Rename command must return.
 
-        Zero-mutation: the entry is observed (stat plus a bounded content read
-        for a file) and nothing is written.  An entry whose exact version this
+        Zero-mutation and content-free: the entry is observed with one metadata
+        query and nothing is written or read.  An entry whose exact version this
         provider cannot verify is refused here instead of being renamed later.
         """
 
@@ -339,7 +339,7 @@ class DirectFileCommandService:
         storage = self._open_storage(library)
         entry = self._stat_entry(library, storage, relative)
         self._require_renamable_entry(library, relative, entry)
-        evidence = self._observed_entry_evidence(library, storage, relative, entry)
+        evidence = self._observed_entry_evidence(library, relative, entry)
         return RenameEvidence(
             resource_library_id=library.library_id,
             path=relative,
@@ -476,13 +476,14 @@ class DirectFileCommandService:
             except Exception as error:
                 outcomes.append(self._locked_outcome(entry, error))
                 continue
-            # The executor re-verifies the confirmed entry evidence at the
-            # last safe boundary, so content swapped in after the impact
-            # preview is never destroyed even under a pre-mutation race.
+            # The executor re-verifies the confirmed entry evidence with one
+            # metadata query at the last safe boundary, so an entry replaced
+            # after the impact preview is never destroyed even under a
+            # pre-mutation race — and no selected file is ever read.
             result = self._executor.execute_direct_delete(
                 storage,
                 full,
-                entry_evidence=EntryVersionEvidence(
+                entry_evidence=DirectEntryEvidence(
                     size=entry.size,
                     modified_at=entry.modified_at,
                     is_directory=entry.is_directory,
@@ -889,7 +890,7 @@ class DirectFileCommandService:
                 library, relative, StorageError(StorageErrorCode.IO_ERROR, "stat", full)
             ) from error
 
-    def _require_deletable_entry(self, library: ResourceLibrary, relative: str, entry) -> None:
+    def _require_deletable_entry(self, library: ResourceLibrary, relative: str, entry) -> str:
         if entry.entry_type is StorageEntryType.SYMLINK:
             raise DirectFileError(
                 "files_direct_symlink_not_supported",
@@ -900,12 +901,44 @@ class DirectFileCommandService:
                 path=relative,
                 next_action="remove the link through its own provider instead",
             )
+        return self._require_entry_identity(library, relative, entry)
 
     @staticmethod
-    def _entry_has_directory_identity(entry) -> bool:
-        return entry.entry_type is not StorageEntryType.DIRECTORY or entry.fingerprint is not None
+    def _entry_identity(entry) -> str | None:
+        """The provider's verifiable exact-entry identity, when it publishes one."""
 
-    def _require_renamable_entry(self, library: ResourceLibrary, relative: str, entry) -> None:
+        value = getattr(entry, "fingerprint", None)
+        return value if isinstance(value, str) and value else None
+
+    def _require_entry_identity(self, library: ResourceLibrary, relative: str, entry) -> str:
+        """Refuse an entry whose exact version this provider cannot verify.
+
+        Rename and Delete both bind the provider's own entry validator and
+        re-check it at the last safe boundary with metadata only.  An entry the
+        provider cannot identify therefore fails closed here — before any Task,
+        any OrganizerExecutor call and any Storage mutation — instead of falling
+        back to size, `mtime`, a content prefix or a full content read, none of
+        which prove the exact observed version.
+        """
+
+        identity = self._entry_identity(entry)
+        if identity is not None:
+            return identity
+        raise DirectFileError(
+            "files_direct_entry_identity_unavailable",
+            "entry_identity_unavailable",
+            "this Storage provider cannot verify the exact version of the selected entry, so the "
+            "operation was not executed",
+            status=400,
+            resource_library_id=library.library_id,
+            path=relative,
+            next_action=(
+                "refresh the directory and retry from a Storage provider that publishes a "
+                "verifiable entry identity; nothing in Storage was changed"
+            ),
+        )
+
+    def _require_renamable_entry(self, library: ResourceLibrary, relative: str, entry) -> str:
         """Admission rule for the entry a Rename command may observe."""
 
         if entry.entry_type is StorageEntryType.SYMLINK:
@@ -918,115 +951,37 @@ class DirectFileCommandService:
                 path=relative,
                 next_action="rename the link through its own provider instead",
             )
-        if not self._entry_has_directory_identity(entry):
-            raise DirectFileError(
-                "files_direct_entry_identity_unavailable",
-                "entry_identity_unavailable",
-                "this Storage provider cannot verify the folder identity, so the folder Rename "
-                "was not executed",
-                status=400,
-                resource_library_id=library.library_id,
-                path=relative,
-                next_action=(
-                    "refresh the directory and rename the folder from a Storage provider that "
-                    "verifies directory identity"
-                ),
-            )
+        return self._require_entry_identity(library, relative, entry)
 
     def _observed_entry_evidence(
-        self, library: ResourceLibrary, storage: Storage, relative: str, entry
-    ) -> EntryVersionEvidence:
-        """The complete version evidence of one entry as it is observed now.
+        self, library: ResourceLibrary, relative: str, entry
+    ) -> DirectEntryEvidence:
+        """The metadata-only exact-version evidence of one observed entry.
 
-        A file is anchored by its exact size, modified time, the provider
-        fingerprint (when the provider offers one) and the digest of its
-        *complete* streamed content: a prefix-only sample cannot prove the
-        version of a file whose remaining bytes changed, and a provider whose
-        timestamps are too coarse to separate two writes cannot prove it from
-        metadata at all.  A directory carries no content, so it is anchored by
-        the provider's stable directory identity; a provider that offers none
-        cannot prove the confirmed folder is still the confirmed folder and the
-        command fails closed instead of mutating an unverified replacement.
+        Every component is provider metadata: the entry type, size, modified
+        time and the provider's verifiable entry identity.  Nothing here reads
+        entry content, so issuing, admitting and last-boundary-verifying a
+        Rename costs one metadata query per step and never depends on the file
+        size.
         """
 
-        if entry.entry_type is StorageEntryType.DIRECTORY:
-            return EntryVersionEvidence(
-                size=entry.size,
-                modified_at=entry.modified_at.isoformat(),
-                is_directory=True,
-                fingerprint=entry.fingerprint,
-            )
-        return EntryVersionEvidence(
+        return DirectEntryEvidence(
             size=entry.size,
             modified_at=entry.modified_at.isoformat(),
-            digest=self._content_digest(library, storage, relative, entry.size),
-            is_directory=False,
-            fingerprint=entry.fingerprint,
+            is_directory=entry.entry_type is StorageEntryType.DIRECTORY,
+            fingerprint=self._require_entry_identity(library, relative, entry),
         )
 
-    def _content_digest(
-        self, library: ResourceLibrary, storage: Storage, relative: str, size: int
-    ) -> str:
-        """Digest the complete content of one observed file.
-
-        Memory stays bounded by the chunk size while the whole content is hashed;
-        a stream that no longer holds exactly the observed amount of bytes means
-        the entry is not the observed version.
-        """
-
-        full = _join_resource_library_path(library.root_path, relative)
-        try:
-            with storage.read(full) as stream:
-                digest, counted = stream_content_digest(stream)
-        except StorageError as error:
-            raise self._storage_admission_failure(library, relative, error) from None
-        except OSError as error:
-            raise self._storage_admission_failure(
-                library, relative, StorageError(StorageErrorCode.IO_ERROR, "read", full)
-            ) from error
-        if counted != size:
-            raise self._stale_source_error(library, relative)
-        return digest
-
     def _entry_version_token(
-        self, library: ResourceLibrary, relative: str, evidence: EntryVersionEvidence
+        self, library: ResourceLibrary, relative: str, evidence: DirectEntryEvidence
     ) -> str:
         return entry_version_token(
             resource_library_id=library.library_id,
             path=relative,
-            is_directory=evidence.is_directory is True,
+            is_directory=evidence.is_directory,
             size=evidence.size,
             modified_at=evidence.modified_at,
             fingerprint=evidence.fingerprint,
-            content_digest=evidence.digest,
-        )
-
-    def _require_directory_identity(self, library: ResourceLibrary, relative: str, entry) -> None:
-        """Refuse a folder Delete this provider cannot verify.
-
-        Deleting a directory is admitted only when the provider exposes a
-        stable per-directory identity, because the confirmed scope must still be
-        provably the confirmed object at the mutation boundary.  A provider whose
-        entries carry no identity token (SMB, OpenList and S3 directory entries)
-        cannot tell the confirmed directory from a same-name replacement, so the
-        command is refused before any mutation with an actionable reason instead
-        of deleting an unconfirmed folder.
-        """
-
-        if self._entry_has_directory_identity(entry):
-            return
-        raise DirectFileError(
-            "files_direct_directory_identity_unavailable",
-            "directory_identity_unavailable",
-            "this Storage provider cannot verify the folder identity, so the "
-            "folder Delete was not executed",
-            status=400,
-            resource_library_id=library.library_id,
-            path=relative,
-            next_action=(
-                "delete the files inside this folder individually, or use a Storage "
-                "provider that verifies directory identity"
-            ),
         )
 
     def _impact_entries(
@@ -1037,8 +992,7 @@ class DirectFileCommandService:
         entries: list[DirectFileImpactEntry] = []
         for relative in targets:
             entry = self._stat_entry(library, storage, relative)
-            self._require_deletable_entry(library, relative, entry)
-            self._require_directory_identity(library, relative, entry)
+            fingerprint = self._require_deletable_entry(library, relative, entry)
             if entry.entry_type is StorageEntryType.DIRECTORY:
                 entries.append(
                     DirectFileImpactEntry(
@@ -1046,7 +1000,7 @@ class DirectFileCommandService:
                         is_directory=True,
                         size=0,
                         modified_at=entry.modified_at.isoformat(),
-                        fingerprint=entry.fingerprint,
+                        fingerprint=fingerprint,
                     )
                 )
                 self._enumerate_into(library, storage, relative, entries)
@@ -1057,7 +1011,7 @@ class DirectFileCommandService:
                         is_directory=False,
                         size=entry.size,
                         modified_at=entry.modified_at.isoformat(),
-                        fingerprint=entry.fingerprint,
+                        fingerprint=fingerprint,
                     )
                 )
             self._enforce_impact_limits(library, entries)
@@ -1086,8 +1040,7 @@ class DirectFileCommandService:
                 ) from error
             for child in children:
                 child_relative = posixpath.join(current, child.name)
-                self._require_deletable_entry(library, child_relative, child)
-                self._require_directory_identity(library, child_relative, child)
+                child_fingerprint = self._require_deletable_entry(library, child_relative, child)
                 child_is_directory = child.entry_type is StorageEntryType.DIRECTORY
                 collected.append(
                     DirectFileImpactEntry(
@@ -1095,7 +1048,7 @@ class DirectFileCommandService:
                         is_directory=child_is_directory,
                         size=0 if child_is_directory else child.size,
                         modified_at=child.modified_at.isoformat(),
-                        fingerprint=child.fingerprint,
+                        fingerprint=child_fingerprint,
                     )
                 )
                 if child.entry_type is StorageEntryType.DIRECTORY:
@@ -1328,10 +1281,11 @@ def _result_error_category(result) -> str | None:
         return "capability_denied"
     if "unsupported capability" in text:
         return "unsupported_capability"
-    if "verifiable directory identity" in text:
-        # The executor's last-boundary refusal when the provider cannot verify
-        # the confirmed folder: an unsupported provider capability, not I/O.
-        return "unsupported_capability"
+    if "version evidence is required" in text:
+        # The executor's last-boundary refusal when the exact entry version
+        # cannot be proved from provider metadata: the mutation stays
+        # unexecuted, so this is an identity-availability refusal, not I/O.
+        return "entry_identity_unavailable"
     if "does not exist" in text:
         return "source_missing"
     if "invalid destination" in text:

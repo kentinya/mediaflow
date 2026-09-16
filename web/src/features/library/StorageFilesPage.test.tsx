@@ -885,11 +885,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.keyboard("{Escape}");
   });
 
-  it("explains a folder Delete the Storage provider cannot verify", async () => {
+  it("explains a Delete the Storage provider cannot verify", async () => {
     const user = userEvent.setup();
-    // The backend refuses a folder Delete when the provider publishes no
-    // verifiable directory identity; the Files dialog must explain it and must
-    // never submit the command.
+    // The backend refuses Rename and Delete for any entry whose exact version
+    // the provider publishes no verifiable identity for; the Files dialog must
+    // explain it and must never submit the command.
     let commandSubmitted = false;
     vi.stubGlobal(
       "fetch",
@@ -899,16 +899,16 @@ describe("Files entry state and ResourceLibrary strip", () => {
           jsonResponse(
             {
               error: {
-                code: "files_direct_directory_identity_unavailable",
+                code: "files_direct_entry_identity_unavailable",
                 message:
-                  "this Storage provider cannot verify the folder identity, so the folder Delete was not executed",
+                  "this Storage provider cannot verify the exact version of the selected entry, so the operation was not executed",
                 details: {
-                  category: "directory_identity_unavailable",
+                  category: "entry_identity_unavailable",
                   durableState: "storage_unchanged",
                   sideEffects: "none",
                   retrySafe: true,
                   nextAction:
-                    "delete the files inside this folder individually",
+                    "refresh the directory and retry from a Storage provider that publishes a verifiable entry identity",
                 },
               },
             },
@@ -928,7 +928,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
     expect(
-      await within(dialog).findByText(/当前存储无法校验文件夹版本/),
+      await within(dialog).findByText(/当前存储无法校验该条目的版本身份/),
     ).toBeVisible();
     expect(within(dialog).getByRole("button", { name: "删除" })).toBeDisabled();
     expect(commandSubmitted).toBe(false);
@@ -1323,7 +1323,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
               error: {
                 code: "files_direct_entry_identity_unavailable",
                 message:
-                  "this Storage provider cannot verify the folder identity, so the folder Rename was not executed",
+                  "this Storage provider cannot verify the exact version of the selected entry, so the operation was not executed",
                 details: {
                   category: "entry_identity_unavailable",
                   durableState: "storage_unchanged",
@@ -1349,7 +1349,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const dialog = await screen.findByRole("dialog", { name: "重命名" });
     expect(
-      await within(dialog).findByText(/当前存储无法校验该文件夹的版本身份/),
+      await within(dialog).findByText(/当前存储无法校验该条目的版本身份/),
     ).toBeVisible();
     expect(
       within(dialog).getByRole("button", { name: "重命名" }),

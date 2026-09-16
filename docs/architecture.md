@@ -551,6 +551,16 @@ Live Storage is authoritative before and after each command. FileIndex may be re
 stale display feedback, but it never admits the command; reconciliation failure is recorded and
 must never replay a completed or uncertain mutation.
 
+Rename and Delete are fenced by the provider's own verifiable entry identity (Local:
+`inode` + `ctime`; S3/R2: the object validator) together with the observed entry type, size and
+`mtime`. Evidence issuance, command admission, Delete confirmation and the executor's last safe
+boundary all re-read metadata only, so their cost never scales with file size and no entry content
+is read to authorize or verify these two mutations. A provider that publishes no verifiable entry
+identity (SMB, OpenList) fails closed with `files_direct_entry_identity_unavailable` before any Task
+or Storage mutation instead of falling back to size, `mtime`, a content prefix or a full read. The
+bounded allowlisted text Read/Write keeps its separate loaded-version digest fence, which is capped
+by the bounded text size limit.
+
 ## UI-V2 Files and shared-shell contract update — 2026-09-14
 
 Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference
