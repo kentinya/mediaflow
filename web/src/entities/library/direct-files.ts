@@ -101,6 +101,38 @@ export function normalizeTextFileDocument(payload: unknown): TextFileDocument {
   return document;
 }
 
+export interface RenameEvidenceModel {
+  readonly resourceLibraryId: string;
+  readonly path: string;
+  readonly isDirectory: boolean;
+  readonly size: number;
+  readonly modifiedAt: string;
+  readonly evidence: string;
+}
+
+/**
+ * The server-issued version evidence one Rename must return.
+ *
+ * The token is opaque: it never carries provider fingerprints, content
+ * digests or host paths into the UI, and the page only echoes it back for the
+ * exact entry version the backend observed.
+ */
+export function normalizeRenameEvidence(payload: unknown): RenameEvidenceModel {
+  const record = expectObject(payload);
+  const evidence = expectString(record, "evidence");
+  if (evidence.length === 0 || evidence.length > 256) {
+    throw new DirectFilesNormalizationError("expected bounded rename evidence");
+  }
+  return {
+    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    path: expectString(record, "path"),
+    isDirectory: record.isDirectory === true,
+    size: expectNumber(record, "size"),
+    modifiedAt: expectString(record, "modifiedAt"),
+    evidence,
+  };
+}
+
 export interface DeleteImpactEntry {
   readonly path: string;
   readonly isDirectory: boolean;

@@ -28,11 +28,13 @@ import {
   normalizeDeleteImpact,
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
+  normalizeRenameEvidence,
   normalizeResourceLibraryRemoval,
   normalizeTextFileDocument,
   type DeleteImpactModel,
   type DirectFileCommandResult,
   type RemovalPreviewModel,
+  type RenameEvidenceModel,
   type ResourceLibraryRemovalModel,
   type TextFileDocument,
 } from "../../entities/library/direct-files";
@@ -2084,7 +2086,11 @@ export type DirectFileCommandOptions =
       readonly operation: "rename";
       readonly path: string;
       readonly name: string;
-      readonly expected: { readonly size: number; readonly modifiedAt: string };
+      readonly expected: {
+        readonly size: number;
+        readonly modifiedAt: string;
+        readonly evidence: string;
+      };
     }
   | {
       readonly operation: "save_text";
@@ -2126,6 +2132,7 @@ export async function submitDirectFileCommand(
     body.expected = {
       size: options.expected.size,
       modifiedAt: options.expected.modifiedAt,
+      evidence: options.expected.evidence,
     };
   } else if (options.operation === "save_text") {
     body.path = options.path;
@@ -2251,6 +2258,58 @@ export async function fetchDeleteImpact(
   }
   try {
     return { ok: true, model: normalizeDeleteImpact(await response.json()) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Zero-mutation version evidence one Rename command must return.
+ *
+ * The backend observes the exact entry version and issues an opaque token; the
+ * page only echoes it back, so a source replaced after the evidence was issued
+ * is refused stale instead of renamed.
+ */
+export async function fetchRenameEvidence(
+  token: string | null,
+  resourceLibraryId: string,
+  path: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: RenameEvidenceModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (resourceLibraryId.trim().length === 0 || path.length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/rename-evidence?path=${encodeURIComponent(path)}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return { ok: true, model: normalizeRenameEvidence(await response.json()) };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }

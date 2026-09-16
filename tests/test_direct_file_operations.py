@@ -70,14 +70,18 @@ def _removal_confirmation(preview: dict) -> dict[str, object]:
 
 
 def _entry_evidence(api, active, resource_library_id: str, relative: str) -> dict:
-    """The server-issued observed evidence for one entry, as the API issues it."""
+    """The server-issued Rename evidence for one entry, as the API issues it."""
 
     binding = api._prepare_runtime_binding_for_revision(active)
     service = binding.direct_files
-    library = service._library(resource_library_id)
-    storage = service._open_storage(library)
-    entry = service._stat_entry(library, storage, relative)
-    return {"size": entry.size, "modifiedAt": entry.modified_at.isoformat()}
+    document = service.rename_evidence(
+        resource_library_id=resource_library_id, path=relative
+    ).document()
+    return {
+        "size": document["size"],
+        "modifiedAt": document["modifiedAt"],
+        "evidence": document["evidence"],
+    }
 
 
 def _loaded_evidence(service: DirectFileCommandService, resource_library_id: str, path: str):
@@ -690,16 +694,29 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual((root / "source" / "a.txt").read_text(encoding="utf-8"), "vX!")
 
     def test_rename_binds_observed_source_evidence_and_refuses_swaps(self) -> None:
-        """Rename requires and re-verifies server-issued source evidence."""
+        """Rename requires and re-verifies server-issued source evidence.
+
+        The replacement below keeps the exact size *and* restores the observed
+        mtime, so only the content-anchored part of the evidence can separate the
+        two versions.  It is therefore deterministic on every filesystem,
+        including ones whose timestamp granularity cannot tell the two writes
+        apart.
+        """
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, _objects, active, runtime = self._activate(root)
             service = self._service(api, active)
-            (root / "source" / "rename-me.txt").write_text("v1", encoding="utf-8")
+            target_file = root / "source" / "rename-me.txt"
+            target_file.write_text("v1", encoding="utf-8")
+            observed = target_file.stat()
             evidence = _entry_evidence(api, active, "source", "rename-me.txt")
             # Same size, different content after observation: refused stale.
-            (root / "source" / "rename-me.txt").write_text("v2", encoding="utf-8")
+            target_file.write_text("v2", encoding="utf-8")
+            os.utime(target_file, ns=(observed.st_atime_ns, observed.st_mtime_ns))
+            swapped = target_file.stat()
+            self.assertEqual(swapped.st_size, observed.st_size)
+            self.assertEqual(swapped.st_mtime_ns, observed.st_mtime_ns)
             with self.assertRaises(DirectFileError) as stale:
                 service.rename(
                     resource_library_id="source",
@@ -711,6 +728,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(stale.exception.status, 409)
             self.assertTrue((root / "source" / "rename-me.txt").exists())
             self.assertFalse((root / "source" / "renamed.txt").exists())
+            self.assertEqual((root / "source" / "rename-me.txt").read_text(encoding="utf-8"), "v2")
             # Fresh evidence succeeds and the durable record carries the target.
             fresh = _entry_evidence(api, active, "source", "rename-me.txt")
             outcome = service.rename(
@@ -731,20 +749,25 @@ class DirectFileOperationsTests(unittest.TestCase):
         """A rename whose source is swapped inside the preflight window fails.
 
         The source matches the observed evidence at admission; a concurrent
-        writer replaces it inside the executor's preflight window, and the
-        executor's own size+mtime fence refuses to rename the replaced entry.
+        writer then replaces it with same-size content under the original mtime
+        inside the executor's preflight window.  Only the executor's own
+        content-anchored re-verification can still refuse this rename, so the
+        regression stays deterministic on any filesystem timestamp granularity.
         """
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, _objects, active, _tasks = self._activate(root)
             service = self._service(api, active)
-            (root / "source" / "race.txt").write_text("v1", encoding="utf-8")
+            raced = root / "source" / "race.txt"
+            raced.write_text("v1", encoding="utf-8")
+            observed = raced.stat()
 
             class SwapInPreflight(OrganizerExecutor):
-                def __init__(self, base: Path) -> None:
+                def __init__(self, base: Path, original) -> None:
                     super().__init__()
                     self._base = base
+                    self._original = original
 
                 def _execute_direct(
                     self,
@@ -762,9 +785,17 @@ class DirectFileOperationsTests(unittest.TestCase):
                     def swap_then_preflight():
                         reason = preflight()
                         if reason is None:
-                            # Same size, different content: only the executor's
-                            # size+mtime fence can still refuse this rename.
-                            (self._base / "source" / "race.txt").write_text("v2", encoding="utf-8")
+                            # Same size, original mtime: the content itself is
+                            # the only remaining proof of the observed version.
+                            target_file = self._base / "source" / "race.txt"
+                            target_file.write_text("v2", encoding="utf-8")
+                            os.utime(
+                                target_file,
+                                ns=(
+                                    self._original.st_atime_ns,
+                                    self._original.st_mtime_ns,
+                                ),
+                            )
                             return preflight()
                         return reason
 
@@ -780,8 +811,9 @@ class DirectFileOperationsTests(unittest.TestCase):
                         verify=verify,
                     )
 
-            swapper = SwapInPreflight(root)
+            swapper = SwapInPreflight(root, observed)
             evidence = _entry_evidence(api, active, "source", "race.txt")
+            self.assertEqual(raced.stat().st_mtime_ns, observed.st_mtime_ns)
             with patch.object(service, "_executor", swapper):
                 outcome = service.rename(
                     resource_library_id="source",
@@ -1118,6 +1150,126 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "single.txt").exists())
             self.assertEqual(storage.deleted, ["single.txt"])
 
+    def test_folder_rename_requires_provider_directory_identity(self) -> None:
+        """A folder whose identity the provider cannot verify is never renamed.
+
+        The provider-neutral fake strips Local's identity, standing in for
+        SMB/OpenList entries and S3 directory entries.  The folder journey fails
+        closed before any mutation with an actionable reason and creates no
+        Task, while the same provider still renames plain files, whose evidence
+        is anchored by their bounded content digest.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _FingerprintlessStorage("source-storage", root / "source")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            (root / "source" / "folder").mkdir()
+            (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
+            (root / "source" / "note.txt").write_text("note", encoding="utf-8")
+
+            library = service._library("source")
+            folder_entry = service._stat_entry(library, storage, "folder")
+
+            with self.assertRaises(DirectFileError) as refused:
+                service.rename_evidence(resource_library_id="source", path="folder")
+            self.assertEqual(refused.exception.code, "files_direct_entry_identity_unavailable")
+            self.assertEqual(refused.exception.category, "entry_identity_unavailable")
+            self.assertEqual(refused.exception.status, 400)
+            self.assertTrue(refused.exception.next_action)
+
+            with self.assertRaises(DirectFileError) as command_refused:
+                service.rename(
+                    resource_library_id="source",
+                    path="folder",
+                    name="renamed-folder",
+                    expected={
+                        "size": folder_entry.size,
+                        "modifiedAt": folder_entry.modified_at.isoformat(),
+                        "evidence": "v1." + "0" * 32,
+                    },
+                )
+            self.assertEqual(command_refused.exception.category, "entry_identity_unavailable")
+            self.assertEqual(runtime.list_tasks(), ())
+            self.assertTrue((root / "source" / "folder").is_dir())
+            self.assertFalse((root / "source" / "renamed-folder").exists())
+
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=folder",
+            )
+            self.assertEqual(status, 400, body)
+            self.assertEqual(body["error"]["code"], "files_direct_entry_identity_unavailable")
+            self.assertEqual(body["error"]["details"]["category"], "entry_identity_unavailable")
+            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+            self.assertTrue(body["error"]["details"]["nextAction"])
+
+            # Plain file Rename still works on the same provider: the refusal is
+            # bounded to folders whose identity cannot be verified.
+            outcome = service.rename(
+                resource_library_id="source",
+                path="note.txt",
+                name="renamed-note.txt",
+                expected=_entry_evidence(api, active, "source", "note.txt"),
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertTrue((root / "source" / "renamed-note.txt").is_file())
+            self.assertFalse((root / "source" / "note.txt").exists())
+
+    def test_rename_evidence_is_bound_to_one_exact_entry(self) -> None:
+        """Issued evidence never authorizes renaming a different entry version."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _tasks = self._activate(root)
+            service = self._service(api, active)
+            first = root / "source" / "first.txt"
+            second = root / "source" / "second.txt"
+            first.write_text("same", encoding="utf-8")
+            second.write_text("same", encoding="utf-8")
+            # Both entries are byte-identical with one shared modification time,
+            # so only the evidence itself can tell their versions apart.
+            timestamp = first.stat().st_mtime_ns
+            os.utime(second, ns=(timestamp, timestamp))
+            observed = first.stat()
+            self.assertEqual(second.stat().st_size, observed.st_size)
+            self.assertEqual(second.stat().st_mtime_ns, observed.st_mtime_ns)
+            evidence = _entry_evidence(api, active, "source", "first.txt")
+            with self.assertRaises(DirectFileError) as stale:
+                service.rename(
+                    resource_library_id="source",
+                    path="second.txt",
+                    name="renamed-second.txt",
+                    expected=evidence,
+                )
+            self.assertEqual(stale.exception.category, "stale_source")
+            self.assertEqual(stale.exception.status, 409)
+            self.assertTrue((root / "source" / "second.txt").exists())
+            self.assertFalse((root / "source" / "renamed-second.txt").exists())
+            # A tampered token is not accepted either.
+            with self.assertRaises(DirectFileError) as tampered:
+                service.rename(
+                    resource_library_id="source",
+                    path="first.txt",
+                    name="renamed-first.txt",
+                    expected={**evidence, "evidence": "v1." + "f" * 32},
+                )
+            self.assertEqual(tampered.exception.category, "stale_source")
+            self.assertTrue((root / "source" / "first.txt").exists())
+            # The evidence issued for this exact entry still succeeds.
+            outcome = service.rename(
+                resource_library_id="source",
+                path="first.txt",
+                name="renamed-first.txt",
+                expected=evidence,
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            self.assertTrue((root / "source" / "renamed-first.txt").is_file())
+
     def test_delete_result_status_names_the_known_durable_effect(self) -> None:
         """Every terminal Delete response carries the strict frontend status."""
 
@@ -1415,7 +1567,11 @@ class DirectFileOperationsTests(unittest.TestCase):
                     resource_library_id="source",
                     path="a.txt",
                     name="b.txt",
-                    expected={"size": 1, "modifiedAt": "1970-01-01T00:00:00+00:00"},
+                    expected={
+                        "size": 1,
+                        "modifiedAt": "1970-01-01T00:00:00+00:00",
+                        "evidence": "v1." + "0" * 32,
+                    },
                 ),
             ):
                 with self.assertRaises(DirectFileError) as caught:
@@ -1602,12 +1758,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual((root / "source" / "doc.txt").read_text(encoding="utf-8"), "v2")
 
     def test_api_rename_requires_and_enforces_observed_evidence(self) -> None:
-        """The API rejects Rename without observed evidence and stale swaps."""
+        """The API rejects Rename without issued evidence and stale replays."""
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            api, _objects, active, _tasks = self._activate(root)
-            (root / "source" / "before.txt").write_text("v1", encoding="utf-8")
+            api, _objects, _active, _tasks = self._activate(root)
+            source_file = root / "source" / "before.txt"
+            source_file.write_text("v1", encoding="utf-8")
             missing_evidence = request(
                 api,
                 "/api/v1/resource-libraries/source/files/commands",
@@ -1616,17 +1773,14 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             self.assertEqual(missing_evidence[0], 400, missing_evidence[1])
             self.assertEqual(missing_evidence[1]["error"]["code"], "invalid_request")
-            self.assertTrue((root / "source" / "before.txt").exists())
+            self.assertTrue(source_file.exists())
             status, listing = request(
                 api,
                 "/api/v1/resource-libraries/source/files?path=",
             )
             self.assertEqual(status, 200, listing)
             entry = next(item for item in listing["entries"] if item["name"] == "before.txt")
-            (root / "source" / "before.txt").write_text("v2", encoding="utf-8")
-            later = datetime.now(UTC) + timedelta(seconds=120)
-            os.utime(root / "source" / "before.txt", (later.timestamp(), later.timestamp()))
-            stale = request(
+            listing_only = request(
                 api,
                 "/api/v1/resource-libraries/source/files/commands",
                 method="POST",
@@ -1640,11 +1794,48 @@ class DirectFileOperationsTests(unittest.TestCase):
                     },
                 },
             )
+            self.assertEqual(listing_only[0], 400, listing_only[1])
+            self.assertEqual(listing_only[1]["error"]["code"], "files_direct_invalid_request")
+            self.assertTrue(source_file.exists())
+            self.assertFalse((root / "source" / "after.txt").exists())
+            status, evidence = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=before.txt",
+            )
+            self.assertEqual(status, 200, evidence)
+            self.assertEqual(evidence["sideEffects"], "none")
+            self.assertEqual(evidence["path"], "before.txt")
+            self.assertFalse(evidence["isDirectory"])
+            # Same size, same mtime, different content: replaying the issued
+            # evidence must fail stale instead of renaming the replacement.
+            observed = source_file.stat()
+            source_file.write_text("v2", encoding="utf-8")
+            os.utime(source_file, ns=(observed.st_atime_ns, observed.st_mtime_ns))
+            self.assertEqual(source_file.stat().st_mtime_ns, observed.st_mtime_ns)
+            stale = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={
+                    "operation": "rename",
+                    "path": "before.txt",
+                    "name": "after.txt",
+                    "expected": {
+                        "size": evidence["size"],
+                        "modifiedAt": evidence["modifiedAt"],
+                        "evidence": evidence["evidence"],
+                    },
+                },
+            )
             self.assertEqual(stale[0], 409, stale[1])
             self.assertEqual(stale[1]["error"]["code"], "files_direct_stale_source")
-            self.assertTrue((root / "source" / "before.txt").exists())
+            self.assertEqual(stale[1]["error"]["details"]["category"], "stale_source")
+            self.assertTrue(source_file.exists())
             self.assertFalse((root / "source" / "after.txt").exists())
-            fresh = _entry_evidence(api, active, "source", "before.txt")
+            _status, refreshed = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=before.txt",
+            )
             ok = request(
                 api,
                 "/api/v1/resource-libraries/source/files/commands",
@@ -1653,13 +1844,76 @@ class DirectFileOperationsTests(unittest.TestCase):
                     "operation": "rename",
                     "path": "before.txt",
                     "name": "after.txt",
-                    "expected": fresh,
+                    "expected": {
+                        "size": refreshed["size"],
+                        "modifiedAt": refreshed["modifiedAt"],
+                        "evidence": refreshed["evidence"],
+                    },
                 },
             )
             self.assertEqual(ok[0], 200, ok[1])
             self.assertEqual(ok[1]["status"], "SUCCESS")
             self.assertEqual(ok[1]["target"], "after.txt")
             self.assertTrue((root / "source" / "after.txt").exists())
+            # Fresh evidence for the migrated name is accepted again.
+            status, migrated = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=after.txt",
+            )
+            self.assertEqual(status, 200, migrated)
+            self.assertNotEqual(migrated["evidence"], refreshed["evidence"])
+
+    def test_api_rename_evidence_is_a_bounded_secret_free_read(self) -> None:
+        """The evidence route never discloses provider or host implementation data."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, _tasks = self._activate(root)
+            (root / "source" / "notes.txt").write_text("bounded", encoding="utf-8")
+            (root / "source" / "folder").mkdir()
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=notes.txt",
+            )
+            self.assertEqual(status, 200, body)
+            self.assertEqual(
+                set(body),
+                {
+                    "resourceLibraryId",
+                    "path",
+                    "isDirectory",
+                    "size",
+                    "modifiedAt",
+                    "evidence",
+                    "sideEffects",
+                    "retrySafe",
+                    "nextAction",
+                },
+            )
+            self.assertEqual(body["resourceLibraryId"], "source")
+            self.assertEqual(body["size"], 7)
+            self.assertTrue(body["evidence"].startswith("v1."))
+            serialized = json.dumps(body)
+            self.assertNotIn("inode", serialized)
+            self.assertNotIn("digest", serialized)
+            self.assertNotIn(str(root), serialized)
+            folder = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=folder",
+            )
+            self.assertEqual(folder[0], 200, folder[1])
+            self.assertTrue(folder[1]["isDirectory"])
+            rejected = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=",
+            )
+            self.assertEqual(rejected[0], 400)
+            unknown = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=missing.txt",
+            )
+            self.assertEqual(unknown[0], 404, unknown[1])
+            self.assertEqual(unknown[1]["error"]["code"], "files_direct_not_found")
 
     # ------------------------------------------------------------------
     # ResourceLibrary removal journey

@@ -30,6 +30,7 @@ import {
 } from "./FileCommandDialogs";
 import {
   fetchDeleteImpact,
+  fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
   removeResourceLibrary,
@@ -301,6 +302,8 @@ function directFileCommandFailure(
       return "该资源库使用的存储为只读，不能执行该操作。";
     case "files_direct_directory_identity_unavailable":
       return "当前存储无法校验文件夹版本，为避免删除被替换的文件夹，本次删除未执行；请改为逐个删除其中的文件，或改用支持该能力的存储。";
+    case "files_direct_entry_identity_unavailable":
+      return "当前存储无法校验该文件夹的版本身份，为避免重命名被替换的目标，本次重命名未执行；请刷新目录后改用支持该能力的存储。";
     case "unsupported_capability":
       return "当前存储不支持该操作，未做任何修改；请改用支持该能力的存储后重试。";
     case "files_direct_unsupported_text_type":
@@ -2047,6 +2050,23 @@ export function StorageFilesPage() {
     retry: false,
   });
 
+  // The Rename command must return the version evidence the backend issues for
+  // this exact entry, so the dialog loads it before the operator can submit.
+  const renamePath = dialog?.kind === "rename" ? dialog.path : null;
+  const renameEvidenceQuery = useQuery({
+    queryKey: ["files-rename-evidence", activeLibraryId, renamePath],
+    queryFn: () => {
+      if (renamePath === null) throw new Error("unreachable");
+      return fetchRenameEvidence(token, activeLibraryId, renamePath);
+    },
+    enabled: renamePath !== null && token !== null,
+    retry: false,
+  });
+  const renameEvidence =
+    renameEvidenceQuery.data !== undefined && renameEvidenceQuery.data.ok
+      ? renameEvidenceQuery.data.model
+      : null;
+
   const removalTargetId = dialog?.kind === "remove_library" ? dialog.id : null;
   const removalPreviewQuery = useQuery({
     queryKey: ["resource-library-removal", removalTargetId],
@@ -2539,20 +2559,40 @@ export function StorageFilesPage() {
         <NamePromptDialog
           kind="rename"
           initialValue={dialog.name}
-          busy={commandMutation.isPending}
-          error={commandError}
+          busy={commandMutation.isPending || renameEvidenceQuery.isFetching}
+          submitDisabled={
+            renameEvidenceQuery.data !== undefined &&
+            !renameEvidenceQuery.data.ok
+          }
+          error={
+            commandError ??
+            (renameEvidenceQuery.data !== undefined &&
+            !renameEvidenceQuery.data.ok
+              ? directFileCommandFailure(renameEvidenceQuery.data.code)
+              : null)
+          }
           onClose={() => {
             setCommandError(null);
             setDialog(null);
           }}
           onSubmit={(name) => {
+            if (renameEvidence === null) {
+              setCommandError(
+                "尚未取得该条目的服务器版本证据，未执行重命名；请刷新目录后重新打开重命名。",
+              );
+              return;
+            }
             setCommandError(null);
             commandMutation.mutate({
               options: {
                 operation: "rename",
                 path: dialog.path,
                 name,
-                expected: dialog.expected,
+                expected: {
+                  size: dialog.expected.size,
+                  modifiedAt: dialog.expected.modifiedAt,
+                  evidence: renameEvidence.evidence,
+                },
               },
             });
           }}

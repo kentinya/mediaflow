@@ -3,6 +3,7 @@ import {
   DirectFilesNormalizationError,
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
+  normalizeRenameEvidence,
 } from "./direct-files";
 
 /**
@@ -224,6 +225,41 @@ describe("real removal preview contract", () => {
     const legacy: Record<string, unknown> = { ...REAL_REMOVAL_PREVIEW };
     delete legacy.active;
     expect(() => normalizeRemovalPreview(legacy)).toThrow(
+      DirectFilesNormalizationError,
+    );
+  });
+});
+
+describe("Rename version evidence", () => {
+  const REAL_RENAME_EVIDENCE = {
+    resourceLibraryId: "source",
+    path: "notes.txt",
+    isDirectory: false,
+    size: 42,
+    modifiedAt: "2026-08-23T11:15:00+00:00",
+    evidence: "v1.4b6f2c8d9e0a1b2c3d4e5f60718293aa",
+    sideEffects: "none",
+    retrySafe: true,
+  };
+
+  it("keeps the opaque server-issued token and never provider internals", () => {
+    const model = normalizeRenameEvidence(REAL_RENAME_EVIDENCE);
+    expect(model).toEqual({
+      resourceLibraryId: "source",
+      path: "notes.txt",
+      isDirectory: false,
+      size: 42,
+      modifiedAt: "2026-08-23T11:15:00+00:00",
+      evidence: "v1.4b6f2c8d9e0a1b2c3d4e5f60718293aa",
+    });
+    expect(Object.keys(model)).not.toContain("fingerprint");
+    expect(Object.keys(model)).not.toContain("digest");
+  });
+
+  it("fails closed when the evidence token is missing", () => {
+    const legacy: Record<string, unknown> = { ...REAL_RENAME_EVIDENCE };
+    delete legacy.evidence;
+    expect(() => normalizeRenameEvidence(legacy)).toThrow(
       DirectFilesNormalizationError,
     );
   });
