@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.3
 Parent Slice: 37
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: e33a030055a81011a32de507bef6758d48607c9a
 Difficulty: High
 Test Level: T4
@@ -600,7 +600,8 @@ Web:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: <HEAD_SHA_PLACEHOLDER>
+Head SHA: 3f04b7cc1c850e482002d90de35d446bf8d7d677
+Commit: 3f04b7c fix(files): bind direct-command evidence and removal confirmation
 Working tree: clean except the pre-existing dirty docs/pics/文件页.png and
 ignored artifacts (web/dist/, web/test-results/, config/alist.json)
 ```
