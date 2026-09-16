@@ -46,16 +46,27 @@ type FilesView = "list" | "grid";
 type FilesDialog =
   | { readonly kind: "create_folder" }
   | { readonly kind: "create_text" }
-  | { readonly kind: "rename"; readonly path: string; readonly name: string }
+  | {
+      readonly kind: "rename";
+      readonly path: string;
+      readonly name: string;
+      readonly expected: { readonly size: number; readonly modifiedAt: string };
+    }
   | { readonly kind: "delete"; readonly paths: readonly string[] }
   | { readonly kind: "editor"; readonly path: string }
   | { readonly kind: "remove_library"; readonly id: string }
   | null;
 
+interface EntryVersionEvidenceVm {
+  readonly size: number;
+  readonly modifiedAt: string;
+}
+
 interface FilesRowVm {
   readonly name: string;
   readonly path: string;
   readonly size: number;
+  readonly modifiedAt: string;
   readonly isDirectory: boolean;
   readonly traversable: boolean;
   readonly selectable: boolean;
@@ -205,6 +216,10 @@ export function removalFailureMessage(
   switch (code) {
     case "configuration_object_referenced":
       return "该资源库仍被整理规则或自动化任务引用，不能删除；请先处理这些引用后再删除。";
+    case "resource_library_removal_stale":
+      return "删除确认已过期：Active 配置在预览后发生了变化，本次删除未执行；请重新获取预览并再次确认。";
+    case "resource_library_disabled":
+      return "所选资源库已停用，不能删除；请刷新后选择已启用的资源库。";
     case "resource_library_not_found":
       return "所选资源库不在当前 Active 配置中，可能已被删除或停用；请刷新后重试。";
     case "forbidden":
@@ -271,6 +286,9 @@ function directFileCommandFailure(
       return "目标已存在，未替换任何内容；请换一个名称或刷新目录后重试。";
     case "files_direct_stale_content":
       return "文件在打开后已发生变化，本次编辑未保存；请重新加载最新内容后再保存。";
+    case "files_direct_stale_source":
+    case "source_changed":
+      return "目标在操作前已发生变化，未做任何修改；请刷新目录后重试。";
     case "files_direct_stale_confirmation":
       return "删除范围已变化，本次未执行；请重新确认最新影响摘要后再删除。";
     case "files_direct_invalid_name":
@@ -393,6 +411,7 @@ function buildRows(
         name: entry.name,
         path: entry.path,
         size: entry.size,
+        modifiedAt: entry.modifiedAt,
         isDirectory: entry.isDirectory,
         traversable: entry.traversable,
         // General selection is intentionally independent from the backend
@@ -812,7 +831,11 @@ function FileBrowseView({
   readonly onRemoveLibraryRequest: (id: string) => void;
   readonly onCreateFolder: () => void;
   readonly onCreateText: () => void;
-  readonly onRename: (path: string, name: string) => void;
+  readonly onRename: (
+    path: string,
+    name: string,
+    expected: EntryVersionEvidenceVm,
+  ) => void;
   readonly onEdit: (path: string) => void;
   readonly onDelete: (paths: readonly string[]) => void;
   readonly onDiscoverDirectories: (paths: readonly string[]) => void;
@@ -1143,7 +1166,10 @@ function FileBrowseView({
                                 className="mf-card-menu-item"
                                 onClick={() => {
                                   setRowMenuPath(null);
-                                  onRename(row.path, row.name);
+                                  onRename(row.path, row.name, {
+                                    size: row.size,
+                                    modifiedAt: row.modifiedAt,
+                                  });
                                 }}
                               >
                                 重命名
@@ -1607,6 +1633,7 @@ export function StorageFilesPage() {
   const [commandResult, setCommandResult] =
     useState<DirectFileCommandResult | null>(null);
   const [editorStale, setEditorStale] = useState(false);
+  const [editorSaved, setEditorSaved] = useState(false);
   const [removalError, setRemovalError] = useState<string | null>(null);
   const statusQuery = useQuery(systemStatusQueryOptions(token));
   const status = statusQuery.data;
@@ -1792,41 +1819,161 @@ export function StorageFilesPage() {
     },
   });
 
+  // Rename/Delete success must clear or remap exactly the affected selection
+  // and directory-tree state; unrelated sibling selections stay independent.
+  const pruneAffectedBrowseState = (
+    removedPaths: readonly string[],
+    renameRemap: { readonly from: string; readonly to: string } | null,
+  ) => {
+    if (renameRemap !== null) {
+      const { from, to } = renameRemap;
+      const remap = (value: string) =>
+        value === from
+          ? to
+          : value.startsWith(from + "/")
+            ? to + value.slice(from.length)
+            : value;
+      const changed = (list: readonly string[], next: readonly string[]) =>
+        next.length !== list.length ||
+        next.some((value, index) => value !== list[index]);
+      setSelectedFiles((current) => {
+        if (!current.has(from)) return current;
+        const next = new Set(current);
+        next.delete(from);
+        next.add(to);
+        return next;
+      });
+      setKnownDirectoryPaths((current) => {
+        const next = current.map(remap);
+        return changed(current, next) ? next : current;
+      });
+      setVisitedDirectories((current) => {
+        const next = current.map(remap);
+        return changed(current, next) ? next : current;
+      });
+      return;
+    }
+    if (removedPaths.length === 0) return;
+    const isRemoved = (value: string) =>
+      removedPaths.some(
+        (path) => value === path || value.startsWith(path + "/"),
+      );
+    setSelectedFiles((current) => {
+      const next = new Set([...current].filter((path) => !isRemoved(path)));
+      return next.size === current.size ? current : next;
+    });
+    setKnownDirectoryPaths((current) => {
+      const next = current.filter((path) => !isRemoved(path));
+      return next.length === current.length ? current : next;
+    });
+    setVisitedDirectories((current) => {
+      const next = current.filter((path) => !isRemoved(path));
+      return next.length === current.length ? current : next;
+    });
+  };
+
   const commandMutation = useMutation({
     mutationFn: ({ options }: { readonly options: DirectFileCommandOptions }) =>
       submitDirectFileCommand(token, activeLibraryId, options),
     retry: false,
     onSuccess: (result, variables) => {
       if (!result.ok) {
+        if (
+          result.code === "files_direct_stale_content" &&
+          dialog?.kind === "editor"
+        ) {
+          // A stale save keeps the local edits and explicitly enters the
+          // reloadable editor state instead of a generic failure.
+          setCommandError(
+            directFileCommandFailure(result.code, result.details),
+          );
+          setEditorStale(true);
+          return;
+        }
         setCommandError(directFileCommandFailure(result.code, result.details));
         return;
       }
       setCommandResult(result.model);
-      if (
+      const knownEffectFailed =
         result.model.status === "FAILED" ||
-        result.model.durableState === "mutation_effect_uncertain"
-      ) {
+        result.model.durableState === "mutation_effect_uncertain";
+      if (variables.options.operation === "delete") {
+        // The response names the exact durable effect; refresh the live
+        // listing and prune only the successfully deleted paths.
+        void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+        void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        pruneAffectedBrowseState(
+          (result.model.outcomes ?? [])
+            .filter((outcome) => outcome.status === "SUCCESS")
+            .map((outcome) => outcome.path),
+          null,
+        );
+        if (knownEffectFailed) {
+          setCommandError(
+            directFileCommandFailure(result.model.errorCategory ?? "", {
+              durableState: result.model.durableState,
+            }),
+          );
+        } else {
+          setCommandError(null);
+        }
+        return;
+      }
+      if (knownEffectFailed) {
         setCommandError(
           directFileCommandFailure(result.model.errorCategory ?? "", {
             durableState: result.model.durableState,
           }),
         );
-        if (variables.options.operation === "delete") {
-          void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-        }
         return;
       }
       setCommandError(null);
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       if (dialog?.kind === "editor") {
-        // The exact saved version stays authoritative after a clean save.
         setEditorStale(false);
+        if (variables.options.operation === "save_text") {
+          // The exact saved version is now authoritative: refresh the editor
+          // evidence so the next Save submits the current version, and keep
+          // the editor open for consecutive saves.
+          setEditorSaved(true);
+          void queryClient
+            .refetchQueries({
+              queryKey: ["files-text", activeLibraryId, dialog.path],
+              exact: true,
+            })
+            .then(() => {
+              const refreshed = queryClient.getQueryData<{
+                readonly ok: boolean;
+              }>(["files-text", activeLibraryId, dialog.path]);
+              if (!refreshed || !refreshed.ok) {
+                // Without fresh evidence the next Save would fail stale;
+                // surface the explicit reload path instead.
+                setEditorStale(true);
+                setEditorSaved(false);
+              }
+            });
+          return;
+        }
       }
       if (dialog?.kind === "delete") {
         // Keep the impact dialog open: it now shows the durable per-item
         // outcome and recovery path.
         return;
+      }
+      if (dialog?.kind === "rename") {
+        // Remap the renamed path so no stale selection or tree node survives.
+        const renamePath =
+          variables.options.operation === "rename"
+            ? variables.options.path
+            : null;
+        const renameTarget =
+          variables.options.operation === "rename"
+            ? (result.model.target ?? variables.options.path)
+            : null;
+        if (renamePath !== null && renameTarget !== null) {
+          pruneAffectedBrowseState([], { from: renamePath, to: renameTarget });
+        }
       }
       const createdFile =
         dialog?.kind === "create_text" && result.model.target
@@ -1870,13 +2017,16 @@ export function StorageFilesPage() {
     saveError:
       dialog?.kind === "editor"
         ? (commandError ??
-          (commandResult !== null && commandResult.status !== "SUCCESS"
+          (commandResult !== null &&
+          commandResult.status !== "SUCCESS" &&
+          commandResult.status !== "PARTIAL"
             ? directFileCommandFailure(commandResult.errorCategory ?? "", {
                 durableState: commandResult.durableState,
               })
             : null))
         : null,
     stale: editorStale,
+    saved: editorSaved,
   };
 
   const deletePaths = dialog?.kind === "delete" ? dialog.paths : null;
@@ -1907,11 +2057,30 @@ export function StorageFilesPage() {
       : null;
 
   const removalMutation = useMutation({
-    mutationFn: (libraryId: string) => removeResourceLibrary(token, libraryId),
+    mutationFn: (input: {
+      readonly id: string;
+      readonly expected: {
+        readonly revisionId: string;
+        readonly version: number;
+        readonly digest: string;
+        readonly libraryId: string;
+      };
+    }) => removeResourceLibrary(token, input.id, input.expected),
     retry: false,
     onSuccess: (result) => {
       if (!result.ok) {
         setRemovalError(removalFailureMessage(result.code, result.details));
+        if (
+          result.code === "resource_library_removal_stale" ||
+          result.code === "configuration_conflict" ||
+          result.code === "configuration_version_conflict"
+        ) {
+          // The confirmation context stays open; re-read the preview from the
+          // new Active so the operator can re-review and confirm again.
+          void queryClient.invalidateQueries({
+            queryKey: ["resource-library-removal", removalTargetId],
+          });
+        }
         if (result.status >= 500 || result.code === "transport_unavailable") {
           void queryClient.invalidateQueries({ queryKey: ["system-status"] });
         }
@@ -2194,15 +2363,21 @@ export function StorageFilesPage() {
                           setCommandError(null);
                           setDialog({ kind: "create_text" });
                         }}
-                        onRename={(entryPath, name) => {
+                        onRename={(entryPath, name, expected) => {
                           setCommandError(null);
                           setCommandResult(null);
-                          setDialog({ kind: "rename", path: entryPath, name });
+                          setDialog({
+                            kind: "rename",
+                            path: entryPath,
+                            name,
+                            expected,
+                          });
                         }}
                         onEdit={(entryPath) => {
                           setCommandError(null);
                           setCommandResult(null);
                           setEditorStale(false);
+                          setEditorSaved(false);
                           setDialog({ kind: "editor", path: entryPath });
                         }}
                         onDelete={(paths) => {
@@ -2367,7 +2542,12 @@ export function StorageFilesPage() {
           onSubmit={(name) => {
             setCommandError(null);
             commandMutation.mutate({
-              options: { operation: "rename", path: dialog.path, name },
+              options: {
+                operation: "rename",
+                path: dialog.path,
+                name,
+                expected: dialog.expected,
+              },
             });
           }}
         />
@@ -2381,12 +2561,14 @@ export function StorageFilesPage() {
             setCommandError(null);
             setCommandResult(null);
             setEditorStale(false);
+            setEditorSaved(false);
             setDialog(null);
           }}
           onReload={() => {
             setCommandError(null);
             setCommandResult(null);
             setEditorStale(false);
+            setEditorSaved(false);
             void queryClient.invalidateQueries({
               queryKey: ["files-text", activeLibraryId, dialog.path],
             });
@@ -2394,6 +2576,7 @@ export function StorageFilesPage() {
           onSave={(content, evidence) => {
             setCommandError(null);
             setCommandResult(null);
+            setEditorSaved(false);
             commandMutation.mutate({
               options: {
                 operation: "save_text",
@@ -2452,6 +2635,10 @@ export function StorageFilesPage() {
         <DeleteResourceLibraryDialog
           preview={removalPreview}
           loading={removalPreviewQuery.isFetching}
+          mismatched={
+            removalPreview !== null &&
+            removalPreview.resourceLibrary.id !== dialog.id
+          }
           error={
             removalError ??
             (removalPreviewQuery.data !== undefined &&
@@ -2467,9 +2654,22 @@ export function StorageFilesPage() {
             setRemovalError(null);
             setDialog(null);
           }}
+          onRefreshPreview={() => {
+            setRemovalError(null);
+            void removalPreviewQuery.refetch();
+          }}
           onConfirm={() => {
             setRemovalError(null);
-            removalMutation.mutate(dialog.id);
+            if (removalPreview === null) return;
+            removalMutation.mutate({
+              id: dialog.id,
+              expected: {
+                revisionId: removalPreview.active.revisionId,
+                version: removalPreview.active.version,
+                digest: removalPreview.active.digest,
+                libraryId: dialog.id,
+              },
+            });
           }}
         />
       )}

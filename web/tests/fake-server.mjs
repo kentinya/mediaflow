@@ -674,7 +674,12 @@ function removalPreviewDocument(resourceLibraryId, state) {
             ],
             truncated: false,
           },
-    active: { status: "active", revisionId: "rev-e2e-2", version: 2 },
+    active: {
+      status: "active",
+      revisionId: "rev-e2e-2",
+      version: 2,
+      digest: "digest-e2e-2",
+    },
     sideEffects: "none",
   };
 }
@@ -4987,6 +4992,32 @@ const server = createServer(async (req, res) => {
     }
     const resourceLibraryId = decodeURIComponent(removalMatch[1]);
     const state = resourceLibraryState(session);
+    // The real backend rejects a confirmation that is not bound to the exact
+    // previewed Active revision and the selected library identity.
+    const confirmation = await readBoundedJsonBody(req, res);
+    if (
+      !confirmation.ok ||
+      confirmation.document.expectedRevisionId !== "rev-e2e-2" ||
+      confirmation.document.expectedVersion !== 2 ||
+      confirmation.document.expectedDigest !== "digest-e2e-2" ||
+      confirmation.document.expectedLibraryId !== resourceLibraryId
+    ) {
+      sendJson(res, 409, {
+        error: {
+          code: "resource_library_removal_stale",
+          message:
+            "the confirmed removal was previewed against a different Active configuration",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "refresh the current Active configuration, re-open the removal preview and confirm again",
+          },
+        },
+      });
+      return;
+    }
     if ((E2E_FAKE_REFERENCES.get(resourceLibraryId) ?? 0) > 0) {
       sendJson(res, 409, {
         error: {

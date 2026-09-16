@@ -37,6 +37,7 @@ from mediaflow.domain.direct_files import (
     DirectFileImpactEntry,
     DirectFileOperation,
     DirectFileTextDocument,
+    EntryVersionEvidence,
     TextVersionEvidence,
     is_text_file_name,
     unsafe_direct_basename,
@@ -242,11 +243,20 @@ class DirectFileCommandService:
             target=target,
         )
 
-    def rename(self, *, resource_library_id: str, path: str, name: str) -> dict[str, object]:
+    def rename(
+        self,
+        *,
+        resource_library_id: str,
+        path: str,
+        name: str,
+        expected: Mapping[str, object],
+    ) -> dict[str, object]:
         library = self._library(resource_library_id)
         source = self._relative_path(path)
         self._require_non_root(source)
         self._require_basename(name)
+        expected_size = self._expected_evidence_field(expected, "size", int)
+        expected_modified = self._expected_evidence_field(expected, "modifiedAt", str)
         parent = posixpath.dirname(source)
         target = posixpath.join(parent, name)
         if target == source:
@@ -259,7 +269,12 @@ class DirectFileCommandService:
                 next_action="enter a different name or cancel the rename",
             )
         storage = self._require_writable_storage(library)
-        self._require_existing_entry(library, storage, source)
+        entry = self._stat_entry(library, storage, source)
+        if entry.size != expected_size or entry.modified_at.isoformat() != expected_modified:
+            raise self._stale_source_error(library, source)
+        source_evidence = EntryVersionEvidence(
+            size=entry.size, modified_at=entry.modified_at.isoformat()
+        )
         self._require_target_free(library, storage, target)
         return self._run_single(
             library,
@@ -271,6 +286,7 @@ class DirectFileCommandService:
                 storage,
                 full,
                 _join_resource_library_path(library.root_path, target),
+                source_evidence=source_evidence,
                 execute=True,
             ),
             target=target,
@@ -297,6 +313,11 @@ class DirectFileCommandService:
         raw = self._read_bounded(current, full, entry.size)
         if hashlib.sha256(raw).hexdigest() != expected_digest:
             raise self._stale_error(library, relative, "stale_changed")
+        expected_evidence = EntryVersionEvidence(
+            size=expected_size,
+            modified_at=entry.modified_at.isoformat(),
+            digest=expected_digest,
+        )
         return self._run_single(
             library,
             current,
@@ -304,7 +325,12 @@ class DirectFileCommandService:
             library_path=relative,
             storage_path=full,
             executor_call=lambda full_path: self._executor.execute_direct_write(
-                current, full_path, encoded, overwrite=True, execute=True
+                current,
+                full_path,
+                encoded,
+                overwrite=True,
+                expected_evidence=expected_evidence,
+                execute=True,
             ),
             target=relative,
         )
@@ -322,11 +348,23 @@ class DirectFileCommandService:
             entry = self._stat_entry(library, storage, relative)
             self._require_deletable_entry(library, relative, entry)
             if entry.entry_type is StorageEntryType.DIRECTORY:
-                entries.append(DirectFileImpactEntry(path=relative, is_directory=True, size=0))
+                entries.append(
+                    DirectFileImpactEntry(
+                        path=relative,
+                        is_directory=True,
+                        size=0,
+                        modified_at=entry.modified_at.isoformat(),
+                    )
+                )
                 self._enumerate_into(library, storage, relative, entries)
             else:
                 entries.append(
-                    DirectFileImpactEntry(path=relative, is_directory=False, size=entry.size)
+                    DirectFileImpactEntry(
+                        path=relative,
+                        is_directory=False,
+                        size=entry.size,
+                        modified_at=entry.modified_at.isoformat(),
+                    )
                 )
             self._enforce_impact_limits(library, entries)
         entries.sort(key=lambda entry: entry.path)
@@ -363,11 +401,23 @@ class DirectFileCommandService:
             entry = self._stat_entry(library, storage, relative)
             self._require_deletable_entry(library, relative, entry)
             if entry.entry_type is StorageEntryType.DIRECTORY:
-                entries.append(DirectFileImpactEntry(path=relative, is_directory=True, size=0))
+                entries.append(
+                    DirectFileImpactEntry(
+                        path=relative,
+                        is_directory=True,
+                        size=0,
+                        modified_at=entry.modified_at.isoformat(),
+                    )
+                )
                 self._enumerate_into(library, storage, relative, entries)
             else:
                 entries.append(
-                    DirectFileImpactEntry(path=relative, is_directory=False, size=entry.size)
+                    DirectFileImpactEntry(
+                        path=relative,
+                        is_directory=False,
+                        size=entry.size,
+                        modified_at=entry.modified_at.isoformat(),
+                    )
                 )
             self._enforce_impact_limits(library, entries)
         if self._scope_digest(library.library_id, entries) != confirmation_digest:
@@ -415,8 +465,20 @@ class DirectFileCommandService:
             except Exception as error:
                 outcomes.append(self._locked_outcome(entry, error))
                 continue
-            result = self._executor.execute_direct_delete(storage, full, execute=True)
-            self._record_item(item, result)
+            # The executor re-verifies the confirmed entry evidence at the
+            # last safe boundary, so content swapped in after the impact
+            # preview is never destroyed even under a pre-mutation race.
+            result = self._executor.execute_direct_delete(
+                storage,
+                full,
+                entry_evidence=EntryVersionEvidence(
+                    size=entry.size,
+                    modified_at=entry.modified_at,
+                    is_directory=entry.is_directory,
+                ),
+                execute=True,
+            )
+            self._record_item(item, result, target_path=entry.path)
             if result.effect_certainty is _UNCERTAIN:
                 uncertain = True
             outcomes.append(
@@ -435,6 +497,17 @@ class DirectFileCommandService:
         failed = sum(1 for item in items if item.status in _FAILED_ITEM_STATUSES)
         document: dict[str, object] = {
             "operation": DirectFileOperation.DELETE.value,
+            # The stable command result contract: every terminal state names
+            # the known durable effect so the Web result view never has to
+            # guess from taskStatus alone.
+            "status": _delete_command_status(
+                uncertain=uncertain,
+                paused=paused,
+                cancelled=cancelled,
+                succeeded=succeeded,
+                failed=failed,
+                attempted=len(items),
+            ),
             "taskId": task.task_id,
             "taskStatus": final.status.value,
             "topLevelPaths": targets,
@@ -451,6 +524,11 @@ class DirectFileCommandService:
                 else "refresh the directory; failed or remaining items keep their own outcome"
             ),
         }
+        if paused or cancelled:
+            document["nextAction"] = (
+                "refresh the directory; completed items stay deleted and remaining items "
+                "keep their own outcome"
+            )
         if uncertain:
             document["durableState"] = "mutation_effect_uncertain"
             document["status"] = "UNCERTAIN"
@@ -504,7 +582,7 @@ class DirectFileCommandService:
                 next_action="resume the Task from Operations and retry the command",
             ) from None
         result = executor_call(storage_path)
-        self._record_item(item, result)
+        self._record_item(item, result, target_path=target)
         self._tasks.finish(task.task_id, _empty_batch())
         document = {
             "operation": operation.value,
@@ -535,7 +613,7 @@ class DirectFileCommandService:
             )
         return document
 
-    def _record_item(self, item, result) -> None:
+    def _record_item(self, item, result, *, target_path: str | None = None) -> None:
         status = {
             "SUCCESS": TaskItemStatus.SUCCESS,
             "DRY_RUN": TaskItemStatus.DRY_RUN,
@@ -545,6 +623,7 @@ class DirectFileCommandService:
             item,
             status=status,
             operation=result.operation.value,
+            target_path=target_path,
             error="; ".join(result.errors)[:512] if result.errors else None,
             effect_certainty=result.effect_certainty.value,
             uncertain_effects=tuple(result.uncertain_effects),
@@ -679,11 +758,6 @@ class DirectFileCommandService:
                 next_action="choose an existing directory as the destination",
             )
 
-    def _require_existing_entry(
-        self, library: ResourceLibrary, storage: Storage, relative: str
-    ) -> None:
-        self._stat_entry(library, storage, relative)
-
     @staticmethod
     def _read_bounded(storage: Storage, full: str, size: int) -> bytes:
         """Read exactly one bounded payload; a grown file fails the read."""
@@ -816,6 +890,7 @@ class DirectFileCommandService:
                         path=child_relative,
                         is_directory=child_is_directory,
                         size=0 if child_is_directory else child.size,
+                        modified_at=child.modified_at.isoformat(),
                     )
                 )
                 if child.entry_type is StorageEntryType.DIRECTORY:
@@ -931,6 +1006,18 @@ class DirectFileCommandService:
             next_action="reload the current content, reapply the edits and save again",
         )
 
+    @staticmethod
+    def _stale_source_error(library: ResourceLibrary, relative: str) -> DirectFileError:
+        return DirectFileError(
+            "files_direct_stale_source",
+            "stale_source",
+            "the entry changed since it was observed; nothing was renamed",
+            status=409,
+            resource_library_id=library.library_id,
+            path=relative,
+            next_action="refresh the directory and rename the current entry again",
+        )
+
     def _impact_limit_error(self, library: ResourceLibrary, category: str) -> DirectFileError:
         return DirectFileError(
             f"files_direct_{category}",
@@ -951,7 +1038,12 @@ class DirectFileCommandService:
             {
                 "resourceLibraryId": resource_library_id,
                 "entries": [
-                    [entry.path, "d" if entry.is_directory else "f", entry.size]
+                    [
+                        entry.path,
+                        "d" if entry.is_directory else "f",
+                        entry.size,
+                        entry.modified_at,
+                    ]
                     for entry in sorted(entries, key=lambda entry: entry.path)
                 ],
             },
@@ -986,6 +1078,30 @@ class DirectFileCommandService:
         )
 
 
+def _delete_command_status(
+    *,
+    uncertain: bool,
+    paused: bool,
+    cancelled: bool,
+    succeeded: int,
+    failed: int,
+    attempted: int,
+) -> str:
+    """The stable Delete result status naming the known durable effect."""
+
+    if uncertain:
+        return "UNCERTAIN"
+    if paused:
+        return "PAUSED"
+    if cancelled:
+        return "CANCELLED"
+    if failed == 0 and succeeded == attempted and attempted > 0:
+        return "SUCCESS"
+    if succeeded == 0:
+        return "FAILED"
+    return "PARTIAL"
+
+
 def _result_error_category(result) -> str | None:
     if not result.errors:
         return None
@@ -994,6 +1110,8 @@ def _result_error_category(result) -> str | None:
     text = "; ".join(result.errors).casefold()
     if "already exists" in text:
         return "target_exists"
+    if "changed since it was" in text:
+        return "source_changed"
     if "capability denied" in text or "read only" in text:
         return "capability_denied"
     if "unsupported capability" in text:

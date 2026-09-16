@@ -952,6 +952,10 @@ class ConfigurationObjectService:
         resource_library_id: str,
         *,
         actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        expected_library_id: str | None = None,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
     ) -> ManagedConfigurationRevision:
         """Remove one unreferenced ResourceLibrary as a managed successor.
@@ -960,14 +964,28 @@ class ConfigurationObjectService:
         involves OrganizerExecutor: it removes only the selected ResourceLibrary
         from a successor of the immutable Active document, validates that
         successor completely, and publishes it through the existing checked
-        atomic activation boundary.  Any reference, validation, concurrency or
-        runtime failure preserves the previous Active.
+        atomic activation boundary.  The confirmation is bound to the exact
+        Active revision the operator previewed: a stale, mismatched, missing
+        or disabled selection is rejected before any successor is constructed.
+        Any reference, validation, concurrency or runtime failure preserves
+        the previous Active.
         """
 
         if not isinstance(resource_library_id, str) or not self._RESOURCE_LIBRARY_SAVE_ID.fullmatch(
             resource_library_id
         ):
             raise ValueError("ResourceLibrary removal requires a valid ResourceLibrary ID")
+        if (
+            not isinstance(expected_revision_id, str)
+            or not expected_revision_id
+            or not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or not isinstance(expected_digest, str)
+            or not expected_digest
+        ):
+            raise ValueError(
+                "ResourceLibrary removal requires the previewed Active revision identity"
+            )
 
         active = self._managed.active()
         if active is None:
@@ -977,7 +995,41 @@ class ConfigurationObjectService:
                 reason="active_missing",
             )
         self._managed.verify_integrity(active)
+        if (
+            expected_library_id is not None and expected_library_id != resource_library_id
+        ) or active.revision_id != expected_revision_id:
+            raise ResourceLibrarySaveError(
+                "resource_library_removal_stale",
+                "the confirmed removal was previewed against a different Active "
+                "configuration; the current Active remains in use",
+                status=409,
+                durable_state="active_preserved",
+                next_action=(
+                    "refresh the current Active configuration, re-open the removal preview "
+                    "and confirm again"
+                ),
+            )
+        if active.version != expected_version or active.digest != expected_digest:
+            raise ResourceLibrarySaveError(
+                "resource_library_removal_stale",
+                "the Active configuration changed since the removal was previewed; the "
+                "current Active remains in use",
+                status=409,
+                durable_state="active_preserved",
+                next_action=(
+                    "refresh the current Active configuration, re-open the removal preview "
+                    "and confirm again"
+                ),
+            )
         resource = self._active_resource_library(active, resource_library_id)
+        if resource.get("enabled", True) is not True:
+            raise ResourceLibrarySaveError(
+                "resource_library_disabled",
+                "a disabled ResourceLibrary cannot be removed from the Files removal journey",
+                status=409,
+                durable_state="active_preserved",
+                next_action="enable the ResourceLibrary first or select an enabled library",
+            )
 
         references = self._references_for(
             ConfigurationObjectKind.RESOURCE_LIBRARY,

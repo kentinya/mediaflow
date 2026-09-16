@@ -2084,6 +2084,7 @@ export type DirectFileCommandOptions =
       readonly operation: "rename";
       readonly path: string;
       readonly name: string;
+      readonly expected: { readonly size: number; readonly modifiedAt: string };
     }
   | {
       readonly operation: "save_text";
@@ -2122,6 +2123,10 @@ export async function submitDirectFileCommand(
   } else if (options.operation === "rename") {
     body.path = options.path;
     body.name = options.name;
+    body.expected = {
+      size: options.expected.size,
+      modifiedAt: options.expected.modifiedAt,
+    };
   } else if (options.operation === "save_text") {
     body.path = options.path;
     body.content = options.content;
@@ -2298,22 +2303,45 @@ export async function fetchResourceLibraryRemovalPreview(
 
 /**
  * Removes one unreferenced ResourceLibrary from managed configuration.  The
- * backend publishes the validated successor atomically and never touches
- * Storage content.
+ * request binds the exact previewed Active revision and selected library
+ * identity; the backend rejects stale, mismatched or disabled confirmations
+ * and publishes the validated successor atomically, never touching Storage
+ * content.
  */
 export async function removeResourceLibrary(
   token: string | null,
   resourceLibraryId: string,
+  expected: {
+    readonly revisionId: string;
+    readonly version: number;
+    readonly digest: string;
+    readonly libraryId: string;
+  },
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<ResourceLibraryRemovalModel>> {
-  if (resourceLibraryId.trim().length === 0 || resourceLibraryId.length > 128) {
+  if (
+    resourceLibraryId.trim().length === 0 ||
+    resourceLibraryId.length > 128 ||
+    expected.libraryId !== resourceLibraryId ||
+    expected.revisionId.trim().length === 0 ||
+    expected.revisionId.length > 128 ||
+    expected.digest.trim().length === 0 ||
+    expected.digest.length > 128 ||
+    !Number.isSafeInteger(expected.version) ||
+    expected.version < 0
+  ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
   return submitAutomationMutation(
     token,
     "DELETE",
     `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
-    {},
+    {
+      expectedRevisionId: expected.revisionId,
+      expectedVersion: expected.version,
+      expectedDigest: expected.digest,
+      expectedLibraryId: expected.libraryId,
+    },
     normalizeResourceLibraryRemoval,
     fetchImpl,
   );

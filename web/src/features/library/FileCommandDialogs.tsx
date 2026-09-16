@@ -198,6 +198,7 @@ export interface TextEditorState {
   readonly document: TextFileDocument | null;
   readonly saveError: string | null;
   readonly stale: boolean;
+  readonly saved: boolean;
 }
 
 export function TextEditorDialog({

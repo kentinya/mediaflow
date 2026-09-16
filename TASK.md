@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.3
 Parent Slice: 37
-Status: READY FOR B REVIEW
+Status: IN PROGRESS
 Task Base: e33a030055a81011a32de507bef6758d48607c9a
 Difficulty: High
 Test Level: T4
@@ -345,127 +345,153 @@ SMB/OpenList/S3/TMDB service, production credential or real media directory is p
   hard-coded sample library records, a fixed four/five-library maximum, or committing/generated
   rewriting of the local `web/test-results/` interaction references.
 
-## Developer Completion Report
+## Developer Completion Report — CORRECTION LOOP (Task 37.3 FIX REQUIRED)
+
+This is the correction-loop report for the same Task 37.3. It replaces the
+previous report's Checkpoint; Task ID, Task Base, Goal and Scope are unchanged.
+Only the blockers listed under the `B Review Result` section and their direct
+root causes were fixed, plus the test/fake contract updates those fixes require.
 
 ### Changed Files
 
+Correction-loop changes on top of `75abfe3` + `a11292e`:
+
 Backend:
 
-- `mediaflow/domain/direct_files.py` (new) — direct-command vocabulary, bounded
-  basename/text limits and allowlists, text-version evidence, bounded Delete
-  impact models.
-- `mediaflow/domain/organizer.py` — `PlanOperation` gains
-  `CREATE_DIRECTORY`/`WRITE`/`RENAME`/`DELETE` for the direct boundary (the
-  planner still produces only the five organize operations).
-- `mediaflow/application/organizer.py` — `OrganizerExecutor` narrow extension:
-  `execute_direct_create_directory/write/rename/delete` with dry-run,
-  capability, conflict, authority and post-mutation verification gates, plus
-  `_direct_capability_error`/`_DirectCommandPlan` helpers.
-- `mediaflow/application/direct_file_commands.py` (new) —
-  `DirectFileCommandService`: Active-snapshot admission, confinement, text
-  read/save evidence (size+digest), bounded impact enumeration with scope
-  digest, confirmed execution and durable per-item outcomes through
-  `PersistentTaskCoordinator` (new `complete_direct_item`), pause/cancel
-  handling; `DirectFileError` bounded error envelope.
-- `mediaflow/application/task_runtime.py` — `complete_direct_item` persists a
-  bounded result record and releases the operation lock.
-- `mediaflow/domain/task_persistence.py` — `FILES_DIRECT_COMMAND_TASK` /
-  `FILES_DELETE_TASK_COMMAND` task command names.
-- `mediaflow/application/configuration_objects.py` — extracted the shared
-  successor evidence gates into `_checked_successor_evidence` (Save behavior
-  unchanged) and added `remove_resource_library` +
-  `resource_library_removal_evidence` (referenced protection, successor draft,
-  complete validation, `activate_checked` atomic publication).
-- `mediaflow/interfaces/service_api.py` — new routes `POST
-  /api/v1/resource-libraries/{id}/files/commands`, `GET .../files/text`,
-  `GET .../files/delete-impact`, `GET .../removal-preview`,
-  `DELETE /api/v1/resource-libraries/{id}`; `DirectFileCommandService` wired
-  into the immutable runtime binding; `DirectFileError` mapping, audit-route
-  templates and read-audit suppression for the bounded reads.
-- `mediaflow/application/manual_organize_preview.py`,
-  `mediaflow/application/storage_browser.py` — lint-only fixes for six
-  pre-existing `ruff check .` failures (line wraps; kept the admission call in
-  `RuntimeFilesBrowserService.browse`).
+- `mediaflow/application/direct_file_commands.py` — Save evidence now carries
+  the exact loaded `modifiedAt` into `EntryVersionEvidence`; Delete execution
+  passes per-entry server-issued evidence to the executor; Delete responses
+  always carry the stable `status` (`SUCCESS`/`PARTIAL`/`FAILED`/`PAUSED`/
+  `CANCELLED`/`UNCERTAIN`) naming the known durable effect; single-command
+  results persist the exact logical `target` path.
+- `mediaflow/application/organizer.py` — `execute_direct_write` re-verifies the
+  loaded digest/size at the last safe boundary before an overwrite write;
+  `execute_direct_rename` re-verifies observed source size/mtime;
+  `execute_direct_delete` re-verifies confirmed entry evidence (files: exact
+  size+mtime; directories: entry type, because a directory's mtime legitimately
+  changes while its confirmed children are deleted).
+- `mediaflow/application/task_runtime.py` — `complete_direct_item` accepts the
+  bounded logical target and persists `destination_path` truthfully (Rename no
+  longer records the source as its own destination); the durable
+  source/target are ResourceLibrary-relative, never host roots.
+- `mediaflow/application/configuration_objects.py` — `remove_resource_library`
+  binds the confirmation to the exact previewed Active revision
+  (`expected_revision_id`/`expected_version`/`expected_digest`) and the
+  selected library identity, and refuses a disabled ResourceLibrary before any
+  successor is constructed.
+- `mediaflow/interfaces/service_api.py` — the removal `DELETE` route requires
+  exactly the four confirmation fields; Rename requires the `expected` observed
+  evidence; the removal preview already publishes `active` (revisionId/
+  version/digest) from `configuration_objects`.
+- `mediaflow/domain/direct_files.py` — `EntryVersionEvidence` mutation-fencing
+  model; `DirectFileImpactEntry.modified_at` participates in the scope digest
+  so a same-size replacement between preview and confirmation is stale.
+- `tests/test_direct_file_operations.py` — updated to the strict contracts and
+  extended with the correction-loop regressions listed under Tests.
 
 Web:
 
-- `web/src/entities/library/direct-files.ts` (new) — text/impact/command/
-  removal models and strict normalizers; `isTextFileName`.
-- `web/src/shared/api/api-client.ts` — `submitDirectFileCommand`,
-  `fetchTextFile`, `fetchDeleteImpact`, `fetchResourceLibraryRemovalPreview`,
-  `removeResourceLibrary` (mutation helper now also admits `DELETE`).
-- `web/src/features/library/LibraryCardStrip.tsx` (new) — responsive visible
-  card budget, `更多` popover with search and promotion semantics,
-  `CardActionMenu` (`删除资源库`).
-- `web/src/features/library/FileCommandDialogs.tsx` (new) — `ModalDialog`,
-  `NamePromptDialog` (Create Folder/Text/Rename), stale-safe
-  `TextEditorDialog`, `DeleteImpactDialog` with durable outcome view.
-- `web/src/features/library/DeleteResourceLibraryDialog.tsx` (new) — removal
-  confirmation with bounded reference evidence, `/review` resolution route and
-  the exact Storage-safety copy.
-- `web/src/features/library/StorageFilesPage.tsx` — drawer closed by default
-  with focus restoration; strip/summary switch; zero-ResourceLibrary
-  full-width empty state; URL route-state selection continuity with
-  deterministic fallback notice (no hard-coded default id); toolbar/row-menu/
-  selection command journeys; command failure copy; text editor and delete
-  confirmation wiring; removal flow.
-- `web/src/shared/ui/Icons.tsx`, `web/src/shared/ui/styles.css` — trash icon
-  and strip/popover/menu/dialog/empty-state styles.
-- `web/src/features/library/StorageFilesPage.test.tsx`,
-  `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs` — new
-  unit/e2e coverage and fake endpoints/fixtures.
+- `web/src/entities/library/direct-files.ts` — `normalizeRemovalPreview` now
+  requires the `active` revision identity (fails closed without it).
+- `web/src/entities/library/direct-files.test.ts` (new) — contract regression
+  feeding the real backend Delete payloads (success/partial/paused/cancelled/
+  failed/uncertain, no hand-added `status`) and the real removal-preview
+  payload through the strict normalizers; proves a `status`-less legacy
+  response fails closed.
+- `web/src/shared/api/api-client.ts` — `removeResourceLibrary` submits the
+  confirmation binding (`expectedRevisionId`/`expectedVersion`/`expectedDigest`/
+  `expectedLibraryId`); Rename submits the observed `expected` evidence.
+- `web/src/features/library/StorageFilesPage.tsx` — stale text Save keeps the
+  local edits and explicitly enters the reloadable editor state; a successful
+  Save refetches the `files-text` query so the next Save submits fresh
+  evidence; Rename/Delete success prunes or remaps `selectedFiles`,
+  `knownDirectoryPaths` and `visitedDirectories` (siblings keep their own
+  independent selections); Delete outcomes prune only successfully deleted
+  paths; removal stale/conflict failures invalidate the preview so the operator
+  can re-review and confirm again.
+- `web/src/features/library/DeleteResourceLibraryDialog.tsx` — blocks the
+  confirmation while the preview is loading, mismatched with the selection, or
+  the library is disabled; offers 重新获取预览并重审 after a stale refusal.
+- `web/src/features/library/LibraryCardStrip.tsx` — removed the hard-coded
+  12-item popover cap; the bounded scroll list now renders every authoritative
+  overflow entry (search still filters it).
+- `web/src/features/library/StorageFilesPage.test.tsx` — fixtures updated to
+  the strict preview contract; new tests for 13+ library discovery/selection,
+  stale save recovery, consecutive-save evidence refresh, partial-Delete
+  durable outcome.
+- `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs` — fake
+  preview exposes the full `active` identity; the fake removal `DELETE`
+  validates the confirmation binding and returns the real
+  `resource_library_removal_stale` 409 contract; new e2e journey for a stale
+  removal confirmation (dialog stays open with the re-review action, library
+  remains configured).
 
 ### Implemented
 
-- Backend: all five direct file commands (CREATE_DIRECTORY, CREATE_TEXT,
-  RENAME, SAVE_TEXT, DELETE) admitted against the exact immutable Active
-  ResourceLibrary snapshot and executed only through the new
-  `OrganizerExecutor` direct methods; admission re-checks confinement,
-  basename safety, existence/type, capability, stale evidence and bounds
-  immediately before mutation; every command persists a durable task/item/
-  result record; recursive or multi-item Delete runs as one Task with
-  independent per-item outcomes, pause/cancel observation, bounded impact
-  summary and a scope-digest-bound confirmation; ResourceLibrary removal is a
-  managed-configuration command (reference-protected, validated, checked
-  activation, prior Active preserved on every failure, zero Storage/executor
-  mutation); authenticated API surface with stable action-oriented errors and
-  secret-free details.
-- Web: the ResourceLibrary strip replaces the obscurable native selector
-  (complete cards fill the width, overflow reachable through the searchable
-  unclipped `更多` popover, selection promoted into the visible row and the
-  previous promoted card returned to overflow); the selected card exposes its
-  own `…` menu with `删除资源库`; removal confirmation identifies name,
-  Storage, relative root, references and the exact safety sentence; Files
-  toolbar/row/selection actions deliver Create Folder/Text File, Rename, Edit
-  (stale-safe, editor content preserved on stale) and Delete (bounded impact +
-  one confirmation + durable outcome); the Add ResourceLibrary drawer is an
-  operator-invoked state only; the zero-library Active configuration renders
-  the full-width empty state with both explicit add entries and no fabricated
-  ResourceLibrary-scoped request; selection survives route re-entry, deep link
-  and reload via URL route state with a deterministic, explained fallback and
-  no hard-coded default library.
+- Delete result contract: every terminal Delete response now carries a stable
+  `status` that names the known durable effect, so `normalizeDirectFileCommandResult()`
+  succeeds on the real API response and the Web result view shows the true
+  durable outcome (per-item outcomes, partial failures and uncertainty stay
+  visible and are never auto-replayed). A contract regression feeds the real
+  backend payload shapes through the frontend normalizer; the fakes no longer
+  invent a `status` the backend never sent.
+- Exact source/scope/version fencing: Rename requires and re-verifies
+  server-issued observed evidence (size + mtime); Delete impact entries carry
+  `modifiedAt` into the scope digest, and the executor re-verifies each
+  confirmed entry (files: size+mtime; directories: entry type) immediately
+  before mutation; text Save re-verifies the exact loaded digest+size inside
+  `OrganizerExecutor` at the last safe boundary. Same-size source replacement
+  between preview/admission and mutation now fails stale with zero erroneous
+  mutation, including a simulated pre-mutation race.
+- ResourceLibrary removal confirmation binding: the preview publishes the exact
+  Active `revisionId`/`version`/`digest`; the `DELETE` request must carry that
+  identity plus the selected library id; the backend rejects stale,
+  mismatched, missing or disabled confirmations with 409
+  `resource_library_removal_stale` / `resource_library_disabled` before any
+  successor work, preserving the prior Active; the Web keeps the confirmation
+  context open with a refresh-and-re-review action.
+- Text editor recovery: stale Save keeps local edits and renders the explicit
+  reload state; a successful Save refetches the authoritative text so the next
+  Save submits the new version (stale→reload/reapply and consecutive-save
+  covered by unit tests).
+- Rename/Delete browse-state hygiene: known-success results prune or remap the
+  affected `selectedFiles`/`knownDirectoryPaths`/`visitedDirectories`; renamed
+  paths are remapped to their new identity; unaffected siblings keep their own
+  selections and outcomes.
+- Durable Rename target: `complete_direct_item` persists the exact bounded
+  logical target, so the durable Result records `rename-me.txt -> renamed.txt`
+  (covered for Create/Rename/Save/Delete; host roots never enter the record).
+- `更多` discoverability: the hard-coded 12-item popover cap is gone; every
+  authoritative overflow entry stays reachable in the bounded scroll list with
+  local search; covered by a 13-library unit journey (discovery, selection,
+  promotion beyond the previous cap).
+- Report SHA: this checkpoint's Head SHA below is the exact resolvable commit
+  containing the report itself.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/ruff format --check .` — PASS (303 files).
-- `.venv/bin/ruff check .` — PASS (six pre-existing failures fixed as in-scope
-  lint hygiene; all other work is new code).
+- `.venv/bin/ruff format --check .` — PASS (304 files).
+- `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS
-  (29 tests: executor gates, admission, stale, impact limits, task outcomes,
-  executor-only mutation, read-only denial, API/RBAC, removal journeys).
+  (38 tests, including new correction-loop regressions: rename stale-source
+  fencing, same-size delete-scope swap refusal, save boundary re-verification
+  with an injected pre-mutation race, delete `status` contract for
+  SUCCESS/PARTIAL, durable source/target identity for Create/Rename/Save/
+  Delete, rename API evidence enforcement, stale/mismatched/disabled/incomplete
+  removal refusals).
 - `.venv/bin/python -m unittest tests.test_resource_library_activation
   tests.test_configuration_objects` — PASS.
 - `.venv/bin/python -m unittest tests.test_organizer
   tests.test_organizer_mutation_authority tests.test_organizer_rollback
-  tests.test_runtime_files_browser tests.test_api_security` — PASS (242 total
-  across these and the Storage adapter modules).
+  tests.test_runtime_files_browser tests.test_api_security` — PASS.
 - `.venv/bin/python -m unittest tests.test_local_storage
   tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage` —
   PASS.
-- `.venv/bin/python -m unittest discover -s tests` — 1566 tests:
-  PASS except 3 known failures, each reproduced on a pristine HEAD worktree
-  and therefore `FAIL / PRE-EXISTING / UNRELATED`:
+- Combined targeted suites (281 tests) — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — 1576 tests: PASS except 3
+  failures, each reproduced identically on a pristine `a11292e` worktree and
+  therefore `FAIL / PRE-EXISTING / UNRELATED`:
   `test_configuration_status.ConfigurationSnapshotTests.
   test_hostile_configuration_content_is_never_exposed`,
   `test_manual_operations_contract.ManualOperationsContractTests.
@@ -475,66 +501,71 @@ Web:
   pre-existing real-service acceptance skips.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m pip check` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — FAIL /
-  PRE-EXISTING / UNRELATED: manual Organize choice returns HTTP 400
-  (`invalid_request ... expectedVersion`) at
-  `scripts/docker_release_security_smoke_test.py:943`; reproduced identically
-  on a pristine HEAD worktree.
 - `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` —
-  PASS.
+  PASS (verified with grep; `rg` is not installed in this environment, the
+  matched set is empty either way).
 - `cd web && npm run format:check` / `npm run typecheck` / `npm run lint` —
   PASS.
 - `cd web && npx vitest run src/features/library/StorageFilesPage.test.tsx` —
-  PASS (14 tests: drawer-closed entry, empty state, strip/promotion, removal
-  confirm/refusal, create/delete/edit journeys).
-- `cd web && npm run test -- --run` — PASS (419 tests / 32 files).
+  PASS (18 tests).
+- `cd web && npx vitest run src/entities/library/direct-files.test.ts` — PASS
+  (10 tests, real-payload contract regression).
+- `cd web && npm run test -- --run` — PASS (433 tests / 33 files).
 - `cd web && npm run build` — PASS.
 - `cd web && npx playwright test tests/e2e/library-files.spec.ts
-  --project=chromium` — PASS (22 tests, including new strip/更多 promotion,
-  empty-state, create/rename/edit/delete and removal-confirmation journeys).
-- `cd web && npm run test:e2e` — 101 PASS; 10 failures, each reproduced on a
-  pristine HEAD worktree build and therefore `FAIL / PRE-EXISTING /
-  UNRELATED` (7 × `library-file-detail.spec.ts`, 3 ×
-  `manual-operations.spec.ts`).
-- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` +
-  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
-  (SHA-256 27225bd2…, checked 2026-09-15).
-- `git diff --check` — PASS. Manifest inspected: `config/alist.json`, the
-  dirty `docs/pics/文件页.png`, credentials, `web/test-results/` references
-  and unrelated files are absent from the checkpoint (the pip-wheel
-  `node_modules/` build artifact was deleted, not committed).
+  --project=chromium` — PASS (23 tests, including the new stale-removal
+  confirmation journey and 13+-library overflow discoverability is covered in
+  unit tests; e2e covers strip/更多 promotion, empty state, create/rename/
+  edit/delete and removal journeys).
+- `cd web && npm run test:e2e` — 101 PASS; 10 failures, all in
+  `library-file-detail.spec.ts` (7) and `manual-operations.spec.ts` (3).
+  Reproduced serially (`--workers=1`) on both the working tree and a pristine
+  `a11292e` worktree with identical test names and counts (10 failed / 9
+  passed on both): `FAIL / PRE-EXISTING / UNRELATED`. Root cause evidence: the
+  FileIndex detail routes were removed from the router in `b507edb` (before
+  this Task's base `e33a030`), while `library-file-detail.spec.ts` still
+  navigates to `/ui-v2/library/file-index*` and the fake server serves the
+  "Route not found" boundary for them; the file-index fake fixtures were
+  removed in the same commit and neither file was touched by Task 37.3.
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w <tmp>` +
+  `.venv/bin/python scripts/wheel_smoke_test.py` — PASS (Status: PASS, backup
+  SHA-256 `27225bd2c66d...`); the wheel and `dist/` build outputs were removed
+  afterwards and are not committed.
+- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE in this
+  environment: the Docker daemon cannot see bind-mount sources created by this
+  session (`invalid mount config for type "bind": bind source path does not
+  exist`), reproduced identically for `/tmp` and `/var/tmp` paths and with the
+  same script on a pristine `a11292e` worktree, so the failure is an
+  environment/daemon mount-visibility limitation, not a code change. The
+  script's earlier stages (image build context, config generation) complete;
+  the failure occurs at `docker compose up` mount time.
+- `git diff --check` — PASS. Staged manifest inspected (17 files listed above):
+  `config/alist.json`, the dirty `docs/pics/文件页.png`, credentials,
+  `web/test-results/` references and unrelated files are absent.
 
 ### Decisions
 
-- Direct commands reuse `EXECUTE_MANUAL_ORGANIZE` as the mutation permission
-  (viewer/read-only principals keep read-only access) and keep
-  configuration-scoped permissions for removal — no new RBAC vocabulary.
-- Every attempted command persists one durable Task/item/result record:
-  single-file operations use command `files_direct_command`, bounded
-  multi-item/recursive Delete uses `files_delete`, executed synchronously
-  within the admitting request while remaining pause/cancel observable; the
-  response reports per-item outcomes and the Task id for recovery.
-- Text save staleness is judged by size + sha256 digest of the current content
-  (mtime alone is not reliable across SMB providers); the editor keeps local
-  edits on stale and offers explicit reload.
-- Delete impact flattens directories bottom-up into per-entry items; the
-  selected directory itself is part of the impact; symlinks and ResourceLibrary
-  roots are refused before mutation; the confirmation digest pins the exact
-  enumerated scope.
-- The shared Save evidence-gate block was extracted
-  (`_checked_successor_evidence`) so removal runs the identical gates without
-  duplicating the policy; Save behavior is unchanged.
-- The card `…` menu renders only `删除资源库`; `编辑资源库` is intentionally
-  not rendered because no existing managed edit journey is reachable from
-  Files, and a dead control would violate the Task's own condition.
-- With exactly one enabled library the existing summary card is kept (matches
-  `task37.2体验bug2-2.png`); with two or more the card strip renders (matches
-  `task37.2体验bug-正确效果.png`). The popover uses `更多资源库`/`搜索资源库`
-  per the Task's rule that the source object is always called `资源库`.
-- Selection continuity uses `window.history.replaceState` for the
-  `resourceLibraryId` route param (already allowlisted by the destination
-  model) and derives the fallback entirely at render time (no effect-driven
-  state mutation).
+- Delete fencing keeps directories on entry-type-only re-verification (a
+  directory's mtime changes legitimately while its confirmed children are
+  deleted); files fence on exact size+mtime. Content replacement inside a
+  confirmed file is still caught by the same-size scope-digest check plus the
+  executor's per-entry size+mtime verification.
+- The Delete `status` contract is derived once in
+  `_delete_command_status` (uncertain > paused > cancelled > success/partial/
+  failed) so the backend, not the UI, names the durable effect; `UNCERTAIN`
+  also sets `durableState: mutation_effect_uncertain` as before.
+- Rename/Delete browse-state cleanup runs from the response's known outcomes
+  only: successfully deleted paths are pruned, renamed paths are remapped
+  (including child paths), and a `FAILED`/`UNCERTAIN` item never prunes state.
+- The stale-removal Web flow intentionally keeps the dialog open and refreshes
+  the preview from the new Active (via query invalidation) rather than closing,
+  so the operator re-reviews the exact current state before re-confirming.
+- The popover cap was removed entirely rather than adding pagination: the
+  bounded scroll container keeps the layout bounded while search narrows large
+  lists, matching the Task's "all enabled libraries discoverable" requirement.
+- The removal `DELETE` body is now mandatory and exact (`set(confirmation) ==
+  required_confirmation`), mirroring the strict request contracts the API
+  already applies to direct commands.
 
 ### Remaining In-Slice Work
 
@@ -543,42 +574,95 @@ Web:
 - Upload and Download bounded journeys.
 - Multi-item media Organize execution from the Files selection footer and
   broader FileIndex reconciliation.
+- The pre-existing `library-file-detail` / `manual-operations` e2e divergence
+  (FileIndex detail routes removed from the router while their e2e specs and
+  fake fixtures remain) predates this Task and needs a B/A contract decision
+  (replace the specs per RO-11 or restore the routes).
 - Slice-level final validation (1536x1024 reference screenshot report, full
   shell smoke) remains with B/A per the Contract.
 
 ### Risks / Deviations
 
-- The five pre-existing full-regression failures (3 Python, listed above) and
-  ten pre-existing non-Files e2e failures are documented with pristine-HEAD
-  reproduction evidence; the docker smoke-test failure (manual organize
-  choice HTTP 400) is also pre-existing. Judgment about their impact on Task
-  PASS belongs to B.
-- Recursive Delete of a bounded directory executes per-entry Storage deletions
-  synchronously inside the request; if the process dies mid-run the Task and
-  completed items remain durable and remaining paths can be re-deleted
-  (impact re-enumeration skips missing entries), but there is no automatic
-  continuation worker for this Task's command — documented behavior, not an
-  auto-replay.
+- The three pre-existing full-regression Python failures and the ten
+  pre-existing non-Files e2e failures are documented with pristine-HEAD
+  serial reproduction evidence; judgment about their impact on Task PASS
+  belongs to B.
+- The docker release security smoke test could not run to completion in this
+  environment (daemon bind-mount visibility, reproduced identically on pristine
+  HEAD); it is reported UNAVAILABLE with evidence rather than PASS.
+- Recursive Delete of a bounded directory still executes per-entry Storage
+  deletions synchronously inside the request (unchanged from the previous
+  checkpoint; documented behavior, not an auto-replay).
 - The pre-existing `web/test-results/` interaction reference images and the
-  dirty `docs/pics/文件页.png` were neither staged nor modified; the e2e
-  screenshot `test-results/files-success-1536x1024.png` regenerates locally
-  and stays ignored.
+  dirty `docs/pics/文件页.png` were neither staged nor modified.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 75abfe3c3f22cb451b80a7d9de2b21178274c78a
-Commit: 75abfe3 feat(files): bounded direct file commands and ResourceLibrary removal
+Head SHA: <HEAD_SHA_PLACEHOLDER>
 Working tree: clean except the pre-existing dirty docs/pics/文件页.png and
-ignored artifacts (dist/, web/test-results/, config/alist.json)
+ignored artifacts (web/dist/, web/test-results/, config/alist.json)
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
+Reviewed: e33a030055a81011a32de507bef6758d48607c9a..a11292ec1279ff4c4b6f71d864b933b75fd80e59
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: PENDING
+Next: SAME TASK FIX LOOP
 ```
+
+- Delete 的真实 API 与 Web 结果契约不一致，已经发生的破坏性效果会被 UI 误报成未知响应。
+  证据：在临时 Local Storage 上依次调用真实 `delete-impact` 与 `files/commands`，HTTP 200
+  且文件已删除，但响应键只有 `taskStatus` 等字段、没有
+  `normalizeDirectFileCommandResult()` 强制要求的 `status`；探针输出
+  `has_required_frontend_status: False, file_deleted: True`。当前 Vitest/E2E fake 自行补了
+  `status: "SUCCESS"`，因此没有覆盖真实契约。修正方向：让 completed/partial/failed/paused/
+  cancelled Delete 都返回与严格前端模型一致、能表达已知效果的稳定状态；Web 必须据此刷新并
+  显示真实 durable outcome，并增加真实 API 响应到前端 normalizer 的契约回归，不能只修 fake。
+- Direct mutation 的 stale fencing 未满足 Task 的“exact source/scope/version”要求。证据：临时
+  Storage 探针先取得 `victim.txt` 的 Delete impact，再把 `v1` 替换为同大小的 `v2`；新旧
+  `scopeDigest` 完全相同，旧确认随后返回 `completed` 并删除了新文件。Rename 请求只有
+  `path + name`，没有任何已观察 source evidence；Save 的 digest 校验发生在创建 Task/
+  Executor preflight 之前，而 overwrite executor 不再核对该 evidence。修正方向：为 Rename、
+  Delete scope 和 Save 传递并绑定适合 provider 的 server-issued current-entry evidence，在最后
+  安全的 mutation 边界重新校验；注入 preview/admission 后替换、同大小替换和 mutation 前竞争的
+  测试必须证明零错误 mutation。
+- ResourceLibrary 删除确认没有绑定预览时的 Active revision，也没有拒绝 disabled selection。
+  证据：临时配置探针读取 removal preview，随后成功 Save 另一个 ResourceLibrary 使 Active
+  revision 改变，再用仅含 library ID 的 `DELETE` 请求仍返回 200 并删除原 ResourceLibrary；
+  `RemovalPreviewModel` 丢弃响应中的 `active`，客户端 DELETE body 为空，服务端
+  `_active_resource_library()` 也不校验 `enabled`。修正方向：把 preview 的 revision/version/
+  digest 和 selected-library identity 绑定到一次确认，后端在构造 successor 前拒绝 stale、
+  mismatched、missing 或 disabled 请求，Web 保留当前确认上下文并提供刷新后重审动作；补齐这些
+  failure-path 回归。
+- 文本编辑的 Web recovery 断裂，而且一次成功 Save 后仍保留旧 evidence。证据：
+  `commandMutation` 对 `files_direct_stale_content` 只设置通用 `commandError` 后返回，代码中
+  `setEditorStale(true)` 从未出现；而“重新加载最新内容”按钮仅在 `state.stale` 为 true 时渲染。
+  成功 Save 也没有更新/失效 `files-text` query，下一次 Save 会继续提交旧 digest。修正方向：
+  stale 响应必须保留本地编辑并显式进入可 reload 的状态；成功 Save 后必须取得或写入新的权威
+  content/evidence，再允许后续 Save；覆盖 stale→reload/reapply 以及连续两次 Save 的 Web 测试。
+- Rename/Delete 成功后没有清除或重映射 Files 的相关选择和目录树状态。证据：成功分支只
+  invalidate `storage-files`/`system-status` queries，未更新 `selectedFiles`、
+  `knownDirectoryPaths` 或 `visitedDirectories`；被重命名/删除的 path 因而作为隐藏状态保留，
+  同路径再次出现时会被意外重新选中，目录也可残留在树中。修正方向：按已知成功/逐项结果清理
+  或重映射受影响状态，并测试 selected file、selected directory、directory rename 和 partial
+  Delete，不能清掉未受影响 sibling 的独立选择/结果。
+- durable direct-command Result 没有保存 Rename 的实际 target。证据：临时 Rename 探针读取
+  `task_results`，得到 `source_path='rename-me.txt'` 且
+  `destination_path='rename-me.txt'`，而实际目标是 `renamed.txt`；
+  `complete_direct_item()` 当前无 target 参数并把 destination 固定成 source。修正方向：从
+  OrganizerExecutor result/application outcome 传入并持久化 bounded logical source/target，保持
+  secret-free，并对 Create/Rename/Delete/Save 的 Result identity 增加回归。
+- `更多` 不能保证所有启用的 ResourceLibrary 可发现。证据：`LibraryCardStrip.tsx` 把过滤后的
+  overflow 再执行 `.slice(0, POPOVER_MAX_ITEMS)`，其中上限硬编码为 12，且没有分页、继续加载或
+  截断提示；第 13 个之后的未搜索条目不在 bounded scroll list 中。修正方向：保留有界可操作
+  布局的同时让全部 authoritative overflow 条目可浏览（或提供真实分页/继续加载），并用超过
+  12 个 ResourceLibrary 覆盖发现、搜索、选择和 promotion。
+- Developer Completion Report 的完整 Head SHA
+  `75abfe3c3f22cb451b80a7d9de2b21178274c78a` 无法由 Git 解析；实际实现提交是
+  `75abfe30b9715853b9bdfe2fa7c044eb29b47cf1`，当前 completion-report commit 是
+  `a11292ec1279ff4c4b6f71d864b933b75fd80e59`。修正方向：下一次 READY FOR B REVIEW 报告必须
+  填写可解析、与实际修正 checkpoint 对应的完整 Head SHA，并如实更新实际测试结果。

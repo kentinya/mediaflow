@@ -4167,6 +4167,22 @@ class MediaFlowApi:
                     "service_unavailable",
                     "managed configuration object service is unavailable",
                 )
+            # The removal confirmation must carry the exact Active revision
+            # identity the operator previewed; the backend rejects stale,
+            # mismatched, missing or disabled selections before any successor
+            # work begins.
+            confirmation = self._document(environ)
+            required_confirmation = {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "expectedLibraryId",
+            }
+            if set(confirmation) != required_confirmation:
+                raise ValueError(
+                    "ResourceLibrary removal requires the previewed Active revision "
+                    "evidence and the selected library identity"
+                )
             prepared: list[_ApiRuntimeBinding] = []
             with self._runtime_binding_lock:
                 # Pin the process to the removal-time Active before any
@@ -4181,6 +4197,10 @@ class MediaFlowApi:
                     revision = self._configuration_objects.remove_resource_library(
                         parts[3],
                         actor=principal.principal_id,
+                        expected_revision_id=confirmation["expectedRevisionId"],
+                        expected_version=confirmation["expectedVersion"],
+                        expected_digest=confirmation["expectedDigest"],
+                        expected_library_id=confirmation["expectedLibraryId"],
                         before_publish=before_publish,
                     )
                 except (ConfigurationActivationConflict, ConfigurationVersionConflict):
@@ -4606,13 +4626,14 @@ class MediaFlowApi:
                     content=document["content"],
                 )
             elif operation == DirectFileOperation.RENAME.value:
-                required = {"operation", "path", "name"}
+                required = {"operation", "path", "name", "expected"}
                 if set(document) != required:
-                    raise ValueError("Rename requires only operation, path, and name")
+                    raise ValueError("Rename requires only operation, path, name, and expected")
                 result = binding.direct_files.rename(
                     resource_library_id=resource_library_id,
                     path=document["path"],
                     name=document["name"],
+                    expected=document["expected"],
                 )
             elif operation == DirectFileOperation.SAVE_TEXT.value:
                 required = {"operation", "path", "content", "expected"}

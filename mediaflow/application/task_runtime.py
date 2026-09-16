@@ -332,6 +332,7 @@ class PersistentTaskCoordinator:
         *,
         status: TaskItemStatus,
         operation: str,
+        target_path: str | None = None,
         error: str | None = None,
         effect_certainty: str = "none",
         uncertain_effects: tuple[str, ...] = (),
@@ -340,17 +341,22 @@ class PersistentTaskCoordinator:
 
         Direct commands carry no media identity or policy evidence: the
         durable record is the bounded operation, status and executor-owned
-        effect evidence only.
+        effect evidence only.  The persisted source/target identity is the
+        bounded logical ResourceLibrary-relative path, never the host root.
         """
 
         now = datetime.now(UTC)
+        source_display = item.source_display if item.source_display else item.source_path
+        target_display = (
+            target_path if isinstance(target_path, str) and target_path else source_display
+        )
         completed = replace(
             item,
             status=status,
             stage="completed" if not status.retryable else "failed",
             updated_at=now,
             destination_storage_id=item.storage_id,
-            destination_path=item.source_path,
+            destination_path=target_display,
             execution_status=(
                 ExecutionStatus.SUCCESS.value if status is TaskItemStatus.SUCCESS else None
             ),
@@ -361,9 +367,9 @@ class PersistentTaskCoordinator:
             item.task_id,
             item.item_id,
             item.storage_id,
-            item.source_path,
+            source_display,
             item.storage_id,
-            item.source_path,
+            target_display,
             None,
             None,
             None,

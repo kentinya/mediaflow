@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from mediaflow.domain.classification import ClassificationResult
+from mediaflow.domain.direct_files import EntryVersionEvidence
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.metadata import MediaIdentity
@@ -719,6 +720,7 @@ class OrganizerExecutor:
         data: bytes,
         *,
         overwrite: bool = False,
+        expected_evidence: EntryVersionEvidence | None = None,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
@@ -726,7 +728,10 @@ class OrganizerExecutor:
 
         ``overwrite`` is granted only by the caller's stale evidence
         admission; the executor itself still refuses to replace an
-        unauthorized existing target.
+        unauthorized existing target.  When ``expected_evidence`` is
+        supplied the exact loaded version is re-verified here, at the last
+        safe boundary before the write, so content replaced after it was
+        loaded is never overwritten.
         """
 
         return self._execute_direct(
@@ -736,7 +741,9 @@ class OrganizerExecutor:
             path,
             execute=execute,
             mutation_authority=mutation_authority,
-            preflight=lambda: self._direct_write_preflight(storage, path, data, overwrite),
+            preflight=lambda: self._direct_write_preflight(
+                storage, path, data, overwrite, expected_evidence
+            ),
             mutate=lambda: storage.write(path, data, overwrite=overwrite),
             verify=lambda: self._direct_write_verified(storage, path, data),
         )
@@ -747,10 +754,15 @@ class OrganizerExecutor:
         source: str,
         target: str,
         *,
+        source_evidence: EntryVersionEvidence | None = None,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
-        """Rename one exact entry within the same Storage; never Copy or Move."""
+        """Rename one exact entry within the same Storage; never Copy or Move.
+
+        ``source_evidence`` is re-verified immediately before the move so a
+        source replaced after it was observed is never renamed away.
+        """
 
         return self._execute_direct(
             storage,
@@ -759,7 +771,9 @@ class OrganizerExecutor:
             target,
             execute=execute,
             mutation_authority=mutation_authority,
-            preflight=lambda: self._direct_rename_preflight(storage, source, target),
+            preflight=lambda: self._direct_rename_preflight(
+                storage, source, target, source_evidence
+            ),
             mutate=lambda: storage.move(source, target, overwrite=False),
             verify=lambda: self._direct_rename_verified(storage, source, target),
         )
@@ -769,10 +783,16 @@ class OrganizerExecutor:
         storage: Storage,
         path: str,
         *,
+        entry_evidence: EntryVersionEvidence | None = None,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
-        """Delete one exact file or empty directory entry."""
+        """Delete one exact file or empty directory entry.
+
+        ``entry_evidence`` is re-verified immediately before the delete so
+        content replaced after the operator confirmed the scope is never
+        destroyed.
+        """
 
         return self._execute_direct(
             storage,
@@ -781,7 +801,7 @@ class OrganizerExecutor:
             path,
             execute=execute,
             mutation_authority=mutation_authority,
-            preflight=lambda: self._direct_exists_preflight(storage, path),
+            preflight=lambda: self._direct_exists_preflight(storage, path, entry_evidence),
             mutate=lambda: storage.delete(path),
             verify=lambda: self._direct_gone_verified(storage, path),
         )
@@ -938,29 +958,74 @@ class OrganizerExecutor:
         return None
 
     @staticmethod
-    def _direct_exists_preflight(storage: Storage, path: str) -> str | None:
+    def _direct_exists_preflight(
+        storage: Storage, path: str, entry_evidence: EntryVersionEvidence | None = None
+    ) -> str | None:
         if not storage.exists(path):
             return "source does not exist"
+        if entry_evidence is not None:
+            observed = storage.stat(path)
+            # A directory's mtime legitimately changes while its confirmed
+            # children are deleted, so directories fence on the entry type
+            # only; files fence on the exact observed size and mtime.
+            if observed.entry_type is StorageEntryType.DIRECTORY:
+                if entry_evidence.is_directory is False:
+                    return "entry changed since it was confirmed"
+            elif (
+                entry_evidence.is_directory is True
+                or observed.size != entry_evidence.size
+                or observed.modified_at.isoformat() != entry_evidence.modified_at
+            ):
+                return "entry changed since it was confirmed"
         return None
 
     @staticmethod
     def _direct_write_preflight(
-        storage: Storage, path: str, data: bytes, overwrite: bool
+        storage: Storage,
+        path: str,
+        data: bytes,
+        overwrite: bool,
+        expected_evidence: EntryVersionEvidence | None = None,
     ) -> str | None:
         if not storage.exists(path):
+            if expected_evidence is not None:
+                return "source content changed since it was loaded"
             return None
         if not overwrite:
             return "destination already exists"
         if storage.stat(path).entry_type is not StorageEntryType.FILE:
             return "destination is not a regular file"
+        if expected_evidence is not None:
+            observed = storage.stat(path)
+            if observed.size != expected_evidence.size:
+                return "source content changed since it was loaded"
+            with storage.read(path) as stream:
+                raw = stream.read(expected_evidence.size + 1)
+            if (
+                len(raw) != expected_evidence.size
+                or hashlib.sha256(raw).hexdigest() != expected_evidence.digest
+            ):
+                return "source content changed since it was loaded"
         return None
 
     @staticmethod
-    def _direct_rename_preflight(storage: Storage, source: str, target: str) -> str | None:
+    def _direct_rename_preflight(
+        storage: Storage,
+        source: str,
+        target: str,
+        source_evidence: EntryVersionEvidence | None = None,
+    ) -> str | None:
         if not storage.exists(source):
             return "source does not exist"
         if storage.exists(target):
             return "destination already exists"
+        if source_evidence is not None:
+            observed = storage.stat(source)
+            if (
+                observed.size != source_evidence.size
+                or observed.modified_at.isoformat() != source_evidence.modified_at
+            ):
+                return "source changed since it was observed"
         return None
 
     @staticmethod
