@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import unittest
 from datetime import UTC, datetime
@@ -62,7 +63,12 @@ class FakeS3Client:
         return S3ListPage(objects, prefixes, next_token)
 
     def _object(self, key: str) -> S3ClientObject:
-        return S3ClientObject(key, len(self.objects[key]), NOW, f"etag-{len(self.objects[key])}")
+        content = self.objects[key]
+        # Real S3 returns the MD5 of the stored content for a simple PUT (and a
+        # content-derived composite for a multipart upload), so the object
+        # validator changes whenever the stored bytes change — including a
+        # same-size replacement that keeps the timestamp.
+        return S3ClientObject(key, len(content), NOW, f"etag-{hashlib.md5(content).hexdigest()}")
 
     def head_object(self, key: str) -> S3ClientObject:
         self.calls.append(("head", key))
@@ -173,6 +179,23 @@ class S3StorageTests(unittest.TestCase):
             S3StorageConfig("x", "x", S3Provider.AWS_S3, "", "ak", "sk")
         with self.assertRaises(ValueError):
             S3StorageConfig("x", "x", S3Provider.S3_COMPATIBLE, "b", "ak", "sk")
+
+    def test_entry_fingerprint_is_a_content_version_validator(self) -> None:
+        """The published object validator separates same-size replacements.
+
+        The Files direct commands fence Rename and Delete with the provider's own
+        entry identity instead of reading the object, so that identity must move
+        when the stored bytes move even though nothing else does.
+        """
+
+        self.storage.write("clip.bin", b"one")
+        first = self.storage.stat("clip.bin")
+        self.storage.write("clip.bin", b"two", overwrite=True)
+        second = self.storage.stat("clip.bin")
+        self.assertIsNotNone(first.fingerprint)
+        self.assertEqual(first.size, second.size)
+        self.assertEqual(first.modified_at, second.modified_at)
+        self.assertNotEqual(first.fingerprint, second.fingerprint)
 
     def test_health_checks_bucket_and_root_prefix(self) -> None:
         self.storage.health_check()

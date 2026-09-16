@@ -13,13 +13,14 @@ from urllib.parse import urlsplit
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
+from mediaflow.application.duplicates import StorageHasher
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.domain.configuration_management import (
     ConfigurationDestinationPrecheckStatus,
     ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
 )
-from mediaflow.domain.direct_files import EntryVersionEvidence
+from mediaflow.domain.direct_files import DirectEntryEvidence
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
 from mediaflow.infrastructure.local_storage import LocalStorage
@@ -295,9 +296,9 @@ class _FingerprintlessStorage(LocalStorage):
     """Storage whose entries publish no provider identity token.
 
     SMB and OpenList entries and S3 directory entries carry no fingerprint, so
-    this provider-neutral fake is the stand-in used to prove that a folder
-    Delete without a verifiable directory identity fails closed.  Every delete
-    that does reach the Storage is recorded.
+    this provider-neutral fake is the stand-in used to prove that Rename and
+    Delete fail closed — with zero Task and zero mutation — for any entry whose
+    exact version the provider cannot verify.
     """
 
     def __init__(self, storage_id: str, root: Path) -> None:
@@ -326,23 +327,69 @@ class _FingerprintlessStorage(LocalStorage):
         return super().delete(path)
 
 
-#: Content shape of the large-file Rename regressions.  Every version shares an
-#: identical leading block and differs only in the tail beyond it, so the two
-#: versions have the same size, the same mtime and the same leading bytes: only
-#: a digest of the complete content can tell them apart.
-_LARGE_HEAD_BYTES = 256 * 1024
-_LARGE_TAIL_BYTES = 64 * 1024
+class _ReadSpyStorage(LocalStorage):
+    """Read-spy provider whose entry identity is controllable.
+
+    Any content read fails the test immediately, so a journey that completes on
+    this provider proves Rename and Delete never read entry content.  ``version``
+    is the identity the provider publishes for every entry: bumping it simulates
+    a same-size/same-``mtime`` replacement, and ``publish_version=False`` stands
+    in for the providers that expose no identity at all.
+    """
+
+    def __init__(
+        self,
+        storage_id: str,
+        root: Path,
+        *,
+        version: str = "v1",
+        publish_version: bool = True,
+    ) -> None:
+        super().__init__(storage_id, root)
+        self.reads: list[str] = []
+        self.mutations: list[str] = []
+        self.version = version
+        self.publish_version = publish_version
+
+    def read(self, path: str):
+        self.reads.append(path)
+        raise AssertionError("Rename and Delete must never read entry content")
+
+    def _versioned(self, entry: StorageEntry) -> StorageEntry:
+        return StorageEntry(
+            name=entry.name,
+            path=entry.path,
+            entry_type=entry.entry_type,
+            size=entry.size,
+            modified_at=entry.modified_at,
+            fingerprint=f"spy:{self.version}" if self.publish_version else None,
+        )
+
+    def stat(self, path: str) -> StorageEntry:
+        return self._versioned(super().stat(path))
+
+    def list(self, path: str):
+        return [self._versioned(entry) for entry in super().list(path)]
+
+    def move(self, *args, **kwargs):
+        self.mutations.append("move")
+        return super().move(*args, **kwargs)
+
+    def delete(self, path: str) -> None:
+        self.mutations.append("delete")
+        return super().delete(path)
 
 
-def _large_file_content(tail: bytes) -> bytes:
-    assert len(tail) <= _LARGE_TAIL_BYTES
-    return b"P" * _LARGE_HEAD_BYTES + tail.ljust(_LARGE_TAIL_BYTES, b"x")
+def _direct_entry_evidence(storage, relative: str) -> DirectEntryEvidence:
+    """The metadata-only exact-version evidence the application admits."""
 
-
-def _large_file_tail(content: bytes) -> bytes:
-    """The distinguishing bytes that sit beyond the leading block."""
-
-    return content[_LARGE_HEAD_BYTES : _LARGE_HEAD_BYTES + 8]
+    observed = storage.stat(relative)
+    return DirectEntryEvidence(
+        size=observed.size,
+        modified_at=observed.modified_at.isoformat(),
+        is_directory=observed.entry_type is StorageEntryType.DIRECTORY,
+        fingerprint=observed.fingerprint or "",
+    )
 
 
 class DirectFileExecutorTests(unittest.TestCase):
@@ -389,10 +436,54 @@ class DirectFileExecutorTests(unittest.TestCase):
         self.assertEqual(conflict.status.value, "FAILED")
         self.assertIn("destination already exists", conflict.errors)
         self.assertTrue((self.root / "a.txt").exists())
-        renamed = executor.execute_direct_rename(self.storage, "a.txt", "c.txt")
+        renamed = executor.execute_direct_rename(
+            self.storage,
+            "a.txt",
+            "c.txt",
+            source_evidence=_direct_entry_evidence(self.storage, "a.txt"),
+        )
         self.assertEqual(renamed.status.value, "SUCCESS")
         self.assertFalse((self.root / "a.txt").exists())
         self.assertTrue((self.root / "c.txt").exists())
+
+    def test_rename_and_delete_require_provider_version_evidence(self) -> None:
+        """The executor's own boundary never mutates an unproved entry."""
+
+        executor = OrganizerExecutor()
+        (self.root / "keep.txt").write_text("x", encoding="utf-8")
+        (self.root / "folder").mkdir()
+        missing = executor.execute_direct_rename(self.storage, "keep.txt", "moved.txt")
+        self.assertEqual(missing.status.value, "FAILED")
+        self.assertTrue(any("version evidence is required" in error for error in missing.errors))
+        for name in ("keep.txt", "folder"):
+            result = executor.execute_direct_delete(
+                self.storage,
+                name,
+                entry_evidence=DirectEntryEvidence(
+                    size=0,
+                    modified_at="1970-01-01T00:00:00+00:00",
+                    is_directory=name == "folder",
+                    fingerprint="",
+                ),
+            )
+            self.assertEqual(result.status.value, "FAILED")
+            self.assertTrue(any("version evidence is required" in error for error in result.errors))
+        refused_rename = executor.execute_direct_rename(
+            self.storage,
+            "keep.txt",
+            "moved.txt",
+            source_evidence=DirectEntryEvidence(
+                size=1,
+                modified_at="1970-01-01T00:00:00+00:00",
+                is_directory=False,
+                fingerprint="",
+            ),
+        )
+        self.assertEqual(refused_rename.status.value, "FAILED")
+        # Zero mutation: nothing was renamed or deleted.
+        self.assertTrue((self.root / "keep.txt").exists())
+        self.assertTrue((self.root / "folder").is_dir())
+        self.assertFalse((self.root / "moved.txt").exists())
 
     def test_delete_requires_existing_entry(self) -> None:
         executor = OrganizerExecutor()
@@ -401,10 +492,20 @@ class DirectFileExecutorTests(unittest.TestCase):
         (self.root / "item.txt").write_text("x", encoding="utf-8")
         (self.root / "folder").mkdir()
         self.assertEqual(
-            executor.execute_direct_delete(self.storage, "item.txt").status.value, "SUCCESS"
+            executor.execute_direct_delete(
+                self.storage,
+                "item.txt",
+                entry_evidence=_direct_entry_evidence(self.storage, "item.txt"),
+            ).status.value,
+            "SUCCESS",
         )
         self.assertEqual(
-            executor.execute_direct_delete(self.storage, "folder").status.value, "SUCCESS"
+            executor.execute_direct_delete(
+                self.storage,
+                "folder",
+                entry_evidence=_direct_entry_evidence(self.storage, "folder"),
+            ).status.value,
+            "SUCCESS",
         )
 
     def test_read_only_storage_is_denied_before_mutation(self) -> None:
@@ -716,10 +817,10 @@ class DirectFileOperationsTests(unittest.TestCase):
         """Rename requires and re-verifies server-issued source evidence.
 
         The replacement below keeps the exact size *and* restores the observed
-        mtime, so only the content-anchored part of the evidence can separate the
-        two versions.  It is therefore deterministic on every filesystem,
-        including ones whose timestamp granularity cannot tell the two writes
-        apart.
+        mtime, so only the provider's own entry identity (Local: inode + ctime)
+        separates the two versions.  No content is read to detect it, and the
+        regression stays deterministic on any filesystem, including ones whose
+        timestamp granularity cannot tell the two writes apart.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -770,8 +871,8 @@ class DirectFileOperationsTests(unittest.TestCase):
         The source matches the observed evidence at admission; a concurrent
         writer then replaces it with same-size content under the original mtime
         inside the executor's preflight window.  Only the executor's own
-        content-anchored re-verification can still refuse this rename, so the
-        regression stays deterministic on any filesystem timestamp granularity.
+        metadata-only re-verification of the provider identity can still refuse
+        this rename, and it does so without reading the file.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -847,80 +948,276 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "raced.txt").exists())
             self.assertEqual((root / "source" / "race.txt").read_text(encoding="utf-8"), "v2")
 
-    def test_rename_refuses_a_swap_beyond_the_head_without_provider_identity(self) -> None:
-        """A large file version is proven by its complete content, not a prefix.
+    def test_rename_fails_closed_without_provider_entry_identity(self) -> None:
+        """A provider that publishes no entry identity never renames anything.
 
-        The provider publishes no fingerprint, and the replacement keeps the
-        file size, its modification time and its entire leading block identical,
-        changing only bytes beyond that block.  A prefix-only digest would accept
-        the stale evidence; the complete streamed digest refuses it before any
-        Task exists and before any Storage mutation.
+        The read-spy provider stands in for SMB/OpenList: it yields no identity
+        for any entry, so evidence issuance, the command admission and the API
+        route all refuse with one stable actionable category, zero content read,
+        zero Task and zero mutation — instead of falling back to size, `mtime`
+        or a full content read.
         """
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source").mkdir(parents=True, exist_ok=True)
-            storage = _FingerprintlessStorage("source-storage", root / "source")
+            storage = _ReadSpyStorage("source-storage", root / "source", publish_version=False)
             api, _objects, active, runtime = self._activate(
                 root, storage_adapters={"source-storage": storage}
             )
             service = self._service(api, active)
-            big = root / "source" / "big.bin"
-            big.write_bytes(_large_file_content(b"old-tail"))
-            observed = big.stat()
-            self.assertGreater(observed.st_size, _LARGE_HEAD_BYTES)
-            self.assertIsNone(storage.stat("big.bin").fingerprint)
-            evidence = _entry_evidence(api, active, "source", "big.bin")
-            # Same size, same mtime, same leading block: only the tail moves.
-            big.write_bytes(_large_file_content(b"new-tail"))
-            os.utime(big, ns=(observed.st_atime_ns, observed.st_mtime_ns))
-            swapped = big.stat()
-            self.assertEqual(swapped.st_size, observed.st_size)
-            self.assertEqual(swapped.st_mtime_ns, observed.st_mtime_ns)
-            self.assertEqual(
-                big.read_bytes()[:_LARGE_HEAD_BYTES],
-                _large_file_content(b"old-tail")[:_LARGE_HEAD_BYTES],
+            (root / "source" / "folder").mkdir()
+            (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
+            (root / "source" / "note.txt").write_text("note", encoding="utf-8")
+            self.assertIsNone(storage.stat("note.txt").fingerprint)
+
+            for relative in ("note.txt", "folder"):
+                with self.assertRaises(DirectFileError) as refused:
+                    service.rename_evidence(resource_library_id="source", path=relative)
+                self.assertEqual(refused.exception.code, "files_direct_entry_identity_unavailable")
+                self.assertEqual(refused.exception.category, "entry_identity_unavailable")
+                self.assertEqual(refused.exception.status, 400)
+                self.assertTrue(refused.exception.next_action)
+                self.assertEqual(refused.exception.details["sideEffects"], "none")
+
+            with self.assertRaises(DirectFileError) as command_refused:
+                service.rename(
+                    resource_library_id="source",
+                    path="note.txt",
+                    name="renamed-note.txt",
+                    expected={
+                        "size": 4,
+                        "modifiedAt": storage.stat("note.txt").modified_at.isoformat(),
+                        "evidence": "v1." + "0" * 32,
+                    },
+                )
+            self.assertEqual(command_refused.exception.category, "entry_identity_unavailable")
+            for relative in ("note.txt", "folder"):
+                status, body = request(
+                    api,
+                    f"/api/v1/resource-libraries/source/files/rename-evidence?path={relative}",
+                )
+                self.assertEqual(status, 400, body)
+                self.assertEqual(body["error"]["code"], "files_direct_entry_identity_unavailable")
+                self.assertEqual(body["error"]["details"]["category"], "entry_identity_unavailable")
+                self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+                self.assertTrue(body["error"]["details"]["nextAction"])
+
+            self.assertEqual(storage.reads, [])
+            self.assertEqual(storage.mutations, [])
+            self.assertEqual(runtime.list_tasks(), ())
+            self.assertTrue((root / "source" / "note.txt").is_file())
+            self.assertTrue((root / "source" / "folder" / "keep.txt").is_file())
+            self.assertFalse((root / "source" / "renamed-note.txt").exists())
+
+    def test_delete_fails_closed_without_provider_entry_identity(self) -> None:
+        """Delete confirmation is bound to a provider identity, or refused.
+
+        Every file and directory of the impact scope must be verifiable by the
+        provider; one unverifiable entry fails the whole impact, so no
+        confirmation scope, Task or Storage mutation can exist for it.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _ReadSpyStorage("source-storage", root / "source", publish_version=False)
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
             )
+            service = self._service(api, active)
+            (root / "source" / "folder").mkdir()
+            (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
+            (root / "source" / "single.txt").write_text("s", encoding="utf-8")
+
+            for paths in (["folder"], ["single.txt"], ["folder", "single.txt"]):
+                with self.assertRaises(DirectFileError) as preview:
+                    service.delete_impact(resource_library_id="source", paths=paths)
+                self.assertEqual(preview.exception.code, "files_direct_entry_identity_unavailable")
+                self.assertEqual(preview.exception.category, "entry_identity_unavailable")
+                self.assertEqual(preview.exception.status, 400)
+                self.assertTrue(preview.exception.next_action)
+
+            with self.assertRaises(DirectFileError) as command_refused:
+                service.execute_delete(
+                    resource_library_id="source",
+                    paths=["folder", "single.txt"],
+                    confirmation_digest="0" * 64,
+                )
+            self.assertEqual(command_refused.exception.category, "entry_identity_unavailable")
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/source/files/delete-impact?path=single.txt",
+            )
+            self.assertEqual(status, 400, body)
+            self.assertEqual(body["error"]["code"], "files_direct_entry_identity_unavailable")
+            self.assertEqual(body["error"]["details"]["category"], "entry_identity_unavailable")
+            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+
+            self.assertEqual(storage.reads, [])
+            self.assertEqual(storage.mutations, [])
+            self.assertEqual(runtime.list_tasks(), ())
+            self.assertTrue((root / "source" / "folder" / "keep.txt").is_file())
+            self.assertTrue((root / "source" / "single.txt").is_file())
+
+    def test_rename_and_delete_never_read_content_or_hash_duplicates(self) -> None:
+        """The whole Rename/Delete journey is metadata-only, end to end.
+
+        The read-spy provider fails the test on any content read, so completing
+        Rename evidence, Rename admission, Rename execution, Delete impact,
+        Delete confirmation and Delete execution on it proves every boundary
+        uses provider metadata only.  The duplicate-detection Hash entry point
+        (the configurable FULL Hash) must not be invoked either.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _ReadSpyStorage("source-storage", root / "source")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            (root / "source" / "renamed.txt").write_text("content", encoding="utf-8")
+            (root / "source" / "victim").mkdir()
+            (root / "source" / "victim" / "inner").mkdir()
+            (root / "source" / "victim" / "inner" / "deep.txt").write_text("d", encoding="utf-8")
+
+            with patch.object(
+                StorageHasher,
+                "calculate",
+                side_effect=AssertionError("Rename/Delete must not run duplicate hashing"),
+            ) as hasher_calculate:
+                outcome = service.rename(
+                    resource_library_id="source",
+                    path="renamed.txt",
+                    name="moved.txt",
+                    expected=_entry_evidence(api, active, "source", "renamed.txt"),
+                )
+                self.assertEqual(outcome["status"], "SUCCESS")
+                impact = service.delete_impact(resource_library_id="source", paths=["moved.txt"])
+                deleted = service.execute_delete(
+                    resource_library_id="source",
+                    paths=["moved.txt"],
+                    confirmation_digest=impact.scope_digest,
+                )
+                self.assertEqual(deleted["status"], "SUCCESS")
+                recursive = service.delete_impact(resource_library_id="source", paths=["victim"])
+                recursive_outcome = service.execute_delete(
+                    resource_library_id="source",
+                    paths=["victim"],
+                    confirmation_digest=recursive.scope_digest,
+                )
+                self.assertEqual(recursive_outcome["status"], "SUCCESS")
+                self.assertEqual(hasher_calculate.call_count, 0)
+
+            self.assertEqual(storage.reads, [])
+            self.assertEqual(storage.mutations, ["move", "delete", "delete", "delete", "delete"])
+            self.assertFalse((root / "source" / "moved.txt").exists())
+            self.assertFalse((root / "source" / "victim").exists())
+            # Rename, single-file Delete and the recursive Delete are three
+            # independent durable Tasks.
+            self.assertEqual(len(runtime.list_tasks()), 3)
+
+    def test_provider_identity_change_invalidates_rename_and_delete_evidence(self) -> None:
+        """A same-size/same-`mtime` replacement is refused without any read.
+
+        The provider keeps the entry's size and `mtime` and moves only the
+        identity it publishes, which is exactly the replacement a size/mtime
+        fence could never see.  Old Rename evidence and an old Delete scope must
+        both go stale, while freshly issued evidence for the replacement still
+        works.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            storage = _ReadSpyStorage("source-storage", root / "source")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            swapped = root / "source" / "swapped.txt"
+            swapped.write_text("v1", encoding="utf-8")
+            observed = swapped.stat()
+            evidence = _entry_evidence(api, active, "source", "swapped.txt")
+            impact = service.delete_impact(resource_library_id="source", paths=["swapped.txt"])
+
+            # Same size, same mtime, same name: only the provider identity moves.
+            swapped.write_text("v2", encoding="utf-8")
+            os.utime(swapped, ns=(observed.st_atime_ns, observed.st_mtime_ns))
+            storage.version = "v2"
+            self.assertEqual(swapped.stat().st_size, observed.st_size)
+            self.assertEqual(swapped.stat().st_mtime_ns, observed.st_mtime_ns)
+
             with self.assertRaises(DirectFileError) as stale:
                 service.rename(
                     resource_library_id="source",
-                    path="big.bin",
-                    name="moved.bin",
+                    path="swapped.txt",
+                    name="renamed.txt",
                     expected=evidence,
                 )
             self.assertEqual(stale.exception.category, "stale_source")
             self.assertEqual(stale.exception.status, 409)
             self.assertEqual(runtime.list_tasks(), ())
-            self.assertTrue(big.exists())
-            self.assertFalse((root / "source" / "moved.bin").exists())
-            self.assertEqual(_large_file_tail(big.read_bytes()), b"new-tail")
+            self.assertTrue(swapped.exists())
+            self.assertFalse((root / "source" / "renamed.txt").exists())
 
-    def test_rename_is_refused_at_the_last_boundary_beyond_the_head(self) -> None:
-        """The last safe boundary re-verifies the complete content, not a prefix.
+            with self.assertRaises(DirectFileError) as stale_confirmation:
+                service.execute_delete(
+                    resource_library_id="source",
+                    paths=["swapped.txt"],
+                    confirmation_digest=impact.scope_digest,
+                )
+            self.assertEqual(stale_confirmation.exception.category, "stale_confirmation")
+            self.assertEqual(stale_confirmation.exception.status, 409)
+            self.assertTrue(swapped.exists())
+            self.assertEqual(storage.reads, [])
+            self.assertEqual(storage.mutations, [])
 
-        The file matches its evidence at admission; a concurrent writer then
-        replaces only the bytes beyond the leading block, keeping the size and
-        the modification time.  The executor's own complete-content fence refuses
-        the rename before the mutating Storage call.
+            # The current version still completes both journeys.
+            outcome = service.rename(
+                resource_library_id="source",
+                path="swapped.txt",
+                name="renamed.txt",
+                expected=_entry_evidence(api, active, "source", "swapped.txt"),
+            )
+            self.assertEqual(outcome["status"], "SUCCESS")
+            refreshed = service.delete_impact(resource_library_id="source", paths=["renamed.txt"])
+            deleted = service.execute_delete(
+                resource_library_id="source",
+                paths=["renamed.txt"],
+                confirmation_digest=refreshed.scope_digest,
+            )
+            self.assertEqual(deleted["status"], "SUCCESS")
+            self.assertEqual(storage.reads, [])
+
+    def test_rename_and_delete_refuse_a_version_change_at_the_last_boundary(self) -> None:
+        """The executor's last safe boundary refuses a post-admission change.
+
+        The entry still matches its admitted evidence when the application
+        admission runs; the provider identity then moves inside the executor's
+        preflight window.  One metadata query at the last safe boundary refuses
+        the mutation, so the replaced entry is neither renamed nor deleted.
         """
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "source").mkdir(parents=True, exist_ok=True)
-            storage = _FingerprintlessStorage("source-storage", root / "source")
+            storage = _ReadSpyStorage("source-storage", root / "source")
             api, _objects, active, _tasks = self._activate(
                 root, storage_adapters={"source-storage": storage}
             )
             service = self._service(api, active)
-            big = root / "source" / "big-race.bin"
-            big.write_bytes(_large_file_content(b"old-tail"))
-            observed = big.stat()
+            (root / "source" / "race.txt").write_text("v1", encoding="utf-8")
+            (root / "source" / "deleted.txt").write_text("v1", encoding="utf-8")
 
-            class SwapTailInPreflight(OrganizerExecutor):
-                def __init__(self, base: Path, original) -> None:
+            class BumpIdentityInPreflight(OrganizerExecutor):
+                """Moves the provider identity between admission and mutation."""
+
+                def __init__(self, provider: _ReadSpyStorage) -> None:
                     super().__init__()
-                    self._base = base
-                    self._original = original
+                    self._provider = provider
 
                 def _execute_direct(
                     self,
@@ -935,18 +1232,13 @@ class DirectFileOperationsTests(unittest.TestCase):
                     mutate,
                     verify,
                 ):
-                    def swap_then_preflight():
+                    def bump_then_preflight():
                         reason = preflight()
                         if reason is None:
-                            target_file = self._base / "source" / "big-race.bin"
-                            target_file.write_bytes(_large_file_content(b"new-tail"))
-                            os.utime(
-                                target_file,
-                                ns=(
-                                    self._original.st_atime_ns,
-                                    self._original.st_mtime_ns,
-                                ),
-                            )
+                            # The admitted evidence just passed; a concurrent
+                            # writer now replaces the entry.  Only the
+                            # provider identity changes.
+                            self._provider.version = "v2"
                             return preflight()
                         return reason
 
@@ -957,29 +1249,36 @@ class DirectFileOperationsTests(unittest.TestCase):
                         target,
                         execute=execute,
                         mutation_authority=mutation_authority,
-                        preflight=swap_then_preflight,
+                        preflight=bump_then_preflight,
                         mutate=mutate,
                         verify=verify,
                     )
 
-            evidence = _entry_evidence(api, active, "source", "big-race.bin")
-            self.assertEqual(big.stat().st_mtime_ns, observed.st_mtime_ns)
-            with patch.object(service, "_executor", SwapTailInPreflight(root, observed)):
+            rename_evidence = _entry_evidence(api, active, "source", "race.txt")
+            impact = service.delete_impact(resource_library_id="source", paths=["deleted.txt"])
+            with patch.object(service, "_executor", BumpIdentityInPreflight(storage)):
                 outcome = service.rename(
                     resource_library_id="source",
-                    path="big-race.bin",
-                    name="big-raced.bin",
-                    expected=evidence,
+                    path="race.txt",
+                    name="raced.txt",
+                    expected=rename_evidence,
                 )
-            self.assertEqual(outcome["status"], "FAILED")
-            self.assertEqual(outcome["errorCategory"], "source_changed")
-            self.assertTrue(big.exists())
-            self.assertFalse((root / "source" / "big-raced.bin").exists())
-            self.assertEqual(_large_file_tail(big.read_bytes()), b"new-tail")
-            self.assertEqual(
-                big.read_bytes()[:_LARGE_HEAD_BYTES],
-                _large_file_content(b"old-tail")[:_LARGE_HEAD_BYTES],
-            )
+                self.assertEqual(outcome["status"], "FAILED")
+                self.assertEqual(outcome["errorCategory"], "source_changed")
+                self.assertTrue((root / "source" / "race.txt").exists())
+                self.assertFalse((root / "source" / "raced.txt").exists())
+
+                storage.version = "v1"
+                delete_outcome = service.execute_delete(
+                    resource_library_id="source",
+                    paths=["deleted.txt"],
+                    confirmation_digest=impact.scope_digest,
+                )
+            self.assertEqual(delete_outcome["status"], "FAILED")
+            self.assertEqual(delete_outcome["failedItems"], 1)
+            self.assertEqual(delete_outcome["succeededItems"], 0)
+            self.assertTrue((root / "source" / "deleted.txt").exists())
+            self.assertEqual(storage.reads, [])
 
     def test_confirmed_delete_refuses_a_same_size_scope_swap(self) -> None:
         """A same-size source swap after the impact preview fails stale."""
@@ -1012,7 +1311,8 @@ class DirectFileOperationsTests(unittest.TestCase):
         The scope digest passes at admission (the file still matches the
         enumerated evidence); a concurrent writer then replaces it with
         same-size/different-mtime content before the executor's mutating
-        Storage call.  The executor's size+mtime fence refuses the delete.
+        Storage call.  The executor's metadata-only provider-identity fence
+        refuses the delete without reading the file.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1101,7 +1401,8 @@ class DirectFileOperationsTests(unittest.TestCase):
 
         The executor fence uses the provider's stable directory identity (the
         inode segment of the Local fingerprint), so the replacement directory
-        created after the operator confirmed the original survives.
+        created after the operator confirmed the original survives — proved from
+        metadata only, with no content read.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1113,11 +1414,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             storage = service._open_storage(library)
             (root / "source" / "victim").mkdir()
             observed = storage.stat("victim")
-            evidence = EntryVersionEvidence(
+            evidence = DirectEntryEvidence(
                 size=0,
                 modified_at=observed.modified_at.isoformat(),
                 is_directory=True,
-                fingerprint=observed.fingerprint,
+                fingerprint=observed.fingerprint or "",
             )
             # Same-name replacement: rmdir + mkdir yields a new inode/ctime.
             storage.delete("victim")
@@ -1163,7 +1464,7 @@ class DirectFileOperationsTests(unittest.TestCase):
         """A recursive parent replaced after confirmation keeps its new content.
 
         The replacement directory has a new provider identity, so the executor's
-        directory-identity fence refuses the delete.
+        metadata-only directory-identity fence refuses the delete.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1176,11 +1477,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             library = direct._library("source")
             storage = direct._open_storage(library)
             observed = storage.stat("parent")
-            evidence = EntryVersionEvidence(
+            evidence = DirectEntryEvidence(
                 size=0,
                 modified_at=observed.modified_at.isoformat(),
                 is_directory=True,
-                fingerprint=observed.fingerprint,
+                fingerprint=observed.fingerprint or "",
             )
             # Replace the whole directory with different unconfirmed content.
             import shutil
@@ -1199,17 +1500,13 @@ class DirectFileOperationsTests(unittest.TestCase):
                 (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"), "new"
             )
 
-    def test_confirmed_delete_refuses_a_replaced_directory_without_provider_identity(
-        self,
-    ) -> None:
-        """No verifiable directory identity means no folder Delete.
+    def test_executor_refuses_delete_evidence_without_provider_identity(self) -> None:
+        """Empty provider identity is never a silent size/mtime fallback.
 
-        The provider-neutral probe strips Local's identity token, standing in for
-        SMB/OpenList entries and S3 directory entries.  The operator's confirmed
-        evidence of the original empty directory is submitted after that
-        directory was replaced by a new empty directory at the same path: "it is
-        still a directory" and "it is empty" are not identity, so the executor
-        fails closed and the replacement survives.
+        The operator's confirmed evidence carries no verifiable identity, so the
+        executor's last safe boundary refuses the mutation instead of trusting
+        "it is still a directory" or the entry's size: the replacement survives
+        and no delete is issued beyond the probe's own setup.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1218,11 +1515,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "victim").mkdir()
             observed = storage.stat("victim")
             self.assertIsNone(observed.fingerprint)
-            evidence = EntryVersionEvidence(
+            evidence = DirectEntryEvidence(
                 size=0,
                 modified_at=observed.modified_at.isoformat(),
                 is_directory=True,
-                fingerprint=observed.fingerprint,
+                fingerprint="",
             )
             # Same-name replacement: rmdir + mkdir of a fresh empty directory.
             storage.delete("victim")
@@ -1232,146 +1529,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             self.assertEqual(result.status.value, "FAILED")
             self.assertEqual(tuple(result.uncertain_effects), ())
-            self.assertTrue(
-                any("verifiable directory identity" in error for error in result.errors)
-            )
+            self.assertTrue(any("version evidence is required" in error for error in result.errors))
             # The replacement survives; the only delete ever issued was the
             # probe's own removal of the original directory.
             self.assertTrue((root / "victim").is_dir())
             self.assertEqual(storage.deleted, ["victim"])
-
-    def test_folder_delete_requires_provider_directory_identity(self) -> None:
-        """A provider without folder identity refuses Delete before any mutation.
-
-        The same provider-neutral fake refuses the folder journey with an
-        actionable reason, keeps the folder and its files untouched, creates no
-        Task, and still deletes plain files, so the refusal is bounded to folders
-        whose identity cannot be verified.
-        """
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "source").mkdir(parents=True, exist_ok=True)
-            storage = _FingerprintlessStorage("source-storage", root / "source")
-            api, _objects, active, runtime = self._activate(
-                root, storage_adapters={"source-storage": storage}
-            )
-            service = self._service(api, active)
-            (root / "source" / "folder").mkdir()
-            (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
-            (root / "source" / "single.txt").write_text("s", encoding="utf-8")
-
-            with self.assertRaises(DirectFileError) as preview:
-                service.delete_impact(resource_library_id="source", paths=["folder"])
-            self.assertEqual(preview.exception.code, "files_direct_directory_identity_unavailable")
-            self.assertEqual(preview.exception.category, "directory_identity_unavailable")
-            self.assertEqual(preview.exception.status, 400)
-            self.assertTrue(preview.exception.next_action)
-
-            # The confirmed command refuses as well, including for a mixed
-            # selection: nothing is deleted and no Task is created.
-            with self.assertRaises(DirectFileError):
-                service.execute_delete(
-                    resource_library_id="source",
-                    paths=["folder", "single.txt"],
-                    confirmation_digest="0" * 64,
-                )
-            self.assertEqual(storage.deleted, [])
-            self.assertEqual(runtime.list_tasks(), ())
-            self.assertTrue((root / "source" / "folder" / "keep.txt").is_file())
-            self.assertTrue((root / "source" / "single.txt").is_file())
-
-            # The API shares the exact application refusal.
-            status, body = request(
-                api,
-                "/api/v1/resource-libraries/source/files/delete-impact?path=folder",
-            )
-            self.assertEqual(status, 400, body)
-            self.assertEqual(body["error"]["code"], "files_direct_directory_identity_unavailable")
-            self.assertEqual(body["error"]["details"]["category"], "directory_identity_unavailable")
-            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-
-            # Plain file Delete still works on the same provider: the refusal is
-            # bounded to folders without a verifiable identity.
-            impact = service.delete_impact(resource_library_id="source", paths=["single.txt"])
-            outcome = service.execute_delete(
-                resource_library_id="source",
-                paths=["single.txt"],
-                confirmation_digest=impact.scope_digest,
-            )
-            self.assertEqual(outcome["status"], "SUCCESS")
-            self.assertFalse((root / "source" / "single.txt").exists())
-            self.assertEqual(storage.deleted, ["single.txt"])
-
-    def test_folder_rename_requires_provider_directory_identity(self) -> None:
-        """A folder whose identity the provider cannot verify is never renamed.
-
-        The provider-neutral fake strips Local's identity, standing in for
-        SMB/OpenList entries and S3 directory entries.  The folder journey fails
-        closed before any mutation with an actionable reason and creates no
-        Task, while the same provider still renames plain files, whose evidence
-        is anchored by their bounded content digest.
-        """
-
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "source").mkdir(parents=True, exist_ok=True)
-            storage = _FingerprintlessStorage("source-storage", root / "source")
-            api, _objects, active, runtime = self._activate(
-                root, storage_adapters={"source-storage": storage}
-            )
-            service = self._service(api, active)
-            (root / "source" / "folder").mkdir()
-            (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
-            (root / "source" / "note.txt").write_text("note", encoding="utf-8")
-
-            library = service._library("source")
-            folder_entry = service._stat_entry(library, storage, "folder")
-
-            with self.assertRaises(DirectFileError) as refused:
-                service.rename_evidence(resource_library_id="source", path="folder")
-            self.assertEqual(refused.exception.code, "files_direct_entry_identity_unavailable")
-            self.assertEqual(refused.exception.category, "entry_identity_unavailable")
-            self.assertEqual(refused.exception.status, 400)
-            self.assertTrue(refused.exception.next_action)
-
-            with self.assertRaises(DirectFileError) as command_refused:
-                service.rename(
-                    resource_library_id="source",
-                    path="folder",
-                    name="renamed-folder",
-                    expected={
-                        "size": folder_entry.size,
-                        "modifiedAt": folder_entry.modified_at.isoformat(),
-                        "evidence": "v1." + "0" * 32,
-                    },
-                )
-            self.assertEqual(command_refused.exception.category, "entry_identity_unavailable")
-            self.assertEqual(runtime.list_tasks(), ())
-            self.assertTrue((root / "source" / "folder").is_dir())
-            self.assertFalse((root / "source" / "renamed-folder").exists())
-
-            status, body = request(
-                api,
-                "/api/v1/resource-libraries/source/files/rename-evidence?path=folder",
-            )
-            self.assertEqual(status, 400, body)
-            self.assertEqual(body["error"]["code"], "files_direct_entry_identity_unavailable")
-            self.assertEqual(body["error"]["details"]["category"], "entry_identity_unavailable")
-            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-            self.assertTrue(body["error"]["details"]["nextAction"])
-
-            # Plain file Rename still works on the same provider: the refusal is
-            # bounded to folders whose identity cannot be verified.
-            outcome = service.rename(
-                resource_library_id="source",
-                path="note.txt",
-                name="renamed-note.txt",
-                expected=_entry_evidence(api, active, "source", "note.txt"),
-            )
-            self.assertEqual(outcome["status"], "SUCCESS")
-            self.assertTrue((root / "source" / "renamed-note.txt").is_file())
-            self.assertFalse((root / "source" / "note.txt").exists())
 
     def test_rename_evidence_is_bound_to_one_exact_entry(self) -> None:
         """Issued evidence never authorizes renaming a different entry version."""

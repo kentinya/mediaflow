@@ -6,7 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from mediaflow.domain.classification import ClassificationResult
-from mediaflow.domain.direct_files import EntryVersionEvidence, stream_content_digest
+from mediaflow.domain.direct_files import DirectEntryEvidence, EntryVersionEvidence
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.metadata import MediaIdentity
@@ -754,14 +754,17 @@ class OrganizerExecutor:
         source: str,
         target: str,
         *,
-        source_evidence: EntryVersionEvidence | None = None,
+        source_evidence: DirectEntryEvidence | None = None,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
         """Rename one exact entry within the same Storage; never Copy or Move.
 
-        ``source_evidence`` is re-verified immediately before the move so a
-        source replaced after it was observed is never renamed away.
+        ``source_evidence`` is the metadata-only exact-version evidence the
+        backend observed, and it is mandatory: it is re-verified with one
+        ``stat`` immediately before the move, so a source replaced after it was
+        observed is never renamed away, and no entry content is ever read to
+        fence the mutation.
         """
 
         return self._execute_direct(
@@ -783,15 +786,17 @@ class OrganizerExecutor:
         storage: Storage,
         path: str,
         *,
-        entry_evidence: EntryVersionEvidence | None = None,
+        entry_evidence: DirectEntryEvidence | None = None,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
         """Delete one exact file or empty directory entry.
 
-        ``entry_evidence`` is re-verified immediately before the delete so
-        content replaced after the operator confirmed the scope is never
-        destroyed.
+        ``entry_evidence`` is the metadata-only exact-version evidence the
+        operator confirmed, and it is mandatory: it is re-verified with one
+        ``stat`` immediately before the delete, so an entry replaced after the
+        confirmation is never destroyed and no entry content is ever read to
+        fence the mutation.
         """
 
         return self._execute_direct(
@@ -959,61 +964,17 @@ class OrganizerExecutor:
 
     @staticmethod
     def _direct_exists_preflight(
-        storage: Storage, path: str, entry_evidence: EntryVersionEvidence | None = None
+        storage: Storage, path: str, entry_evidence: DirectEntryEvidence | None = None
     ) -> str | None:
         if not storage.exists(path):
             return "source does not exist"
-        if entry_evidence is not None:
-            observed = storage.stat(path)
-            if (
-                entry_evidence.is_directory is not None
-                and (observed.entry_type is StorageEntryType.DIRECTORY)
-                != entry_evidence.is_directory
-            ):
-                return "entry changed since it was confirmed"
-            # A provider fingerprint (inode+ctime, ETag, ...) is the provider's
-            # stable identity.  For files the full token fences this last safe
-            # boundary.  For directories the inode segment is the stable
-            # identity: a same-name replacement (rmdir + mkdir) always yields a
-            # new inode and fails closed here, while the confirmed deletion of
-            # the directory's own children legitimately moves its ctime (and
-            # therefore the full token) without changing its inode.
-            if entry_evidence.fingerprint is not None and (
-                observed.fingerprint != entry_evidence.fingerprint
-            ):
-                if entry_evidence.is_directory is not True:
-                    return "entry changed since it was confirmed"
-                if _directory_fingerprint_identity(
-                    observed.fingerprint
-                ) != _directory_fingerprint_identity(entry_evidence.fingerprint):
-                    return "entry changed since it was confirmed"
-            if observed.entry_type is StorageEntryType.DIRECTORY:
-                # A Directory Delete is only safe when the provider exposes a
-                # stable per-directory identity that survives the confirmed
-                # deletion of the directory's own children (Local: the inode
-                # segment).  A provider that publishes no such token (SMB,
-                # OpenList and S3 directory entries carry no fingerprint) cannot
-                # distinguish the confirmed directory from a same-name
-                # replacement, and "it is still a directory" or "it is empty"
-                # are not identity.  The mutation fails closed here instead of
-                # deleting an unconfirmed replacement.
-                if (
-                    _directory_fingerprint_identity(entry_evidence.fingerprint) is None
-                    or _directory_fingerprint_identity(observed.fingerprint) is None
-                ):
-                    return (
-                        "directory delete requires a verifiable directory identity "
-                        "from this Storage provider"
-                    )
-                # With an identity the check above is authoritative; the mtime
-                # may legitimately have moved while confirmed children were
-                # deleted, so it is not re-compared.
-            elif (
-                observed.size != entry_evidence.size
-                or observed.modified_at.isoformat() != entry_evidence.modified_at
-            ):
-                return "entry changed since it was confirmed"
-        return None
+        if entry_evidence is None or not entry_evidence.fingerprint:
+            return "entry version evidence is required before this Storage mutation"
+        return _direct_entry_version_mismatch(
+            storage.stat(path),
+            entry_evidence,
+            "entry changed since it was confirmed",
+        )
 
     @staticmethod
     def _direct_write_preflight(
@@ -1049,67 +1010,28 @@ class OrganizerExecutor:
         storage: Storage,
         source: str,
         target: str,
-        source_evidence: EntryVersionEvidence | None = None,
+        source_evidence: DirectEntryEvidence | None = None,
     ) -> str | None:
         """Re-verify the observed source version at the last safe boundary.
 
-        The evidence is checked component by component against the entry as it
-        is right now, including its bounded content digest, so a source
-        replaced after the evidence was issued — even by same-size content
-        under a restored mtime, where a coarse provider timestamp cannot
-        separate the two writes — is refused before any Storage mutation.
+        One metadata query re-checks the entry type, size, modified time and the
+        provider's verifiable entry identity against the evidence.  A source
+        replaced after the evidence was issued is refused before any Storage
+        mutation, and an entry this provider cannot identify is refused as well
+        instead of being renamed unverified.  The entry content is never read.
         """
 
         if not storage.exists(source):
             return "source does not exist"
         if storage.exists(target):
             return "destination already exists"
-        if source_evidence is None:
-            return None
-        observed = storage.stat(source)
-        is_directory = observed.entry_type is StorageEntryType.DIRECTORY
-        if (
-            source_evidence.is_directory is not None
-            and is_directory != source_evidence.is_directory
-        ):
-            return "source changed since it was observed"
-        if is_directory:
-            # A directory has no content to compare; its provider identity is
-            # the only proof that the confirmed folder is still the confirmed
-            # folder.  A provider that exposes none fails closed here instead of
-            # renaming an unverified same-name replacement.
-            if (
-                _directory_fingerprint_identity(source_evidence.fingerprint) is None
-                or _directory_fingerprint_identity(observed.fingerprint) is None
-            ):
-                return "rename requires a verifiable directory identity from this Storage provider"
-            if _directory_fingerprint_identity(observed.fingerprint) != (
-                _directory_fingerprint_identity(source_evidence.fingerprint)
-            ):
-                return "source changed since it was observed"
-            return None
-        if (
-            observed.size != source_evidence.size
-            or observed.modified_at.isoformat() != source_evidence.modified_at
-        ):
-            return "source changed since it was observed"
-        if (
-            source_evidence.fingerprint is not None
-            and observed.fingerprint != source_evidence.fingerprint
-        ):
-            return "source changed since it was observed"
-        if source_evidence.digest is not None:
-            # The complete streamed content is re-hashed here, not a sample: the
-            # last safe boundary must prove the whole observed version, including
-            # bytes a prefix-only digest could never cover.
-            try:
-                with storage.read(source) as stream:
-                    digest, counted = stream_content_digest(stream)
-            except (StorageError, RuntimeError, OSError):
-                return "source could not be re-verified before the rename"
-            if counted != observed.size or digest != source_evidence.digest:
-                return "source content changed since it was observed"
-        return None
+        if source_evidence is None or not source_evidence.fingerprint:
+            return "entry version evidence is required before this Storage mutation"
+        return _direct_entry_version_mismatch(
+            storage.stat(source),
+            source_evidence,
+            "source changed since it was observed",
+        )
 
     @staticmethod
     def _direct_directory_verified(storage: Storage, path: str) -> bool:
@@ -1691,6 +1613,35 @@ class OrganizerExecutor:
         return result
 
 
+def _direct_entry_version_mismatch(
+    observed, evidence: DirectEntryEvidence, message: str
+) -> str | None:
+    """Compare one fresh provider observation against admitted entry evidence.
+
+    Only provider metadata participates, so the last safe boundary of Rename and
+    Delete costs exactly one ``stat`` and never reads entry content.  A file is
+    fenced by its provider identity plus the observed type, size and modification
+    time; a directory is fenced by the stable identity segment of its provider
+    token, because deleting the directory's own confirmed children legitimately
+    moves the rest of that token (Local's ctime segment) without changing which
+    directory it is.
+    """
+
+    if evidence.is_directory != (observed.entry_type is StorageEntryType.DIRECTORY):
+        return message
+    if evidence.is_directory:
+        if _directory_fingerprint_identity(observed.fingerprint) != (
+            _directory_fingerprint_identity(evidence.fingerprint)
+        ):
+            return message
+        return None
+    if observed.fingerprint != evidence.fingerprint:
+        return message
+    if observed.size != evidence.size or observed.modified_at.isoformat() != evidence.modified_at:
+        return message
+    return None
+
+
 def _directory_fingerprint_identity(fingerprint: str | None) -> str | None:
     """The provider's stable per-directory identity segment.
 
@@ -1743,8 +1694,8 @@ def _execution_log_category(result: ExecutionResult) -> str | None:
         return "invalid_destination"
     if "unsupported" in text or "not executable" in text or "cross storage link" in text:
         return "unsupported_capability"
-    if "verifiable directory identity" in text:
-        return "unsupported_capability"
+    if "version evidence is required" in text:
+        return "entry_identity_unavailable"
     if (
         "capability denied" in text
         or "permission denied" in text

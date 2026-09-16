@@ -35,12 +35,6 @@ MAX_IMPACT_DEPTH = 32
 #: Largest total byte size one bounded Delete impact may cover.
 MAX_IMPACT_BYTES = 20 * 1024**3
 
-#: Chunk size of the complete streaming content digest one Rename evidence
-#: carries.  The digest covers the entire entry content — a prefix-only sample
-#: cannot prove the version of a file whose remaining bytes changed — while the
-#: read stays memory bounded by this constant.
-RENAME_DIGEST_CHUNK_BYTES = 1024 * 1024
-
 #: Reserved Windows device names that must never be created through a name
 #: field because SMB shares reject or dangerously reinterpret them.
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -135,33 +129,42 @@ class DirectFileTextDocument:
 
 @dataclass(frozen=True)
 class EntryVersionEvidence:
-    """Server-issued observed state of one entry, used as mutation fencing.
+    """Loaded-version evidence of one bounded *text* document.
 
-    The Rename/Delete/Save commands bind this evidence at admission and the
-    executor re-verifies it at the last safe boundary before the mutating
-    Storage call, so a source replaced after it was observed is never
-    destroyed or overwritten.
-
-    ``fingerprint`` is the provider's optional stable identity token (e.g.
-    inode+ctime for Local, ETag for S3).  When the provider offers one it is
-    the strongest fence available, including for directories where size is
-    constant and mtime may legitimately move.
-
-    ``digest`` is the exact observed content digest of the bytes this evidence
-    covers: the full loaded document for a bounded text Save, and the complete
-    streamed content of the entry for a Rename.  A Rename digest always covers
-    the whole file — a prefix-only sample cannot prove the version of a file
-    whose remaining bytes changed — and it is the fence that stays
-    deterministic even where a provider's timestamps are too coarse to separate
-    two writes, so a same-size/same-mtime content replacement is still refused
-    on a provider that offers no fingerprint at all.
+    This is the text-edit fence only: it covers the exact bytes the operator
+    loaded, which are bounded by :data:`MAX_TEXT_BYTES`, so the bounded text
+    read that produces it is also the content-authoritative admission for the
+    Save.  It is never Rename or Delete evidence — those commands are fenced by
+    :class:`DirectEntryEvidence`, because a version check that reads the whole
+    entry would make an ordinary file-management command's cost proportional to
+    the media file size.
     """
 
     size: int
     modified_at: str
-    digest: str | None = None
-    is_directory: bool | None = None
-    fingerprint: str | None = None
+    digest: str
+
+
+@dataclass(frozen=True)
+class DirectEntryEvidence:
+    """Metadata-only exact-version evidence of one entry, for Rename and Delete.
+
+    Every component comes from a provider observation (`stat`/`list`):
+    ``fingerprint`` is the provider's own verifiable entry identity (Local:
+    ``inode:…:ctime:…``, S3: the object validator).  There is deliberately no
+    content digest here: the whole point of this type is that Rename and Delete
+    prove the exact observed version from provider metadata alone, so their cost
+    never depends on file size and no media byte is read to fence a mutation.
+
+    A provider that publishes no such identity cannot prove the entry version at
+    all, and the command fails closed before any Task or Storage mutation rather
+    than falling back to size, `mtime` or a content prefix.
+    """
+
+    size: int
+    modified_at: str
+    is_directory: bool
+    fingerprint: str
 
 
 @dataclass(frozen=True)
@@ -170,10 +173,10 @@ class RenameEvidence:
 
     ``token`` binds the exact entry version the backend observed — Active
     ResourceLibrary, ResourceLibrary-relative path, entry type, size, modified
-    time, the provider fingerprint and the complete streamed content digest —
-    without disclosing any of those implementation values to the browser.  Only
-    the backend can mint it, and an older token never matches a changed entry,
-    so replaying stale evidence fails closed instead of renaming a replacement.
+    time and the provider's verifiable entry identity — without disclosing any
+    of those implementation values to the browser.  Only the backend can mint
+    it, and an older token never matches a changed entry, so replaying stale
+    evidence fails closed instead of renaming a replacement.
     """
 
     resource_library_id: str
@@ -190,32 +193,10 @@ class RenameEvidence:
             "isDirectory": self.is_directory,
             "size": self.size,
             "modifiedAt": self.modified_at,
-            # The provider fingerprint and the content digest stay server-side:
-            # the browser only needs the opaque version token it must return.
+            # The provider identity stays server-side: the browser only needs
+            # the opaque version token it must return.
             "evidence": self.token,
         }
-
-
-def stream_content_digest(
-    stream, *, chunk_bytes: int = RENAME_DIGEST_CHUNK_BYTES
-) -> tuple[str, int]:
-    """The SHA-256 digest and byte count of one complete provider stream.
-
-    The whole content is hashed in bounded chunks, so the evidence proves the
-    complete entry version while memory stays constant.  Short reads are
-    tolerated (the loop stops only at end of stream), and the byte count it
-    returns lets a caller prove the stream still had exactly the observed size.
-    """
-
-    digest = hashlib.sha256()
-    counted = 0
-    while True:
-        chunk = stream.read(chunk_bytes)
-        if not chunk:
-            break
-        digest.update(chunk)
-        counted += len(chunk)
-    return digest.hexdigest(), counted
 
 
 def entry_version_token(
@@ -225,15 +206,15 @@ def entry_version_token(
     is_directory: bool,
     size: int,
     modified_at: str,
-    fingerprint: str | None,
-    content_digest: str | None,
+    fingerprint: str,
 ) -> str:
     """The opaque, secret-free version token of one observed entry.
 
-    The token covers the exact observed entry version, so re-deriving it from a
-    later observation only reproduces the client's token while nothing about the
-    entry changed.  It is not a permission: the command still requires the
-    operator's permission, the Active ResourceLibrary and every admission check.
+    The token covers the exact observed entry version — including the provider's
+    verifiable entry identity — so re-deriving it from a later observation only
+    reproduces the client's token while nothing about the entry changed.  It is
+    not a permission: the command still requires the operator's permission, the
+    Active ResourceLibrary and every admission check.
     """
 
     payload = json.dumps(
@@ -244,7 +225,6 @@ def entry_version_token(
             "size": size,
             "modifiedAt": modified_at,
             "fingerprint": fingerprint,
-            "contentDigest": content_digest,
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -260,16 +240,17 @@ class DirectFileImpactEntry:
     ``modified_at`` and ``fingerprint`` participate in the scope digest so a
     same-size source replacement (or a same-name directory replacement) between
     the impact preview and the confirmation is rejected as stale instead of
-    deleting the replaced content.  ``fingerprint`` carries the provider's
-    stable identity token when the provider offers one (Local: inode+ctime,
-    S3: ETag); providers without one fall back to mtime fencing.
+    deleting the replaced content.  ``fingerprint`` is the provider's verifiable
+    entry identity (Local: inode+ctime, S3: the object validator) and is
+    mandatory: an entry the provider cannot identify never enters a confirmed
+    Delete scope, so no size/`mtime` fallback can authorize a mutation.
     """
 
     path: str
     is_directory: bool
     size: int
     modified_at: str
-    fingerprint: str | None = None
+    fingerprint: str
 
 
 @dataclass(frozen=True)
