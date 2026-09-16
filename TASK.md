@@ -345,128 +345,107 @@ SMB/OpenList/S3/TMDB service, production credential or real media directory is p
   hard-coded sample library records, a fixed four/five-library maximum, or committing/generated
   rewriting of the local `web/test-results/` interaction references.
 
-## Developer Completion Report — CORRECTION LOOP (Task 37.3 FIX REQUIRED)
+## Developer Completion Report — SECOND CORRECTION LOOP (Task 37.3 FIX REQUIRED)
 
-This is the correction-loop report for the same Task 37.3. It replaces the
-previous report's Checkpoint; Task ID, Task Base, Goal and Scope are unchanged.
-Only the blockers listed under the `B Review Result` section and their direct
-root causes were fixed, plus the test/fake contract updates those fixes require.
+This is the second correction-loop report for the same Task 37.3 (Task Base,
+Goal and Scope unchanged). Only the blockers listed in the current
+`## B Review Result` section and their direct root causes were fixed, plus the
+test and fake updates those fixes require.
 
 ### Changed Files
 
-Correction-loop changes on top of `75abfe3` + `a11292e`:
+Correction-loop changes on top of `1bf47b7`:
 
 Backend:
 
-- `mediaflow/application/direct_file_commands.py` — Save evidence now carries
-  the exact loaded `modifiedAt` into `EntryVersionEvidence`; Delete execution
-  passes per-entry server-issued evidence to the executor; Delete responses
-  always carry the stable `status` (`SUCCESS`/`PARTIAL`/`FAILED`/`PAUSED`/
-  `CANCELLED`/`UNCERTAIN`) naming the known durable effect; single-command
-  results persist the exact logical `target` path.
-- `mediaflow/application/organizer.py` — `execute_direct_write` re-verifies the
-  loaded digest/size at the last safe boundary before an overwrite write;
-  `execute_direct_rename` re-verifies observed source size/mtime;
-  `execute_direct_delete` re-verifies confirmed entry evidence (files: exact
-  size+mtime; directories: entry type, because a directory's mtime legitimately
-  changes while its confirmed children are deleted).
-- `mediaflow/application/task_runtime.py` — `complete_direct_item` accepts the
-  bounded logical target and persists `destination_path` truthfully (Rename no
-  longer records the source as its own destination); the durable
-  source/target are ResourceLibrary-relative, never host roots.
-- `mediaflow/application/configuration_objects.py` — `remove_resource_library`
-  binds the confirmation to the exact previewed Active revision
-  (`expected_revision_id`/`expected_version`/`expected_digest`) and the
-  selected library identity, and refuses a disabled ResourceLibrary before any
-  successor is constructed.
-- `mediaflow/interfaces/service_api.py` — the removal `DELETE` route requires
-  exactly the four confirmation fields; Rename requires the `expected` observed
-  evidence; the removal preview already publishes `active` (revisionId/
-  version/digest) from `configuration_objects`.
-- `mediaflow/domain/direct_files.py` — `EntryVersionEvidence` mutation-fencing
-  model; `DirectFileImpactEntry.modified_at` participates in the scope digest
-  so a same-size replacement between preview and confirmation is stale.
-- `tests/test_direct_file_operations.py` — updated to the strict contracts and
-  extended with the correction-loop regressions listed under Tests.
+- `mediaflow/domain/direct_files.py` — `EntryVersionEvidence` and
+  `DirectFileImpactEntry` carry the provider's optional stable identity
+  (`fingerprint`); the fingerprint participates in the Delete scope digest but
+  is deliberately not emitted in the browser-facing impact document.
+- `mediaflow/application/direct_file_commands.py` — impact enumeration,
+  confirmed-execution re-enumeration and the scope digest now include each
+  entry's provider fingerprint; Delete responses carry a bounded,
+  never-truncated `knownEffects` contract (one entry per confirmed top-level
+  target).
+- `mediaflow/application/organizer.py` — `_direct_exists_preflight` fences
+  directories on the provider's stable identity (the inode segment of the
+  Local fingerprint, which survives the confirmed deletion of the directory's
+  own children but changes on a same-name `rmdir`+`mkdir` replacement); for
+  providers without a fingerprint the confirmed directory must be empty before
+  removal; file fencing additionally compares the full provider fingerprint.
+  New `_directory_fingerprint_identity` helper.
+- `tests/test_direct_file_operations.py` — replaced-empty-directory,
+  replaced-recursive-parent and secret-free impact regressions; a large
+  (>200-entry) directory Delete known-effect regression; the Save/Rename/Delete
+  pre-mutation race tests now really act inside the executor's preflight window
+  and assert zero erroneous mutation.
 
 Web:
 
-- `web/src/entities/library/direct-files.ts` — `normalizeRemovalPreview` now
-  requires the `active` revision identity (fails closed without it).
-- `web/src/entities/library/direct-files.test.ts` (new) — contract regression
-  feeding the real backend Delete payloads (success/partial/paused/cancelled/
-  failed/uncertain, no hand-added `status`) and the real removal-preview
-  payload through the strict normalizers; proves a `status`-less legacy
-  response fails closed.
-- `web/src/shared/api/api-client.ts` — `removeResourceLibrary` submits the
-  confirmation binding (`expectedRevisionId`/`expectedVersion`/`expectedDigest`/
-  `expectedLibraryId`); Rename submits the observed `expected` evidence.
-- `web/src/features/library/StorageFilesPage.tsx` — stale text Save keeps the
-  local edits and explicitly enters the reloadable editor state; a successful
-  Save refetches the `files-text` query so the next Save submits fresh
-  evidence; Rename/Delete success prunes or remaps `selectedFiles`,
-  `knownDirectoryPaths` and `visitedDirectories` (siblings keep their own
-  independent selections); Delete outcomes prune only successfully deleted
-  paths; removal stale/conflict failures invalidate the preview so the operator
-  can re-review and confirm again.
-- `web/src/features/library/DeleteResourceLibraryDialog.tsx` — blocks the
-  confirmation while the preview is loading, mismatched with the selection, or
-  the library is disabled; offers 重新获取预览并重审 after a stale refusal.
-- `web/src/features/library/LibraryCardStrip.tsx` — removed the hard-coded
-  12-item popover cap; the bounded scroll list now renders every authoritative
-  overflow entry (search still filters it).
-- `web/src/features/library/StorageFilesPage.test.tsx` — fixtures updated to
-  the strict preview contract; new tests for 13+ library discovery/selection,
-  stale save recovery, consecutive-save evidence refresh, partial-Delete
-  durable outcome.
-- `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs` — fake
-  preview exposes the full `active` identity; the fake removal `DELETE`
-  validates the confirmation binding and returns the real
-  `resource_library_removal_stale` 409 contract; new e2e journey for a stale
-  removal confirmation (dialog stays open with the re-review action, library
-  remains configured).
+- `web/src/entities/library/direct-files.ts` — `DirectFileKnownEffect` model and
+  strict `knownEffects` normalizer.
+- `web/src/features/library/StorageFilesPage.tsx` — Delete reconciliation now
+  prunes exactly the top-level targets the backend reports as
+  `effect: "deleted"` (never a truncated per-item outcome list); partial or
+  failed targets keep their rows, selections and outcomes.
+- `web/src/features/library/FileCommandDialogs.tsx` — the bounded text editor
+  keeps the local draft separately, preserves it across the explicit
+  reload, lets the operator reapply it, and only then saves with the freshly
+  loaded evidence.
+- `web/src/entities/library/direct-files.test.ts`,
+  `web/src/features/library/StorageFilesPage.test.tsx`,
+  `web/tests/fake-server.mjs` — contract and journey coverage for the new
+  known-effect contract, the stale→reload→reapply→save loop, and real
+  selection/directory-tree reconciliation (selected file, selected and
+  visited directory, directory rename, >200-entry Delete).
 
 ### Implemented
 
-- Delete result contract: every terminal Delete response now carries a stable
-  `status` that names the known durable effect, so `normalizeDirectFileCommandResult()`
-  succeeds on the real API response and the Web result view shows the true
-  durable outcome (per-item outcomes, partial failures and uncertainty stay
-  visible and are never auto-replayed). A contract regression feeds the real
-  backend payload shapes through the frontend normalizer; the fakes no longer
-  invent a `status` the backend never sent.
-- Exact source/scope/version fencing: Rename requires and re-verifies
-  server-issued observed evidence (size + mtime); Delete impact entries carry
-  `modifiedAt` into the scope digest, and the executor re-verifies each
-  confirmed entry (files: size+mtime; directories: entry type) immediately
-  before mutation; text Save re-verifies the exact loaded digest+size inside
-  `OrganizerExecutor` at the last safe boundary. Same-size source replacement
-  between preview/admission and mutation now fails stale with zero erroneous
-  mutation, including a simulated pre-mutation race.
-- ResourceLibrary removal confirmation binding: the preview publishes the exact
-  Active `revisionId`/`version`/`digest`; the `DELETE` request must carry that
-  identity plus the selected library id; the backend rejects stale,
-  mismatched, missing or disabled confirmations with 409
-  `resource_library_removal_stale` / `resource_library_disabled` before any
-  successor work, preserving the prior Active; the Web keeps the confirmation
-  context open with a refresh-and-re-review action.
-- Text editor recovery: stale Save keeps local edits and renders the explicit
-  reload state; a successful Save refetches the authoritative text so the next
-  Save submits the new version (stale→reload/reapply and consecutive-save
-  covered by unit tests).
-- Rename/Delete browse-state hygiene: known-success results prune or remap the
-  affected `selectedFiles`/`knownDirectoryPaths`/`visitedDirectories`; renamed
-  paths are remapped to their new identity; unaffected siblings keep their own
-  selections and outcomes.
-- Durable Rename target: `complete_direct_item` persists the exact bounded
-  logical target, so the durable Result records `rename-me.txt -> renamed.txt`
-  (covered for Create/Rename/Save/Delete; host roots never enter the record).
-- `更多` discoverability: the hard-coded 12-item popover cap is gone; every
-  authoritative overflow entry stays reachable in the bounded scroll list with
-  local search; covered by a 13-library unit journey (discovery, selection,
-  promotion beyond the previous cap).
-- Report SHA: this checkpoint's Head SHA below is the exact resolvable commit
-  containing the report itself.
+- **Directory Delete identity fencing.** `_direct_exists_preflight` no longer
+  degrades directories to a bare entry-type comparison. With a provider
+  fingerprint it compares the directory's stable identity segment (Local
+  inode), so a directory that was replaced between the operator's confirmation
+  and the mutating Storage call is refused; the confirmed deletion of the
+  directory's own children legitimately moves its `ctime` but not its inode,
+  so recursive Delete of the confirmed scope still succeeds. Providers without
+  a fingerprint (SMB/OpenList entries, S3 directory markers) instead require
+  the confirmed directory to be empty at the mutation boundary, which refuses
+  any replacement that carries content. The impact scope digest also includes
+  each entry's fingerprint, so a replacement is additionally refused at
+  `execute_delete` admission. Regressions: the B probe scenario
+  (empty-directory replacement → `FAILED`, `replacement_deleted: False`),
+  a replaced recursive parent with unconfirmed children (refused, new child
+  retained), and confirmed recursive Delete still succeeding.
+- **Real pre-mutation race tests.** The Save race test now performs the
+  same-size swap inside the executor's own preflight window (the file still
+  matches the admitted evidence at application admission) and asserts the
+  executor fence refuses the write, returning `status=FAILED`,
+  `errorCategory=source_changed` with the editor content never written.
+  Equivalent new tests cover Rename and Delete. The previous test's patch of
+  `mediaflow.application.direct_file_commands.OrganizerExecutor` (applied after
+  the service was already constructed, so it never replaced
+  `service._executor`) and its swap-before-call timing are gone.
+- **Text editor stale recovery loop.** The editor now keeps the local draft in
+  a separate state slot: a stale Save keeps it untouched, the explicit
+  "确认放弃本地修改并重新加载" fetches the authoritative content/evidence, and
+  after the reload the dialog offers "重新应用我的编辑" so the operator can
+  reapply the draft and save with the new evidence. The Web regression keeps
+  the old evidence failing 409 twice (a naive retry does not fabricate
+  success), verifies the draft survives, then reloads, reapplies and only then
+  succeeds with the fresh `size`/`digest`.
+- **Bounded known-effect Delete contract.** Every Delete response now carries
+  `knownEffects`: one entry per confirmed top-level target with
+  `effect` ∈ {deleted, partial, retained, uncertain}. It is bounded by
+  `MAX_DELETE_PATHS` at admission and is never truncated, unlike the
+  diagnostic `outcomes` list (capped at `MAX_DELETE_PATHS * 4 = 200`). The Web
+  reconciles selection and directory-tree state from `knownEffects` only, so a
+  directory with more than 200 entries no longer leaves hidden selection/tree
+  state behind, while partial and failed siblings keep their own state.
+  Coverage: backend >200-entry Delete (`outcomesTruncated: true` +
+  `knownEffects: [{path: big-dir, effect: deleted}]`), Web tests for a selected
+  file, a selected and visited directory, a directory rename (selection and
+  visited tree node remapped to the new identity) and a partial Delete
+  (retained target stays selected).
 
 ### Tests and Results
 
@@ -474,24 +453,22 @@ Web:
 - `.venv/bin/ruff format --check .` — PASS (304 files).
 - `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS
-  (38 tests, including new correction-loop regressions: rename stale-source
-  fencing, same-size delete-scope swap refusal, save boundary re-verification
-  with an injected pre-mutation race, delete `status` contract for
-  SUCCESS/PARTIAL, durable source/target identity for Create/Rename/Save/
-  Delete, rename API evidence enforcement, stale/mismatched/disabled/incomplete
-  removal refusals).
+  (46 tests, including the new directory-replacement fences, the corrected
+  pre-mutation race tests, the >200-entry known-effect regression and the
+  secret-free impact-document regression).
 - `.venv/bin/python -m unittest tests.test_resource_library_activation
-  tests.test_configuration_objects` — PASS.
+  tests.test_configuration_objects` — PASS (85 tests).
 - `.venv/bin/python -m unittest tests.test_organizer
   tests.test_organizer_mutation_authority tests.test_organizer_rollback
   tests.test_runtime_files_browser tests.test_api_security` — PASS.
 - `.venv/bin/python -m unittest tests.test_local_storage
   tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage` —
   PASS.
-- Combined targeted suites (281 tests) — PASS.
-- `.venv/bin/python -m unittest discover -s tests` — 1576 tests: PASS except 3
-  failures, each reproduced identically on a pristine `a11292e` worktree and
-  therefore `FAIL / PRE-EXISTING / UNRELATED`:
+- Combined targeted suites (288 tests) — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — 1583 tests: PASS except 3
+  failures, the same pre-existing set documented in the previous report and
+  reproduced identically on pristine checkouts (`FAIL / PRE-EXISTING /
+  UNRELATED`):
   `test_configuration_status.ConfigurationSnapshotTests.
   test_hostile_configuration_content_is_never_exposed`,
   `test_manual_operations_contract.ManualOperationsContractTests.
@@ -502,75 +479,71 @@ Web:
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m pip check` — PASS.
 - `test -z "$(rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml || true)"` —
-  PASS (verified with grep; `rg` is not installed in this environment, the
+  PASS (verified with `grep`; `rg` is not installed in this environment and the
   matched set is empty either way).
 - `cd web && npm run format:check` / `npm run typecheck` / `npm run lint` —
   PASS.
 - `cd web && npx vitest run src/features/library/StorageFilesPage.test.tsx` —
-  PASS (18 tests).
+  PASS (22 tests).
 - `cd web && npx vitest run src/entities/library/direct-files.test.ts` — PASS
-  (10 tests, real-payload contract regression).
-- `cd web && npm run test -- --run` — PASS (433 tests / 33 files).
+  (11 tests).
+- `cd web && npm run test -- --run` — PASS (438 tests / 33 files).
 - `cd web && npm run build` — PASS.
 - `cd web && npx playwright test tests/e2e/library-files.spec.ts
-  --project=chromium` — PASS (23 tests, including the new stale-removal
-  confirmation journey and 13+-library overflow discoverability is covered in
-  unit tests; e2e covers strip/更多 promotion, empty state, create/rename/
-  edit/delete and removal journeys).
+  --project=chromium` — PASS (23 tests).
 - `cd web && npm run test:e2e` — 101 PASS; 10 failures, all in
   `library-file-detail.spec.ts` (7) and `manual-operations.spec.ts` (3).
-  Reproduced serially (`--workers=1`) on both the working tree and a pristine
-  `a11292e` worktree with identical test names and counts (10 failed / 9
-  passed on both): `FAIL / PRE-EXISTING / UNRELATED`. Root cause evidence: the
-  FileIndex detail routes were removed from the router in `b507edb` (before
-  this Task's base `e33a030`), while `library-file-detail.spec.ts` still
-  navigates to `/ui-v2/library/file-index*` and the fake server serves the
-  "Route not found" boundary for them; the file-index fake fixtures were
-  removed in the same commit and neither file was touched by Task 37.3.
+  Re-verified this round: reproduced serially (`--workers=1`) on a pristine
+  `1bf47b7` worktree with identical test names and counts (10 failed / 9 passed
+  on both), so they are `FAIL / PRE-EXISTING / UNRELATED`. Root cause (unchanged
+  from the previous report): the FileIndex detail routes were removed from the
+  router in `b507edb`, before this Task's base `e33a030`, while
+  `library-file-detail.spec.ts` still navigates to `/ui-v2/library/file-index*`
+  and the fake server answers with the "Route not found" boundary.
 - `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w <tmp>` +
   `.venv/bin/python scripts/wheel_smoke_test.py` — PASS (Status: PASS, backup
-  SHA-256 `27225bd2c66d...`); the wheel and `dist/` build outputs were removed
+  SHA-256 `27225bd2c66d...`); the wheel and build outputs were removed
   afterwards and are not committed.
 - `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE in this
   environment: the Docker daemon cannot see bind-mount sources created by this
   session (`invalid mount config for type "bind": bind source path does not
-  exist`), reproduced identically for `/tmp` and `/var/tmp` paths and with the
-  same script on a pristine `a11292e` worktree, so the failure is an
-  environment/daemon mount-visibility limitation, not a code change. The
-  script's earlier stages (image build context, config generation) complete;
-  the failure occurs at `docker compose up` mount time.
-- `git diff --check` — PASS. Staged manifest inspected (17 files listed above):
+  exist` for `/tmp` paths, reproduced again this round and previously on a
+  pristine worktree). The script's build/config stages complete; the failure is
+  at `docker compose up` mount time and is an environment/daemon
+  mount-visibility limitation, not a code change.
+- `git diff --check` — PASS. Staged manifest inspected (10 files listed above):
   `config/alist.json`, the dirty `docs/pics/文件页.png`, credentials,
   `web/test-results/` references and unrelated files are absent.
 
 ### Decisions
 
-- Delete fencing keeps directories on entry-type-only re-verification (a
-  directory's mtime changes legitimately while its confirmed children are
-  deleted); files fence on exact size+mtime. Content replacement inside a
-  confirmed file is still caught by the same-size scope-digest check plus the
-  executor's per-entry size+mtime verification.
-- The Delete `status` contract is derived once in
-  `_delete_command_status` (uncertain > paused > cancelled > success/partial/
-  failed) so the backend, not the UI, names the durable effect; `UNCERTAIN`
-  also sets `durableState: mutation_effect_uncertain` as before.
-- Rename/Delete browse-state cleanup runs from the response's known outcomes
-  only: successfully deleted paths are pruned, renamed paths are remapped
-  (including child paths), and a `FAILED`/`UNCERTAIN` item never prunes state.
-- The stale-removal Web flow intentionally keeps the dialog open and refreshes
-  the preview from the new Active (via query invalidation) rather than closing,
-  so the operator re-reviews the exact current state before re-confirming.
-- The popover cap was removed entirely rather than adding pagination: the
-  bounded scroll container keeps the layout bounded while search narrows large
-  lists, matching the Task's "all enabled libraries discoverable" requirement.
-- The removal `DELETE` body is now mandatory and exact (`set(confirmation) ==
-  required_confirmation`), mirroring the strict request contracts the API
-  already applies to direct commands.
+- Directory fencing uses the strongest evidence the provider actually offers:
+  the inode segment of the Local fingerprint for providers with fingerprints,
+  and an emptiness check plus the scope-digest fence for providers that publish
+  no per-entry identity. A same-name *empty* directory replacement on a
+  fingerprint-less provider is not distinguishable from the original at the
+  mutation boundary; the admission-time scope digest (which includes the
+  entry's mtime and fingerprint) still refuses it whenever the replacement is
+  observable before admission, and the executor fails closed for any
+  replacement that carries content. This is recorded as a provider limitation,
+  not a silent degrade.
+- The provider fingerprint is part of the Delete scope digest but is not sent
+  to the browser: the client needs only the bounded path/size/mtime summary and
+  the digest, so Files results stay secret-free and free of host identity
+  details.
+- `knownEffects` is the reconciliation contract and `outcomes` stays the
+  diagnostic contract: only `knownEffects` is bounded by the confirmed
+  selection and never truncated, and the Web prunes state from it only for
+  `effect: "deleted"`.
+- The editor keeps the draft in its own state slot instead of mutating the
+  server document: the reload may adopt the authoritative content, but the
+  draft is only abandoned when the operator explicitly re-applies or replaces
+  it, so a stale failure never silently discards local edits.
 
 ### Remaining In-Slice Work
 
-- Copy, Move, cross-Storage transfer, destination picker and transfer
-  fallback (RO-6 remainder).
+- Copy, Move, cross-Storage transfer, destination picker and transfer fallback
+  (RO-6 remainder).
 - Upload and Download bounded journeys.
 - Multi-item media Organize execution from the Files selection footer and
   broader FileIndex reconciliation.
@@ -584,15 +557,19 @@ Web:
 ### Risks / Deviations
 
 - The three pre-existing full-regression Python failures and the ten
-  pre-existing non-Files e2e failures are documented with pristine-HEAD
-  serial reproduction evidence; judgment about their impact on Task PASS
+  pre-existing non-Files e2e failures are documented with pristine-checkout
+  serial reproduction evidence; the judgment about their impact on Task PASS
   belongs to B.
 - The docker release security smoke test could not run to completion in this
-  environment (daemon bind-mount visibility, reproduced identically on pristine
-  HEAD); it is reported UNAVAILABLE with evidence rather than PASS.
+  environment (daemon bind-mount visibility); it is reported UNAVAILABLE with
+  evidence rather than PASS.
+- A fingerprint-less provider cannot distinguish an empty-directory
+  replacement at the last safe boundary; the fail-closed cases (content
+  present, observable replacement before admission) are covered by tests, and
+  the residue is documented above under Decisions.
 - Recursive Delete of a bounded directory still executes per-entry Storage
-  deletions synchronously inside the request (unchanged from the previous
-  checkpoint; documented behavior, not an auto-replay).
+  deletions synchronously inside the request (unchanged; documented behavior,
+  not an auto-replay).
 - The pre-existing `web/test-results/` interaction reference images and the
   dirty `docs/pics/文件页.png` were neither staged nor modified.
 
@@ -600,8 +577,8 @@ Web:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 3f04b7cc1c850e482002d90de35d446bf8d7d677
-Commit: 3f04b7c fix(files): bind direct-command evidence and removal confirmation
+Head SHA: d70b5177e36c19bdbc694df6c78991b31440c09e
+Commit: d70b517 fix(files): fence directory deletes, complete text reload and bound delete effects
 Working tree: clean except the pre-existing dirty docs/pics/文件页.png and
 ignored artifacts (web/dist/, web/test-results/, config/alist.json)
 ```
@@ -609,61 +586,39 @@ ignored artifacts (web/dist/, web/test-results/, config/alist.json)
 ## B Review Result
 
 ```text
-Reviewed: e33a030055a81011a32de507bef6758d48607c9a..a11292ec1279ff4c4b6f71d864b933b75fd80e59
+Reviewed: e33a030055a81011a32de507bef6758d48607c9a..1bf47b71d61074260fbd5c2c72c61a26b5786532
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Delete 的真实 API 与 Web 结果契约不一致，已经发生的破坏性效果会被 UI 误报成未知响应。
-  证据：在临时 Local Storage 上依次调用真实 `delete-impact` 与 `files/commands`，HTTP 200
-  且文件已删除，但响应键只有 `taskStatus` 等字段、没有
-  `normalizeDirectFileCommandResult()` 强制要求的 `status`；探针输出
-  `has_required_frontend_status: False, file_deleted: True`。当前 Vitest/E2E fake 自行补了
-  `status: "SUCCESS"`，因此没有覆盖真实契约。修正方向：让 completed/partial/failed/paused/
-  cancelled Delete 都返回与严格前端模型一致、能表达已知效果的稳定状态；Web 必须据此刷新并
-  显示真实 durable outcome，并增加真实 API 响应到前端 normalizer 的契约回归，不能只修 fake。
-- Direct mutation 的 stale fencing 未满足 Task 的“exact source/scope/version”要求。证据：临时
-  Storage 探针先取得 `victim.txt` 的 Delete impact，再把 `v1` 替换为同大小的 `v2`；新旧
-  `scopeDigest` 完全相同，旧确认随后返回 `completed` 并删除了新文件。Rename 请求只有
-  `path + name`，没有任何已观察 source evidence；Save 的 digest 校验发生在创建 Task/
-  Executor preflight 之前，而 overwrite executor 不再核对该 evidence。修正方向：为 Rename、
-  Delete scope 和 Save 传递并绑定适合 provider 的 server-issued current-entry evidence，在最后
-  安全的 mutation 边界重新校验；注入 preview/admission 后替换、同大小替换和 mutation 前竞争的
-  测试必须证明零错误 mutation。
-- ResourceLibrary 删除确认没有绑定预览时的 Active revision，也没有拒绝 disabled selection。
-  证据：临时配置探针读取 removal preview，随后成功 Save 另一个 ResourceLibrary 使 Active
-  revision 改变，再用仅含 library ID 的 `DELETE` 请求仍返回 200 并删除原 ResourceLibrary；
-  `RemovalPreviewModel` 丢弃响应中的 `active`，客户端 DELETE body 为空，服务端
-  `_active_resource_library()` 也不校验 `enabled`。修正方向：把 preview 的 revision/version/
-  digest 和 selected-library identity 绑定到一次确认，后端在构造 successor 前拒绝 stale、
-  mismatched、missing 或 disabled 请求，Web 保留当前确认上下文并提供刷新后重审动作；补齐这些
-  failure-path 回归。
-- 文本编辑的 Web recovery 断裂，而且一次成功 Save 后仍保留旧 evidence。证据：
-  `commandMutation` 对 `files_direct_stale_content` 只设置通用 `commandError` 后返回，代码中
-  `setEditorStale(true)` 从未出现；而“重新加载最新内容”按钮仅在 `state.stale` 为 true 时渲染。
-  成功 Save 也没有更新/失效 `files-text` query，下一次 Save 会继续提交旧 digest。修正方向：
-  stale 响应必须保留本地编辑并显式进入可 reload 的状态；成功 Save 后必须取得或写入新的权威
-  content/evidence，再允许后续 Save；覆盖 stale→reload/reapply 以及连续两次 Save 的 Web 测试。
-- Rename/Delete 成功后没有清除或重映射 Files 的相关选择和目录树状态。证据：成功分支只
-  invalidate `storage-files`/`system-status` queries，未更新 `selectedFiles`、
-  `knownDirectoryPaths` 或 `visitedDirectories`；被重命名/删除的 path 因而作为隐藏状态保留，
-  同路径再次出现时会被意外重新选中，目录也可残留在树中。修正方向：按已知成功/逐项结果清理
-  或重映射受影响状态，并测试 selected file、selected directory、directory rename 和 partial
-  Delete，不能清掉未受影响 sibling 的独立选择/结果。
-- durable direct-command Result 没有保存 Rename 的实际 target。证据：临时 Rename 探针读取
-  `task_results`，得到 `source_path='rename-me.txt'` 且
-  `destination_path='rename-me.txt'`，而实际目标是 `renamed.txt`；
-  `complete_direct_item()` 当前无 target 参数并把 destination 固定成 source。修正方向：从
-  OrganizerExecutor result/application outcome 传入并持久化 bounded logical source/target，保持
-  secret-free，并对 Create/Rename/Delete/Save 的 Result identity 增加回归。
-- `更多` 不能保证所有启用的 ResourceLibrary 可发现。证据：`LibraryCardStrip.tsx` 把过滤后的
-  overflow 再执行 `.slice(0, POPOVER_MAX_ITEMS)`，其中上限硬编码为 12，且没有分页、继续加载或
-  截断提示；第 13 个之后的未搜索条目不在 bounded scroll list 中。修正方向：保留有界可操作
-  布局的同时让全部 authoritative overflow 条目可浏览（或提供真实分页/继续加载），并用超过
-  12 个 ResourceLibrary 覆盖发现、搜索、选择和 promotion。
-- Developer Completion Report 的完整 Head SHA
-  `75abfe3c3f22cb451b80a7d9de2b21178274c78a` 无法由 Git 解析；实际实现提交是
-  `75abfe30b9715853b9bdfe2fa7c044eb29b47cf1`，当前 completion-report commit 是
-  `a11292ec1279ff4c4b6f71d864b933b75fd80e59`。修正方向：下一次 READY FOR B REVIEW 报告必须
-  填写可解析、与实际修正 checkpoint 对应的完整 Head SHA，并如实更新实际测试结果。
+- Delete 对目录仍没有绑定 exact source/scope/version，能够删除确认后替换进来的新目录。
+  证据：`OrganizerExecutor._direct_exists_preflight()` 对目录明确只比较 entry type，完全忽略已
+  传入的 `modified_at`；独立临时 Local Storage 探针取得原空目录 evidence 后删除并在同路径创建
+  一个新空目录，再以旧 evidence 调用 `execute_direct_delete()`，结果为
+  `status='SUCCESS', replacement_directory_deleted=True, race_rejected=False`。此外新增的 Save
+  “pre-mutation race”测试并未覆盖其声称的窗口：文件在 `service.save_text()` 调用前就被替换，
+  且 patch `OrganizerExecutor` 发生在 service 已构造之后，不会替换 `service._executor`，所以它只
+  证明 application admission 能发现旧 digest。修正方向：目录也必须使用 provider 可提供的稳定
+  身份/版本证据在最后安全 mutation 边界 fail closed，不能普遍退化为“仍是目录”；补齐空目录
+  replacement、递归父目录 replacement，以及真正发生在 application admission 之后、executor
+  preflight 之前的 Save/Rename/Delete 竞态测试，断言错误对象零 mutation。
+- 文本 stale recovery 仍没有完成所要求的 reload/reapply 闭环，现有测试靠不真实的 fake 获得
+  通过。证据：`TextEditorDialog` 第一次点击“重新加载最新内容”只显示放弃确认，第二次才调用
+  `onReload()`；该回调清除 stale 并 refetch，而 digest 变化后 effect 直接以服务端内容覆盖本地
+  `content`，没有保存或重新应用 stale draft。新增测试在第一次点击后根本没有确认 reload/refetch，
+  随即用原 `size=5,digest=digest-1` 再次 Save，fake 却无条件返回 SUCCESS；真实后端会再次返回
+  stale。修正方向：保留独立本地 draft，显式取得最新 content/evidence 后提供可理解的 reapply/
+  reconcile 动作，再以新 evidence Save；测试必须让旧 evidence 持续 409，并实际走完
+  stale→确认 reload→取得新 evidence→reapply→成功 Save，同时证明本地编辑在用户明确放弃前不丢失。
+- Delete 后的 browse-state reconciliation 依赖被截断的逐项 outcomes，大目录已删除后仍会留下
+  隐藏的 selection/tree 状态。证据：后端允许最多 5000 个 impact entries，却把响应 outcomes
+  截为 `MAX_DELETE_PATHS * 4 = 200`；Web 只从这段返回值中提取 `SUCCESS` path 做 prune。独立探针
+  删除含 201 个文件的目录得到
+  `impact_entries=202, succeeded_items=202, returned_outcomes=200,
+  outcomes_truncated=True, top_level_outcome_returned=False, directory_deleted=True`，所以选中的顶层
+  目录不会被清理。新增 Web 测试也没有先选择被删文件/目录或建立并断言 visited/known tree state，
+  因而没有覆盖上轮要求的隐藏状态。修正方向：在可截断逐项诊断之外返回一个不丢失的、有界顶层
+  known-effect/reconciliation 契约（最多 50 个确认目标），Web 只清理已知完全删除的顶层范围并
+  保留 partial/failed sibling；用真实选中文件、选中目录、目录 Rename、>200-entry Delete 和
+  partial Delete 覆盖 selection/visited/known state。
