@@ -476,6 +476,7 @@ export interface TransferResultModel {
   readonly checkpointsTruncated: boolean;
   readonly totalItems: number;
   readonly succeededItems: number;
+  readonly skippedItems?: number;
   readonly failedItems: number;
   readonly outcomes: readonly TransferItemOutcome[];
   readonly outcomesTruncated: boolean;
@@ -584,6 +585,9 @@ export function normalizeTransferResult(payload: unknown): TransferResultModel {
     checkpointsTruncated: record.checkpointsTruncated === true,
     totalItems: expectNumber(record, "totalItems"),
     succeededItems: expectNumber(record, "succeededItems"),
+    ...(typeof record.skippedItems === "number"
+      ? { skippedItems: record.skippedItems }
+      : {}),
     failedItems: expectNumber(record, "failedItems"),
     outcomes,
     outcomesTruncated: record.outcomesTruncated === true,

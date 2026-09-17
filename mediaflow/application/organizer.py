@@ -860,6 +860,7 @@ class OrganizerExecutor:
         target: str,
         *,
         source_evidence: DirectEntryEvidence | None = None,
+        same_storage: bool | None = None,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
@@ -871,6 +872,13 @@ class OrganizerExecutor:
         destination has been re-read and verified against the source digest and
         size.  A truncated or changed transfer is never reported as a completed
         Copy.  The source is never deleted.
+
+        ``same_storage`` is the caller's validated business decision, derived
+        from the configured Storage identity of both endpoints.  Normal runtime
+        adapter construction may return a distinct adapter object per
+        ``open_storage`` call, so incidental Python object identity must never
+        decide the operation path; when omitted, object identity remains the
+        conservative fallback for existing callers.
         """
 
         started = time.monotonic()
@@ -892,7 +900,9 @@ class OrganizerExecutor:
                 ExecutionStatus.DRY_RUN,
                 warnings=("dry-run: no Storage mutation was executed",),
             )
-        same_storage = source_storage is target_storage
+        same_storage = (
+            source_storage is target_storage if same_storage is None else bool(same_storage)
+        )
         capability_error = _transfer_capability_error(
             PlanOperation.COPY,
             source_storage,
@@ -988,6 +998,8 @@ class OrganizerExecutor:
         target: str,
         *,
         source_evidence: DirectEntryEvidence | None = None,
+        same_storage: bool | None = None,
+        verified_destination: bool = False,
         execute: bool = True,
         mutation_authority: MutationAuthority | None = None,
     ) -> ExecutionResult:
@@ -1000,6 +1012,13 @@ class OrganizerExecutor:
         authority loss after the verified Copy ends as a recoverable
         verified-copy/source-retained partial outcome (never an auto-replayed
         whole Move).
+
+        ``same_storage`` carries the caller's validated business decision from
+        the configured Storage identities, never from incidental adapter
+        object identity (see :meth:`execute_direct_copy`).  ``verified_destination``
+        is the recovery continuation of an interrupted compound Move whose
+        destination was already proven to hold the exact source bytes; the
+        Copy is never repeated and the source step keeps its fresh evidence.
         """
 
         started = time.monotonic()
@@ -1021,7 +1040,9 @@ class OrganizerExecutor:
                 ExecutionStatus.DRY_RUN,
                 warnings=("dry-run: no Storage mutation was executed",),
             )
-        same_storage = source_storage is target_storage
+        same_storage = (
+            source_storage is target_storage if same_storage is None else bool(same_storage)
+        )
         capability_error = _transfer_capability_error(
             PlanOperation.MOVE,
             source_storage,
@@ -1051,6 +1072,19 @@ class OrganizerExecutor:
                 ExecutionStatus.FAILED,
                 errors=(preflight_error,),
             )
+        plan = _DirectCommandPlan(PlanOperation.MOVE, source, target)
+        if verified_destination and not same_storage:
+            return self._cross_storage_move(
+                source_storage,
+                target_storage,
+                source,
+                target,
+                source_evidence,
+                plan,
+                mutation_authority,
+                started,
+                verified_destination=True,
+            )
         if target_storage.exists(target):
             return self._direct_result(
                 PlanOperation.MOVE,
@@ -1060,7 +1094,6 @@ class OrganizerExecutor:
                 ExecutionStatus.FAILED,
                 errors=("destination already exists",),
             )
-        plan = _DirectCommandPlan(PlanOperation.MOVE, source, target)
         if same_storage:
             if mutation_authority is not None:
                 try:
@@ -1312,6 +1345,39 @@ class OrganizerExecutor:
             raise RuntimeError("transfer destination verification failed: digest mismatch")
         return transferred
 
+    def verify_streamed_copy(
+        self,
+        source_storage: Storage,
+        target_storage: Storage,
+        source: str,
+        target: str,
+        *,
+        expected_size: int | None = None,
+    ) -> bool:
+        """Whether an existing destination already holds the exact source bytes.
+
+        Zero-mutation recovery evidence for an interrupted streamed Copy: the
+        destination is re-read in bounded chunks and compared with the source
+        by size and digest.  It never overwrites, deletes or rewrites
+        anything, so a compound Move interrupted after the Copy can be
+        continued from this persisted known-safe state without re-copying.
+        """
+
+        try:
+            if not target_storage.exists(target) or not source_storage.exists(source):
+                return False
+            observed = target_storage.stat(target)
+            if observed.entry_type is not StorageEntryType.FILE:
+                return False
+            source_entry = source_storage.stat(source)
+            if expected_size is not None and observed.size != expected_size:
+                return False
+            if observed.size != source_entry.size:
+                return False
+            return _stream_digest(target_storage, target) == _stream_digest(source_storage, source)
+        except (StorageError, OSError):
+            return False
+
     def _cross_storage_move(
         self,
         source_storage: Storage,
@@ -1322,26 +1388,37 @@ class OrganizerExecutor:
         plan: "_DirectCommandPlan",
         mutation_authority: MutationAuthority | None,
         started: float,
+        *,
+        verified_destination: bool = False,
     ) -> ExecutionResult:
         completed: list[str] = []
-        expected_size = source_evidence.size if source_evidence is not None else None
-        try:
-            self._stream_copy_verified(
-                source_storage, target_storage, source, target, expected_size
-            )
-        except (StorageError, RuntimeError, OSError) as error:
-            return self._direct_result(
-                PlanOperation.MOVE,
-                source,
-                target,
-                started,
-                ExecutionStatus.FAILED,
-                errors=(_bounded_error(error),),
-                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
-                uncertain_effects=("destination_write",),
-            )
-        completed.append(TransferCheckpoint.COPY_WRITTEN.value)
-        completed.append(TransferCheckpoint.DESTINATION_VERIFIED.value)
+        if verified_destination:
+            # The caller proved the destination already holds the exact source
+            # bytes (persisted known-safe checkpoint of an interrupted
+            # compound Move); the Copy checkpoints are adopted, never faked by
+            # a re-copy, and the destructive source step keeps its fresh
+            # exact-evidence revalidation below.
+            completed.append(TransferCheckpoint.COPY_WRITTEN.value)
+            completed.append(TransferCheckpoint.DESTINATION_VERIFIED.value)
+        else:
+            expected_size = source_evidence.size if source_evidence is not None else None
+            try:
+                self._stream_copy_verified(
+                    source_storage, target_storage, source, target, expected_size
+                )
+            except (StorageError, RuntimeError, OSError) as error:
+                return self._direct_result(
+                    PlanOperation.MOVE,
+                    source,
+                    target,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=(_bounded_error(error),),
+                    effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                    uncertain_effects=("destination_write",),
+                )
+            completed.append(TransferCheckpoint.COPY_WRITTEN.value)
+            completed.append(TransferCheckpoint.DESTINATION_VERIFIED.value)
         # Fresh exact source revalidation immediately before the destructive step.
         missing_authority = _transfer_source_preflight(
             source_storage, source, source_evidence, require_exact_authority=True

@@ -1920,6 +1920,214 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await waitFor(() => expect(document.activeElement).toBe(lastRowTrigger));
   });
 
+  it("prevents duplicate submission while the impact fetch is in flight", async () => {
+    const user = userEvent.setup();
+    let impactRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onTransferImpact: () => {
+          impactRequests += 1;
+          return new Response(
+            JSON.stringify({
+              resourceLibraryId: "lib-a",
+              destinationResourceLibraryId: "lib-a",
+              operation: "copy",
+              conflictMode: "fail",
+              sameStorage: true,
+              sourceLibraryRoot: "/lib-a",
+              destinationDirectory: "",
+              capability: "native_copy",
+              topLevelPaths: ["notes.txt"],
+              destinations: [
+                { path: "notes.txt", destination: "Movies/notes.txt" },
+              ],
+              entries: [
+                {
+                  path: "notes.txt",
+                  isDirectory: false,
+                  size: 32,
+                  modifiedAt: "2026-08-23T11:15:00Z",
+                },
+              ],
+              fileCount: 1,
+              directoryCount: 0,
+              totalBytes: 32,
+              conflicts: [],
+              manifestDigest: "t1.manifest-digest-9",
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "更多操作 notes.txt" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "复制" }));
+    const dialog = await screen.findByRole("dialog", { name: "复制到…" });
+    const submit = within(dialog).getByRole("button", { name: "复制" });
+    // Two clicks land inside the impact-acquisition window before the
+    // execution mutation becomes pending; only one submission may start.
+    await user.click(submit);
+    await user.click(submit);
+    // The second click lands while the impact fetch is still in flight; the
+    // dialog is busy and refuses it instead of starting a second submission.
+    await waitFor(() => expect(impactRequests).toBe(1));
+    expect(submit).toBeDisabled();
+  });
+
+  it("keeps the selection after a Copy and shows per-item outcomes after a Move", async () => {
+    const user = userEvent.setup();
+    const moveBodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onTransfer: (body) => {
+          moveBodies.push(body);
+          return jsonResponse({
+            operation: body.operation,
+            conflictMode: body.conflictMode,
+            sameStorage: true,
+            status: "PARTIAL",
+            taskId: "task-move-1",
+            taskStatus: "partial_success",
+            resourceLibraryId: "lib-a",
+            destinationResourceLibraryId: body.destinationResourceLibraryId,
+            topLevelPaths: body.paths,
+            destinations: [],
+            knownEffects: [
+              {
+                path: (body.paths as string[])[0],
+                effect: "transferred",
+                status: "SUCCESS",
+              },
+            ],
+            checkpoints: [],
+            checkpointsTruncated: false,
+            totalItems: 1,
+            succeededItems: 1,
+            skippedItems: 0,
+            failedItems: 0,
+            outcomes: [
+              {
+                path: (body.paths as string[])[0],
+                destination: `Movies/${(body.paths as string[])[0]}`,
+                status: "SUCCESS",
+                checkpoints: ["MOVE"],
+              },
+            ],
+            outcomesTruncated: false,
+            nextAction: "refresh the source and destination directories",
+            sideEffects: "storage_mutations",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    const rowCheckbox = screen.getByRole("checkbox", {
+      name: "选择 notes.txt",
+    });
+    await user.click(rowCheckbox);
+    expect(rowCheckbox).toBeChecked();
+
+    // Move the selection: the known effect proves the source no longer exists,
+    // so the selection is pruned and the per-item outcome names the durable
+    // compound state instead of an internal token.
+    await user.click(screen.getByRole("button", { name: "移动" }));
+    const moveDialog = await screen.findByRole("dialog", { name: "移动到…" });
+    await user.click(within(moveDialog).getByRole("button", { name: "移动" }));
+    await waitFor(() => expect(moveBodies).toHaveLength(1));
+    const resultDialog = await screen.findByRole("dialog", {
+      name: "移动结果",
+    });
+    expect(within(resultDialog).getByText("逐项结果")).toBeVisible();
+    expect(within(resultDialog).getByText(/已完成/)).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("checkbox", { name: "选择 notes.txt" }),
+      ).not.toBeChecked(),
+    );
+    await user.click(
+      within(resultDialog).getByRole("button", { name: "关闭" }),
+    );
+  });
+
+  it("keeps the Copy selection and labels skipped and uncertain outcomes truthfully", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onTransfer: (body) =>
+          jsonResponse({
+            operation: body.operation,
+            conflictMode: body.conflictMode,
+            sameStorage: true,
+            status: "PARTIAL",
+            taskId: "task-copy-2",
+            taskStatus: "partial_success",
+            resourceLibraryId: "lib-a",
+            destinationResourceLibraryId: body.destinationResourceLibraryId,
+            topLevelPaths: body.paths,
+            destinations: [],
+            knownEffects: [
+              { path: "notes.txt", effect: "transferred", status: "SUCCESS" },
+              { path: "Season", effect: "skipped", status: "SKIPPED" },
+            ],
+            checkpoints: [],
+            checkpointsTruncated: false,
+            totalItems: 2,
+            succeededItems: 1,
+            skippedItems: 1,
+            failedItems: 0,
+            outcomes: [
+              {
+                path: "Season",
+                destination: "Movies/Season",
+                status: "SKIPPED",
+                checkpoints: [],
+              },
+            ],
+            outcomesTruncated: false,
+            nextAction: "refresh both directories",
+            sideEffects: "storage_mutations",
+          }),
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("checkbox", { name: "选择 notes.txt" }));
+    await user.click(screen.getByRole("checkbox", { name: "选择 Season" }));
+    await user.click(screen.getByRole("button", { name: "复制" }));
+    const dialog = await screen.findByRole("dialog", { name: "复制到…" });
+    await user.click(within(dialog).getByRole("button", { name: "复制" }));
+    const resultDialog = await screen.findByRole("dialog", {
+      name: "复制结果",
+    });
+    // A skipped item is named as skipped, never folded into success.
+    expect(within(resultDialog).getByText("已跳过")).toBeVisible();
+    // A Copy keeps the source present: the selection stays even though the
+    // backend recorded transferred effects.
+    expect(
+      screen.getByRole("checkbox", { name: "选择 notes.txt" }),
+    ).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "选择 Season" })).toBeChecked();
+    await user.click(
+      within(resultDialog).getByRole("button", { name: "关闭" }),
+    );
+  });
   it("copies one file through the live destination picker and one confirmed submission", async () => {
     const user = userEvent.setup();
     const transferBodies: Record<string, unknown>[] = [];

@@ -2195,7 +2195,7 @@ export function StorageFilesPage() {
         manifestDigest: input.manifestDigest,
       }),
     retry: false,
-    onSuccess: (result) => {
+    onSuccess: (result, variables) => {
       if (!result.ok) {
         setTransferError(
           transferFailureMessage(result.code, {
@@ -2207,12 +2207,14 @@ export function StorageFilesPage() {
       setTransferError(null);
       setTransferResult(result.model);
       // Success refreshes authoritative source/destination truth; only
-      // selection whose physical truth changed is cleared or remapped.
+      // selection whose physical truth changed is cleared or remapped.  A
+      // Copy leaves the source present, so only a Move whose known effect
+      // proves the source no longer exists may prune the selection.
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       if (
-        result.model.status === "SUCCESS" ||
-        result.model.status === "PARTIAL"
+        variables.operation === "move" &&
+        (result.model.status === "SUCCESS" || result.model.status === "PARTIAL")
       ) {
         const removed = result.model.knownEffects
           .filter((effect) => effect.effect === "transferred")

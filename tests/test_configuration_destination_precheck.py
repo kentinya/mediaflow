@@ -2004,7 +2004,10 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertIsNotNone(repository.get_classification_preview(draft.revision_id))
                 self.assertIsNotNone(repository.get_organize_authority(draft.revision_id))
                 self.assertIsNotNone(repository.get_local_setup_check(draft.revision_id))
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 34)
+                # Runtime schema 35 adds the bounded in-flight
+                # transfer-progress column on task_items for interrupted
+                # Files transfer recovery.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 35)
 
 
 if __name__ == "__main__":

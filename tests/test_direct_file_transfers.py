@@ -2,10 +2,13 @@
 
 Covers the same-Storage native Copy/Move, the composed bounded directory
 transfer, the explicit cross-Storage compound Move with its durable
-copy -> verify -> delete-source checkpoints, explicit conflict behavior,
-fail-closed admission, stale-manifest refusal, the repeated-`path` Delete
-impact contract and OrganizerExecutor-only mutation.  Every endpoint is a
-temporary local root or an in-process fake; no production service is used.
+copy -> verify -> delete-source checkpoints, explicit conflict behavior
+(including directory and in-batch destinations), fail-closed admission,
+stale-manifest refusal, the repeated-`path` Delete impact contract,
+OrganizerExecutor-only mutation, truthful skip/partial aggregation, the
+durable Result identity/checkpoints and the durable continuation of an
+interrupted transfer Task.  Every endpoint is a temporary local root or an
+in-process fake; no production service is used.
 """
 
 from __future__ import annotations
@@ -14,6 +17,7 @@ import io
 import json
 import tempfile
 import unittest
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -33,7 +37,10 @@ from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import (
     StorageCapabilities,
     StorageEntry,
+    StorageError,
+    StorageErrorCode,
 )
+from mediaflow.domain.task_persistence import TaskItemStatus
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -823,6 +830,465 @@ class TransferApiTests(TransferTestCase):
             self.assertEqual(runtime.list_tasks(command="files_transfer"), ())
 
 
+class _NoNativeMutationStorage(LocalStorage):
+    """A same-Storage double that forbids every non-native mutation."""
+
+    def write(self, *args, **kwargs):
+        raise AssertionError("no streaming Write fallback may be attempted")
+
+    def delete(self, *args, **kwargs):
+        raise AssertionError("no Delete fallback may be attempted")
+
+
+class _PausingSource(LocalStorage):
+    """A source that requests a durable Task pause at the Nth file mutation.
+
+    The pause request goes through the same durable Task repository the
+    application uses, so the running transfer observes it exactly like a
+    concurrent operator pause.
+    """
+
+    def __init__(self, storage_id: str, root: Path, runtime_db: Path, *, after: int) -> None:
+        super().__init__(storage_id, root)
+        self._runtime_db = runtime_db
+        self._after = after
+        self.mutation_calls = 0
+
+    def _request_pause(self) -> None:
+        self.mutation_calls += 1
+        if self.mutation_calls != self._after:
+            return
+        repository = SQLiteTaskRepository(self._runtime_db)
+        try:
+            tasks = repository.list_tasks(command="files_transfer")
+            if tasks:
+                repository.request_task_pause(tasks[0].task_id, datetime.now(UTC))
+        finally:
+            repository.close()
+
+    def copy(self, *args, **kwargs):
+        self._request_pause()
+        return super().copy(*args, **kwargs)
+
+    def move(self, *args, **kwargs):
+        self._request_pause()
+        return super().move(*args, **kwargs)
+
+
+class _CrashAfterWriteTarget(LocalStorage):
+    """A target that loses the process right after a streamed write lands."""
+
+    def __init__(self, storage_id: str, root: Path) -> None:
+        super().__init__(storage_id, root)
+        self.write_calls = 0
+
+    def write(self, path: str, data, *, overwrite: bool = False) -> None:
+        self.write_calls += 1
+        super().write(path, data, overwrite=overwrite)
+        raise SystemExit(3)
+
+
+class _TruncatingCrashTarget(LocalStorage):
+    """A target that truncates the streamed write and then loses the process."""
+
+    def write(self, path: str, data, *, overwrite: bool = False) -> None:
+        if hasattr(data, "read"):
+            data = data.read(3)
+        super().write(path, data, overwrite=overwrite)
+        raise SystemExit(3)
+
+
+class DirectoryConflictTests(TransferTestCase):
+    """F-1: the selected conflict mode binds every destination, directories included."""
+
+    def _prepare(self, root: Path):
+        api, active, runtime = self._activate(root)
+        transfers = self._transfers(api, active)
+        tree = root / "source" / "show" / "season1"
+        tree.mkdir(parents=True)
+        (tree / "one.mkv").write_bytes(b"one")
+        (tree / "two.mkv").write_bytes(b"two")
+        (root / "source" / "Movies").mkdir()
+        return transfers, runtime
+
+    def test_fail_mode_directory_move_never_merges_into_existing_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transfers, runtime = self._prepare(root)
+            (root / "source" / "Movies" / "show").mkdir()
+            (root / "source" / "Movies" / "show" / "keep.mkv").write_bytes(b"keep")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode=TransferConflictMode.FAIL.value,
+            )
+            self.assertEqual(impact.conflicts[0].resolution, "fail_no_overwrite")
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            # The B reproduction demanded zero mutation for the affected item.
+            self.assertEqual(result["status"], "FAILED")
+            self.assertEqual(result["knownEffects"][0]["effect"], "retained")
+            self.assertEqual(result["outcomes"][0]["errorCategory"], "target_exists")
+            self.assertEqual(result["outcomes"][0]["checkpoints"], [])
+            self.assertTrue((root / "source" / "show" / "season1" / "one.mkv").exists())
+            self.assertTrue((root / "source" / "show" / "season1" / "two.mkv").exists())
+            self.assertEqual(
+                (root / "source" / "Movies" / "show" / "keep.mkv").read_bytes(), b"keep"
+            )
+            item = runtime.list_items(result["taskId"])[0]
+            self.assertEqual(item.status, TaskItemStatus.FAILED)
+
+    def test_skip_mode_directory_conflict_skips_the_whole_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transfers, runtime = self._prepare(root)
+            (root / "source" / "Movies" / "show").mkdir()
+            (root / "source" / "Movies" / "show" / "keep.mkv").write_bytes(b"keep")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="skip",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="skip",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "SKIPPED")
+            self.assertEqual(result["knownEffects"][0]["effect"], "skipped")
+            self.assertEqual(result["skippedItems"], 1)
+            self.assertTrue((root / "source" / "show" / "season1" / "one.mkv").exists())
+            self.assertEqual(
+                (root / "source" / "Movies" / "show" / "keep.mkv").read_bytes(), b"keep"
+            )
+            item = runtime.list_items(result["taskId"])[0]
+            self.assertEqual(item.status, TaskItemStatus.SKIPPED)
+            self.assertEqual(item.destination_storage_id, "source-storage")
+
+    def test_keep_both_directory_transfer_pins_a_unique_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            transfers, _runtime = self._prepare(root)
+            (root / "source" / "Movies" / "show").mkdir()
+            (root / "source" / "Movies" / "show" / "keep.mkv").write_bytes(b"keep")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="keep_both",
+            )
+            self.assertEqual(impact.manifest.destination_for("show"), "Movies/show (1)")
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="keep_both",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "SUCCESS")
+            self.assertEqual(
+                (root / "source" / "Movies" / "show (1)" / "season1" / "one.mkv").read_bytes(),
+                b"one",
+            )
+            self.assertEqual(
+                (root / "source" / "Movies" / "show" / "keep.mkv").read_bytes(), b"keep"
+            )
+            self.assertFalse((root / "source" / "show").exists())
+
+    def test_in_batch_destination_collision_is_reported_not_merged(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a").mkdir()
+            (root / "source" / "b").mkdir()
+            (root / "source" / "d").mkdir()
+            (root / "source" / "a" / "x.mkv").write_bytes(b"first")
+            (root / "source" / "b" / "x.mkv").write_bytes(b"second")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a/x.mkv", "b/x.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="d",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            self.assertEqual(
+                [conflict.resolution for conflict in impact.conflicts],
+                ["batch_conflict"],
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["a/x.mkv", "b/x.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="d",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "PARTIAL")
+            effects = {effect["path"]: effect["effect"] for effect in result["knownEffects"]}
+            self.assertEqual(effects["a/x.mkv"], "transferred")
+            self.assertEqual(effects["b/x.mkv"], "retained")
+            categories = {
+                outcome["path"]: outcome.get("errorCategory") for outcome in result["outcomes"]
+            }
+            self.assertEqual(categories["b/x.mkv"], "batch_conflict")
+            self.assertEqual((root / "source" / "d" / "x.mkv").read_bytes(), b"first")
+            self.assertEqual((root / "source" / "b" / "x.mkv").read_bytes(), b"second")
+
+    def test_skip_mode_collision_skips_the_later_sibling_only(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a").mkdir()
+            (root / "source" / "b").mkdir()
+            (root / "source" / "d").mkdir()
+            (root / "source" / "a" / "x.mkv").write_bytes(b"first")
+            (root / "source" / "b" / "x.mkv").write_bytes(b"second")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a/x.mkv", "b/x.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="d",
+                operation="copy",
+                conflict_mode="skip",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["a/x.mkv", "b/x.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="d",
+                operation="copy",
+                conflict_mode="skip",
+                manifest_digest=impact.manifest.digest,
+            )
+            # One item transferred, one skipped by the explicit choice: the
+            # truthful aggregate is PARTIAL with exact per-item effects, not a
+            # fabricated all-success and not a fabricated all-skip.
+            self.assertEqual(result["status"], "PARTIAL")
+            self.assertEqual(result["skippedItems"], 1)
+            effects = {effect["path"]: effect["effect"] for effect in result["knownEffects"]}
+            self.assertEqual(effects["a/x.mkv"], "transferred")
+            self.assertEqual(effects["b/x.mkv"], "skipped")
+            self.assertEqual((root / "source" / "b" / "x.mkv").read_bytes(), b"second")
+            self.assertEqual((root / "source" / "d" / "x.mkv").read_bytes(), b"first")
+
+
+class SameStorageDecisionTests(TransferTestCase):
+    """F-2: the same-Storage decision is bound to configured Storage identity."""
+
+    def test_production_adapter_factory_uses_only_native_operations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # No injected adapter instances: the normal runtime factory builds
+            # its own adapters, so no shared object identity exists.
+            api, active, _runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "show").mkdir()
+            (root / "source" / "show" / "one.mkv").write_bytes(b"one")
+            (root / "source" / "Movies").mkdir()
+            copy_impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+            )
+            copied = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=copy_impact.manifest.digest,
+            )
+            self.assertEqual(copied["status"], "SUCCESS")
+            file_outcome = next(
+                outcome for outcome in copied["outcomes"] if outcome["path"] == "show/one.mkv"
+            )
+            self.assertEqual(file_outcome["checkpoints"], ["COPY"])
+            self.assertTrue((root / "source" / "show" / "one.mkv").exists())
+            (root / "source" / "Archive").mkdir()
+            move_impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Archive",
+                operation="move",
+            )
+            moved = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Archive",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=move_impact.manifest.digest,
+            )
+            self.assertEqual(moved["status"], "SUCCESS")
+            moved_outcome = next(
+                outcome for outcome in moved["outcomes"] if outcome["path"] == "show/one.mkv"
+            )
+            self.assertEqual(moved_outcome["checkpoints"], ["MOVE"])
+            self.assertFalse((root / "source" / "show").exists())
+            self.assertEqual(
+                (root / "source" / "Archive" / "show" / "one.mkv").read_bytes(), b"one"
+            )
+
+    def test_explicit_same_storage_decision_never_streams_or_deletes(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = _NoNativeMutationStorage("source-storage", root)
+            second = LocalStorage("source-storage", root)
+            (root / "a.mkv").write_bytes(b"media")
+            executor = OrganizerExecutor()
+            copied = executor.execute_direct_copy(
+                first,
+                second,
+                "a.mkv",
+                "b.mkv",
+                same_storage=True,
+                execute=True,
+            )
+            self.assertEqual(copied.status.value, "SUCCESS")
+            self.assertEqual(copied.completed_operations, ("COPY",))
+            self.assertEqual((root / "b.mkv").read_bytes(), b"media")
+            moved = executor.execute_direct_move(
+                second,
+                first,
+                "b.mkv",
+                "c.mkv",
+                same_storage=True,
+                execute=True,
+            )
+            self.assertEqual(moved.status.value, "SUCCESS")
+            self.assertEqual(moved.completed_operations, ("MOVE",))
+            self.assertFalse((root / "b.mkv").exists())
+            self.assertEqual((root / "c.mkv").read_bytes(), b"media")
+
+
+class _DisjointRootFixture(TransferTestCase):
+    """A fixture whose second ResourceLibrary root is disjoint on one Storage."""
+
+    def _document(self, root: Path) -> dict[str, object]:
+        document = super()._document(root)
+        document["resourceLibraries"].append(
+            {
+                "id": "inner",
+                "name": "Inner",
+                "storageId": "source-storage",
+                "storagePath": "other",
+                "enabled": True,
+                "extensions": ["mkv"],
+            }
+        )
+        return document
+
+
+class _NestedRootFixture(TransferTestCase):
+    """A fixture whose second ResourceLibrary root sits inside the source tree."""
+
+    def _document(self, root: Path) -> dict[str, object]:
+        document = super()._document(root)
+        document["resourceLibraries"].append(
+            {
+                "id": "inner",
+                "name": "Inner",
+                "storageId": "source-storage",
+                "storagePath": "shows/nested",
+                "enabled": True,
+                "extensions": ["mkv"],
+            }
+        )
+        return document
+
+
+class ResolvedRootOverlapTests(TransferTestCase):
+    """F-2: overlap compares fully resolved logical Storage paths.
+
+    Both fixtures keep two ResourceLibrary roots on one Storage.  Relative
+    string comparisons either falsely reject the disjoint case or miss the
+    physical descendant case; the resolved comparison handles both truthfully.
+    """
+
+    def test_equal_relative_strings_on_disjoint_roots_transfer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "shows").mkdir(parents=True)
+            (root / "source" / "shows" / "a.mkv").write_bytes(b"a")
+            (root / "source" / "other").mkdir(parents=True)
+            api, active, _runtime = _DisjointRootFixture()._activate(root)
+            transfers = self._transfers(api, active)
+            # The relative strings are identical ("shows" -> "shows"), but the
+            # resolved physical locations are disjoint ResourceLibrary roots on
+            # one Storage, so the transfer is valid.
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["shows"],
+                destination_resource_library_id="inner",
+                destination_directory="",
+                operation="move",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["shows"],
+                destination_resource_library_id="inner",
+                destination_directory="",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "SUCCESS")
+            self.assertTrue((root / "source" / "other" / "shows" / "a.mkv").exists())
+            self.assertFalse((root / "source" / "shows").exists())
+
+    def test_physical_self_descendant_overlap_is_rejected_across_roots(self) -> None:
+        fixture = _NestedRootFixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "shows" / "nested" / "d").mkdir(parents=True)
+            (root / "source" / "shows" / "a.mkv").write_bytes(b"a")
+            api, active, _runtime = fixture._activate(root)
+            transfers = self._transfers(api, active)
+            # The destination resolves to root/source/shows/nested/d/shows — a
+            # physical descendant of the selected directory — even though the
+            # relative strings ("shows" vs "d/shows") look unrelated.
+            with self.assertRaises(Exception) as caught:
+                transfers.transfer_impact(
+                    resource_library_id="source",
+                    paths=["shows"],
+                    destination_resource_library_id="inner",
+                    destination_directory="d",
+                    operation="move",
+                )
+            self.assertIn("overlap", str(caught.exception.code))
+            self.assertTrue((root / "source" / "shows" / "a.mkv").exists())
+
+
 class RepeatedPathDeleteImpactTests(TransferTestCase):
     def test_delete_impact_accepts_two_and_fifty_repeated_paths(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -868,6 +1334,381 @@ class RepeatedPathDeleteImpactTests(TransferTestCase):
                 + "&".join(f"path=f{index:02d}.txt" for index in range(51)),
             )
             self.assertEqual(limit, 400)
+
+
+class _FailingDirectoryCreationTarget(LocalStorage):
+    """A destination that refuses to create one specific directory."""
+
+    def create_directory(self, path: str) -> None:
+        if path == "Movies/show":
+            raise StorageError(
+                StorageErrorCode.PERMISSION_DENIED,
+                "create_directory",
+                path,
+                "permission denied",
+            )
+        return super().create_directory(path)
+
+
+class _RefusingDirectoryDeleteSource(LocalStorage):
+    """A source that refuses to delete the emptied source directory."""
+
+    def delete(self, path: str) -> None:
+        if path.endswith("show"):
+            raise StorageError(
+                StorageErrorCode.PERMISSION_DENIED, "delete", path, "permission denied"
+            )
+        return super().delete(path)
+
+
+class AggregationTests(TransferTestCase):
+    """F-3: skipped, directory and partial effects aggregate truthfully."""
+
+    def test_all_skipped_batch_is_reported_as_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media")
+            (root / "source" / "b.mkv").write_bytes(b"other")
+            (root / "source" / "d").mkdir()
+            (root / "source" / "d" / "a.mkv").write_bytes(b"existing")
+            (root / "source" / "d" / "b.mkv").write_bytes(b"existing-b")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="d",
+                operation="copy",
+                conflict_mode="skip",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="d",
+                operation="copy",
+                conflict_mode="skip",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "SKIPPED")
+            self.assertEqual(result["skippedItems"], 2)
+            self.assertEqual({effect["effect"] for effect in result["knownEffects"]}, {"skipped"})
+            items = runtime.list_items(result["taskId"])
+            self.assertEqual({item.status for item in items}, {TaskItemStatus.SKIPPED})
+            self.assertEqual((root / "source" / "d" / "a.mkv").read_bytes(), b"existing")
+            self.assertTrue((root / "source" / "a.mkv").exists())
+
+    def test_failed_destination_directory_creation_stops_before_files(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "destination" / "Movies").mkdir(parents=True, exist_ok=True)
+            target = _FailingDirectoryCreationTarget("media-target", root / "destination")
+            api, active, runtime = self._activate(root, storage_adapters={"media-target": target})
+            transfers = self._transfers(api, active)
+            tree = root / "source" / "show" / "season1"
+            tree.mkdir(parents=True)
+            (tree / "one.mkv").write_bytes(b"one")
+            (root / "source" / "spare").mkdir()
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show", "spare"],
+                destination_resource_library_id="destination",
+                destination_directory="Movies",
+                operation="copy",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show", "spare"],
+                destination_resource_library_id="destination",
+                operation="copy",
+                destination_directory="Movies",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            # The failing item's directory mutation was refused: it is a plain
+            # failure with no fabricated file transfer behind it.
+            show_effects = {effect["path"]: effect for effect in result["knownEffects"]}
+            self.assertEqual(show_effects["show"]["effect"], "retained")
+            outcomes = {outcome["path"]: outcome for outcome in result["outcomes"]}
+            self.assertEqual(outcomes["show"].get("errorCategory"), "create_directory_failed")
+            self.assertTrue((root / "source" / "show" / "season1" / "one.mkv").exists())
+            # The unaffected sibling still transfers independently.
+            self.assertTrue((root / "destination" / "Movies" / "spare").exists())
+
+    def test_failed_emptied_source_directory_removal_is_never_wholly_successful(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "destination").mkdir(parents=True, exist_ok=True)
+            source = _RefusingDirectoryDeleteSource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            tree = root / "source" / "show"
+            tree.mkdir()
+            (tree / "one.mkv").write_bytes(b"one")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            # The file moved and its destination is verified, but the source
+            # directory could not be removed: the effect of the refused delete
+            # is uncertain to the executor, so the item is an explicit
+            # uncertain/partial state — never a wholly successful directory
+            # Move and never replayed automatically.
+            self.assertEqual(result["status"], "UNCERTAIN")
+            outcomes = {outcome["path"]: outcome for outcome in result["outcomes"]}
+            self.assertEqual(outcomes["show/one.mkv"]["status"], "SUCCESS")
+            self.assertEqual(outcomes["show"]["status"], "UNCERTAIN")
+            self.assertEqual(
+                outcomes["show"].get("errorCategory"), "source_directory_removal_failed"
+            )
+            self.assertTrue((root / "source" / "show").is_dir())
+            self.assertEqual((root / "destination" / "show" / "one.mkv").read_bytes(), b"one")
+            item = runtime.list_items(result["taskId"])[0]
+            self.assertEqual(item.status, TaskItemStatus.PARTIAL)
+
+
+class DurableResultTests(TransferTestCase):
+    """F-4: the durable Result reproduces the truthful transfer identity."""
+
+    def test_cross_storage_result_persists_destination_identity_and_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 100)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "SUCCESS")
+            items = runtime.list_items(result["taskId"])
+            self.assertEqual(len(items), 1)
+            item = items[0]
+            self.assertEqual(item.destination_storage_id, "media-target")
+            self.assertEqual(item.destination_path, "a.mkv")
+            results = runtime.list_results(result["taskId"])
+            self.assertEqual(len(results), 1)
+            record = results[0]
+            self.assertEqual(record.source_storage_id, "source-storage")
+            self.assertEqual(record.destination_storage_id, "media-target")
+            self.assertEqual(record.status, "success")
+            self.assertEqual(
+                record.completed_operations,
+                (
+                    "copy_written:a.mkv",
+                    "destination_verified:a.mkv",
+                    "source_deleted:a.mkv",
+                ),
+            )
+            self.assertEqual(record.effect_certainty, "verified_complete")
+
+
+class PauseCancelResumeTests(TransferTestCase):
+    """F-5: durable per-entry pause/cancel and interruption recovery."""
+
+    def _tree(self, root: Path, count: int = 6) -> None:
+        tree = root / "source" / "show"
+        tree.mkdir(parents=True)
+        for index in range(count):
+            (tree / f"ep{index:02d}.mkv").write_bytes(b"episode" * (index + 1))
+
+    def test_pause_inside_one_directory_is_observed_and_resumed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _PausingSource(
+                "source-storage", root / "source", root / "runtime.sqlite3", after=2
+            )
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            self._tree(root)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "PAUSED")
+            task = runtime.get_task(result["taskId"])
+            self.assertEqual(task.status.value, "paused")
+            items = runtime.list_items(result["taskId"])
+            self.assertEqual(items[0].status, TaskItemStatus.PAUSED)
+            progress = json.loads(items[0].progress)
+            # The created destination directory and the two completed file
+            # moves are the recorded known-safe state.
+            self.assertEqual(progress["completedEntries"], 3)
+            self.assertEqual(len(progress["confirmedEntries"]), 7)
+            copied_after_pause = source.mutation_calls
+            moved_files = list((root / "source" / "Movies" / "show").glob("*.mkv"))
+            self.assertEqual(len(moved_files), 2)
+
+            resumed = transfers.resume_transfer(result["taskId"])
+            self.assertEqual(resumed["status"], "SUCCESS")
+            # Already-moved entries are never replayed.
+            self.assertEqual(source.mutation_calls - copied_after_pause, 4)
+            self.assertEqual(len(list((root / "source" / "Movies" / "show").glob("*.mkv"))), 6)
+            self.assertFalse((root / "source" / "show").exists())
+            final = runtime.get_task(result["taskId"])
+            self.assertEqual(final.status.value, "completed")
+
+    def test_resume_refuses_keep_both_and_reports_running_tasks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _PausingSource(
+                "source-storage", root / "source", root / "runtime.sqlite3", after=1
+            )
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            self._tree(root, count=3)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="keep_both",
+            )
+            result = transfers.execute_transfer(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="keep_both",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "PAUSED")
+            with self.assertRaises(Exception) as caught:
+                transfers.resume_transfer(result["taskId"])
+            self.assertEqual(caught.exception.code, "files_transfer_resume_unavailable")
+            # The paused state and its recorded effects are untouched.
+            task = runtime.get_task(result["taskId"])
+            self.assertEqual(task.status.value, "paused")
+
+    def test_process_interruption_after_verified_copy_finishes_the_move(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "destination").mkdir(parents=True, exist_ok=True)
+            target = _CrashAfterWriteTarget("media-target", root / "destination")
+            api, active, runtime = self._activate(root, storage_adapters={"media-target": target})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 100)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+            )
+            with self.assertRaises(SystemExit):
+                transfers.execute_transfer(
+                    resource_library_id="source",
+                    paths=["a.mkv"],
+                    destination_resource_library_id="destination",
+                    destination_directory="",
+                    operation="move",
+                    conflict_mode="fail",
+                    manifest_digest=impact.manifest.digest,
+                )
+            # The interrupted process leaves the Task running with an item in
+            # flight, its confirmed scope and baseline progress persisted.
+            tasks = runtime.list_tasks(command="files_transfer")
+            self.assertEqual(len(tasks), 1)
+            item = runtime.list_items(tasks[0].task_id)[0]
+            self.assertEqual(item.status, TaskItemStatus.PROCESSING)
+            progress = json.loads(item.progress)
+            self.assertEqual(len(progress["confirmedEntries"]), 1)
+            writes_after_crash = target.write_calls
+            # Pause the abandoned Task, then continue from the durable state.
+            runtime.request_task_pause(tasks[0].task_id, datetime.now(UTC))
+            from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            coordinator.acknowledge_pause(tasks[0].task_id)
+            resumed = transfers.resume_transfer(tasks[0].task_id)
+            self.assertEqual(resumed["status"], "SUCCESS")
+            self.assertEqual(target.write_calls, writes_after_crash)
+            self.assertFalse((root / "source" / "a.mkv").exists())
+            self.assertEqual((root / "destination" / "a.mkv").read_bytes(), b"media-a" * 100)
+
+    def test_interrupted_truncated_destination_stops_without_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "destination").mkdir(parents=True, exist_ok=True)
+            target = _TruncatingCrashTarget("media-target", root / "destination")
+            api, active, runtime = self._activate(root, storage_adapters={"media-target": target})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 100)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+            )
+            with self.assertRaises(SystemExit):
+                transfers.execute_transfer(
+                    resource_library_id="source",
+                    paths=["a.mkv"],
+                    destination_resource_library_id="destination",
+                    destination_directory="",
+                    operation="move",
+                    conflict_mode="fail",
+                    manifest_digest=impact.manifest.digest,
+                )
+            tasks = runtime.list_tasks(command="files_transfer")
+            runtime.request_task_pause(tasks[0].task_id, datetime.now(UTC))
+            from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+            PersistentTaskCoordinator(runtime, runtime).acknowledge_pause(tasks[0].task_id)
+            resumed = transfers.resume_transfer(tasks[0].task_id)
+            # The destination does not hold the source's exact bytes and the
+            # source is intact: the selected no-overwrite behavior refuses the
+            # item instead of overwriting or deleting anything.
+            self.assertNotEqual(resumed["status"], "SUCCESS")
+            self.assertEqual(resumed["outcomes"][0]["errorCategory"], "target_exists")
+            self.assertTrue((root / "source" / "a.mkv").exists())
+            self.assertNotEqual((root / "destination" / "a.mkv").read_bytes(), b"media-a" * 100)
 
 
 class ExecutorBoundaryTests(TransferTestCase):

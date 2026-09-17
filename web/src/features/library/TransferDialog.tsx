@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
   type TransferConflictMode,
   type TransferImpactModel,
+  type TransferItemOutcome,
   type TransferOperation,
   type TransferResultModel,
 } from "../../entities/library/direct-files";
@@ -101,8 +102,10 @@ export function transferResultMessage(model: TransferResultModel): string {
   switch (model.status) {
     case "SUCCESS":
       return `传输完成 ${model.succeededItems} 项；结果已记录。`;
+    case "SKIPPED":
+      return `所选项全部按冲突选择跳过（${model.skippedItems ?? 0} 项）；目标与来源均未改动。`;
     case "PARTIAL":
-      return `传输部分完成：成功 ${model.succeededItems} 项，未完成 ${model.failedItems} 项；每项结果独立记录，未自动重试。`;
+      return `传输部分完成：成功 ${model.succeededItems} 项，跳过 ${model.skippedItems ?? 0} 项，未完成 ${model.failedItems} 项；每项结果独立记录，未自动重试。`;
     case "PAUSED":
       return "传输已暂停；已完成项保持有效，可从任务中继续。";
     case "CANCELLED":
@@ -111,6 +114,53 @@ export function transferResultMessage(model: TransferResultModel): string {
       return "存在结果不确定的项目，未自动重试；请刷新两个目录核实实际状态。";
     default:
       return "传输未完成；每项的结果独立记录，可修正后重试未受影响的项目。";
+  }
+}
+
+const OUTCOME_STATUS_LABELS: Record<string, string> = {
+  SUCCESS: "已传输",
+  SKIPPED: "已跳过",
+  PARTIAL: "部分完成",
+  UNCERTAIN: "结果不确定",
+  FAILED: "未完成",
+};
+
+/**
+ * The bounded known-state explanation of one entry outcome: it names what
+ * currently exists at source and destination (including the durable
+ * copy→verify→delete-source checkpoints of a compound Move) instead of
+ * exposing internal execution tokens.
+ */
+function outcomeStateLabel(
+  outcome: TransferItemOutcome,
+  operation: TransferOperation,
+): string {
+  const has = (name: string) => outcome.checkpoints.includes(name);
+  if (outcome.durableState === "mutation_effect_uncertain") {
+    if (
+      has("copy_written") &&
+      has("destination_verified") &&
+      !has("source_deleted")
+    ) {
+      return "目标已复制并校验，来源保留；可检查后继续或清理。";
+    }
+    return "结果不确定；请刷新两个目录核实，未自动重试。";
+  }
+  switch (outcome.status) {
+    case "SUCCESS":
+      return has("source_deleted")
+        ? "已复制并校验目标，来源已删除"
+        : operation === "copy"
+          ? "已完成；来源保留"
+          : "已完成";
+    case "SKIPPED":
+      return "目标与来源均保留原样";
+    case "PARTIAL":
+      return "部分完成；已完成部分保持有效";
+    case "FAILED":
+      return "未改动；可修正原因后重试";
+    default:
+      return OUTCOME_STATUS_LABELS[outcome.status] ?? outcome.status;
   }
 }
 
@@ -149,6 +199,11 @@ export function TransferDialog({
   const [destinationPath, setDestinationPath] = useState("");
   const [conflictMode, setConflictMode] =
     useState<TransferConflictMode>("fail");
+  // The impact fetch is part of one submission: the window between clicking
+  // the submit button and the execution mutation becoming pending must also
+  // prevent duplicate submits.
+  const [impactPending, setImpactPending] = useState(false);
+  const working = submitting || impactPending;
   const destinationQuery = useQuery({
     ...storageFilesQueryOptions(token, {
       resourceLibraryId: destinationLibraryId,
@@ -181,22 +236,28 @@ export function TransferDialog({
       : null;
   const done = result !== null;
   const submit = async () => {
-    const read = await fetchTransferImpact(token, currentLibraryId, {
-      operation: state.operation,
-      paths: state.paths,
-      destinationResourceLibraryId: destinationLibraryId,
-      destinationDirectory: destinationPath,
-      conflictMode,
-    });
-    if (!read.ok) {
-      onImpactFailure(
-        transferFailureMessage(read.code, {
-          durableState: read.details?.durableState,
-        }),
-      );
-      return;
+    if (impactPending || submitting) return;
+    setImpactPending(true);
+    try {
+      const read = await fetchTransferImpact(token, currentLibraryId, {
+        operation: state.operation,
+        paths: state.paths,
+        destinationResourceLibraryId: destinationLibraryId,
+        destinationDirectory: destinationPath,
+        conflictMode,
+      });
+      if (!read.ok) {
+        onImpactFailure(
+          transferFailureMessage(read.code, {
+            durableState: read.details?.durableState,
+          }),
+        );
+        return;
+      }
+      onSubmit({ impact: read.model, conflictMode });
+    } finally {
+      setImpactPending(false);
     }
-    onSubmit({ impact: read.model, conflictMode });
   };
   const title = done
     ? state.operation === "copy"
@@ -225,7 +286,7 @@ export function TransferDialog({
               type="button"
               className="mf-button mf-button-secondary"
               onClick={onClose}
-              disabled={submitting}
+              disabled={working}
             >
               取消
             </button>
@@ -233,10 +294,10 @@ export function TransferDialog({
               type="button"
               className="mf-button mf-button-primary"
               onClick={() => void submit()}
-              disabled={submitting || browseError !== null}
-              aria-busy={submitting}
+              disabled={working || browseError !== null}
+              aria-busy={working}
             >
-              {submitting
+              {working
                 ? state.operation === "copy"
                   ? "复制中…"
                   : "移动中…"
@@ -265,15 +326,39 @@ export function TransferDialog({
                 <span>
                   {effect.effect === "transferred"
                     ? "已传输"
-                    : effect.effect === "partial"
-                      ? "部分完成"
-                      : effect.effect === "uncertain"
-                        ? "结果不确定"
-                        : "未改动"}
+                    : effect.effect === "skipped"
+                      ? "已跳过"
+                      : effect.effect === "partial"
+                        ? "部分完成"
+                        : effect.effect === "uncertain"
+                          ? "结果不确定"
+                          : "未改动"}
                 </span>
               </li>
             ))}
           </ul>
+          {result.outcomes.length > 0 && (
+            <>
+              <p className="mf-dialog-hint">逐项结果</p>
+              <ul className="mf-impact-list">
+                {result.outcomes.slice(0, 50).map((outcome) => (
+                  <li key={`${outcome.path}:${outcome.destination}`}>
+                    <span>{outcome.path}</span>
+                    <span>
+                      {OUTCOME_STATUS_LABELS[outcome.status] ?? outcome.status}
+                      {" · "}
+                      {outcomeStateLabel(outcome, result.operation)}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              {result.outcomesTruncated && (
+                <p className="mf-dialog-hint">
+                  仅显示前 50 项的逐项结果；完整结果已记录在任务中。
+                </p>
+              )}
+            </>
+          )}
           <p className="mf-dialog-hint">{result.nextAction}</p>
         </>
       ) : (

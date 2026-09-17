@@ -16,7 +16,9 @@ Classification, Planner) is never invoked.
 
 from __future__ import annotations
 
+import json
 import posixpath
+from dataclasses import dataclass
 
 from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
 from mediaflow.application.organizer import OrganizerExecutor
@@ -30,6 +32,7 @@ from mediaflow.domain.direct_files import (
     MAX_TRANSFER_DEPTH,
     MAX_TRANSFER_ENTRIES,
     MAX_TRANSFER_PATHS,
+    MAX_TRANSFER_PROGRESS_ENTRIES,
     DirectEntryEvidence,
     TransferConflict,
     TransferConflictMode,
@@ -46,14 +49,139 @@ from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, St
 from mediaflow.domain.task_persistence import (
     FILES_DIRECT_COMMAND_TASK,
     FILES_TRANSFER_TASK_COMMAND,
+    TRANSFER_INTERRUPTED_STAGE,
+    PersistentTaskItem,
+    PersistentTaskStatus,
     TaskItemStatus,
 )
 
 __all__ = ["DirectFileTransferService", "DirectFileTransferError"]
 
 
+@dataclass(frozen=True)
+class _TransferPlan:
+    """The executable per-entry decision set of one confirmed transfer.
+
+    Normal execution builds it from the pinned manifest; the durable
+    continuation of an interrupted Task rebuilds it from the persisted
+    confirmed scope and revalidates it against live Storage.  Either way the
+    per-entry destinations are the backend's deterministic decisions — never
+    client-side joins.
+    """
+
+    operation: TransferOperation
+    conflict_mode: TransferConflictMode
+    same_storage: bool
+    entries: tuple[TransferManifestEntry, ...]
+    destinations: dict[str, str]
+    top_levels: tuple[str, ...] = ()
+    resuming: bool = False
+
+    def destination_for(self, path: str) -> str | None:
+        return self.destinations.get(path)
+
+
+@dataclass(frozen=True)
+class _ResumeContext:
+    """One item's rebuilt continuation plan plus its persisted checkpoint."""
+
+    plan: _TransferPlan
+    destination: ResourceLibrary
+    destination_storage: Storage
+    skip_paths: frozenset[str]
+    confirmed_entries: tuple[tuple[str, str, str], ...]
+    confirmed_truncated: bool
+
+
+def _conflict_outcome(
+    mode: TransferConflictMode, path: str, destination: str, category: str
+) -> dict[str, object]:
+    """The truthful per-entry outcome the selected conflict mode produces.
+
+    ``FAIL`` performs zero mutation for the affected entry, ``SKIP`` records a
+    truthful skipped entry, and a keep-both destination that appeared after
+    admission is never silently replaced.
+    """
+
+    if mode is TransferConflictMode.FAIL:
+        status = "FAILED"
+    elif mode is TransferConflictMode.SKIP:
+        status = "SKIPPED"
+    else:
+        status = "UNCERTAIN"
+        category = "keep_both_conflict_appeared"
+    return {
+        "path": path,
+        "destination": destination,
+        "status": status,
+        "errorCategory": category,
+        "checkpoints": [],
+    }
+
+
+def _item_status(entries: list[dict[str, object]]) -> str:
+    """Aggregate one item's entry outcomes into its truthful item status.
+
+    Directory creation, file transfer and emptied-source-directory removal all
+    participate: an item whose every entry was skipped is itself skipped, a
+    known partial mutation is partial, an unknown effect is uncertain, and
+    only an item with no mutation at all is a plain failure.
+    """
+
+    statuses = {str(value["status"]) for value in entries}
+    if not statuses:
+        return "FAILED"
+    if "UNCERTAIN" in statuses:
+        return "UNCERTAIN"
+    if statuses <= {"SKIPPED"}:
+        return "SKIPPED"
+    if "FAILED" in statuses or "PARTIAL" in statuses:
+        mutated = any(value.get("checkpoints") for value in entries)
+        return "PARTIAL" if mutated else "FAILED"
+    return "SUCCESS"
+
+
+def _item_checkpoint_evidence(entries: list[dict[str, object]]) -> tuple[str, ...]:
+    """The bounded durable checkpoint annotations of one item's Result."""
+
+    values: list[str] = []
+    for outcome in entries:
+        for checkpoint in outcome.get("checkpoints") or ():
+            values.append(f"{checkpoint}:{outcome.get('path', '')}")
+    if len(values) > MAX_TRANSFER_PROGRESS_ENTRIES:
+        values = values[:MAX_TRANSFER_PROGRESS_ENTRIES]
+        values.append("transfer_checkpoints_truncated")
+    return tuple(values)
+
+
+_ITEM_TASK_STATUS = {
+    "SUCCESS": TaskItemStatus.SUCCESS,
+    "SKIPPED": TaskItemStatus.SKIPPED,
+    "PARTIAL": TaskItemStatus.PARTIAL,
+    "UNCERTAIN": TaskItemStatus.PARTIAL,
+    "FAILED": TaskItemStatus.FAILED,
+}
+
+_ITEM_KNOWN_EFFECT = {
+    "SUCCESS": "transferred",
+    "SKIPPED": "skipped",
+    "PARTIAL": "partial",
+    "UNCERTAIN": "uncertain",
+    "FAILED": "retained",
+}
+
+
 class DirectFileTransferError(DirectFileError):
-    """A stable, secret-free Copy/Move admission or execution failure."""
+    """A stable, secret-free Copy/Move admission or execution failure.
+
+    ``mutated`` records whether the failing continuation may already have
+    completed part of its confirmed work, so recovery messaging can name a
+    partial known effect instead of a clean retained state.
+    """
+
+    def __init__(self, *args: object, mutated: bool = False, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.mutated = mutated
 
     @property
     def details(self) -> dict[str, object]:
@@ -105,8 +233,7 @@ class DirectFileTransferService:
             conflict_mode=conflict_mode,
         )
         destination = self._direct.library(destination_resource_library_id)
-        destination_storage = self._direct.open_storage(destination)
-        conflicts = self._detect_conflicts(manifest, destination_storage)
+        conflicts = self._detect_conflicts(manifest, destination)
         return TransferImpact(
             manifest=manifest,
             conflicts=conflicts,
@@ -190,16 +317,73 @@ class DirectFileTransferService:
             configuration_snapshot_id=self._direct.revision.revision_id,
             configuration_snapshot_digest=self._direct.revision.digest,
         )
+        plan = _TransferPlan(
+            operation=manifest.operation,
+            conflict_mode=manifest.conflict_mode,
+            same_storage=manifest.same_storage,
+            entries=manifest.entries,
+            destinations=dict(manifest.destinations),
+            top_levels=manifest.top_level_paths,
+        )
+        confirmed_scope, scope_truncated = _confirmed_entries(manifest)
+        return self._run_transfer_task(
+            task=task,
+            plan=plan,
+            confirmed_entries=confirmed_scope,
+            confirmed_truncated=scope_truncated,
+            source=source,
+            destination=destination,
+            source_storage=source_storage,
+            destination_storage=destination_storage,
+        )
+
+    def _run_transfer_task(
+        self,
+        *,
+        task,
+        plan: _TransferPlan,
+        confirmed_entries: tuple[tuple[str, str, str], ...],
+        confirmed_truncated: bool,
+        source: ResourceLibrary,
+        destination: ResourceLibrary,
+        source_storage: Storage,
+        destination_storage: Storage,
+    ) -> dict[str, object]:
+        """Drive one durable transfer Task to its truthful durable outcome.
+
+        Every top-level selection is an independently recoverable item: its
+        conflict intent is revalidated at the last safe boundary (including a
+        conflicting destination directory), every per-entry mutation crosses
+        ``OrganizerExecutor``, pause/cancel are observed at every per-entry
+        boundary, and the bounded in-flight progress is persisted after each
+        entry so a process interruption leaves a known-safe checkpoint.  A
+        failing item never hides a completed sibling and no uncertain effect
+        is ever replayed automatically.
+        """
+
         outcomes: list[dict[str, object]] = []
         checkpoints: list[dict[str, object]] = []
         known_effects: list[dict[str, object]] = []
+        item_summaries: list[dict[str, object]] = []
         uncertain = False
         paused = False
         cancelled = False
-        for target in manifest.top_level_paths:
+        skipped_items = 0
+        transferred_items = 0
+        partial_items = 0
+        failed_items = 0
+        claimed: set[str] = set()
+        for target in plan.top_levels:
             if self._direct.tasks.cancellation_observed(task.task_id):
                 cancelled = True
                 break
+            root_destination = plan.destination_for(target) or target
+            # Deterministic in-batch collision: a later sibling whose resolved
+            # destination equals an earlier sibling's is reported through the
+            # selected conflict mode instead of merging into it as if the
+            # destination were an external pre-existing entry.
+            batch_conflict = root_destination in claimed
+            claimed.add(root_destination)
             full = _join_resource_library_path(source.root_path, target)
             try:
                 item = self._direct.tasks.begin_item(
@@ -218,47 +402,56 @@ class DirectFileTransferService:
                     {"path": target, "status": "FAILED", "errorCategory": "path_locked"}
                 )
                 known_effects.append({"path": target, "effect": "retained", "status": "FAILED"})
+                item_summaries.append(
+                    {
+                        "path": target,
+                        "destination": root_destination,
+                        "status": "FAILED",
+                        "errorCategory": "path_locked",
+                    }
+                )
+                failed_items += 1
                 continue
-            entry_outcomes = self._transfer_target(
-                manifest,
-                target,
-                source,
-                destination,
-                source_storage,
-                destination_storage,
-                checkpoints,
+            item_entries, item_paused, item_cancelled = self._execute_item(
+                plan=plan,
+                top_level=target,
+                source=source,
+                destination=destination,
+                source_storage=source_storage,
+                destination_storage=destination_storage,
+                checkpoints=checkpoints,
+                task_id=task.task_id,
+                item=item,
+                batch_conflict=batch_conflict,
+                destination_root=root_destination,
+                confirmed_entries=confirmed_entries,
+                confirmed_truncated=confirmed_truncated,
             )
-            outcomes.extend(entry_outcomes)
-            unknown = any(outcome.get("status") == "UNCERTAIN" for outcome in entry_outcomes)
-            failed = any(
-                outcome.get("status") in {"FAILED", "PARTIAL", "UNCERTAIN"}
-                for outcome in entry_outcomes
-            )
-            # A selection whose every recorded checkpoint is empty had no known
-            # mutation at all (a no-overwrite conflict refusal, for example), so
-            # its durable effect is "retained" rather than a partial mutation.
-            mutated = any(outcome.get("checkpoints") for outcome in entry_outcomes)
+            if item_cancelled:
+                cancelled = True
+                break
+            if item_paused:
+                self._direct.tasks.acknowledge_pause(task.task_id)
+                paused = True
+                break
+            outcomes.extend(item_entries)
+            status = _item_status(item_entries)
+            unknown = status == "UNCERTAIN"
             if unknown:
                 uncertain = True
-            status = (
-                "UNCERTAIN"
-                if unknown
-                else "PARTIAL"
-                if failed and mutated
-                else "FAILED"
-                if failed
-                else "SUCCESS"
-            )
+            if status == "SUCCESS":
+                transferred_items += 1
+            elif status == "SKIPPED":
+                skipped_items += 1
+            elif status == "PARTIAL":
+                partial_items += 1
+            else:
+                failed_items += 1
             self._direct.tasks.complete_direct_item(
                 item,
-                status={
-                    "SUCCESS": TaskItemStatus.SUCCESS,
-                    "PARTIAL": TaskItemStatus.PARTIAL,
-                    "UNCERTAIN": TaskItemStatus.PARTIAL,
-                    "FAILED": TaskItemStatus.FAILED,
-                }[status],
-                operation=manifest.operation.value,
-                target_path=manifest.destination_for(target) or target,
+                status=_ITEM_TASK_STATUS[status],
+                operation=plan.operation.value,
+                target_path=root_destination,
                 error=(
                     None
                     if status == "SUCCESS"
@@ -266,7 +459,7 @@ class DirectFileTransferService:
                         next(
                             (
                                 outcome.get("errorCategory")
-                                for outcome in entry_outcomes
+                                for outcome in item_entries
                                 if outcome.get("status") != "SUCCESS"
                             ),
                             "transfer_partial",
@@ -279,17 +472,26 @@ class DirectFileTransferService:
                     else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
                 ),
                 uncertain_effects=("mutation_outcome",) if unknown else (),
+                destination_storage_id=destination.storage_id,
+                completed_operations=_item_checkpoint_evidence(item_entries),
             )
             known_effects.append(
                 {
                     "path": target,
-                    "effect": {
-                        "SUCCESS": "transferred",
-                        "PARTIAL": "partial",
-                        "UNCERTAIN": "uncertain",
-                        "FAILED": "retained",
-                    }[status],
+                    "effect": _ITEM_KNOWN_EFFECT[status],
                     "status": status,
+                }
+            )
+            item_summaries.append(
+                {
+                    "path": target,
+                    "destination": root_destination,
+                    "status": status,
+                    **{
+                        "errorCategory": outcome.get("errorCategory")
+                        for outcome in item_entries
+                        if outcome.get("status") != "SUCCESS" and outcome.get("errorCategory")
+                    },
                 }
             )
         if paused or cancelled:
@@ -298,34 +500,39 @@ class DirectFileTransferService:
             final = self._direct.tasks.finish(task.task_id, _empty_batch())
         items = self._direct.tasks.repository.list_items(task.task_id)
         succeeded = sum(1 for item in items if item.status is TaskItemStatus.SUCCESS)
-        failed_items = sum(
+        failed_persisted = sum(
             1 for item in items if item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
         )
+        skipped_persisted = sum(1 for item in items if item.status is TaskItemStatus.SKIPPED)
         document: dict[str, object] = {
-            "operation": manifest.operation.value,
-            "conflictMode": manifest.conflict_mode.value,
-            "sameStorage": manifest.same_storage,
+            "operation": plan.operation.value,
+            "conflictMode": plan.conflict_mode.value,
+            "sameStorage": plan.same_storage,
             "status": _transfer_status(
                 uncertain=uncertain,
                 paused=paused,
                 cancelled=cancelled,
-                transferred=any(effect["effect"] == "transferred" for effect in known_effects),
-                partial=any(effect["effect"] == "partial" for effect in known_effects),
+                transferred=transferred_items,
+                partial=partial_items,
+                skipped=skipped_items,
+                failed=failed_items,
             ),
             "taskId": task.task_id,
             "taskStatus": final.status.value,
             "resourceLibraryId": source.library_id,
             "destinationResourceLibraryId": destination.library_id,
-            "topLevelPaths": list(manifest.top_level_paths),
+            "topLevelPaths": sorted(plan.destinations),
             "destinations": [
-                {"path": path, "destination": value} for path, value in manifest.destinations
+                {"path": path, "destination": value} for path, value in plan.destinations.items()
             ],
             "knownEffects": known_effects,
+            "itemOutcomes": item_summaries[:MAX_TRANSFER_PATHS],
             "checkpoints": checkpoints[:MAX_TRANSFER_ENTRIES],
             "checkpointsTruncated": len(checkpoints) > MAX_TRANSFER_ENTRIES,
             "totalItems": len(items),
             "succeededItems": succeeded,
-            "failedItems": failed_items,
+            "skippedItems": skipped_persisted,
+            "failedItems": failed_persisted,
             "outcomes": outcomes[: MAX_TRANSFER_PATHS * 64],
             "outcomesTruncated": len(outcomes) > MAX_TRANSFER_PATHS * 64,
             "sideEffects": "storage_mutations",
@@ -344,6 +551,480 @@ class DirectFileTransferService:
                 "uncertain effects are never replayed automatically"
             )
         return document
+
+    # ------------------------------------------------------------------
+    # Durable continuation of an interrupted transfer Task
+    # ------------------------------------------------------------------
+
+    def resume_transfer(self, task_id: str) -> dict[str, object]:
+        """Continue one paused or interrupted Files transfer Task.
+
+        Continuation proceeds only from each item's persisted known-safe
+        checkpoint: the confirmed per-entry scope recorded with the item must
+        still match live Storage exactly, completed entries are never replayed,
+        recorded uncertain effects stop the item with an investigation state,
+        and keep-both renames (whose unique names are admission-pinned) are
+        never re-derived.  Work outside the confirmed scope is never picked up;
+        a scope that changed stops that item with an actionable state instead
+        of expanding the confirmed transfer.
+        """
+
+        task = self._direct.tasks.require(task_id)
+        if task.command != FILES_TRANSFER_TASK_COMMAND:
+            raise DirectFileTransferError(
+                "files_transfer_resume_unavailable",
+                "resume_unavailable",
+                "only a bounded Files transfer Task can be continued this way",
+                status=409,
+                next_action="inspect the Task in Operations",
+            )
+        if task.status is PersistentTaskStatus.RUNNING:
+            raise DirectFileTransferError(
+                "files_transfer_resume_running",
+                "resume_running",
+                "the transfer Task still reports a running execution; it must not be started twice",
+                status=409,
+                next_action="refresh the Task state and wait for it to finish or cancel it",
+            )
+        if task.status is not PersistentTaskStatus.PAUSED:
+            raise DirectFileTransferError(
+                "files_transfer_resume_unavailable",
+                "resume_unavailable",
+                "the transfer Task has no continuable paused work",
+                status=409,
+                next_action="submit a fresh bounded transfer instead",
+            )
+        current = self._direct.revision
+        if (
+            task.configuration_snapshot_id != current.revision_id
+            or task.configuration_snapshot_digest != current.digest
+        ):
+            raise DirectFileTransferError(
+                "files_transfer_resume_stale_snapshot",
+                "resume_stale_snapshot",
+                "the paused transfer was admitted against a different Active configuration",
+                status=409,
+                next_action=(
+                    "submit a fresh bounded transfer against the current Active configuration"
+                ),
+            )
+        items = self._direct.tasks.repository.list_items(task.task_id)
+        continuable = [
+            item
+            for item in items
+            if item.status
+            in {TaskItemStatus.PAUSED, TaskItemStatus.PROCESSING, TaskItemStatus.PENDING}
+        ]
+        if not continuable:
+            raise DirectFileTransferError(
+                "files_transfer_resume_unavailable",
+                "resume_unavailable",
+                "the paused transfer has no continuable item",
+                status=409,
+                next_action="inspect the recorded per-item outcomes and submit a fresh transfer",
+            )
+        for item in continuable:
+            payload = _progress_payload(item)
+            if payload is None:
+                continue
+            if payload.get("conflictMode") == TransferConflictMode.KEEP_BOTH.value:
+                raise DirectFileTransferError(
+                    "files_transfer_resume_unavailable",
+                    "resume_unavailable",
+                    "the keep-both destination names were pinned at admission and cannot be "
+                    "re-derived after an interruption",
+                    status=409,
+                    next_action=(
+                        "inspect the recorded per-item outcomes and submit a fresh keep-both "
+                        "transfer for the remaining entries"
+                    ),
+                )
+        source = self._direct.library(continuable[0].resource_library_id)
+        self._direct.tasks.reopen(task.task_id, execute=True)
+        outcomes: list[dict[str, object]] = []
+        checkpoints: list[dict[str, object]] = []
+        known_effects: list[dict[str, object]] = []
+        uncertain = False
+        paused = False
+        cancelled = False
+        transferred_items = 0
+        partial_items = 0
+        skipped_items = 0
+        failed_items = 0
+        source_storage = self._direct.open_storage(source)
+        operation_value = "transfer"
+        destination_library_id = ""
+        for item in continuable:
+            if self._direct.tasks.cancellation_observed(task.task_id):
+                cancelled = True
+                break
+            try:
+                context = self._resume_item_plan(item)
+            except DirectFileTransferError as error:
+                if error.category != "scope_changed":
+                    raise
+                self._mark_interrupted_item(item, error.code, mutated=error.mutated)
+                if error.mutated:
+                    partial_items += 1
+                    known_effects.append(
+                        {
+                            "path": item.source_display,
+                            "effect": "partial",
+                            "status": "PARTIAL",
+                        }
+                    )
+                else:
+                    failed_items += 1
+                    known_effects.append(
+                        {
+                            "path": item.source_display,
+                            "effect": "retained",
+                            "status": "FAILED",
+                        }
+                    )
+                continue
+            if context is None:
+                # No persisted known-safe checkpoint: the item is an explicit
+                # interrupted/investigation state, never a blind retry.
+                self._mark_interrupted_item(item, "files_transfer_interrupted_unknown")
+                uncertain = True
+                known_effects.append(
+                    {
+                        "path": item.source_display,
+                        "effect": "uncertain",
+                        "status": "UNCERTAIN",
+                    }
+                )
+                continue
+            operation_value = context.plan.operation.value
+            destination_library_id = context.destination.library_id
+            try:
+                resumed_item = self._direct.tasks.begin_item(
+                    task.task_id,
+                    source.storage_id,
+                    source.library_id,
+                    _join_resource_library_path(source.root_path, item.source_display),
+                    item.source_display,
+                )
+            except TaskPauseRequested:
+                self._direct.tasks.acknowledge_pause(task.task_id)
+                paused = True
+                break
+            except Exception:
+                failed_items += 1
+                known_effects.append(
+                    {
+                        "path": item.source_display,
+                        "effect": "retained",
+                        "status": "FAILED",
+                    }
+                )
+                continue
+            item_entries, item_paused, item_cancelled = self._execute_item(
+                plan=context.plan,
+                top_level=item.source_display,
+                source=source,
+                destination=context.destination,
+                source_storage=source_storage,
+                destination_storage=context.destination_storage,
+                checkpoints=checkpoints,
+                task_id=task.task_id,
+                item=resumed_item,
+                batch_conflict=False,
+                destination_root=context.plan.destinations.get(item.source_display, ""),
+                confirmed_entries=context.confirmed_entries,
+                confirmed_truncated=context.confirmed_truncated,
+                skip_paths=context.skip_paths,
+            )
+            if item_cancelled:
+                cancelled = True
+                break
+            if item_paused:
+                self._direct.tasks.acknowledge_pause(task.task_id)
+                paused = True
+                break
+            outcomes.extend(item_entries)
+            status = _item_status(item_entries)
+            unknown = status == "UNCERTAIN"
+            if unknown:
+                uncertain = True
+            if status == "SUCCESS":
+                transferred_items += 1
+            elif status == "SKIPPED":
+                skipped_items += 1
+            elif status == "PARTIAL":
+                partial_items += 1
+            else:
+                failed_items += 1
+            self._direct.tasks.complete_direct_item(
+                resumed_item,
+                status=_ITEM_TASK_STATUS[status],
+                operation=context.plan.operation.value,
+                target_path=context.plan.destinations.get(item.source_display, item.source_display),
+                error=(
+                    None
+                    if status == "SUCCESS"
+                    else str(
+                        next(
+                            (
+                                outcome.get("errorCategory")
+                                for outcome in item_entries
+                                if outcome.get("status") != "SUCCESS"
+                            ),
+                            "transfer_partial",
+                        )
+                    )
+                ),
+                effect_certainty=(
+                    ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+                    if unknown
+                    else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
+                ),
+                uncertain_effects=("mutation_outcome",) if unknown else (),
+                destination_storage_id=context.destination.storage_id,
+                completed_operations=_item_checkpoint_evidence(item_entries),
+            )
+            known_effects.append(
+                {
+                    "path": item.source_display,
+                    "effect": _ITEM_KNOWN_EFFECT[status],
+                    "status": status,
+                }
+            )
+        if paused or cancelled:
+            final = self._direct.tasks.require(task.task_id)
+        else:
+            final = self._direct.tasks.finish(task.task_id, _empty_batch())
+        persisted = self._direct.tasks.repository.list_items(task.task_id)
+        document: dict[str, object] = {
+            "operation": operation_value,
+            "resumed": True,
+            "status": _transfer_status(
+                uncertain=uncertain,
+                paused=paused,
+                cancelled=cancelled,
+                transferred=transferred_items,
+                partial=partial_items,
+                skipped=skipped_items,
+                failed=failed_items,
+            ),
+            "taskId": task.task_id,
+            "taskStatus": final.status.value,
+            "resourceLibraryId": source.library_id,
+            "destinationResourceLibraryId": destination_library_id,
+            "topLevelPaths": [item.source_display for item in continuable],
+            "knownEffects": known_effects,
+            "checkpoints": checkpoints[:MAX_TRANSFER_ENTRIES],
+            "checkpointsTruncated": len(checkpoints) > MAX_TRANSFER_ENTRIES,
+            "totalItems": len(persisted),
+            "succeededItems": sum(1 for item in persisted if item.status is TaskItemStatus.SUCCESS),
+            "skippedItems": sum(1 for item in persisted if item.status is TaskItemStatus.SKIPPED),
+            "failedItems": sum(
+                1
+                for item in persisted
+                if item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
+            ),
+            "outcomes": outcomes[: MAX_TRANSFER_PATHS * 64],
+            "outcomesTruncated": len(outcomes) > MAX_TRANSFER_PATHS * 64,
+            "sideEffects": "storage_mutations",
+            "retrySafe": False,
+            "nextAction": (
+                "refresh both directories; each item keeps its own durable outcome"
+                if paused or cancelled
+                else "refresh the source and destination directories to see the current state"
+            ),
+        }
+        if uncertain:
+            document["durableState"] = "mutation_effect_uncertain"
+            document["status"] = "UNCERTAIN"
+            document["nextAction"] = (
+                "an interrupted item could not be safely continued; inspect the Task and "
+                "submit a fresh transfer for the remaining entries"
+            )
+        return document
+
+    def _mark_interrupted_item(
+        self, item: PersistentTaskItem, code: str, *, mutated: bool = False
+    ) -> None:
+        """Record one item as an explicit interrupted/investigation state.
+
+        The item is never marked as a clean failure or a replayable retry: its
+        recorded effects stay authoritative and the code names exactly why the
+        continuation stopped.
+        """
+
+        self._direct.tasks.complete_direct_item(
+            item,
+            status=TaskItemStatus.PARTIAL if mutated else TaskItemStatus.FAILED,
+            operation="transfer",
+            error=code,
+            effect_certainty=(
+                ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+                if mutated or code == "files_transfer_interrupted_unknown"
+                else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
+            ),
+            uncertain_effects=("mutation_outcome",) if mutated else (),
+            stage=TRANSFER_INTERRUPTED_STAGE,
+        )
+
+    def _resume_item_plan(self, item: PersistentTaskItem) -> _ResumeContext | None:
+        """Rebuild one item's confirmed plan from its persisted checkpoint.
+
+        Returns ``None`` when the item has no usable persisted checkpoint.  A
+        confirmed scope that no longer matches live Storage raises a fail-closed
+        ``scope_changed`` error so the continuation never expands the confirmed
+        transfer, and a recorded uncertain effect is never replayed.
+        """
+
+        payload = _progress_payload(item)
+        if payload is None:
+            return None
+        try:
+            operation = TransferOperation(str(payload.get("operation")))
+            conflict_mode = TransferConflictMode(str(payload.get("conflictMode")))
+        except (TypeError, ValueError):
+            return None
+        destination_path_value = payload.get("destinationPath")
+        destination_library_id = payload.get("destinationResourceLibraryId")
+        if not isinstance(destination_path_value, str) or not isinstance(
+            destination_library_id, str
+        ):
+            return None
+        confirmed = payload.get("confirmedEntries")
+        if payload.get("confirmedTruncated") is True or not isinstance(confirmed, list):
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the interrupted item's confirmed scope is not fully recorded, so it cannot "
+                "be safely continued",
+                status=409,
+                next_action="inspect the recorded outcomes and submit a fresh bounded transfer",
+                mutated=False,
+            )
+        try:
+            destination = self._direct.library(destination_library_id)
+        except DirectFileError:
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the paused transfer's destination ResourceLibrary is not part of the pinned "
+                "Active configuration",
+                status=409,
+                next_action=(
+                    "submit a fresh bounded transfer against the current Active configuration"
+                ),
+                mutated=False,
+            ) from None
+        destination_storage = self._direct.open_storage(destination)
+        source = self._direct.library(item.resource_library_id)
+        source_storage = self._direct.open_storage(source)
+        top_level = item.source_display
+        try:
+            observed = self._observed_entry(source, source_storage, top_level)
+        except DirectFileTransferError as error:
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the interrupted item's source is no longer observable",
+                status=409,
+                next_action="inspect the source directory and submit a fresh bounded transfer",
+                mutated=bool(payload.get("completedEntries")),
+            ) from error
+        if observed.entry_type is StorageEntryType.SYMLINK:
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the interrupted item's source changed type",
+                status=409,
+                next_action="inspect the source directory and submit a fresh bounded transfer",
+                mutated=bool(payload.get("completedEntries")),
+            )
+        entries: list[TransferManifestEntry] = []
+        destination_pairs: list[tuple[str, str]] = []
+        kind = (
+            TransferEntryKind.DIRECTORY
+            if observed.entry_type is StorageEntryType.DIRECTORY
+            else TransferEntryKind.FILE
+        )
+        entries.append(
+            TransferManifestEntry(
+                path=top_level,
+                kind=kind,
+                size=observed.size,
+                modified_at=observed.modified_at.isoformat(),
+                fingerprint=getattr(observed, "fingerprint", None) or "",
+            )
+        )
+        destination_pairs.append((top_level, destination_path_value))
+        if kind is TransferEntryKind.DIRECTORY:
+            self._enumerate_directory(
+                source,
+                source_storage,
+                top_level,
+                destination_path_value,
+                entries,
+                destination_pairs,
+            )
+        confirmed_set = {(str(value[0]), str(value[1]), str(value[2])) for value in confirmed}
+        destinations = dict(destination_pairs)
+        fresh_set = {
+            (entry.path, destinations.get(entry.path, entry.path), entry.kind.value)
+            for entry in entries
+        }
+        skip: set[str] = set()
+        for value in payload.get("entries") or ():
+            if not isinstance(value, dict):
+                continue
+            path = str(value.get("path", ""))
+            status = str(value.get("status", ""))
+            if status == "UNCERTAIN":
+                raise DirectFileTransferError(
+                    "files_transfer_resume_uncertain",
+                    "scope_changed",
+                    "the interrupted item recorded an uncertain effect that must not be replayed",
+                    status=409,
+                    next_action=("inspect the source and destination directories before any retry"),
+                    mutated=True,
+                )
+            if status == "SUCCESS" and path in {value[0] for value in confirmed_set}:
+                # The completed effect stays terminal; its source may already
+                # be gone, which is exactly why the fresh enumeration misses it.
+                skip.add(path)
+        completed = {value for value in confirmed_set if value[0] in skip}
+        # The fresh enumeration may legitimately miss confirmed entries whose
+        # verified transfer already removed the source; anything else that
+        # differs - a new source entry or a lost completed entry - means the
+        # scope changed and the continuation stops instead of expanding it.
+        if confirmed_set - fresh_set - completed or fresh_set - confirmed_set:
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the source or destination scope changed since the transfer was admitted",
+                status=409,
+                next_action="inspect both directories and submit a fresh bounded transfer",
+                mutated=bool(completed),
+            )
+        plan = _TransferPlan(
+            operation=operation,
+            conflict_mode=conflict_mode,
+            same_storage=source.storage_id == destination.storage_id,
+            entries=tuple(entries),
+            destinations=destinations,
+            top_levels=(top_level,),
+            resuming=True,
+        )
+        confirmed_scope = tuple(
+            (str(value[0]), str(value[1]), str(value[2]))
+            for value in confirmed[:MAX_TRANSFER_PROGRESS_ENTRIES]
+        )
+        return _ResumeContext(
+            plan=plan,
+            destination=destination,
+            destination_storage=destination_storage,
+            skip_paths=frozenset(skip),
+            confirmed_entries=confirmed_scope,
+            confirmed_truncated=False,
+        )
 
     # ------------------------------------------------------------------
     # Manifest construction
@@ -401,6 +1082,7 @@ class DirectFileTransferService:
         entries: list[TransferManifestEntry] = []
         destinations: list[tuple[str, str]] = []
         keep_both_names: list[tuple[str, str]] = []
+        assigned: set[str] = set()
         for target in targets:
             observed = self._observed_entry(source, source_storage, target)
             if observed.entry_type is StorageEntryType.SYMLINK:
@@ -409,13 +1091,26 @@ class DirectFileTransferService:
                 destination_relative, posixpath.basename(target)
             )
             self._require_no_overlap(source, destination, target, destination_path)
-            if mode is TransferConflictMode.KEEP_BOTH and self._destination_exists(
-                destination_storage, destination_path, observed.entry_type
+            if mode is TransferConflictMode.KEEP_BOTH and (
+                destination_path in assigned
+                or self._destination_exists(
+                    destination_storage,
+                    self._full_destination(destination, destination_path),
+                    observed.entry_type,
+                )
             ):
+                # Keep-both names are pinned against both live Storage and the
+                # destinations already assigned inside this batch, so two
+                # selected roots with the same basename can never collide.
                 destination_path = self._unique_destination_name(
-                    destination_storage, destination_path, observed.entry_type
+                    destination_storage,
+                    destination,
+                    destination_path,
+                    observed.entry_type,
+                    assigned,
                 )
                 keep_both_names.append((target, destination_path))
+            assigned.add(destination_path)
             destinations.append((target, destination_path))
             if observed.entry_type is StorageEntryType.DIRECTORY:
                 entries.append(self._manifest_entry(target, observed, TransferEntryKind.DIRECTORY))
@@ -673,6 +1368,19 @@ class DirectFileTransferService:
     def _destination_path(destination_directory: str, name: str) -> str:
         return posixpath.join(destination_directory, name) if destination_directory else name
 
+    @staticmethod
+    def _full_destination(destination: ResourceLibrary, destination_path: str) -> str:
+        """The confined Storage-relative path of one logical destination.
+
+        Destination state checks must observe the exact physical location the
+        mutation will touch: the destination ResourceLibrary root plus its
+        relative path.  A bare library-relative path silently observes the
+        wrong location whenever the destination library is not mounted at the
+        Storage root.
+        """
+
+        return _join_resource_library_path(destination.root_path, destination_path)
+
     def _require_no_overlap(
         self,
         source: ResourceLibrary,
@@ -680,11 +1388,23 @@ class DirectFileTransferService:
         target: str,
         destination_path: str,
     ) -> None:
-        """Refuse a same-Storage transfer into itself or one of its descendants."""
+        """Refuse a same-Storage transfer into itself or one of its descendants.
+
+        The comparison uses the fully resolved confined logical Storage paths
+        (ResourceLibrary root plus relative path), so distinct ResourceLibrary
+        roots on one Storage neither falsely reject distinct destinations nor
+        miss a physical self/descendant overlap.
+        """
 
         if source.storage_id != destination.storage_id:
             return
-        if destination_path == target or destination_path.startswith(f"{target}/"):
+        resolved_source = posixpath.normpath(_join_resource_library_path(source.root_path, target))
+        resolved_destination = posixpath.normpath(
+            _join_resource_library_path(destination.root_path, destination_path)
+        )
+        if resolved_source == resolved_destination or resolved_destination.startswith(
+            f"{resolved_source}/"
+        ):
             raise DirectFileTransferError(
                 "files_transfer_overlap",
                 "overlap",
@@ -693,7 +1413,7 @@ class DirectFileTransferService:
                 path=target,
                 next_action="choose a destination outside the transferred directory",
             )
-        if destination_path and target.startswith(f"{destination_path}/"):
+        if resolved_source.startswith(f"{resolved_destination}/"):
             raise DirectFileTransferError(
                 "files_transfer_overlap",
                 "overlap",
@@ -722,17 +1442,27 @@ class DirectFileTransferService:
         return False
 
     def _unique_destination_name(
-        self, storage: Storage, destination_path: str, entry_type: StorageEntryType
+        self,
+        storage: Storage,
+        destination: ResourceLibrary,
+        destination_path: str,
+        entry_type: StorageEntryType,
+        assigned: set[str] | None = None,
     ) -> str:
         parent = posixpath.dirname(destination_path)
         name = posixpath.basename(destination_path)
         stem, dot, suffix = name.rpartition(".")
         base = stem if dot else name
         extension = f".{suffix}" if dot else ""
+        reserved = assigned or set()
         for index in range(1, 1000):
             candidate_name = f"{base} ({index}){extension}"
             candidate = posixpath.join(parent, candidate_name) if parent else candidate_name
-            if not self._destination_exists(storage, candidate, entry_type):
+            if candidate not in reserved and not self._destination_exists(
+                storage,
+                self._full_destination(destination, candidate),
+                entry_type,
+            ):
                 return candidate
         raise DirectFileTransferError(
             "files_transfer_conflict_limit",
@@ -804,120 +1534,187 @@ class DirectFileTransferService:
         )
 
     def _detect_conflicts(
-        self, manifest: TransferManifest, destination_storage: Storage
+        self, manifest: TransferManifest, destination: ResourceLibrary
     ) -> tuple[TransferConflict, ...]:
+        """The current conflict truth of the confirmed top-level destinations.
+
+        Nested entries cannot conflict while their root destination is fresh,
+        so the item-level conflicts are the top-level destinations plus the
+        deterministic in-batch collisions between two selected roots.
+        """
+
         resolution = {
             TransferConflictMode.FAIL: "fail_no_overwrite",
             TransferConflictMode.SKIP: "skip",
             TransferConflictMode.KEEP_BOTH: "keep_both",
         }[manifest.conflict_mode]
         conflicts: list[TransferConflict] = []
-        for path, destination in manifest.destinations:
-            if not destination:
+        claimed: set[str] = set()
+        top_levels = set(manifest.top_level_paths)
+        destination_storage = self._direct.open_storage(destination)
+        for path, destination_path in manifest.destinations:
+            if path not in top_levels or not destination_path:
                 continue
+            if destination_path in claimed:
+                # Two selected roots resolve to the same destination basename:
+                # the later sibling is reported as a batch-internal conflict
+                # instead of being misread as an external or uncertain effect.
+                conflicts.append(
+                    TransferConflict(
+                        path=path, destination=destination_path, resolution="batch_conflict"
+                    )
+                )
+                continue
+            claimed.add(destination_path)
             try:
-                exists = destination_storage.exists(destination)
+                exists = destination_storage.exists(
+                    self._full_destination(destination, destination_path)
+                )
             except (StorageError, OSError):
                 conflicts.append(
-                    TransferConflict(path=path, destination=destination, resolution="unknown")
+                    TransferConflict(path=path, destination=destination_path, resolution="unknown")
                 )
                 continue
             if exists:
                 conflicts.append(
-                    TransferConflict(path=path, destination=destination, resolution=resolution)
+                    TransferConflict(path=path, destination=destination_path, resolution=resolution)
                 )
         return tuple(conflicts)
 
     # ------------------------------------------------------------------
-    # Per-target execution
+    # Per-item execution
     # ------------------------------------------------------------------
 
-    def _transfer_target(
+    def _execute_item(
         self,
-        manifest: TransferManifest,
+        *,
+        plan: _TransferPlan,
         top_level: str,
         source: ResourceLibrary,
         destination: ResourceLibrary,
         source_storage: Storage,
         destination_storage: Storage,
         checkpoints: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
-        """Execute one independently recoverable top-level selection."""
+        task_id: str,
+        item: PersistentTaskItem,
+        batch_conflict: bool,
+        destination_root: str,
+        confirmed_entries: tuple[tuple[str, str, str], ...] = (),
+        confirmed_truncated: bool = False,
+        skip_paths: frozenset[str] = frozenset(),
+    ) -> tuple[list[dict[str, object]], bool, bool]:
+        """Run one top-level selection to its truthful per-entry outcomes.
+
+        Returns ``(entry outcomes, pause observed, cancellation observed)``.
+        The selected conflict mode applies to the top-level destination itself
+        — including a directory — and is revalidated fresh at this last safe
+        boundary, so a conflicting destination directory is never merged
+        entry-by-entry and a directory Move removes no source entry when the
+        selected behavior says the item must fail or skip.  Every mutation
+        crosses ``OrganizerExecutor``; pause/cancel are observed at every
+        per-entry boundary and the bounded in-flight progress is persisted
+        after each recorded entry so an interruption leaves a known-safe
+        checkpoint instead of an unknown state.
+        """
 
         entries = [
             entry
-            for entry in manifest.entries
+            for entry in plan.entries
             if entry.path == top_level or entry.path.startswith(f"{top_level}/")
         ]
-        outcomes: list[dict[str, object]] = []
+        recorded: list[dict[str, object]] = []
+
+        def progress() -> None:
+            self._record_progress(
+                item,
+                destination=destination,
+                destination_root=destination_root,
+                plan=plan,
+                recorded=recorded,
+                skip_count=len(skip_paths),
+                confirmed_entries=confirmed_entries,
+                confirmed_truncated=confirmed_truncated,
+            )
+
+        def interruption() -> str | None:
+            if self._direct.tasks.cancellation_observed(task_id):
+                return "cancel"
+            if self._direct.tasks.pause_requested(task_id):
+                return "pause"
+            return None
+
+        if batch_conflict:
+            recorded.append(
+                _conflict_outcome(plan.conflict_mode, top_level, destination_root, "batch_conflict")
+            )
+            progress()
+            return recorded, False, False
+        root_entry = next((value for value in entries if value.path == top_level), None)
+        root_kind = (
+            StorageEntryType.DIRECTORY
+            if root_entry is not None and root_entry.is_directory
+            else StorageEntryType.FILE
+        )
+        # A fresh top-level destination conflict is refused whole: the tree is
+        # never merged into the existing destination.  A continuation of an
+        # interrupted item revalidates its remaining entries individually — a
+        # directory destination that exists without any recorded completed
+        # entry cannot be proven to be this item's own partial work, so it
+        # stops as an explicit investigation state instead of merging.
+        if not skip_paths and self._destination_exists(
+            destination_storage,
+            _join_resource_library_path(destination.root_path, destination_root),
+            root_kind,
+        ):
+            if plan.resuming:
+                if root_kind is StorageEntryType.DIRECTORY:
+                    recorded.append(
+                        {
+                            "path": top_level,
+                            "destination": destination_root,
+                            "status": "UNCERTAIN",
+                            "errorCategory": "interrupted_destination_unknown",
+                            "checkpoints": [],
+                            "durableState": "mutation_effect_uncertain",
+                        }
+                    )
+                    progress()
+                    return recorded, False, False
+            else:
+                recorded.append(
+                    _conflict_outcome(
+                        plan.conflict_mode, top_level, destination_root, "target_exists"
+                    )
+                )
+                progress()
+                return recorded, False, False
+        progress()
         # Explicitly plan the required destination directories, shortest path
-        # first.  Every CreateDirectory crosses OrganizerExecutor.
+        # first.  Every CreateDirectory crosses OrganizerExecutor and joins the
+        # item's aggregated known effect.
         for entry in sorted(
             (value for value in entries if value.is_directory),
             key=lambda value: value.path.count("/"),
         ):
-            destination_path = manifest.destination_for(entry.path)
+            stop = interruption()
+            if stop is not None:
+                return recorded, stop == "pause", stop == "cancel"
+            destination_path = plan.destination_for(entry.path)
             if destination_path is None:
                 continue
-            if destination_storage.exists(destination_path):
+            if destination_storage.exists(
+                _join_resource_library_path(destination.root_path, destination_path)
+            ):
                 continue
             result = self._executor.execute_direct_create_directory(
-                destination_storage, destination_path, execute=True
+                destination_storage,
+                _join_resource_library_path(destination.root_path, destination_path),
+                execute=True,
             )
-            checkpoints.append(
-                {
-                    "path": entry.path,
-                    "destination": destination_path,
-                    "checkpoints": list(result.completed_operations),
-                    "status": result.status.value,
-                }
-            )
-            if result.status.value != "SUCCESS":
-                return [
-                    {
-                        "path": entry.path,
-                        "destination": destination_path,
-                        "status": "FAILED",
-                        "errorCategory": "create_directory_failed",
-                        "checkpoints": [],
-                    }
-                ]
-        for entry in entries:
-            if entry.is_directory:
-                continue
-            destination_path = manifest.destination_for(entry.path) or entry.path
-            skip = self._resolve_conflict(manifest, entry, destination_path, destination_storage)
-            if skip is not None:
-                outcomes.append(skip)
-                continue
-            full_source = _join_resource_library_path(source.root_path, entry.path)
-            full_target = _join_resource_library_path(destination.root_path, destination_path)
-            evidence = DirectEntryEvidence(
-                size=entry.size,
-                modified_at=entry.modified_at,
-                is_directory=False,
-                fingerprint=entry.fingerprint,
-            )
-            if manifest.operation is TransferOperation.COPY:
-                result = self._executor.execute_direct_copy(
-                    source_storage,
-                    destination_storage,
-                    full_source,
-                    full_target,
-                    source_evidence=evidence,
-                    execute=True,
-                )
-            else:
-                result = self._executor.execute_direct_move(
-                    source_storage,
-                    destination_storage,
-                    full_source,
-                    full_target,
-                    source_evidence=evidence,
-                    execute=True,
-                )
             outcome = self._entry_outcome(entry.path, destination_path, result)
-            outcomes.append(outcome)
+            if result.status.value != "SUCCESS":
+                outcome["errorCategory"] = "create_directory_failed"
+            recorded.append(outcome)
             checkpoints.append(
                 {
                     "path": entry.path,
@@ -926,11 +1723,286 @@ class DirectFileTransferService:
                     "status": outcome["status"],
                 }
             )
-        if manifest.operation is TransferOperation.MOVE:
-            self._remove_emptied_source_directories(
-                manifest, top_level, source, source_storage, outcomes, checkpoints
+            progress()
+            if result.status.value != "SUCCESS":
+                return recorded, False, False
+        for entry in entries:
+            if entry.is_directory:
+                continue
+            stop = interruption()
+            if stop is not None:
+                return recorded, stop == "pause", stop == "cancel"
+            if entry.path in skip_paths:
+                # Completed before the interruption; a completed effect stays
+                # terminal and is never replayed.
+                continue
+            destination_path = plan.destination_for(entry.path) or entry.path
+            if plan.resuming:
+                # A continuation first proves whether an existing destination
+                # already holds the confirmed entry's exact bytes: a verified
+                # copy is adopted (never re-copied), a compound Move finishes
+                # only its remaining destructive step, and everything else
+                # falls through to the selected conflict behavior.
+                resumed = self._resume_entry_outcome(
+                    plan,
+                    entry,
+                    destination_path,
+                    source,
+                    destination,
+                    source_storage,
+                    destination_storage,
+                )
+                if resumed is not None:
+                    recorded.append(resumed)
+                    checkpoints.append(
+                        {
+                            "path": entry.path,
+                            "destination": destination_path,
+                            "checkpoints": [
+                                str(value) for value in resumed.get("checkpoints") or ()
+                            ],
+                            "status": resumed["status"],
+                        }
+                    )
+                    progress()
+                    continue
+            conflict = self._resolve_conflict(
+                plan.conflict_mode, entry, destination, destination_path, destination_storage
             )
-        return outcomes
+            if conflict is not None:
+                recorded.append(conflict)
+                progress()
+                continue
+            outcome = self._transfer_entry(
+                plan,
+                entry,
+                destination_path,
+                source,
+                destination,
+                source_storage,
+                destination_storage,
+            )
+            recorded.append(outcome)
+            checkpoints.append(
+                {
+                    "path": entry.path,
+                    "destination": destination_path,
+                    "checkpoints": [str(value) for value in outcome.get("checkpoints") or ()],
+                    "status": outcome["status"],
+                }
+            )
+            progress()
+        if plan.operation is TransferOperation.MOVE:
+            completed_files = {
+                str(value["path"]) for value in recorded if value.get("status") == "SUCCESS"
+            } | set(skip_paths)
+            recorded.extend(
+                self._remove_emptied_source_directories(
+                    plan,
+                    top_level,
+                    entries,
+                    source,
+                    source_storage,
+                    checkpoints,
+                    completed_files,
+                )
+            )
+            progress()
+        return recorded, False, False
+
+    def _record_progress(
+        self,
+        item: PersistentTaskItem,
+        *,
+        destination: ResourceLibrary,
+        destination_root: str,
+        plan: _TransferPlan,
+        recorded: list[dict[str, object]],
+        skip_count: int,
+        confirmed_entries: tuple[tuple[str, str, str], ...],
+        confirmed_truncated: bool,
+    ) -> None:
+        """Persist the bounded in-flight progress snapshot of one item.
+
+        The snapshot carries the item's endpoint identities, requested
+        operation and conflict choice beside the confirmed scope, so the
+        durable continuation never has to re-derive an admission decision
+        that was already pinned.
+        """
+
+        completed = sum(1 for value in recorded if value.get("status") == "SUCCESS")
+        failed = sum(
+            1 for value in recorded if value.get("status") in {"FAILED", "PARTIAL", "UNCERTAIN"}
+        )
+        skipped = sum(1 for value in recorded if value.get("status") == "SKIPPED")
+        self._direct.tasks.record_transfer_progress(
+            item,
+            destination_storage_id=destination.storage_id,
+            destination_resource_library_id=destination.library_id,
+            destination_path=destination_root,
+            operation=plan.operation.value,
+            conflict_mode=plan.conflict_mode.value,
+            status=TaskItemStatus.PROCESSING,
+            confirmed_entries=confirmed_entries,
+            confirmed_truncated=confirmed_truncated,
+            entries=tuple(
+                {
+                    "path": str(value.get("path", "")),
+                    "destination": str(value.get("destination", "")),
+                    "status": str(value.get("status", "")),
+                }
+                for value in recorded[:MAX_TRANSFER_PROGRESS_ENTRIES]
+            ),
+            completed_entries=completed + skip_count,
+            failed_entries=failed,
+            skipped_entries=skipped,
+            truncated=len(recorded) > MAX_TRANSFER_PROGRESS_ENTRIES,
+        )
+
+    def _resume_entry_outcome(
+        self,
+        plan: _TransferPlan,
+        entry: TransferManifestEntry,
+        destination_path: str,
+        source: ResourceLibrary,
+        destination: ResourceLibrary,
+        source_storage: Storage,
+        destination_storage: Storage,
+    ) -> dict[str, object] | None:
+        """The continuation outcome of one interrupted entry, if determinable.
+
+        Returns ``None`` when the fresh normal path should run (destination
+        absent, unverifiable destination or a Storage read failure).  A
+        destination proven by digest to already hold the entry's exact bytes
+        is adopted — never re-copied — and a cross-Storage Move finishes only
+        its remaining destructive step with fresh exact source evidence.
+        """
+
+        full_source = _join_resource_library_path(source.root_path, entry.path)
+        full_target = _join_resource_library_path(destination.root_path, destination_path)
+        try:
+            source_present = source_storage.exists(full_source)
+            destination_present = destination_storage.exists(full_target)
+        except (StorageError, OSError):
+            return None
+        if source_present and destination_present:
+            if not self._executor.verify_streamed_copy(
+                source_storage,
+                destination_storage,
+                full_source,
+                full_target,
+                expected_size=entry.size,
+            ):
+                return None
+            if plan.operation is TransferOperation.MOVE:
+                if plan.same_storage:
+                    # A native rename leaves both sides present only when the
+                    # destination appeared externally; the selected conflict
+                    # behavior decides, never a silent adoption.
+                    return None
+                evidence = DirectEntryEvidence(
+                    size=entry.size,
+                    modified_at=entry.modified_at,
+                    is_directory=False,
+                    fingerprint=entry.fingerprint,
+                )
+                result = self._executor.execute_direct_move(
+                    source_storage,
+                    destination_storage,
+                    full_source,
+                    full_target,
+                    source_evidence=evidence,
+                    same_storage=False,
+                    verified_destination=True,
+                    execute=True,
+                )
+                return self._entry_outcome(entry.path, destination_path, result)
+            return {
+                "path": entry.path,
+                "destination": destination_path,
+                "status": "SUCCESS",
+                "checkpoints": ["COPY"],
+            }
+        if not source_present and destination_present:
+            if plan.operation is not TransferOperation.MOVE:
+                return {
+                    "path": entry.path,
+                    "destination": destination_path,
+                    "status": "UNCERTAIN",
+                    "errorCategory": "interrupted_transfer",
+                    "checkpoints": [],
+                    "durableState": "mutation_effect_uncertain",
+                }
+            try:
+                observed = destination_storage.stat(full_target)
+            except (StorageError, OSError):
+                return None
+            if observed.entry_type is StorageEntryType.FILE and observed.size == entry.size:
+                # The source is gone and the destination holds the entry's
+                # exact size: the native rename completed before the
+                # interruption and is recorded truthfully instead of replayed.
+                return {
+                    "path": entry.path,
+                    "destination": destination_path,
+                    "status": "SUCCESS",
+                    "checkpoints": ["MOVE"],
+                }
+            return {
+                "path": entry.path,
+                "destination": destination_path,
+                "status": "UNCERTAIN",
+                "errorCategory": "interrupted_transfer",
+                "checkpoints": [],
+                "durableState": "mutation_effect_uncertain",
+            }
+        return None
+
+    def _transfer_entry(
+        self,
+        plan: _TransferPlan,
+        entry: TransferManifestEntry,
+        destination_path: str,
+        source: ResourceLibrary,
+        destination: ResourceLibrary,
+        source_storage: Storage,
+        destination_storage: Storage,
+    ) -> dict[str, object]:
+        """Execute one file entry through the executor's native-only path.
+
+        The same/cross-Storage decision is the validated business decision
+        pinned in the confirmed plan — never incidental adapter object
+        identity.
+        """
+
+        full_source = _join_resource_library_path(source.root_path, entry.path)
+        full_target = _join_resource_library_path(destination.root_path, destination_path)
+        evidence = DirectEntryEvidence(
+            size=entry.size,
+            modified_at=entry.modified_at,
+            is_directory=False,
+            fingerprint=entry.fingerprint,
+        )
+        if plan.operation is TransferOperation.COPY:
+            result = self._executor.execute_direct_copy(
+                source_storage,
+                destination_storage,
+                full_source,
+                full_target,
+                source_evidence=evidence,
+                same_storage=plan.same_storage,
+                execute=True,
+            )
+        else:
+            result = self._executor.execute_direct_move(
+                source_storage,
+                destination_storage,
+                full_source,
+                full_target,
+                source_evidence=evidence,
+                same_storage=plan.same_storage,
+                execute=True,
+            )
+        return self._entry_outcome(entry.path, destination_path, result)
 
     @staticmethod
     def _entry_outcome(path: str, destination_path: str, result) -> dict[str, object]:
@@ -957,15 +2029,23 @@ class DirectFileTransferService:
 
     def _resolve_conflict(
         self,
-        manifest: TransferManifest,
+        conflict_mode: TransferConflictMode,
         entry: TransferManifestEntry,
+        destination: ResourceLibrary,
         destination_path: str,
         destination_storage: Storage,
     ) -> dict[str, object] | None:
-        """Apply the explicitly selected conflict behavior for one entry."""
+        """Apply the explicitly selected conflict behavior for one entry.
+
+        The destination state is revalidated at this last safe boundary, so a
+        conflict that appears after admission fails, skips or renames
+        truthfully and never becomes an implicit merge.
+        """
 
         try:
-            exists = destination_storage.exists(destination_path)
+            exists = destination_storage.exists(
+                _join_resource_library_path(destination.root_path, destination_path)
+            )
         except (StorageError, OSError):
             return {
                 "path": entry.path,
@@ -976,57 +2056,34 @@ class DirectFileTransferService:
             }
         if not exists:
             return None
-        if manifest.conflict_mode is TransferConflictMode.FAIL:
-            return {
-                "path": entry.path,
-                "destination": destination_path,
-                "status": "FAILED",
-                "errorCategory": "target_exists",
-                "checkpoints": [],
-            }
-        if manifest.conflict_mode is TransferConflictMode.SKIP:
-            return {
-                "path": entry.path,
-                "destination": destination_path,
-                "status": "SKIPPED",
-                "errorCategory": "target_exists",
-                "checkpoints": [],
-            }
-        # KEEP_BOTH names are pinned in the manifest; a destination that
-        # appeared after that admission is never silently replaced.
-        return {
-            "path": entry.path,
-            "destination": destination_path,
-            "status": "UNCERTAIN",
-            "errorCategory": "keep_both_conflict_appeared",
-            "checkpoints": [],
-        }
+        return _conflict_outcome(conflict_mode, entry.path, destination_path, "target_exists")
 
     def _remove_emptied_source_directories(
         self,
-        manifest: TransferManifest,
+        plan: _TransferPlan,
         top_level: str,
+        entries: list[TransferManifestEntry],
         source: ResourceLibrary,
         source_storage: Storage,
-        outcomes: list[dict[str, object]],
         checkpoints: list[dict[str, object]],
-    ) -> None:
+        completed_files: set[str],
+    ) -> list[dict[str, object]]:
         """Remove the source directories the verified Move just emptied.
 
-        Only directories whose manifest children all reported a completed
+        Only directories whose confirmed children all reported a completed
         transfer are candidates, and the executor re-lists each one immediately
         before the removal.  An unknown or newly appeared entry stops the
-        removal without a recursive delete, and an already-absent virtual prefix
-        (S3/R2) is truthfully recorded instead of deleting a fictional object.
+        removal without a recursive delete, an already-absent virtual prefix
+        (S3/R2) is truthfully recorded instead of deleting a fictional object,
+        and a failed removal keeps the directory Move from being reported
+        wholly successful.
         """
 
-        completed_files = {
-            str(outcome["path"]) for outcome in outcomes if outcome.get("status") == "SUCCESS"
-        }
+        outcomes: list[dict[str, object]] = []
         directories = sorted(
             (
                 entry
-                for entry in manifest.entries
+                for entry in entries
                 if entry.is_directory
                 and (entry.path == top_level or entry.path.startswith(f"{top_level}/"))
             ),
@@ -1035,26 +2092,27 @@ class DirectFileTransferService:
         )
         for entry in directories:
             children = [
-                candidate
-                for candidate in manifest.entries
-                if candidate.path.startswith(f"{entry.path}/")
+                candidate for candidate in entries if candidate.path.startswith(f"{entry.path}/")
             ]
-            if not children or not all(
-                child.is_directory or child.path in completed_files for child in children
-            ):
+            if not all(child.is_directory or child.path in completed_files for child in children):
                 continue
             full = _join_resource_library_path(source.root_path, entry.path)
             result = self._executor.execute_direct_remove_empty_directory(
                 source_storage, full, execute=True
             )
+            outcome = self._entry_outcome(entry.path, "", result)
+            if result.status.value != "SUCCESS":
+                outcome["errorCategory"] = "source_directory_removal_failed"
+            outcomes.append(outcome)
             checkpoints.append(
                 {
                     "path": entry.path,
                     "destination": "",
                     "checkpoints": list(result.completed_operations),
-                    "status": result.status.value,
+                    "status": outcome["status"],
                 }
             )
+        return outcomes
 
     # ------------------------------------------------------------------
     # Error helpers
@@ -1102,16 +2160,19 @@ def _transfer_status(
     uncertain: bool,
     paused: bool,
     cancelled: bool,
-    transferred: bool,
-    partial: bool,
+    transferred: int,
+    partial: int,
+    skipped: int,
+    failed: int,
 ) -> str:
     """The stable known-effect status of one confirmed bounded transfer.
 
     The state names what is durably known about the durable work: any uncertain
-    mutation dominates; a verified-copy/source-retained Move item (or any other
-    item that completed part of its compound work) is PARTIAL; every selection
-    transferred is SUCCESS; and only a transfer whose every selection is known
-    to be unchanged is FAILED.
+    mutation dominates; an interrupted observation is PAUSED/CANCELLED; a
+    batch whose every item transferred is SUCCESS; a batch whose every item
+    was skipped is SKIPPED; anything mixed (including skipped siblings beside
+    transferred ones) is PARTIAL because not every requested transfer
+    happened; and only a batch where nothing was mutated is FAILED.
     """
 
     if uncertain:
@@ -1120,11 +2181,44 @@ def _transfer_status(
         return "PAUSED"
     if cancelled:
         return "CANCELLED"
-    if transferred and not partial:
+    if transferred and not (partial or failed or skipped):
         return "SUCCESS"
-    if partial or transferred:
+    if skipped and not (transferred or partial or failed):
+        return "SKIPPED"
+    if transferred or partial or skipped:
         return "PARTIAL"
     return "FAILED"
+
+
+def _confirmed_entries(
+    manifest: TransferManifest,
+) -> tuple[tuple[tuple[str, str, str], ...], bool]:
+    """The bounded confirmed per-entry scope persisted with every item.
+
+    The continuation of an interrupted transfer may proceed only against this
+    recorded scope; an item whose confirmed scope was truncated cannot be
+    safely continued and stops with an actionable investigation state instead.
+    """
+
+    values: list[tuple[str, str, str]] = []
+    for entry in manifest.entries:
+        values.append(
+            (entry.path, manifest.destination_for(entry.path) or entry.path, entry.kind.value)
+        )
+    truncated = len(values) > MAX_TRANSFER_PROGRESS_ENTRIES
+    return tuple(values[:MAX_TRANSFER_PROGRESS_ENTRIES]), truncated
+
+
+def _progress_payload(item: PersistentTaskItem) -> dict[str, object] | None:
+    """The parsed bounded progress snapshot of one transfer item, if any."""
+
+    if not item.progress:
+        return None
+    try:
+        payload = json.loads(item.progress)
+    except ValueError:
+        return None
+    return payload if isinstance(payload, dict) else None
 
 
 def _result_error_category(result) -> str | None:
