@@ -796,7 +796,8 @@ not satisfy the browser assertion.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 57f096c645773dba39b12bb31168bd30a84f05cd
+Head SHA: b52c04df18f14335e2d26f923bb13201b11bb9ba
+(the implementation checkpoint; the TASK.md record commit follows it)
 ```
 
 ## B Re-review Findings — 2026-09-17
