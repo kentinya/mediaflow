@@ -241,6 +241,14 @@ export function TransferDialog({
   const [destinationPath, setDestinationPath] = useState("");
   const [conflictMode, setConflictMode] =
     useState<TransferConflictMode>("fail");
+  // The exact submitted selection is frozen when the operator submits so the
+  // queued/following dialog can still show the confirmed destination and
+  // conflict choice after admission, even while the picker is not rendered.
+  const [submitted, setSubmitted] = useState<{
+    readonly libraryId: string;
+    readonly path: string;
+    readonly conflictMode: TransferConflictMode;
+  } | null>(null);
   // The impact fetch is part of one submission: the window between clicking
   // the submit button and the admission mutation becoming pending must also
   // prevent duplicate submits.
@@ -350,6 +358,11 @@ export function TransferDialog({
         return;
       }
       admitted = true;
+      setSubmitted({
+        libraryId: destinationLibraryId,
+        path: destinationPath,
+        conflictMode,
+      });
       onSubmit({ impact: read.model, conflictMode });
     } finally {
       setImpactPending(false);
@@ -391,6 +404,14 @@ export function TransferDialog({
 
   const done = admittedTaskId !== null;
   const terminal = projection?.terminal === true;
+  // After admission the context shown is the exact submitted selection; before
+  // it, the live picker state.
+  const selectedLibraryId = submitted?.libraryId ?? destinationLibraryId;
+  const selectedDestinationPath = submitted?.path ?? destinationPath;
+  const selectedConflictMode = submitted?.conflictMode ?? conflictMode;
+  const selectedLibrary = libraries.find(
+    (library) => library.id === selectedLibraryId,
+  );
   // Once a transfer is admitted the dialog follows the durable projection;
   // the title names the followed journey instead of a result-only state.
   const title = done
@@ -462,6 +483,22 @@ export function TransferDialog({
             {projection === null
               ? "正在读取传输进度…"
               : transferStatusMessage(projection)}
+          </p>
+          {/* The operator's confirmed destination and conflict context stay
+              visible after admission, so the queued/polling journey never
+              loses what was submitted. */}
+          <p className="mf-dialog-hint" aria-label="传输上下文">
+            {state.operation === "copy" ? "复制" : "移动"}{" "}
+            {state.paths.length === 1
+              ? `“${state.paths[0]}”`
+              : `${state.paths.length} 个所选项目`}
+            {" → "}
+            {selectedLibrary?.name ?? selectedLibraryId}
+            {destinationLabel(selectedDestinationPath)}
+            {" · "}
+            {CONFLICT_CHOICES.find(
+              (choice) => choice.value === selectedConflictMode,
+            )?.label ?? selectedConflictMode}
           </p>
           {projection !== null && (
             <>

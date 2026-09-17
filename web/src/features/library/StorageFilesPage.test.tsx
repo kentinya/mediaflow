@@ -418,7 +418,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onTransferImpact?:
       | ((query: URLSearchParams) => Response)
       | ((query: URLSearchParams) => Promise<Response>);
-    onTransfer?: (body: Record<string, unknown>) => Response;
+    onTransfer?:
+      | ((body: Record<string, unknown>) => Response)
+      | ((body: Record<string, unknown>) => Promise<Response>);
     /** The durable projection read for one admitted transfer Task. */
     onTransferProjection?: (taskId: string) => Response;
   }) {
@@ -589,7 +591,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
           string,
           unknown
         >;
-        if (options.onTransfer) return options.onTransfer(body);
+        if (options.onTransfer) return await options.onTransfer(body);
         return jsonResponse({
           operation: body.operation,
           conflictMode: body.conflictMode,
@@ -2337,5 +2339,149 @@ describe("Files entry state and ResourceLibrary strip", () => {
         { name: "关闭" },
       ),
     );
+  });
+
+  it("accepts the exact real admission document and enters queued polling without a resubmit", async () => {
+    const user = userEvent.setup();
+    const transferBodies: Record<string, unknown>[] = [];
+    // A deliberately slow admission response widens the window between the
+    // committed POST and the normalized queued projection: no duplicate
+    // transfer may be enqueued while that first admission is in flight.
+    let releaseAdmission: () => void = () => {};
+    const admissionGate = new Promise<void>((resolve) => {
+      releaseAdmission = resolve;
+    });
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onTransfer: (body) => {
+          transferBodies.push(body);
+          // Captured verbatim from the real Python
+          // DirectFileTransferService.submit_transfer -> _queued_document.
+          // The previous backend also serialized destination pairs into
+          // topLevelPaths, which the strict normalizer rejected as
+          // malformed_response *after* admission committed.
+          return admissionGate.then(() =>
+            jsonResponse({
+              admitted: true,
+              checkpoints: [],
+              checkpointsTruncated: false,
+              conflictMode: body.conflictMode,
+              destinationResourceLibraryId: body.destinationResourceLibraryId,
+              destinations: [
+                { destination: "Movies/notes.txt", path: "notes.txt" },
+              ],
+              failedItems: 0,
+              itemOutcomes: [
+                {
+                  destination: "Movies/notes.txt",
+                  path: "notes.txt",
+                  status: "QUEUED",
+                },
+              ],
+              knownEffects: [],
+              nextAction:
+                "the transfer is admitted and queued for execution; its progress appears below",
+              operation: body.operation,
+              outcomes: [],
+              outcomesTruncated: false,
+              resourceLibraryId: "lib-a",
+              retrySafe: true,
+              sameStorage: true,
+              sideEffects: "none",
+              skippedItems: 0,
+              status: "QUEUED",
+              succeededItems: 0,
+              taskId: "task-real-admission",
+              taskStatus: "pending",
+              topLevelPaths: body.paths,
+              totalItems: 1,
+            }),
+          );
+        },
+        onTransferProjection: (taskId) => {
+          // The durable projection keeps advancing after admission.
+          return jsonResponse({
+            operation: "copy",
+            conflictMode: "fail",
+            status: "RUNNING",
+            taskId,
+            taskStatus: "running",
+            resourceLibraryId: "lib-a",
+            destinationResourceLibraryId: "lib-a",
+            topLevelPaths: ["notes.txt"],
+            knownEffects: [
+              { path: "notes.txt", effect: "in_progress", status: "RUNNING" },
+            ],
+            itemOutcomes: [
+              {
+                path: "notes.txt",
+                destination: "Movies/notes.txt",
+                status: "RUNNING",
+              },
+            ],
+            outcomes: [],
+            outcomesTruncated: false,
+            totalItems: 1,
+            succeededItems: 0,
+            skippedItems: 0,
+            failedItems: 0,
+            terminal: false,
+            actions: [
+              { action: "pause", available: true, path: "/pause" },
+              { action: "cancel", available: true, path: "/cancel" },
+            ],
+            version: "2026-09-17T00:00:00Z",
+            nextAction:
+              "the transfer is running; its per-item progress appears here",
+            sideEffects: "storage_mutations",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "更多操作 notes.txt" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "复制" }));
+    const dialog = await screen.findByRole("dialog", { name: "复制到…" });
+    await user.click(within(dialog).getByRole("button", { name: "复制" }));
+
+    // The admission is committed but not yet normalized: the ordinary journey
+    // must not show a malformed-response banner and must not submit again.
+    await waitFor(() => expect(transferBodies).toHaveLength(1));
+    expect(within(dialog).queryByRole("alert")).toBeNull();
+    const submitWhilePending = within(dialog).queryByRole("button", {
+      name: "复制",
+    });
+    if (submitWhilePending !== null) {
+      await user.click(submitWhilePending).catch(() => {});
+    }
+    expect(transferBodies).toHaveLength(1);
+
+    releaseAdmission();
+    // Submit -> queued -> automatic polling, with the destination/conflict
+    // context still visible and no raw Task-ID ceremony.
+    const progressDialog = await screen.findByRole("dialog", {
+      name: "复制进度",
+    });
+    expect(
+      within(progressDialog).queryByText(/task-real-admission/),
+    ).toBeNull();
+    // The original source/destination/conflict context stays visible after
+    // admission instead of being replaced by a result-only view.
+    const context = within(progressDialog).getByLabelText("传输上下文");
+    expect(context).toHaveTextContent("notes.txt");
+    // The friendly library name is shown instead of a raw identifier.
+    expect(context).toHaveTextContent("资源库A");
+    expect(context).toHaveTextContent("遇冲突时停止该项");
+    await waitFor(() =>
+      expect(within(progressDialog).getByText(/正在执行/)).toBeVisible(),
+    );
+    expect(transferBodies).toHaveLength(1);
   });
 });

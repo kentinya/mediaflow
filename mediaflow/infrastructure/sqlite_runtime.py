@@ -7873,6 +7873,14 @@ class SQLiteTaskRepository:
         a live Worker's transfer is never handed to a second Worker.  The
         claim alone does not publish the running boundary: only
         ``begin_files_transfer`` does, immediately before execution starts.
+
+        The pinned configuration revision is deliberately *not* a claim
+        filter: the resident Worker reconstructs the exact persisted immutable
+        runtime of the claimed transfer (see ``FilesTransferWorker``), so an
+        older Worker process may lawfully execute newer admitted work and a
+        newer Worker may lawfully continue work admitted under a superseded
+        snapshot.  Revision compatibility is enforced by reconstruction, never
+        by process age.
         """
 
         self._require_claim_values(worker_id, claim_token, lease_seconds)
@@ -7950,7 +7958,14 @@ class SQLiteTaskRepository:
         now: datetime,
         lease_seconds: float,
     ) -> bool:
-        """Extend the live lease of the Worker that owns this transfer."""
+        """Extend the live lease of the Worker that owns this transfer.
+
+        Ownership is proven by the claim token, not by the previous deadline:
+        a token that still matches this running transfer means no replacement
+        has taken over, so renewing is always safe and a heartbeat can never be
+        rejected merely because the deadline is due.  The lease deadline only
+        decides whether a *new* Worker may claim the transfer.
+        """
 
         if not isinstance(claim_token, str) or not claim_token.strip():
             raise ValueError("files transfer claim token is invalid")
@@ -7960,15 +7975,13 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """UPDATE files_transfers SET claim_expires_at=?, updated_at=?
-                WHERE transfer_id=? AND claim_token=? AND status=?
-                AND (claim_expires_at IS NULL OR claim_expires_at > ?)""",
+                WHERE transfer_id=? AND claim_token=? AND status=?""",
                 (
                     expires_at.isoformat(),
                     now.isoformat(),
                     transfer_id,
                     claim_token,
                     FilesTransferStatus.RUNNING.value,
-                    now.isoformat(),
                 ),
             )
         return cursor.rowcount == 1
@@ -8068,6 +8081,45 @@ class SQLiteTaskRepository:
                 raise ValueError(f"a {current.status.value} transfer cannot be re-queued")
         return self.require_files_transfer(transfer_id)
 
+    def release_files_transfer_claim(
+        self,
+        transfer_id: str,
+        *,
+        claim_token: str,
+        now: datetime,
+        error: str,
+        next_action: str,
+    ) -> bool:
+        """Release one claim back to the claimable queue without a business failure.
+
+        Used when a Worker cannot lawfully reconstruct the transfer's pinned
+        immutable runtime.  The exact claim token is compared, so a Worker that
+        already lost ownership writes nothing; the pinned authority and the
+        per-item checkpoints are preserved for a compatible Worker.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
+                claimed_at=NULL, claim_expires_at=NULL, error=?, next_action=?, updated_at=?
+                WHERE transfer_id=? AND claim_token=? AND status IN (?, ?)""",
+                (
+                    FilesTransferStatus.ADMITTED.value,
+                    error,
+                    next_action,
+                    now.isoformat(),
+                    transfer_id,
+                    claim_token,
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                ),
+            )
+        return cursor.rowcount == 1
+
     def require_files_transfer(self, transfer_id: str) -> PersistentFilesTransfer:
         transfer = self.get_files_transfer(transfer_id)
         if transfer is None:
@@ -8093,6 +8145,203 @@ class SQLiteTaskRepository:
                 ),
             ).fetchone()
         return row is not None
+
+    def _transfer_claim_locked(self, transfer_id: str, claim_token: str, now: datetime) -> bool:
+        """The in-transaction claim comparison used by every guarded publication.
+
+        The caller must already hold ``self._lock`` and an open transaction: the
+        ownership check and the guarded write then commit or roll back together,
+        so a Worker that lost its lease can never publish progress, a TaskItem,
+        a Result or a terminal status from a stale observation.  The lease must
+        still be unexpired, so a claimant whose deadline passed cannot publish
+        either.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            return False
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        row = self._connection.execute(
+            """SELECT 1 FROM files_transfers WHERE transfer_id=? AND claim_token=?
+            AND status IN (?, ?) AND (claim_expires_at IS NULL OR claim_expires_at > ?)""",
+            (
+                transfer_id,
+                claim_token,
+                FilesTransferStatus.ADMITTED.value,
+                FilesTransferStatus.RUNNING.value,
+                now.isoformat(),
+            ),
+        ).fetchone()
+        return row is not None
+
+    def upsert_item_guarded(
+        self,
+        item: PersistentTaskItem,
+        *,
+        transfer_id: str,
+        claim_token: str,
+        now: datetime,
+    ) -> bool:
+        """Persist one TaskItem only while this Worker still owns the claim.
+
+        Returns ``False`` (and writes nothing) when the claim was lost, so the
+        caller stops instead of publishing a stale progress snapshot.
+        """
+
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._transfer_claim_locked(transfer_id, claim_token, now):
+                    self._connection.rollback()
+                    return False
+                bound = self._bind_item_to_current_occurrence(item)
+                self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
+
+    def complete_item_with_evidence_guarded(
+        self,
+        item: PersistentTaskItem,
+        result: PersistentResultRecord,
+        evidence: PipelineEvidence | None,
+        *,
+        transfer_id: str,
+        claim_token: str,
+        now: datetime,
+    ) -> bool:
+        """Atomically publish one item's terminal outcome only while claim owner."""
+
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._transfer_claim_locked(transfer_id, claim_token, now):
+                    self._connection.rollback()
+                    return False
+                self._insert_result_locked(result)
+                bound = self._bind_item_to_current_occurrence(item)
+                self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                if evidence is not None:
+                    self._connection.execute(
+                        """
+                        INSERT OR REPLACE INTO pipeline_evidence (
+                            evidence_id, task_id, item_id, attempts, source_storage_id, source_path,
+                            captured_at, configuration_snapshot_id, configuration_snapshot_digest,
+                            outcome, document
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        self._evidence_values(evidence),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
+
+    def update_task_guarded(
+        self,
+        task: PersistentTask,
+        *,
+        transfer_id: str,
+        claim_token: str,
+        now: datetime,
+    ) -> bool:
+        """Update one transfer Task only while this Worker still owns the claim."""
+
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._transfer_claim_locked(transfer_id, claim_token, now):
+                    self._connection.rollback()
+                    return False
+                cursor = self._connection.execute(
+                    """
+                    UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
+                        updated_at=?, started_at=?, completed_at=?, total_items=?,
+                        completed_items=?, failed_items=?, error=?, pause_requested=?,
+                        scope_path=?, item_limit=?, configuration_snapshot_id=?,
+                        configuration_snapshot_digest=?
+                        WHERE task_id=?
+                    """,
+                    (*self._task_values(task)[1:], task.task_id),
+                )
+                if cursor.rowcount != 1:
+                    raise LookupError(f"task {task.task_id!r} is not configured")
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
+
+    def converge_files_transfer_failure(
+        self,
+        transfer: PersistentFilesTransfer,
+        *,
+        claim_token: str,
+        now: datetime,
+        task: PersistentTask | None,
+        items: tuple[PersistentTaskItem, ...],
+        results: tuple[PersistentResultRecord, ...],
+    ) -> bool:
+        """Publish one truthful terminal transfer state in a single commitment.
+
+        Every Worker failure funnels through this compare-and-set: the transfer
+        row, the Task aggregate, each unfinished TaskItem and the bounded
+        terminal Result evidence commit together, so a reloaded projection can
+        never show a failed transfer beside a permanently running Task or an
+        item that claims to be processing forever.  The write is idempotent: a
+        claim owner that already lost the lease writes nothing.
+        """
+
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._transfer_claim_locked(transfer.transfer_id, claim_token, now):
+                    self._connection.rollback()
+                    return False
+                cursor = self._connection.execute(
+                    """UPDATE files_transfers SET status=?, error=?, next_action=?,
+                    updated_at=?, completed_at=? WHERE transfer_id=? AND claim_token=?
+                    AND status IN (?, ?)""",
+                    (
+                        transfer.status.value,
+                        transfer.error,
+                        transfer.next_action,
+                        now.isoformat(),
+                        now.isoformat(),
+                        transfer.transfer_id,
+                        claim_token,
+                        FilesTransferStatus.ADMITTED.value,
+                        FilesTransferStatus.RUNNING.value,
+                    ),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return False
+                if task is not None:
+                    self._connection.execute(
+                        """
+                        UPDATE tasks SET command=?, status=?, execute_authorized=?, created_at=?,
+                            updated_at=?, started_at=?, completed_at=?, total_items=?,
+                            completed_items=?, failed_items=?, error=?, pause_requested=?,
+                            scope_path=?, item_limit=?, configuration_snapshot_id=?,
+                            configuration_snapshot_digest=?
+                            WHERE task_id=?
+                        """,
+                        (*self._task_values(task)[1:], task.task_id),
+                    )
+                for item in items:
+                    bound = self._bind_item_to_current_occurrence(item)
+                    self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                for result in results:
+                    self._insert_result_locked(result)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
 
     def update_manual_execution(self, execution: ManualExecution) -> None:
         with self._lock, self._connection:

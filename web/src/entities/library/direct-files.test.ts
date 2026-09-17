@@ -4,6 +4,8 @@ import {
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
   normalizeRenameEvidence,
+  normalizeTransferProjection,
+  normalizeTransferResult,
 } from "./direct-files";
 
 /**
@@ -262,5 +264,140 @@ describe("Rename version evidence", () => {
     expect(() => normalizeRenameEvidence(legacy)).toThrow(
       DirectFilesNormalizationError,
     );
+  });
+});
+
+/**
+ * Contract regression: the exact admission document the real Python API
+ * returns for `POST .../files/transfers` must normalize through the strict
+ * frontend model.  The previous backend serialized `topLevelPaths` as the
+ * destination pairs (a nested array per path), so the real response was
+ * rejected as `malformed_response` *after* the transfer had already been
+ * durably admitted — losing the handle to a committed mutation and permitting
+ * a dangerous resubmission.  This payload is captured verbatim from
+ * `DirectFileTransferService.submit_transfer` -> `_queued_document`.
+ */
+const REAL_TRANSFER_ADMISSION = {
+  admitted: true,
+  checkpoints: [],
+  checkpointsTruncated: false,
+  conflictMode: "fail",
+  destinationResourceLibraryId: "source",
+  destinations: [{ destination: "Movies/a.mkv", path: "a.mkv" }],
+  failedItems: 0,
+  itemOutcomes: [
+    { destination: "Movies/a.mkv", path: "a.mkv", status: "QUEUED" },
+  ],
+  knownEffects: [],
+  nextAction:
+    "the transfer is admitted and queued for execution; its progress appears below",
+  operation: "copy",
+  outcomes: [],
+  outcomesTruncated: false,
+  resourceLibraryId: "source",
+  retrySafe: true,
+  sameStorage: true,
+  sideEffects: "none",
+  skippedItems: 0,
+  status: "QUEUED",
+  succeededItems: 0,
+  taskId: "b997c48a-d1b5-4826-9933-2be0fb296c67",
+  taskStatus: "pending",
+  topLevelPaths: ["a.mkv"],
+  totalItems: 1,
+};
+
+/**
+ * The exact durable projection the real API returns once the Worker finished,
+ * with per-entry outcome and checkpoint evidence the dialog must present.
+ */
+const REAL_TRANSFER_PROJECTION = {
+  operation: "move",
+  conflictMode: "fail",
+  taskId: "b997c48a-d1b5-4826-9933-2be0fb296c67",
+  taskStatus: "partial_success",
+  resourceLibraryId: "source",
+  destinationResourceLibraryId: "destination",
+  topLevelPaths: ["a.mkv"],
+  knownEffects: [{ path: "a.mkv", effect: "partial", status: "PARTIAL" }],
+  itemOutcomes: [
+    {
+      path: "a.mkv",
+      destination: "Movies/a.mkv",
+      status: "PARTIAL",
+      errorCategory: "target_exists",
+    },
+  ],
+  outcomes: [
+    {
+      path: "a.mkv",
+      destination: "Movies/a.mkv",
+      status: "SUCCESS",
+      checkpoints: ["copy_written", "destination_verified", "source_deleted"],
+    },
+    {
+      path: "a.mkv",
+      destination: "Movies/a.mkv",
+      status: "SKIPPED",
+      checkpoints: [],
+      errorCategory: "target_exists",
+    },
+  ],
+  outcomesTruncated: false,
+  totalItems: 1,
+  succeededItems: 0,
+  skippedItems: 1,
+  failedItems: 1,
+  status: "PARTIAL",
+  terminal: true,
+  actions: [
+    { action: "pause", available: false },
+    { action: "cancel", available: false },
+    { action: "resume", available: false },
+  ],
+  version: "2026-09-17T00:00:00+00:00",
+  sideEffects: "storage_mutations",
+  retrySafe: false,
+  nextAction:
+    "refresh the source and destination directories to see the current state",
+};
+
+describe("real transfer admission contract", () => {
+  it("normalizes the exact backend admission document", () => {
+    const model = normalizeTransferResult(REAL_TRANSFER_ADMISSION);
+    expect(model.topLevelPaths).toEqual(["a.mkv"]);
+    expect(model.taskId).toBe("b997c48a-d1b5-4826-9933-2be0fb296c67");
+    expect(model.status).toBe("QUEUED");
+    expect(model.taskStatus).toBe("pending");
+    expect(model.destinations).toEqual([
+      { path: "a.mkv", destination: "Movies/a.mkv" },
+    ]);
+  });
+
+  it("fails closed on the superseded nested-pair shape the real API no longer emits", () => {
+    // The regression that broke the ordinary journey: destination pairs
+    // serialized into topLevelPaths.  The normalizer must reject it rather
+    // than silently accepting an unusable selection, and the caller must
+    // treat a committed admission as committed.
+    expect(() =>
+      normalizeTransferResult({
+        ...REAL_TRANSFER_ADMISSION,
+        topLevelPaths: [["a.mkv", "Movies/a.mkv"]],
+      }),
+    ).toThrow(DirectFilesNormalizationError);
+  });
+
+  it("normalizes the durable projection with per-entry checkpoints", () => {
+    const model = normalizeTransferProjection(REAL_TRANSFER_PROJECTION);
+    expect(model.status).toBe("PARTIAL");
+    expect(model.terminal).toBe(true);
+    expect(model.skippedItems).toBe(1);
+    expect(model.outcomes[0]?.checkpoints).toEqual([
+      "copy_written",
+      "destination_verified",
+      "source_deleted",
+    ]);
+    expect(model.outcomes[1]?.status).toBe("SKIPPED");
+    expect(model.actions.filter((action) => action.available)).toHaveLength(0);
   });
 });
