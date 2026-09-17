@@ -18,7 +18,7 @@ import json
 import tempfile
 import threading
 import unittest
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -41,7 +41,11 @@ from mediaflow.domain.storage import (
     StorageError,
     StorageErrorCode,
 )
-from mediaflow.domain.task_persistence import TaskItemStatus
+from mediaflow.domain.task_persistence import (
+    PersistentResultRecord,
+    PersistentTaskStatus,
+    TaskItemStatus,
+)
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
@@ -2392,6 +2396,653 @@ class PauseCancelResumeTests(TransferTestCase):
                 )
             )
             second.run_next()  # no work claimable; must be a no-op
+
+    def test_guarded_publications_refuse_a_lost_claim(self) -> None:
+        """Every post-mutation publication compares the exact claim token."""
+
+        from dataclasses import replace
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            (root / "source" / "Movies").mkdir()
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+            claimed = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-a",
+                claim_token="token-a",
+                lease_seconds=3600.0,
+            )
+            self.assertTrue(runtime.begin_files_transfer(task_id, "token-a", datetime.now(UTC)))
+            task = runtime.get_task(task_id)
+            item = runtime.list_items(task_id)[0]
+
+            # A Worker that already lost the claim writes nothing: the Task
+            # running boundary, the TaskItem progress and the terminal Task
+            # aggregate are all compare-and-set against the live token.
+            running = replace(task, status=PersistentTaskStatus.FAILED)
+            self.assertFalse(
+                runtime.update_task_guarded(
+                    running,
+                    transfer_id=task_id,
+                    claim_token="token-b",
+                    now=datetime.now(UTC),
+                )
+            )
+            self.assertFalse(
+                runtime.upsert_item_guarded(
+                    replace(item, status=TaskItemStatus.SUCCESS),
+                    transfer_id=task_id,
+                    claim_token="token-b",
+                    now=datetime.now(UTC),
+                )
+            )
+            record = PersistentResultRecord(
+                "res-1",
+                task_id,
+                item.item_id,
+                item.storage_id,
+                item.source_display,
+                item.destination_storage_id,
+                item.destination_path,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "copy",
+                "success",
+                datetime.now(UTC),
+            )
+            self.assertFalse(
+                runtime.complete_item_with_evidence_guarded(
+                    replace(item, status=TaskItemStatus.SUCCESS),
+                    record,
+                    None,
+                    transfer_id=task_id,
+                    claim_token="token-b",
+                    now=datetime.now(UTC),
+                )
+            )
+            # Nothing was published by the stale token.
+            self.assertEqual(runtime.get_task(task_id).status, task.status)
+            self.assertEqual(runtime.list_items(task_id)[0].status, item.status)
+            self.assertEqual(runtime.list_results(task_id), ())
+            del claimed
+
+
+class _BlockingCopySource(LocalStorage):
+    """A source whose native Copy blocks until the test releases it.
+
+    The blocked call is a genuine provider mutation in flight: while it is
+    inside ``copy`` the test advances the wall clock far beyond a short lease
+    and lets a second Worker poll, then releases the call.  The first Worker's
+    lease keeper must keep the claim alive so the second Worker never sees the
+    transfer as abandoned.
+    """
+
+    def __init__(self, storage_id: str, root: Path) -> None:
+        super().__init__(storage_id, root)
+        self.mutation_calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def copy(self, *args, **kwargs):
+        self.mutation_calls += 1
+        self.entered.set()
+        self.release.wait(timeout=30)
+        return super().copy(*args, **kwargs)
+
+
+class TwoWorkerFenceTests(TransferTestCase):
+    """A long provider call can never let a second Worker take over in parallel."""
+
+    def test_blocked_mutation_keeps_the_claim_through_a_short_lease(self) -> None:
+        """A provider call blocked past the lease is never taken over.
+
+        The whole point is that the ownership signal must not be merely the
+        lease deadline: while Worker A is genuinely blocked inside a native
+        Copy, Worker B must see no claimable work and must not invoke Storage,
+        even though the original one-second deadline has long passed.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _BlockingCopySource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            first = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=1.0,
+                worker_id="worker-a",
+            )
+            results: list = []
+            thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
+            thread.start()
+            self.assertTrue(source.entered.wait(30))
+            # The blocked mutation outlives several lease intervals while the
+            # keeper keeps the claim live.
+            threading.Event().wait(3.0)
+            second = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=1.0,
+                worker_id="worker-b",
+            )
+            self.assertIsNone(second.run_next())
+            self.assertEqual(source.mutation_calls, 1)
+            self.assertEqual(runtime.get_files_transfer(task_id).worker_id, "worker-a")
+            source.release.set()
+            thread.join(30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(source.mutation_calls, 1)
+            self.assertEqual(
+                [transfer.status.value for transfer in results if transfer is not None],
+                ["completed"],
+            )
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+
+    def test_takeover_continues_only_after_the_owner_is_genuinely_lost(self) -> None:
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _BlockingCopySource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            # A claimed lease that this process abandons (no keeper, no
+            # heartbeat) is exactly the crashed-owner case: only then may a
+            # replacement Worker take over.
+            claimed = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-crashed",
+                claim_token="token-crashed",
+                lease_seconds=1.0,
+            )
+            self.assertIsNotNone(claimed)
+            replacement = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=3600.0,
+                worker_id="worker-replacement",
+                clock=lambda: datetime.now(UTC) + timedelta(seconds=60),
+            )
+            finished = replacement.run_next()
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status.value, "completed")
+            self.assertTrue((root / "source" / "Movies" / "a.mkv").exists())
+            self.assertEqual(source.mutation_calls, 1)
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+
+
+class _ExplodingCopySource(LocalStorage):
+    """A same-Storage provider whose native Copy raises an unexpected error."""
+
+    def copy(self, *args, **kwargs):
+        raise OSError("provider exploded")
+
+
+class _ExplodingExistsSource(LocalStorage):
+    """A provider whose destination-state read raises before any mutation."""
+
+    def exists(self, path):
+        raise OSError("provider exploded")
+
+
+class FailureConvergenceTests(TransferTestCase):
+    """An unexpected Worker failure converges to one truthful terminal state."""
+
+    def _admit_copy(self, transfers, root: Path) -> str:
+        (root / "source" / "a.mkv").write_bytes(b"media-a")
+        (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+        impact = transfers.transfer_impact(
+            resource_library_id="source",
+            paths=["a.mkv"],
+            destination_resource_library_id="source",
+            destination_directory="Movies",
+            operation="copy",
+            conflict_mode="fail",
+        )
+        queued = transfers.submit_transfer(
+            resource_library_id="source",
+            paths=["a.mkv"],
+            destination_resource_library_id="source",
+            destination_directory="Movies",
+            operation="copy",
+            conflict_mode="fail",
+            manifest_digest=impact.manifest.digest,
+        )
+        return queued["taskId"]
+
+    def _assert_converged(self, transfers, runtime, task_id: str) -> dict[str, object]:
+        from mediaflow.domain.task_persistence import FilesTransferStatus
+
+        transfer = runtime.get_files_transfer(task_id)
+        task = runtime.get_task(task_id)
+        projection = transfers.transfer_projection(task_id)
+        self.assertIn(
+            transfer.status,
+            {
+                FilesTransferStatus.FAILED,
+                FilesTransferStatus.PARTIAL_SUCCESS,
+                FilesTransferStatus.COMPLETED,
+            },
+        )
+        self.assertTrue(
+            task.status.value in {"failed", "partial_success", "completed"},
+            task.status.value,
+        )
+        self.assertTrue(projection["terminal"], projection)
+        self.assertNotEqual(projection["status"], "RUNNING")
+        for item in runtime.list_items(task_id):
+            self.assertNotIn(item.status.value, {"processing", "pending", "paused"}, item.status)
+        return projection
+
+    def test_failure_before_the_first_mutation_is_a_terminal_failed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(
+                root,
+                storage_adapters={
+                    "source-storage": _ExplodingExistsSource("source-storage", root / "source")
+                },
+            )
+            transfers = self._transfers(api, active)
+            task_id = self._admit_copy(transfers, root)
+            self._run_worker(transfers, runtime)
+            projection = self._assert_converged(transfers, runtime, task_id)
+            self.assertEqual(projection["status"], "FAILED")
+            # The source is untouched and a fresh transfer is the safe action.
+            self.assertTrue((root / "source" / "a.mkv").exists())
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+
+    def test_failure_after_a_known_mutation_is_partial_or_uncertain(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(
+                root,
+                storage_adapters={
+                    "source-storage": _ExplodingCopySource("source-storage", root / "source")
+                },
+            )
+            transfers = self._transfers(api, active)
+            task_id = self._admit_copy(transfers, root)
+            self._run_worker(transfers, runtime)
+            projection = self._assert_converged(transfers, runtime, task_id)
+            self.assertIn(projection["status"], {"FAILED", "PARTIAL", "UNCERTAIN"})
+            self.assertTrue((root / "source" / "a.mkv").exists())
+
+    def test_worker_start_failure_converges_the_task_and_items(self) -> None:
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            task_id = self._admit_copy(transfers, root)
+
+            class _BrokenService:
+                converge_worker_failure = transfers.converge_worker_failure
+
+                def run_claimed_transfer(self, *args, **kwargs):
+                    raise RuntimeError("worker wiring failed")
+
+            worker = FilesTransferWorker(
+                _BrokenService(), runtime, lease_seconds=3600.0, worker_id="worker-broken"
+            )
+            self.assertIsNone(worker.run_next())
+            projection = self._assert_converged(transfers, runtime, task_id)
+            self.assertEqual(projection["status"], "FAILED")
+
+    def test_incident_evidence_is_bounded_and_secret_free(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(
+                root,
+                storage_adapters={
+                    "source-storage": _ExplodingCopySource("source-storage", root / "source")
+                },
+            )
+            transfers = self._transfers(api, active)
+            task_id = self._admit_copy(transfers, root)
+            self._run_worker(transfers, runtime)
+            projection = transfers.transfer_projection(task_id)
+            rendered = json.dumps(projection)
+            for secret in ("provider exploded", "OSError", str(root)):
+                self.assertNotIn(secret, rendered)
+
+
+class StaleWorkerRevisionTests(TransferTestCase):
+    """The pinned revision travels with the transfer, not with the process."""
+
+    def _activate_successor(self, root: Path, service, objects, document):
+        """Publish one successor revision and return its Active row."""
+
+        import copy as copy_module
+
+        candidate = copy_module.deepcopy(document)
+        candidate["resourceLibraries"][0]["name"] = "Source Renamed"
+        draft = service.import_draft(candidate, actor="operator")
+        validated = service.validate(draft.revision_id, actor="operator")
+        for storage_id in ("source-storage", "media-target"):
+            objects.storage_check(
+                validated.revision_id,
+                storage_id=storage_id,
+                expected_version=validated.version,
+                expected_digest=validated.digest,
+                actor="operator",
+            )
+        objects.recognition_strategy_test(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            resource_library_id="source",
+            synthetic_path="a.mkv",
+        )
+        objects.destination_precheck(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            recognition_type="C",
+            sample={
+                "title": "T",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            },
+        )
+        return objects.activate_checked(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="operator",
+        )
+
+    def _fixture(self, root: Path):
+        from mediaflow.application.configuration_objects import ConfigurationObjectService
+        from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        document = self._document(root)
+        (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+        (root / "destination" / "Movies").mkdir(parents=True, exist_ok=True)
+        repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+        self.addCleanup(repository.close)
+        service = ManagedConfigurationService(
+            repository, bootstrap_database_path=str(root / "configuration.sqlite3")
+        )
+        objects = ConfigurationObjectService(service, storage_browser_cursor_secret="s")
+        draft = service.import_draft(document, actor="operator")
+        validated = service.validate(draft.revision_id, actor="operator")
+        for storage_id in ("source-storage", "media-target"):
+            objects.storage_check(
+                validated.revision_id,
+                storage_id=storage_id,
+                expected_version=validated.version,
+                expected_digest=validated.digest,
+                actor="operator",
+            )
+        objects.recognition_strategy_test(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            resource_library_id="source",
+            synthetic_path="a.mkv",
+        )
+        objects.destination_precheck(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            recognition_type="C",
+            sample={
+                "title": "T",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            },
+        )
+        active = objects.activate_checked(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="operator",
+        )
+        return document, service, objects, active
+
+    def _pinned_rebuilder(self, api, service):
+        """Rebuild one persisted revision exactly like the resident Worker does.
+
+        It reproduces ``mediaflow.final_cli._files_transfer_worker_context``:
+        the claimed transfer's own revision is loaded from durable
+        configuration state and resolved into an equivalent service, or
+        ``None`` when this process cannot lawfully reconstruct it.
+        """
+
+        from mediaflow.application.direct_file_commands import DirectFileCommandService
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        def rebuild(revision_id: str, revision_digest: str):
+            pinned = service._repository.get_revision(revision_id)
+            if pinned is None or pinned.digest != revision_digest:
+                return None
+            runtime = with_managed_snapshot(
+                load_managed_runtime_configuration(
+                    pinned.document,
+                    bootstrap_database_path=service.bootstrap_database_path,
+                ),
+                snapshot_id=pinned.revision_id,
+                digest=pinned.digest,
+                version=pinned.version,
+            )
+            from dataclasses import replace as dc_replace
+
+            from mediaflow.domain.configuration_management import ManagedConfigurationStatus
+
+            published = dc_replace(
+                pinned,
+                status=ManagedConfigurationStatus.ACTIVE,
+                activated_at=pinned.activated_at or datetime.now(UTC),
+            )
+            return DirectFileTransferService(
+                direct_files=DirectFileCommandService(
+                    active_revision=published,
+                    runtime_configuration=runtime,
+                    task_repository=api._repository,
+                    revision_rebuilder=rebuild,
+                )
+            )
+
+        return rebuild
+
+    def _submit_under(self, service, root: Path, task_id_out: list) -> None:
+        (root / "source" / "a.mkv").write_bytes(b"media-a")
+        impact = service.transfer_impact(
+            resource_library_id="source",
+            paths=["a.mkv"],
+            destination_resource_library_id="source",
+            destination_directory="Movies",
+            operation="copy",
+            conflict_mode="fail",
+        )
+        queued = service.submit_transfer(
+            resource_library_id="source",
+            paths=["a.mkv"],
+            destination_resource_library_id="source",
+            destination_directory="Movies",
+            operation="copy",
+            conflict_mode="fail",
+            manifest_digest=impact.manifest.digest,
+        )
+        task_id_out.append(queued["taskId"])
+
+    def test_a_newer_worker_reconstructs_an_older_pinned_transfer(self) -> None:
+        from mediaflow.application.direct_file_transfers import DirectFileTransferService
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+        from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+        from mediaflow.interfaces.service_api import MediaFlowApi
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document, service, objects, active = self._fixture(root)
+            runtime = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(runtime.close)
+            api = MediaFlowApi(
+                runtime,
+                None,
+                principals=(
+                    ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ),
+                configuration_service=service,
+                bootstrap_document=document,
+                storage_browser_cursor_secret="s",
+            )
+            old_binding = api._prepare_runtime_binding_for_revision(active)
+            old_service = DirectFileTransferService(direct_files=old_binding.direct_files)
+            task_ids: list = []
+            self._submit_under(old_service, root, task_ids)
+            task_id = task_ids[0]
+
+            # A successor revision becomes Active while the Worker process
+            # stays live; the already-admitted transfer keeps its own pin.
+            successor = self._activate_successor(root, service, objects, document)
+            new_binding = api._prepare_runtime_binding_for_revision(successor)
+            new_service = DirectFileTransferService(
+                direct_files=new_binding.direct_files,
+                runtime_factory=self._pinned_rebuilder(api, service),
+            )
+            worker = FilesTransferWorker(
+                new_service, runtime, lease_seconds=3600.0, worker_id="worker-new"
+            )
+            finished = worker.run_next()
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status.value, "completed")
+            self.assertTrue((root / "source" / "Movies" / "a.mkv").exists())
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+
+    def test_an_incompatible_worker_leaves_the_transfer_claimable(self) -> None:
+        from mediaflow.application.direct_file_transfers import DirectFileTransferService
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+        from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+        from mediaflow.interfaces.service_api import MediaFlowApi
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document, service, objects, active = self._fixture(root)
+            runtime = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(runtime.close)
+            api = MediaFlowApi(
+                runtime,
+                None,
+                principals=(
+                    ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ),
+                configuration_service=service,
+                bootstrap_document=document,
+                storage_browser_cursor_secret="s",
+            )
+            new_binding = api._prepare_runtime_binding_for_revision(active)
+            new_service = DirectFileTransferService(direct_files=new_binding.direct_files)
+            task_ids: list = []
+            self._submit_under(new_service, root, task_ids)
+            task_id = task_ids[0]
+
+            # A Worker bound to a *different* revision cannot reconstruct the
+            # transfer's pin: the claim is released, never consumed.
+            incompatible = DirectFileTransferService(
+                direct_files=new_binding.direct_files,
+                runtime_factory=lambda revision_id, digest: None,
+            )
+            worker = FilesTransferWorker(
+                incompatible,
+                runtime,
+                lease_seconds=3600.0,
+                worker_id="worker-incompatible",
+            )
+            worker.run_next()
+            transfer = runtime.get_files_transfer(task_id)
+            self.assertEqual(transfer.status.value, "admitted")
+            self.assertEqual(transfer.error, "files_transfer_snapshot_unavailable")
+            self.assertEqual(runtime.get_task(task_id).status.value, "pending")
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
 
 
 class ExecutorBoundaryTests(TransferTestCase):

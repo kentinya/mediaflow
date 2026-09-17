@@ -119,6 +119,7 @@ class DirectFileCommandService:
         storage_adapters: Mapping[str, object] | None = None,
         executor: OrganizerExecutor | None = None,
         clock: Callable[[], float] = time.monotonic,
+        revision_rebuilder: (Callable[[str, str], DirectFileCommandService | None] | None) = None,
     ) -> None:
         from mediaflow.domain.configuration_management import ManagedConfigurationStatus
 
@@ -137,6 +138,11 @@ class DirectFileCommandService:
         self._storage_cache: dict[str, Storage] = {}
         self._executor = executor or OrganizerExecutor()
         self._tasks = PersistentTaskCoordinator(task_repository, task_repository)
+        #: Rebuilds an equivalent service for one persisted configuration
+        #: revision.  The resident Worker uses it so a claimed transfer always
+        #: executes under the exact revision it was admitted against, never
+        #: under whatever snapshot the Worker process happened to start with.
+        self._revision_rebuilder = revision_rebuilder
         self._libraries: dict[str, ResourceLibrary] = {
             library.library_id: library
             for library in sorted(
@@ -169,6 +175,35 @@ class DirectFileCommandService:
 
     def open_storage(self, library: ResourceLibrary) -> Storage:
         return self._open_storage(library)
+
+    def rebind_to_revision(
+        self, revision_id: str, revision_digest: str
+    ) -> DirectFileCommandService | None:
+        """Rebuild this service's runtime for one persisted configuration revision.
+
+        Returns ``None`` when this process cannot lawfully reconstruct that
+        revision; the caller must then leave the transfer claimable instead of
+        executing or failing it under the wrong snapshot.
+        """
+
+        if revision_id == self._revision.revision_id and (
+            not revision_digest or revision_digest == self._revision.digest
+        ):
+            return self
+        rebuilder = self._revision_rebuilder
+        if rebuilder is None:
+            return None
+        try:
+            rebuilt = rebuilder(revision_id, revision_digest)
+        except Exception:
+            return None
+        if rebuilt is None:
+            return None
+        if rebuilt.revision.revision_id != revision_id or (
+            revision_digest and rebuilt.revision.digest != revision_digest
+        ):
+            return None
+        return rebuilt
 
     # ------------------------------------------------------------------
     # Bounded zero-mutation text read

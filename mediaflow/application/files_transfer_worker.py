@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import secrets
 import sys
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 
@@ -72,6 +73,14 @@ class FilesTransferWorker:
         no claimable work.  A claimed transfer that cannot be started is
         closed with one recorded pre-mutation failure; it is never silently
         returned to the claimable queue.
+
+        A lease-keeper keeps the claim live for the whole invocation — including
+        while a provider call is blocked — so one long SMB/OpenList/S3 mutation
+        can never outlive its only ownership signal and be taken over in
+        parallel.  A takeover therefore becomes possible only after this
+        process genuinely stopped (or this invocation ended), which is exactly
+        when a replacement Worker may safely continue from the persisted
+        checkpoints.
         """
 
         claim_token = secrets.token_urlsafe(32)
@@ -83,6 +92,7 @@ class FilesTransferWorker:
         )
         if claimed is None:
             return None
+        keeper = self._start_lease_keeper(claimed.transfer_id, claim_token)
         try:
             return self._service.run_claimed_transfer(
                 claimed,
@@ -94,6 +104,44 @@ class FilesTransferWorker:
             self._notice(self._bounded_notice(claimed.transfer_id, error))
             self._close_unstarted(claimed.transfer_id, claim_token, error)
             return None
+        finally:
+            keeper.stop()
+
+    def _start_lease_keeper(self, transfer_id: str, claim_token: str):
+        """Keep one claim's lease live for the whole invocation.
+
+        The keeper heartbeats at a fraction of the lease interval in its own
+        thread, so a blocked or slow provider mutation cannot let the lease
+        expire while this Worker still owns it.  It stops as soon as the claim
+        is lost or the invocation ends; it never extends a claim the Worker no
+        longer owns.
+        """
+
+        interval = max(0.05, self._lease_seconds / 3.0)
+        heartbeat = self._heartbeat
+
+        class _LeaseKeeper:
+            def __init__(self) -> None:
+                self._stop = threading.Event()
+                self._thread = threading.Thread(target=self._run, daemon=True)
+
+            def _run(self) -> None:
+                while not self._stop.wait(interval):
+                    try:
+                        if not heartbeat(transfer_id, claim_token):
+                            return
+                    except Exception:
+                        return
+
+            def start(self):
+                self._thread.start()
+                return self
+
+            def stop(self) -> None:
+                self._stop.set()
+                self._thread.join(timeout=interval + 1.0)
+
+        return _LeaseKeeper().start()
 
     def _heartbeat(self, transfer_id: str, claim_token: str) -> bool:
         return bool(
@@ -105,12 +153,25 @@ class FilesTransferWorker:
     def _close_unstarted(self, transfer_id: str, claim_token: str, error: BaseException) -> None:
         """Make sure a claimed transfer that never started is not claimable forever.
 
-        The claim owner closes its own lease with a truthful bounded failure.
-        A replacement Worker may later take over an expired claim, but that
-        continuation proceeds only from the persisted known-safe checkpoints —
-        never by replaying a completed or uncertain mutation.
+        The claim owner closes its own lease with a truthful bounded failure,
+        converging the transfer row, the Task, every unfinished item and the
+        bounded Result evidence together, so a failed start never leaves a
+        permanently running projection.  A replacement Worker may later take
+        over an expired claim, but that continuation proceeds only from the
+        persisted known-safe checkpoints — never by replaying a completed or
+        uncertain mutation.
         """
 
+        converge = getattr(self._service, "converge_worker_failure", None)
+        if callable(converge):
+            try:
+                # A truthful convergence (or an already-terminal row) is the
+                # whole outcome; only a convergence that could not run at all
+                # falls through to the narrow terminal-publish fallback.
+                if converge(transfer_id, claim_token, error):
+                    return
+            except Exception:
+                pass
         closer = getattr(self._repository, "finish_files_transfer", None)
         if not callable(closer):
             return

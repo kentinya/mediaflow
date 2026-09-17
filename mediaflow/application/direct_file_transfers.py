@@ -29,7 +29,7 @@ from mediaflow.application.storage_browser import (
     _join_resource_library_path,
     _normalize_storage_relative_path,
 )
-from mediaflow.application.task_runtime import TaskPauseRequested
+from mediaflow.application.task_runtime import TaskClaimLost, TaskPauseRequested
 from mediaflow.domain.direct_files import (
     MAX_TRANSFER_BYTES,
     MAX_TRANSFER_DEPTH,
@@ -97,6 +97,24 @@ class _ResumeContext:
     skip_paths: frozenset[str]
     confirmed_entries: tuple[tuple[str, str, str], ...]
     confirmed_truncated: bool
+
+
+@dataclass(frozen=True)
+class _ClaimFence:
+    """The Worker-side claim comparison every durable transfer write carries.
+
+    Every post-mutation publication compares the exact claim token while the
+    lease is still unexpired, so a Worker that lost ownership (a takeover after
+    a stalled provider call, a paused/cancelled claim) stops publishing instead
+    of overwriting a newer owner's state.
+    """
+
+    transfer_id: str
+    claim_token: str
+
+    @property
+    def value(self) -> tuple[str, str, datetime]:
+        return (self.transfer_id, self.claim_token, datetime.now(UTC))
 
 
 def _conflict_outcome(
@@ -249,9 +267,16 @@ class DirectFileTransferService:
         *,
         direct_files: DirectFileCommandService,
         executor: OrganizerExecutor | None = None,
+        runtime_factory: Callable[[str, str], DirectFileCommandService | None] | None = None,
     ) -> None:
         self._direct = direct_files
         self._executor = executor or OrganizerExecutor()
+        #: Reconstructs the exact immutable runtime of one persisted
+        #: configuration revision for a claimed transfer, so a Worker never
+        #: depends on whatever process-local Active snapshot it happened to
+        #: start with.  It returns ``None`` when this Worker cannot lawfully
+        #: reconstruct that revision, which leaves the transfer claimable.
+        self._runtime_factory = runtime_factory
 
     # ------------------------------------------------------------------
     # Zero-mutation impact / admission phase
@@ -405,6 +430,11 @@ class DirectFileTransferService:
         bounded in-flight progress is persisted after each entry, and the
         terminal status is published through a claim-guarded update — so only
         the current claim owner may advance progress or finish the transfer.
+
+        Every unexpected failure converges the transfer row, the Task, the
+        unfinished TaskItems and the bounded Result evidence on one truthful
+        terminal state in a single guarded commitment, so a reloaded projection
+        never reports a permanently running transfer beside a failed row.
         """
 
         repository = self._direct.tasks.repository
@@ -418,17 +448,26 @@ class DirectFileTransferService:
                 status=409,
                 next_action="the transfer stays claimable for the next Worker",
             )
+        fence = _ClaimFence(transfer.transfer_id, claim_token)
         try:
             self._execute_claimed_transfer(
                 transfer,
                 task_id=task_id,
                 heartbeat=heartbeat,
                 lease_seconds=lease_seconds,
+                fence=fence,
             )
-        except _TransferClaimLost:
+        except (_TransferClaimLost, TaskClaimLost):
             # The lease was lost mid-flight: stop without publishing a
             # terminal state.  The claim has already expired, so a replacement
             # Worker takes over and continues from the persisted checkpoints.
+            return repository.require_files_transfer(transfer.transfer_id)
+        except _TransferSnapshotUnavailable:
+            # This Worker cannot lawfully reconstruct the transfer's pinned
+            # immutable runtime.  The transfer is never consumed as a business
+            # failure: it returns to the claimable queue with bounded readiness
+            # evidence for a compatible Worker.
+            self._release_snapshot_unavailable(fence)
             return repository.require_files_transfer(transfer.transfer_id)
         except TaskPauseRequested:
             repository.pause_files_transfer(
@@ -445,18 +484,10 @@ class DirectFileTransferService:
             )
         except Exception as error:
             # A failed execution is a durable, bounded, secret-free outcome:
-            # items keep their recorded per-entry state and the transfer stops
-            # with an actionable reason instead of staying claimable forever.
-            terminal = replace(
-                repository.require_files_transfer(transfer.transfer_id),
-                status=FilesTransferStatus.FAILED,
-                error=_bounded_transfer_error(error),
-                next_action=(
-                    "inspect the recorded per-item outcomes and submit a fresh transfer "
-                    "for the remaining entries"
-                ),
-                completed_at=datetime.now(UTC),
-            )
+            # the transfer, Task, unfinished items and Result evidence converge
+            # on one truthful state instead of being left contradictory.
+            self._converge_execution_failure(fence, error)
+            return repository.require_files_transfer(transfer.transfer_id)
         else:
             current = repository.require_files_transfer(transfer.transfer_id)
             task = repository.get_task(task_id)
@@ -469,12 +500,125 @@ class DirectFileTransferService:
                     if task is not None and task.status is PersistentTaskStatus.COMPLETED
                     else FilesTransferStatus.FAILED
                 ),
-                error=None,
+                error=(
+                    current.error
+                    if task is not None and task.status is not PersistentTaskStatus.COMPLETED
+                    else None
+                ),
                 next_action=None,
                 completed_at=datetime.now(UTC),
             )
         repository.finish_files_transfer(terminal, claim_token=claim_token, now=datetime.now(UTC))
         return repository.require_files_transfer(transfer.transfer_id)
+
+    def converge_worker_failure(
+        self, transfer_id: str, claim_token: str, error: BaseException
+    ) -> bool:
+        """Converge one claimed transfer whose Worker failed before/while starting.
+
+        Called by the resident Worker when its invocation of this transfer
+        raised outside the normal per-item path, so the transfer row, Task,
+        unfinished items and Result evidence all reach the same truthful
+        terminal state instead of leaving a permanently running projection.
+        Returns ``False`` when this claim no longer owns the row.
+        """
+
+        return self._converge_execution_failure(_ClaimFence(transfer_id, claim_token), error)
+
+    def _converge_execution_failure(self, fence: _ClaimFence, error: BaseException) -> bool:
+        """Publish one truthful terminal state after an unexpected failure.
+
+        The failed item keeps its own recorded partial/uncertain evidence; the
+        still-unfinished items become explicit interrupted/investigation states
+        with a bounded terminal Result; and the Task aggregate is set to the
+        matching terminal status.  All of it is one compare-and-set against the
+        current claim token so a stale owner can never publish it.
+        """
+
+        repository = self._direct.tasks.repository
+        transfer = repository.get_files_transfer(fence.transfer_id)
+        if transfer is None or transfer.status.terminal:
+            return True
+        now = datetime.now(UTC)
+        items = repository.list_items(transfer.task_id)
+        records = {record.item_id: record for record in repository.list_results(transfer.task_id)}
+        outcomes: list[PersistentTaskItem] = []
+        results: list[PersistentResultRecord] = []
+        for item in items:
+            if item.status not in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:
+                continue
+            mutated, uncertain = _item_known_mutation(item, records.get(item.item_id))
+            converted, record = _interrupted_terminal_item(
+                item,
+                uncertain=uncertain,
+                mutated=mutated,
+                now=now,
+                code=f"files_transfer_worker_failed_{type(error).__name__}",
+            )
+            outcomes.append(converted)
+            results.append(record)
+        failed = sum(
+            item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL} for item in items
+        ) + len(results)
+        completed = sum(
+            item.status in {TaskItemStatus.SUCCESS, TaskItemStatus.SKIPPED, TaskItemStatus.DRY_RUN}
+            for item in items
+        )
+        status = (
+            FilesTransferStatus.PARTIAL_SUCCESS
+            if completed and failed
+            else FilesTransferStatus.FAILED
+        )
+        terminal_task = None
+        task = repository.get_task(transfer.task_id)
+        if task is not None and task.status not in {
+            PersistentTaskStatus.COMPLETED,
+            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.FAILED,
+            PersistentTaskStatus.CANCELLED,
+        }:
+            terminal_task = replace(
+                task,
+                status=(
+                    PersistentTaskStatus.PARTIAL_SUCCESS
+                    if status is FilesTransferStatus.PARTIAL_SUCCESS
+                    else PersistentTaskStatus.FAILED
+                ),
+                updated_at=now,
+                completed_at=now,
+                total_items=len(items),
+                completed_items=completed,
+                failed_items=failed,
+                error=_bounded_transfer_error(error),
+                pause_requested=False,
+            )
+        terminal_transfer = replace(
+            transfer,
+            status=status,
+            error=_bounded_transfer_error(error),
+            next_action=(
+                "inspect the recorded per-item outcomes and submit a fresh transfer "
+                "for the remaining entries"
+            ),
+            completed_at=now,
+        )
+        converged = getattr(repository, "converge_files_transfer_failure", None)
+        if callable(converged):
+            return bool(
+                converged(
+                    terminal_transfer,
+                    claim_token=fence.claim_token,
+                    now=now,
+                    task=terminal_task,
+                    items=tuple(outcomes),
+                    results=tuple(results),
+                )
+            )
+        return bool(
+            repository.finish_files_transfer(
+                terminal_transfer, claim_token=fence.claim_token, now=now
+            )
+        )
 
     def _execute_claimed_transfer(
         self,
@@ -483,6 +627,7 @@ class DirectFileTransferService:
         task_id: str,
         heartbeat: Callable[[], bool],
         lease_seconds: float,
+        fence: _ClaimFence,
     ) -> None:
         """Drive one claimed transfer through its items to a terminal state."""
 
@@ -490,24 +635,7 @@ class DirectFileTransferService:
         task = repository.get_task(task_id)
         if task is None:
             raise LookupError(f"transfer Task {task_id!r} was not found")
-        authority = _parse_authority(transfer.authority_json)
-        if (
-            authority.get("revisionId") != self._direct.revision.revision_id
-            or authority.get("revisionDigest") != self._direct.revision.digest
-        ):
-            # A pinned transfer is never executed against a different Active
-            # configuration: the stale admission stops with an actionable
-            # state instead of silently re-deciding under a new snapshot.
-            self._fail_stale_authority(task_id, transfer)
-            raise DirectFileTransferError(
-                "files_transfer_stale_snapshot",
-                "stale_snapshot",
-                "the admitted transfer was pinned to a different Active configuration",
-                status=409,
-                next_action=(
-                    "submit a fresh bounded transfer against the current Active configuration"
-                ),
-            )
+        authority = self._parse_pinned_authority(transfer)
         paused = False
         cancelled = False
         errored = False
@@ -524,7 +652,7 @@ class DirectFileTransferService:
         # reclaims exactly this Task's locks before any further mutation, so
         # the takeover continues instead of failing on its predecessor.
         self._direct.tasks.locks.reclaim_task_locks(task_id)
-        self._direct.tasks.begin_queued(task_id)
+        self._direct.tasks.begin_queued(task_id, transfer_fence=fence.value)
         heartbeat()
         items = repository.list_items(task_id)
         # The deterministic in-batch collisions pinned at admission (two
@@ -554,6 +682,7 @@ class DirectFileTransferService:
                     batch_conflict=batch_conflict,
                     heartbeat=heartbeat,
                     lease_seconds=lease_seconds,
+                    fence=fence,
                 )
             else:
                 stopped = self._continue_item(
@@ -561,6 +690,7 @@ class DirectFileTransferService:
                     task_id=task_id,
                     heartbeat=heartbeat,
                     lease_seconds=lease_seconds,
+                    fence=fence,
                 )
             if stopped == "pause":
                 self._direct.tasks.acknowledge_pause(task_id)
@@ -574,39 +704,84 @@ class DirectFileTransferService:
         if errored:
             raise _TransferExecutionFailed()
         # The durable Task outcome is the transfer's terminal aggregate.
-        self._direct.tasks.finish(task_id, _empty_batch())
+        self._direct.tasks.finish(task_id, _empty_batch(), transfer_fence=fence.value)
         self._mark_uncertain_from_evidence(task_id)
 
-    def _fail_stale_authority(self, task_id: str, transfer: PersistentFilesTransfer) -> None:
-        """Record the stale-admission failure on the Task and its items."""
+    def _parse_pinned_authority(self, transfer: PersistentFilesTransfer) -> dict[str, object]:
+        """The claimed transfer's reconstructed immutable pinned authority.
+
+        The Worker reconstructs the transfer's own persisted configuration
+        revision/digest rather than trusting whatever process-local snapshot it
+        may hold: an older Worker process may lawfully execute newer admitted
+        work, and a newer Worker may lawfully continue work admitted under a
+        superseded revision.  A revision this Worker cannot lawfully
+        reconstruct raises ``_TransferSnapshotUnavailable`` and leaves the
+        transfer claimable instead of consuming it as a business failure.
+        """
+
+        authority = _parse_authority(transfer.authority_json)
+        pinned_id = transfer.configuration_snapshot_id or str(authority.get("revisionId", ""))
+        pinned_digest = transfer.configuration_snapshot_digest or str(
+            authority.get("revisionDigest", "")
+        )
+        if not pinned_id:
+            raise _TransferSnapshotUnavailable("the transfer has no pinned configuration identity")
+        if self._runtime_factory is not None:
+            rebuilt = self._runtime_factory(pinned_id, pinned_digest)
+            if rebuilt is None:
+                raise _TransferSnapshotUnavailable("the pinned revision is unavailable")
+            # The factory may return either a direct-command service or a fully
+            # composed transfer service; adopt the direct-command boundary (and
+            # the executor it was built with, when it carries one) so the
+            # claimed transfer executes under its own pinned revision.
+            direct = getattr(rebuilt, "_direct", rebuilt)
+            self._direct = direct
+            executor = getattr(rebuilt, "_executor", None)
+            if executor is not None:
+                self._executor = executor
+            if direct.revision.revision_id != pinned_id or (
+                pinned_digest and direct.revision.digest != pinned_digest
+            ):
+                raise _TransferSnapshotUnavailable("the pinned revision identity does not match")
+            return authority
+        rebind = getattr(self._direct, "rebind_to_revision", None)
+        if not callable(rebind):
+            raise _TransferSnapshotUnavailable("the runtime cannot reconstruct a pinned revision")
+        try:
+            direct = rebind(pinned_id, pinned_digest)
+        except Exception as error:  # pragma: no cover - defensive boundary
+            raise _TransferSnapshotUnavailable(type(error).__name__) from error
+        if direct is None:
+            raise _TransferSnapshotUnavailable("the pinned revision is unavailable")
+        if direct.revision.revision_id != pinned_id or (
+            pinned_digest and direct.revision.digest != pinned_digest
+        ):
+            raise _TransferSnapshotUnavailable("the pinned revision identity does not match")
+        self._direct = direct
+        return authority
+
+    def _release_snapshot_unavailable(self, fence: _ClaimFence) -> None:
+        """Return one incompatible claim to the queue with readiness evidence.
+
+        The transfer row goes back to the claimable state only under the
+        current claim token, so a Worker that already lost ownership writes
+        nothing.  The pinned authority and per-item checkpoints are untouched:
+        a compatible Worker continues from exactly where the transfer stood.
+        """
 
         repository = self._direct.tasks.repository
-        now = datetime.now(UTC)
-        task = repository.get_task(task_id)
-        if task is not None and task.status in {
-            PersistentTaskStatus.PENDING,
-            PersistentTaskStatus.RUNNING,
-        }:
-            failed = replace(
-                task,
-                status=PersistentTaskStatus.FAILED,
-                updated_at=now,
-                completed_at=now,
-                error="the admitted transfer was pinned to a different Active configuration",
+        requeue = getattr(repository, "release_files_transfer_claim", None)
+        if callable(requeue):
+            requeue(
+                fence.transfer_id,
+                claim_token=fence.claim_token,
+                now=datetime.now(UTC),
+                error="files_transfer_snapshot_unavailable",
+                next_action=(
+                    "wait for a Worker that can reconstruct this transfer's pinned "
+                    "Active configuration, or inspect the Active revision"
+                ),
             )
-            repository.update_task(failed)
-        for item in repository.list_items(task_id):
-            if item.status is TaskItemStatus.PENDING:
-                repository.upsert_item(
-                    replace(
-                        item,
-                        status=TaskItemStatus.FAILED,
-                        stage="stale_snapshot",
-                        error="files_transfer_stale_snapshot",
-                        updated_at=now,
-                        progress=None,
-                    )
-                )
 
     def _run_admitted_item(
         self,
@@ -619,6 +794,7 @@ class DirectFileTransferService:
         batch_conflict: bool = False,
         heartbeat: Callable[[], bool],
         lease_seconds: float,
+        fence: _ClaimFence | None = None,
     ) -> str | None:
         """Execute one never-started item from the pinned admission authority.
 
@@ -648,6 +824,7 @@ class DirectFileTransferService:
                 status=TaskItemStatus.FAILED,
                 operation=plan.operation.value,
                 error="source is locked by another active task",
+                transfer_fence=fence.value if fence is not None else None,
             )
             return None
         confirmed_scope = tuple(
@@ -670,6 +847,7 @@ class DirectFileTransferService:
             confirmed_entries=confirmed_scope[:MAX_TRANSFER_PROGRESS_ENTRIES],
             confirmed_truncated=truncated,
             batch_conflict=batch_conflict,
+            fence=fence,
         )
 
     def _continue_item(
@@ -679,6 +857,7 @@ class DirectFileTransferService:
         task_id: str,
         heartbeat: Callable[[], bool],
         lease_seconds: float,
+        fence: _ClaimFence | None = None,
     ) -> str | None:
         """Continue one started item from its persisted checkpoint.
 
@@ -699,12 +878,12 @@ class DirectFileTransferService:
         except DirectFileTransferError as error:
             if error.category != "scope_changed":
                 raise
-            self._mark_interrupted_item(item, error.code, mutated=error.mutated)
+            self._mark_interrupted_item(item, error.code, mutated=error.mutated, fence=fence)
             return None
         if context is None:
             # The claim owner never recorded a known-safe checkpoint for this
             # item: it is an explicit interrupted/investigation state.
-            self._mark_interrupted_item(item, "files_transfer_interrupted_unknown")
+            self._mark_interrupted_item(item, "files_transfer_interrupted_unknown", fence=fence)
             return None
         source = self._direct.library(item.resource_library_id)
         try:
@@ -732,6 +911,7 @@ class DirectFileTransferService:
             skip_paths=context.skip_paths,
             confirmed_entries=context.confirmed_entries,
             confirmed_truncated=context.confirmed_truncated,
+            fence=fence,
         )
 
     def _execute_item_with_fences(
@@ -750,6 +930,7 @@ class DirectFileTransferService:
         confirmed_entries: tuple[tuple[str, str, str], ...] = (),
         confirmed_truncated: bool = False,
         batch_conflict: bool = False,
+        fence: _ClaimFence | None = None,
     ) -> str | None:
         """Run one item to its durable terminal outcome under claim fences.
 
@@ -788,12 +969,13 @@ class DirectFileTransferService:
             skip_paths=skip_paths,
             interruption=interruption,
             collect=outcomes.extend,
+            fence=fence,
         )
         if paused or cancelled:
             return "pause" if paused else "cancel"
         status = _item_status(outcomes)
         unknown = status == "UNCERTAIN"
-        self._direct.tasks.complete_direct_item(
+        published = self._direct.tasks.complete_direct_item(
             item,
             status=_ITEM_TASK_STATUS[status],
             operation=plan.operation.value,
@@ -820,30 +1002,45 @@ class DirectFileTransferService:
             uncertain_effects=("mutation_outcome",) if unknown else (),
             destination_storage_id=destination.storage_id,
             completed_operations=_item_checkpoint_evidence(outcomes),
+            transfer_fence=fence.value if fence is not None else None,
         )
+        if published is False:
+            # The lease was taken over: the terminal item publish is another
+            # Worker's to make, so this owner stops without touching the Task.
+            raise _TransferClaimLost()
         if unknown:
-            self._mark_transfer_uncertain(task_id)
+            self._mark_transfer_uncertain(task_id, fence=fence)
         return None
 
-    def _mark_transfer_uncertain(self, task_id: str) -> None:
+    def _mark_transfer_uncertain(self, task_id: str, *, fence: _ClaimFence | None = None) -> None:
         """Record one uncertain mutation on the Task's durable error surface.
 
         The marker is set on the still-running Task so a process interruption
         after an uncertain mutation is durably visible before any terminal
-        aggregate exists.
+        aggregate exists.  On the Worker path it is a claim-guarded update, so
+        a Worker that lost ownership cannot overwrite a newer owner's Task.
         """
 
         repository = self._direct.tasks.repository
         task = repository.get_task(task_id)
         if task is None or task.status is not PersistentTaskStatus.RUNNING:
             return
-        repository.update_task(
-            replace(
-                task,
-                error="mutation_outcome",
-                updated_at=datetime.now(UTC),
-            )
+        uncertain = replace(
+            task,
+            error="mutation_outcome",
+            updated_at=datetime.now(UTC),
         )
+        if fence is not None:
+            guarded = getattr(repository, "update_task_guarded", None)
+            if callable(guarded):
+                guarded(
+                    uncertain,
+                    transfer_id=fence.transfer_id,
+                    claim_token=fence.claim_token,
+                    now=datetime.now(UTC),
+                )
+                return
+        repository.update_task(uncertain)
 
     def _mark_uncertain_from_evidence(self, task_id: str) -> None:
         """Persist the uncertain marker from executor-owned effect evidence.
@@ -1095,7 +1292,12 @@ class DirectFileTransferService:
     # ------------------------------------------------------------------
 
     def _mark_interrupted_item(
-        self, item: PersistentTaskItem, code: str, *, mutated: bool = False
+        self,
+        item: PersistentTaskItem,
+        code: str,
+        *,
+        mutated: bool = False,
+        fence: _ClaimFence | None = None,
     ) -> None:
         """Record one item as an explicit interrupted/investigation state.
 
@@ -1104,7 +1306,7 @@ class DirectFileTransferService:
         continuation stopped.
         """
 
-        self._direct.tasks.complete_direct_item(
+        published = self._direct.tasks.complete_direct_item(
             item,
             status=TaskItemStatus.PARTIAL if mutated else TaskItemStatus.FAILED,
             operation="transfer",
@@ -1116,7 +1318,10 @@ class DirectFileTransferService:
             ),
             uncertain_effects=("mutation_outcome",) if mutated else (),
             stage=TRANSFER_INTERRUPTED_STAGE,
+            transfer_fence=fence.value if fence is not None else None,
         )
+        if published is False:
+            raise _TransferClaimLost()
 
     def _resume_item_plan(self, item: PersistentTaskItem) -> _ResumeContext | None:
         """Rebuild one item's confirmed plan from its persisted checkpoint.
@@ -1855,6 +2060,7 @@ class DirectFileTransferService:
         skip_paths: frozenset[str] = frozenset(),
         interruption: Callable[[], str | None] | None = None,
         collect: Callable[[list[dict[str, object]]], None] | None = None,
+        fence: _ClaimFence | None = None,
     ) -> tuple[list[dict[str, object]], bool, bool]:
         """Run one top-level selection to its truthful per-entry outcomes.
 
@@ -1890,6 +2096,7 @@ class DirectFileTransferService:
                 skip_count=len(skip_paths),
                 confirmed_entries=confirmed_entries,
                 confirmed_truncated=confirmed_truncated,
+                fence=fence,
             )
 
         if interruption is None:
@@ -1927,6 +2134,7 @@ class DirectFileTransferService:
                     entries=entries,
                     recorded=recorded,
                     collect=collect,
+                    fence=fence,
                 )
             finally:
                 collect(recorded)
@@ -1950,6 +2158,7 @@ class DirectFileTransferService:
             entries=entries,
             recorded=recorded,
             collect=None,
+            fence=fence,
         )
 
     def _execute_item_entries(
@@ -1974,6 +2183,7 @@ class DirectFileTransferService:
         entries: list[TransferManifestEntry],
         recorded: list[dict[str, object]],
         collect: Callable[[list[dict[str, object]]], None] | None,
+        fence: _ClaimFence | None = None,
     ) -> tuple[list[dict[str, object]], bool, bool]:
 
         if batch_conflict:
@@ -2129,17 +2339,20 @@ class DirectFileTransferService:
             completed_files = {
                 str(value["path"]) for value in recorded if value.get("status") == "SUCCESS"
             } | set(skip_paths)
-            recorded.extend(
-                self._remove_emptied_source_directories(
-                    plan,
-                    top_level,
-                    entries,
-                    source,
-                    source_storage,
-                    checkpoints,
-                    completed_files,
-                )
+            removals, stop = self._remove_emptied_source_directories(
+                plan,
+                top_level,
+                entries,
+                source,
+                source_storage,
+                checkpoints,
+                completed_files,
+                progress=progress,
+                interruption=interruption,
             )
+            recorded.extend(removals)
+            if stop is not None:
+                return recorded, stop == "pause", stop == "cancel"
             progress()
         return recorded, False, False
 
@@ -2154,13 +2367,16 @@ class DirectFileTransferService:
         skip_count: int,
         confirmed_entries: tuple[tuple[str, str, str], ...],
         confirmed_truncated: bool,
+        fence: _ClaimFence | None = None,
     ) -> None:
         """Persist the bounded in-flight progress snapshot of one item.
 
         The snapshot carries the item's endpoint identities, requested
         operation and conflict choice beside the confirmed scope, so the
         durable continuation never has to re-derive an admission decision
-        that was already pinned.
+        that was already pinned.  On the Worker path the write is
+        claim-guarded: a Worker that lost ownership stops instead of publishing
+        a stale snapshot over a newer owner's progress.
         """
 
         completed = sum(1 for value in recorded if value.get("status") == "SUCCESS")
@@ -2168,7 +2384,7 @@ class DirectFileTransferService:
             1 for value in recorded if value.get("status") in {"FAILED", "PARTIAL", "UNCERTAIN"}
         )
         skipped = sum(1 for value in recorded if value.get("status") == "SKIPPED")
-        self._direct.tasks.record_transfer_progress(
+        published = self._direct.tasks.record_transfer_progress(
             item,
             destination_storage_id=destination.storage_id,
             destination_resource_library_id=destination.library_id,
@@ -2195,7 +2411,10 @@ class DirectFileTransferService:
             failed_entries=failed,
             skipped_entries=skipped,
             truncated=len(recorded) > MAX_TRANSFER_PROGRESS_ENTRIES,
+            transfer_fence=fence.value if fence is not None else None,
         )
+        if published is False:
+            raise _TransferClaimLost()
 
     def _resume_entry_outcome(
         self,
@@ -2405,7 +2624,9 @@ class DirectFileTransferService:
         source_storage: Storage,
         checkpoints: list[dict[str, object]],
         completed_files: set[str],
-    ) -> list[dict[str, object]]:
+        progress: Callable[[], None] | None = None,
+        interruption: Callable[[], str | None] | None = None,
+    ) -> tuple[list[dict[str, object]], str | None]:
         """Remove the source directories the verified Move just emptied.
 
         Only directories whose confirmed children all reported a completed
@@ -2415,6 +2636,15 @@ class DirectFileTransferService:
         (S3/R2) is truthfully recorded instead of deleting a fictional object,
         and a failed removal keeps the directory Move from being reported
         wholly successful.
+
+        A Worker-driven Move observes pause/cancel and its live claim around
+        every source-directory removal, so a stalled or lost owner stops before
+        the next destructive step and each completed removal is published as
+        durable progress before the following one begins.  The observed
+        interruption is returned so the caller keeps the pause/cancel outcome
+        instead of reporting a completed item.
+
+        Returns ``(outcomes, observed interruption)``.
         """
 
         outcomes: list[dict[str, object]] = []
@@ -2434,6 +2664,9 @@ class DirectFileTransferService:
             ]
             if not all(child.is_directory or child.path in completed_files for child in children):
                 continue
+            stop = interruption() if interruption is not None else None
+            if stop is not None:
+                return outcomes, stop
             full = _join_resource_library_path(source.root_path, entry.path)
             result = self._executor.execute_direct_remove_empty_directory(
                 source_storage, full, execute=True
@@ -2450,7 +2683,9 @@ class DirectFileTransferService:
                     "status": outcome["status"],
                 }
             )
-        return outcomes
+            if progress is not None:
+                progress()
+        return outcomes, None
 
     # ------------------------------------------------------------------
     # Error helpers
@@ -2613,6 +2848,15 @@ class _TransferClaimLost(RuntimeError):
     """The Worker's lease expired or was taken over mid-execution."""
 
 
+class _TransferSnapshotUnavailable(RuntimeError):
+    """This Worker cannot lawfully reconstruct the transfer's pinned revision.
+
+    The transfer is not a business failure: the claim is released with bounded
+    readiness evidence so a compatible Worker can execute it under exactly the
+    configuration it was admitted against.
+    """
+
+
 class _TransferCancelled(RuntimeError):
     """One durable cooperative cancellation was observed at a safe boundary."""
 
@@ -2627,6 +2871,99 @@ def _bounded_transfer_error(error: BaseException) -> str:
     if isinstance(error, DirectFileTransferError):
         return error.code
     return f"files_transfer_worker_failed_{type(error).__name__}"
+
+
+def _item_known_mutation(
+    item: PersistentTaskItem, record: PersistentResultRecord | None
+) -> tuple[bool, bool]:
+    """Whether one item already recorded a known mutation, and its certainty.
+
+    The durable per-entry progress of a started item is the authoritative
+    known-effect evidence after an unexpected failure: an entry marked
+    ``UNCERTAIN`` (or an item already carrying the uncertain marker) means the
+    effect cannot be proven and must be investigation-only; any other recorded
+    non-skipped entry means a mutation may already have happened.
+    """
+
+    if item.error == "mutation_outcome":
+        return True, True
+    if record is not None:
+        if record.effect_certainty == ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value:
+            return True, True
+        if record.effect_certainty == ExecutionEffectCertainty.VERIFIED_COMPLETE.value:
+            return True, False
+    payload = _progress_payload(item)
+    if payload is None:
+        return False, False
+    statuses = {
+        str(value.get("status", ""))
+        for value in payload.get("entries") or ()
+        if isinstance(value, dict)
+    }
+    if "UNCERTAIN" in statuses:
+        return True, True
+    completed = payload.get("completedEntries")
+    if statuses & {"SUCCESS", "PARTIAL"} or (isinstance(completed, int) and completed > 0):
+        return True, False
+    return False, False
+
+
+def _interrupted_terminal_item(
+    item: PersistentTaskItem,
+    *,
+    uncertain: bool,
+    mutated: bool,
+    now: datetime,
+    code: str,
+) -> tuple[PersistentTaskItem, PersistentResultRecord]:
+    """One unfinished transfer item converged to an explicit terminal state.
+
+    The item keeps its recorded known-safe progress evidence but becomes a
+    terminal interrupted/investigation outcome with a bounded Result, so a
+    reloaded Task/Result detail never shows a permanently processing item
+    beside a terminal transfer.  An uncertain known effect stays uncertain; an
+    item whose mutation effect is unproven is investigation-only and is never
+    silently retried.
+    """
+
+    status = TaskItemStatus.PARTIAL if (mutated or uncertain) else TaskItemStatus.FAILED
+    effect_certainty = (
+        ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+        if uncertain
+        else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
+    )
+    terminal = replace(
+        item,
+        status=status,
+        stage=TRANSFER_INTERRUPTED_STAGE,
+        updated_at=now,
+        error=code,
+        progress=None,
+    )
+    record = PersistentResultRecord(
+        f"{item.item_id}:{item.attempts}",
+        item.task_id,
+        item.item_id,
+        item.storage_id,
+        item.source_display or item.source_path,
+        item.destination_storage_id,
+        item.destination_path,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "transfer",
+        status.value,
+        now,
+        error=code,
+        completed_operations=(),
+        effect_certainty=effect_certainty,
+        uncertain_effects=("mutation_outcome",) if uncertain else (),
+    )
+    return terminal, record
 
 
 def _transfer_authority(manifest: TransferManifest) -> str:
@@ -2769,7 +3106,11 @@ def _queued_document(
         "taskStatus": task.status.value,
         "resourceLibraryId": manifest.source_resource_library_id,
         "destinationResourceLibraryId": manifest.destination_resource_library_id,
-        "topLevelPaths": sorted(manifest.destinations),
+        # The exact selected top-level path strings.  The per-entry destination
+        # pairs travel in ``destinations``; serializing them here would hand the
+        # browser a nested tuple per path and break the shared admission
+        # contract the projection and every terminal read already use.
+        "topLevelPaths": list(manifest.top_level_paths),
         "destinations": [
             {"path": path, "destination": value} for path, value in manifest.destinations
         ],

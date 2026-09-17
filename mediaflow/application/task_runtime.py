@@ -35,6 +35,10 @@ class TaskPauseRequested(RuntimeError):
     pass
 
 
+class TaskClaimLost(RuntimeError):
+    """A guarded Task publication found the Worker's claim no longer current."""
+
+
 class PersistentTaskCoordinator:
     """Persists orchestration state without owning any media strategy decision."""
 
@@ -83,13 +87,20 @@ class PersistentTaskCoordinator:
         self.repository.create_task(task)
         return task
 
-    def begin_queued(self, task_id: str) -> PersistentTask:
+    def begin_queued(
+        self,
+        task_id: str,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> PersistentTask:
         """Publish the running boundary of one admitted (queued) Task.
 
         The resident Worker calls this after a successful claim, immediately
         before the first OrganizerExecutor call: a queued transfer Task only
         becomes running under the Worker's claim fence, never inside the
-        admitting HTTP request.
+        admitting HTTP request.  When a fence is supplied the publish is
+        compare-and-set against the live claim, so a Worker that already lost
+        ownership cannot mark the Task running.
         """
 
         task = self.require(task_id)
@@ -104,6 +115,17 @@ class PersistentTaskCoordinator:
             updated_at=now,
             started_at=now,
         )
+        if transfer_fence is not None:
+            transfer_id, claim_token, claim_now = transfer_fence
+            guarded = getattr(self.repository, "update_task_guarded", None)
+            if callable(guarded) and not guarded(
+                running,
+                transfer_id=transfer_id,
+                claim_token=claim_token,
+                now=claim_now,
+            ):
+                raise TaskClaimLost()
+            return running
         self.repository.update_task(running)
         return running
 
@@ -391,7 +413,8 @@ class PersistentTaskCoordinator:
         completed_operations: tuple[str, ...] = (),
         execution_status: str | None = None,
         stage: str | None = None,
-    ) -> None:
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> bool:
         """Persist one direct Files command outcome and release its lock.
 
         Direct commands carry no media identity or policy evidence: the
@@ -402,6 +425,11 @@ class PersistentTaskCoordinator:
         its executor-owned completed checkpoints, so reloading the Task or
         Result detail reproduces the truthful known state without the original
         HTTP response.
+
+        ``transfer_fence`` is the Worker-side claim comparison
+        ``(transfer_id, claim_token, now)``: when supplied, the TaskItem and
+        its Result commit only while this Worker still owns the live claim, and
+        a lost claim returns ``False`` without writing anything.
         """
 
         now = datetime.now(UTC)
@@ -449,6 +477,20 @@ class PersistentTaskCoordinator:
             uncertain_effects=uncertain_effects,
         )
         try:
+            if transfer_fence is not None:
+                transfer_id, claim_token, claim_now = transfer_fence
+                guarded = getattr(self.repository, "complete_item_with_evidence_guarded", None)
+                if callable(guarded):
+                    return bool(
+                        guarded(
+                            completed,
+                            record,
+                            None,
+                            transfer_id=transfer_id,
+                            claim_token=claim_token,
+                            now=claim_now,
+                        )
+                    )
             atomic = getattr(self.repository, "complete_item_with_evidence", None)
             if callable(atomic):
                 atomic(completed, record, None)
@@ -457,6 +499,7 @@ class PersistentTaskCoordinator:
                 self.repository.upsert_item(completed)
         finally:
             self.locks.release(item.storage_id, item.source_path, item.task_id)
+        return True
 
     def record_transfer_progress(
         self,
@@ -475,7 +518,8 @@ class PersistentTaskCoordinator:
         failed_entries: int,
         skipped_entries: int,
         truncated: bool,
-    ) -> None:
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> bool:
         """Persist the bounded in-flight progress of one transfer item.
 
         The snapshot is the process-interruption authority: a TaskItem left
@@ -484,6 +528,11 @@ class PersistentTaskCoordinator:
         continues only from the recorded known-safe state instead of guessing
         or re-enumerating a possibly changed source.  Both lists are bounded;
         the aggregate counters stay exact even when a list is truncated.
+
+        ``transfer_fence`` is the Worker-side claim comparison
+        ``(transfer_id, claim_token, now)``: when supplied, progress is
+        published only while this Worker still owns the live claim, and a lost
+        claim returns ``False`` without writing a stale snapshot.
         """
 
         payload = json.dumps(
@@ -516,7 +565,20 @@ class PersistentTaskCoordinator:
             destination_path=destination_path,
             progress=payload,
         )
+        if transfer_fence is not None:
+            transfer_id, claim_token, claim_now = transfer_fence
+            guarded = getattr(self.repository, "upsert_item_guarded", None)
+            if callable(guarded):
+                return bool(
+                    guarded(
+                        snapshot,
+                        transfer_id=transfer_id,
+                        claim_token=claim_token,
+                        now=claim_now,
+                    )
+                )
         self.repository.upsert_item(snapshot)
+        return True
 
     def wait_for_confirmation(
         self,
@@ -613,7 +675,13 @@ class PersistentTaskCoordinator:
         )
         self.locks.release(item.storage_id, item.source_path, item.task_id)
 
-    def finish(self, task_id: str, batch: MediaOrganizerBatchResult) -> PersistentTask:
+    def finish(
+        self,
+        task_id: str,
+        batch: MediaOrganizerBatchResult,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> PersistentTask:
         task = self.require(task_id)
         if task.status is PersistentTaskStatus.CANCELLED:
             # A durable cooperative cancellation is never overwritten by a later
@@ -657,6 +725,20 @@ class PersistentTaskCoordinator:
             failed_items=failed + len(batch.scan_errors),
             error="scan errors occurred" if batch.scan_errors else None,
         )
+        if transfer_fence is not None:
+            transfer_id, claim_token, claim_now = transfer_fence
+            guarded = getattr(self.repository, "update_task_guarded", None)
+            if callable(guarded):
+                # A Worker that lost its claim must not publish the aggregate:
+                # the replacement owner owns the Task's terminal state.
+                if not guarded(
+                    final,
+                    transfer_id=transfer_id,
+                    claim_token=claim_token,
+                    now=claim_now,
+                ):
+                    return self.require(task_id)
+                return final
         self.repository.update_task(final)
         return final
 

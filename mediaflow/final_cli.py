@@ -3562,6 +3562,47 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
     from mediaflow.application.direct_file_transfers import DirectFileTransferService
     from mediaflow.application.files_transfer_worker import FilesTransferWorker
 
+    def reconstruct(revision_id: str, revision_digest: str):
+        """Rebuild the exact persisted revision a claimed transfer pinned.
+
+        A resident Worker may outlive an activation, so it must execute each
+        claimed transfer under that transfer's own immutable revision rather
+        than under whatever Active snapshot the process started with.  A
+        revision this process cannot lawfully reconstruct returns ``None`` and
+        leaves the transfer claimable instead of consuming it as a failure.
+        """
+
+        with SQLiteConfigurationRepository(configuration.database_path) as pinned_repository:
+            pinned = pinned_repository.get_revision(revision_id)
+        if pinned is None:
+            return None
+        from mediaflow.domain.configuration_management import ManagedConfigurationStatus
+
+        if pinned.status is ManagedConfigurationStatus.DRAFT:
+            return None
+        if revision_digest and pinned.digest != revision_digest:
+            return None
+        try:
+            pinned_runtime = _configuration(
+                configured_path,
+                snapshot_id=pinned.revision_id,
+                snapshot_digest=pinned.digest,
+            )
+        except Exception:
+            return None
+        published = replace(
+            pinned,
+            status=ManagedConfigurationStatus.ACTIVE,
+            activated_at=pinned.activated_at or datetime.now(UTC),
+        )
+        return DirectFileCommandService(
+            active_revision=published,
+            runtime_configuration=pinned_runtime,
+            task_repository=repository,
+            storage_adapters=None,
+            revision_rebuilder=reconstruct,
+        )
+
     with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
         active = configuration_repository.get_active_revision()
         if active is None:
@@ -3577,8 +3618,11 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
                 active_revision=active,
                 runtime_configuration=runtime,
                 task_repository=repository,
+                revision_rebuilder=reconstruct,
             )
-            transfers = DirectFileTransferService(direct_files=direct_files)
+            transfers = DirectFileTransferService(
+                direct_files=direct_files, runtime_factory=reconstruct
+            )
         except Exception as error:
             # An unhealthy Active configuration must not disable this Worker's
             # other duties (queued Jobs, admitted manual executions): a

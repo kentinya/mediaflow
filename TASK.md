@@ -533,221 +533,182 @@ not satisfy the browser assertion.
 
 ## Developer Completion Report
 
-> Correction round 2, 2026-09-17: the report below covers the B-2.1..B-2.3
-> correction checkpoint; the superseded first-round and F-1..F-6 correction
-> report content has been replaced. The correction commit sits after the
-> previous correction checkpoint `98e4175ceefd87ec327562379306918ab6ef43f9`
-> without amending it.
+> Correction round 3, 2026-09-17: the report below covers the four B blocker
+> corrections from the `b52c04d` review (`C-1` admission contract, `C-2`
+> mutation ownership fence, `C-3` truthful failure convergence, `C-4` pinned
+> revision at claim). It supersedes the earlier round reports. The correction
+> commit sits after the previous correction checkpoint
+> `b52c04df18f14335e2d26f923bb13201b11bb9ba` and `3c4a0ed` without amending
+> either.
 
 ### Changed Files
 
-- `mediaflow/infrastructure/sqlite_runtime.py` — runtime schema 36: the new
-  `files_transfers` admission/claim table (DDL + index); every `task_items`
-  INSERT now names its columns explicitly through the shared
-  `_TASK_ITEM_COLUMNS`/`_TASK_ITEM_INSERT`/`_TASK_ITEM_UPSERT` definitions
-  (order-independent on a fresh or an in-place-upgraded database); the
-  repository methods `admit_files_transfer`, `get_files_transfer(_for_task)`,
-  `claim_next_files_transfer`, `begin_files_transfer`,
-  `heartbeat_files_transfer_claim`, `finish_files_transfer`,
-  `pause_files_transfer`, `requeue_files_transfer`, `require_files_transfer`
-  and `transfer_claim_is_current`.
-- `mediaflow/domain/task_persistence.py` — `FilesTransferStatus`,
-  `PersistentFilesTransfer`, the new `PersistentTaskRepository` transfer
-  protocol methods, and the truthful FILES_TRANSFER_TASK_COMMAND semantics
-  (every transfer executes through the durable runner).
-- `mediaflow/application/direct_file_transfers.py` — `submit_transfer`
-  (atomic durable admission: PENDING Task + per-item transfer authority +
-  claimable transfer row, returned before the first Storage mutation),
-  `run_claimed_transfer`/`_execute_claimed_transfer` (the Worker execution
-  engine: snapshot-compatibility check, claim-fenced per-entry observation,
-  fresh items from the pinned authority, started items only from their
-  persisted checkpoints), `requeue_transfer` (resume re-queues only — zero
-  Storage work in the resume request), `transfer_projection` (the durable
-  poll document with backend-advertised lifecycle actions and per-entry
-  outcomes rebuilt from Task/items/progress/Results), the truthful
-  `_item_status` precedence (any mixed SUCCESS+SKIPPED aggregate is PARTIAL),
-  per-entry status/error evidence in the Result annotations, `_execute_item`
-  `interruption`/`collect` extension, and the claim-guarded engine helpers.
-- `mediaflow/application/files_transfer_worker.py` (new) —
-  `FilesTransferWorker`: atomic claim of an admitted (or lease-expired)
-  transfer, guarded running boundary, heartbeat at every safe boundary, and a
-  bounded truthful pre-mutation failure when a claim cannot start.
-- `mediaflow/application/task_runtime.py` — queued Task creation
-  (`status=PENDING`), `begin_queued` (the Worker-side running boundary) and
-  `requeue` (PAUSED -> PENDING without execution).
-- `mediaflow/application/operations_lifecycle.py` — `TaskExecutionContext
-  .resumable`; the lifecycle projection now advertises `resume` for a paused
-  `files_transfer` Task with the durable re-queue outcome.
-- `mediaflow/application/automation.py` — `AutomationWorker` serves admitted
-  transfers through the injected `files_transfer_worker` runner; the
-  readiness default pins runtime schema 36.
-- `mediaflow/final_cli.py` — `_files_transfer_worker_context` (the resident
-  Worker reconstructs the Active revision/runtime/Storage from durable state;
-  an unhealthy Active config disables only the transfer runner, never the
-  Worker's other duties); `worker run`/`worker run-next` drive it.
-- `mediaflow/interfaces/service_api.py` — `POST
-  .../files/transfers` returns 202 with the durable queued projection (no
-  inline execution); new `GET .../files/transfers/{task_id}` bounded durable
-  projection read; `POST /tasks/{id}/resume` for `files_transfer` re-queues
-  (202) instead of executing inline; `DirectFileTransferError` import.
-- `web/src/entities/library/direct-files.ts` — `TransferProjectionModel`,
-  `TransferLifecycleAction`, `normalizeTransferProjection`.
-- `web/src/shared/api/api-client.ts` — `fetchTransferProjection` (polling
-  read) and `mutateTransferLifecycle` (pause/cancel/resume with the
-  projection version as the optimistic-concurrency value).
-- `web/src/features/library/TransferDialog.tsx` — after admission the dialog
-  polls the durable projection, shows queued/running/paused/terminal
-  per-item state and known-state explanations, offers exactly the
-  backend-advertised pause/cancel/resume actions, keeps the operator's
-  destination/conflict context, and keeps the synchronous duplicate-submit
-  guard across the whole impact+admission window; no Task ID or token
-  ceremony.
-- `web/src/features/library/StorageFilesPage.tsx` — the admission response
-  only stores the durable Task identity; terminal projections refresh live
-  truth and prune only a Move's provably-gone sources;
-  `pruneAffectedBrowseState` is a stable callback.
-- Tests: `tests/test_direct_file_transfers.py` (async admission/worker
-  journeys, gated pause/cancel from a control request, takeover after process
-  loss at every compound checkpoint, single-file process loss, atomic fenced
-  claims, projection reads, truthful aggregation), `tests/test_task_persistence.py`
-  (production-shaped schema 34 -> 35 migration regression + insert
-  order-independence guard), schema-version pins updated to 36
-  (`tests/test_configuration_organize.py`, `test_configuration_classification.py`,
-  `test_configuration_destination.py`, `test_configuration_destination_activation.py`,
-  `test_configuration_destination_precheck.py`),
-  `web/src/features/library/StorageFilesPage.test.tsx` (async dialog flow,
-  deterministic duplicate-submit window, projection-driven outcomes),
-  `web/tests/fake-server.mjs` + `web/tests/e2e/library-files.spec.ts`
-  (admission -> polling -> terminal journey, no raw Task-ID ceremony).
+- `mediaflow/application/direct_file_transfers.py` — `_queued_document` now
+  returns the exact selected top-level path strings in `topLevelPaths` (the
+  per-entry destination pairs stay in `destinations`); the new `_ClaimFence`
+  carried by every post-mutation write; `_parse_pinned_authority` reconstructs
+  the claimed transfer's own revision through an injected `runtime_factory`
+  or the service's `rebind_to_revision`; `_release_snapshot_unavailable`
+  returns an incompatible claim to the queue; `converge_worker_failure` /
+  `_converge_execution_failure` publish one truthful terminal
+  transfer/Task/item/Result state in a single claim-guarded commitment; the
+  dead `_fail_stale_authority` path is removed; `_run_admitted_item`,
+  `_continue_item`, `_execute_item`, `_execute_item_entries`,
+  `_record_progress`, `_mark_interrupted_item`, `_mark_transfer_uncertain` and
+  `_remove_emptied_source_directories` thread the fence; source-directory
+  removal now observes pause/cancel and the live claim around every removal
+  and publishes progress after each one.
+- `mediaflow/application/files_transfer_worker.py` — a lease keeper keeps the
+  claim live for the whole invocation, including while a provider call is
+  blocked; `_close_unstarted` funnels through the service convergence before
+  its narrow fallback.
+- `mediaflow/application/task_runtime.py` — `complete_direct_item`,
+  `record_transfer_progress`, `begin_queued` and `finish` accept the optional
+  claim fence and return the publication result; a new `TaskClaimLost` marks a
+  guarded publication that lost ownership.
+- `mediaflow/infrastructure/sqlite_runtime.py` — new compare-and-set repository
+  methods `upsert_item_guarded`, `complete_item_with_evidence_guarded`,
+  `update_task_guarded`, `converge_files_transfer_failure` and
+  `release_files_transfer_claim`; `heartbeat_files_transfer_claim` renews on
+  claim-token ownership rather than the previous deadline;
+  `transfer_claim_is_current` accepts an admitted or running row;
+  `claim_next_files_transfer` documents that revision compatibility is enforced
+  by reconstruction, not a claim-time revision filter.
+- `mediaflow/application/direct_file_commands.py` — `revision_rebuilder` and
+  `rebind_to_revision` so a service can be rebuilt for one persisted revision.
+- `mediaflow/final_cli.py` — `_files_transfer_worker_context` supplies the
+  production `reconstruct` factory (and rebuilder) that loads the persisted
+  revision, rebuilds its runtime and returns `None` when it cannot lawfully do
+  so.
+- `web/src/entities/library/direct-files.test.ts` — real-admission and
+  real-projection contract fixtures; the superseded nested-pair shape must
+  fail closed.
+- `web/src/features/library/StorageFilesPage.test.tsx` — regression for the
+  exact real admission document, single submit → queued → polling, no
+  resubmission and no raw Task-ID ceremony.
+- `web/src/features/library/TransferDialog.tsx` — the confirmed
+  source/destination/conflict context stays visible after admission.
+- Tests: `tests/test_direct_file_transfers.py` (52 → 53 tests) with the new
+  `TwoWorkerFenceTests`, `FailureConvergenceTests`, `StaleWorkerRevisionTests`
+  and the guarded-publication fence regression.
 
 ### Implemented
 
-- B-2.1 (schema 35 upgrade safety): every `task_items` insert statement names
-  its 20 columns explicitly through one shared definition. A fresh schema-36
-  database and a schema-34 database upgraded in place (occurrence columns
-  appended, then `progress` at the physical end) store and load identical
-  values; the isolated migration fixture proves an ordinary TaskItem round
-  trip, a transfer TaskItem's bounded progress round trip, unchanged
-  occurrence fields, terminal completion clearing progress without corrupting
-  the row or its Result, and a source-level guard that fails when a positional
-  `INSERT INTO task_items VALUES` reappears.
-- B-2.2 (durable admission split from execution): the mutation request
-  revalidates the submitted manifest digest, then atomically persists the
-  PENDING Task, every bounded per-item transfer authority and the claimable
-  transfer row, and returns 202 with the queued projection before the first
-  Storage mutation. The resident Worker claims the transfer under a persisted
-  claim/lease fence (atomic claim SQL, guarded running boundary, heartbeat at
-  every per-entry boundary, claim-guarded terminal publish), executes it
-  through the existing OrganizerExecutor-only path, and publishes per-entry
-  progress after each safe entry. Pause/cancel arrive through the normal
-  authenticated Task lifecycle API and are observed at safe boundaries; a
-  permitted resume re-queues the persisted authority and the Worker
-  continues it — never inline in the resume request. On process loss a
-  replacement Worker claims the expired lease and continues only from the
-  persisted checkpoints (verified destinations adopted, uncertain effects
-  never replayed, missing checkpoints becoming explicit investigation
-  states); the same-Storage single-file fast path is routed through this one
-  durable runner, so Copy/Move has exactly one recovery model. The API
-  process creates no implicit worker; the runner is served by the existing
-  resident Worker loop (`mediaflow worker run`).
-- B-2.3 (truthful mixed-outcome aggregation): one deterministic precedence —
-  any UNCERTAIN dominates, all-SUCCESS/SKIPPED stay truthful, any
-  SUCCESS+SKIPPED mixture is PARTIAL, a failure beside a known mutation is
-  PARTIAL, and only a failure with zero recorded mutation is FAILED. The
-  aggregate counts, the top-level known effect (`partial`), the durable
-  TaskItem/Result and every reloaded detail agree; the exact skipped child
-  and completed directory/file checkpoints persist as bounded Result
-  evidence (`entry:STATUS:path`, `entry_error:*`, `skip_conflict:*`
-  annotations) and the Web prunes selection only by physical source truth.
+- **C-1 admission contract.** `_queued_document` serializes
+  `topLevelPaths: list(manifest.top_level_paths)`. Reproduced before the fix:
+  the real backend returned `[('a.mkv', 'Movies/a.mkv')]`, which
+  `normalizeTransferResult` rejected as `malformed_response` after the transfer
+  was already durably admitted. The Python API, the TypeScript model/client and
+  the e2e fake now agree on the exact selected path strings. A captured
+  real-API admission fixture is consumed by the TypeScript normalizer, and the
+  Web regression proves a single submit enters queued polling with the
+  submitted context still visible and cannot enqueue a second transfer while
+  the first admission response is being normalized.
+- **C-2 mutation ownership fence.** A lease keeper heartbeats for the whole
+  Worker invocation, so a provider call blocked beyond the lease is never taken
+  over: the second Worker sees no claimable work and invokes no Storage
+  operation. Every post-mutation progress, TaskItem, Result, Task running
+  boundary and terminal Task/transfer publication is now a compare-and-set on
+  the exact claim token, and pause/cancel/claim are observed around each
+  source-directory removal. Takeover remains possible only after the owner is
+  genuinely lost and continues from the last persisted safe checkpoint.
+- **C-3 truthful failure convergence.** An unexpected Worker failure converges
+  the transfer row, the Task, every unfinished TaskItem and the bounded Result
+  evidence to one terminal state in a single guarded commitment: a failure
+  before mutation is terminal `FAILED` with retained source and a safe retry
+  action, a known effect plus a later failure is `PARTIAL`, and an unprovable
+  effect is `UNCERTAIN`/investigation-only. The reproduced contradiction
+  (transfer `failed`, Task `running`, projection `RUNNING terminal=false`) is
+  gone; the projection now terminates and the Files/Operations views agree.
+- **C-4 pinned revision at claim.** A claimed transfer is executed under its own
+  persisted immutable revision, reconstructed through the injected
+  `runtime_factory`: an older Worker process may execute newer admitted work and
+  a newer Worker may continue work admitted under a superseded revision. A
+  revision the Worker cannot lawfully reconstruct releases the claim with
+  bounded readiness evidence instead of consuming the transfer as a business
+  failure. Reproduced before the fix: an old-revision Worker claimed and
+  irreversibly failed a newer transfer. After the fix the transfer returns to
+  `admitted`/`pending` and a compatible Worker completes it under its pin.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/ruff format --check .` — PASS; `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/ruff format --check .` — PASS (307 files formatted).
+  `.venv/bin/ruff check .` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS.
-- `test -z "$(grep -rn -i -E 'ffprobe|ffmpeg' mediaflow pyproject.toml)"`
-  (rg unavailable in this environment; equivalent grep) — PASS, no matches.
-- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (44).
+- `.venv/bin/python -m pip check` — PASS ("No broken requirements found").
+- `test -z "$(grep -rn -i -E 'ffprobe|ffmpeg' mediaflow pyproject.toml)"` —
+  PASS (rg unavailable in this environment; equivalent grep, no matches).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (53).
+  The 9 new tests are the real-admission/contract, blocked-mutation fence,
+  genuinely-lost-owner takeover, unexpected-failure convergence (before/after a
+  known effect and Worker start failure), bounded secret-free incident
+  evidence, guarded-publication refusal, pinned-revision reconstruction and
+  incompatible-Worker release regressions.
 - `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (55).
 - `.venv/bin/python -m unittest tests.test_source_directory_cleanup
-  tests.test_manual_organize_execution tests.test_configuration_organize` — PASS.
+  tests.test_manual_organize_execution tests.test_configuration_organize` —
+  PASS (112 across the direct-ops/cleanup/organize group).
 - `.venv/bin/python -m unittest tests.test_organizer
-  tests.test_organizer_mutation_authority tests.test_organizer_rollback` — PASS.
+  tests.test_organizer_mutation_authority tests.test_organizer_rollback` —
+  PASS (45).
 - `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage
-  tests.test_openlist_storage tests.test_s3_storage` — PASS.
+  tests.test_openlist_storage tests.test_s3_storage` — PASS (94).
 - `.venv/bin/python -m unittest tests.test_runtime_files_browser
-  tests.test_api_security tests.test_task_persistence
-  tests.test_task_pause_resume tests.test_task_retry` — PASS (45).
-- `.venv/bin/python -m unittest discover -s tests` — 1645 tests: FAIL with
-  only the same 3 failures reproduced identically at a clean Task Base
-  worktree (`4954502`, see Risks); the schema-version fixture pins were
-  updated for runtime schema 36 (five configuration modules).
-- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE, same
-  environment limitation as both previous rounds: the Docker daemon rejects
-  the smoke harness's bind mounts (`bind source path does not exist:
-  /tmp/mediaflow-smoke-security-*/…`); the script fails visibly, nothing is
-  hidden or asserted as PASS.
-- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` —
-  PASS; `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` —
-  PASS (SHA-256 50dcbdf5…); wheel artifacts removed after the check.
+  tests.test_api_security tests.test_task_persistence tests.test_task_pause_resume
+  tests.test_task_retry` — PASS (45).
+- `.venv/bin/python -m unittest discover -s tests` — 1654 tests: FAIL with only
+  the same 3 failures reproduced identically at a clean Task Base worktree
+  (`4954502`, see Risks).
+- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE: the
+  Docker daemon rejects the smoke harness's bind mounts (`bind source path does
+  not exist: /tmp/mediaflow-smoke-security-*/media/organized`). The script fails
+  visibly; nothing is hidden or asserted as PASS. The real `mediaflow`,
+  `jellyfin`, `nginx` and `music-tag-web` stacks were verified untouched.
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS;
+  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
+  (schema 36, SHA-256 50dcbdf5…); wheel artifacts removed after the check.
 - `cd web && npm run format:check` — PASS; `npm run typecheck` — PASS;
   `npm run lint` — PASS (0 errors).
 - `cd web && NODE_ENV=test npx vitest run
-  src/features/library/StorageFilesPage.test.tsx` — PASS (32; the
+  src/features/library/StorageFilesPage.test.tsx` — PASS (33; the
   `NODE_ENV=test` shell requirement is unchanged from the previous rounds).
-- `cd web && npm run test -- --run` — PASS (33 files / 451 tests).
+- `cd web && NODE_ENV=test npx vitest run
+  src/entities/library/direct-files.test.ts` — PASS (16).
+- `cd web && npm run test -- --run` — PASS (33 files / 455 tests).
 - `cd web && npm run build` — PASS.
 - `cd web && npx playwright test tests/e2e/library-files.spec.ts
   --project=chromium` — PASS (28); `npm run test:e2e` — 116 tests: FAIL with
-  only the 10 failures of the two spec files reproduced identically at a
-  clean Task Base worktree (`library-file-detail` 7 + `manual-operations` 3,
-  verified by `git stash` reproduction; see Risks).
-- `git diff --check` — PASS; staged manifest inspected: no
-  `config/alist.json`, credentials or unrelated files; the pre-existing dirty
-  `docs/pics/文件页.png` is preserved and deliberately not staged.
+  only the 10 failures of the two spec files reproduced identically at a clean
+  Task Base worktree (`library-file-detail` 7 + `manual-operations` 3). The
+  transfer e2e spec passes fully.
+- `git diff --check` — PASS; staged manifest inspected: no `config/alist.json`,
+  credentials or unrelated files; the pre-existing dirty `docs/pics/文件页.png`
+  is preserved and deliberately not staged.
 
 ### Decisions
 
-- One recovery model for Copy/Move: every transfer — including the short
-  same-Storage single-file command — is admitted into the same durable
-  Task + claimable transfer authority and executed by the same resident
-  Worker. The B plan prefers this over retaining an inline fast path, and it
-  removes the `files_direct_command` orphaned-running recovery hole entirely.
-- The Worker claim fence lives on the new `files_transfers` row (not the Task
-  row): atomic claim SQL accepts only a non-terminal transfer whose previous
-  lease expired, the running boundary is a guarded claim-token update before
-  the first mutation, every per-entry boundary heartbeats the claim, and the
-  terminal status is published through a claim-token-guarded update — so only
-  the current claim owner advances progress or finishes a transfer. Task rows
-  stay the projection surface; the fence stays the Worker's.
-- Admission persists the full pinned manifest authority
-  (`files_transfers.authority_json`, bounded by the existing entry limits)
-  beside per-item TaskItems that each carry their own bounded confirmed
-  scope. Fresh items execute from the pinned authority (so a directory larger
-  than the per-item continuation bound still transfers once); a started item
-  continues only from its recorded progress, where the existing documented
-  512-entry continuation bound applies.
-- Keep-both continuation is now legal because the pinned unique names travel
-  inside the persisted authority (root destination + per-entry destinations);
-  a conflicting keep-both destination that appears after admission still
-  resolves through the selected conflict behavior at the last safe boundary
-  and is never silently replaced.
-- The uncertain-effect marker is derived from executor-owned effect
-  certainty (`attempted_unverified` Results), so the projection reproduces
-  UNCERTAIN after a restart without trusting status inference; a mid-flight
-  interruption also writes the marker onto the running Task row.
-- A lifecycle resume is a durable re-queue (202), never an execution: the
-  Worker owns every mutation. The projection advertises resume for a paused
-  transfer (and the backend refuses a live-claim re-queue), so the Operations
-  and Files surfaces agree with the route behavior.
-- The fake e2e server emulates the same journey (202 admission, polling
-  projection, advertised actions) so the browser tests exercise the real
-  Web contract; the genuine claim/fence/restart evidence lives in the Python
-  Worker tests.
-- `TASK.md` (B's correction text plus this report) travels with the
-  correction checkpoint per the workflow; `docs/pics/文件页.png` remains
-  unstaged/dirty.
+- One ownership signal, not two: the claim token is authority and the lease
+  deadline only gates *new* claims. `heartbeat_files_transfer_claim` therefore
+  renews on token ownership instead of refusing when the previous deadline has
+  passed, and the Worker runs a lease keeper for its whole invocation. A long
+  provider call can no longer outlive the only ownership signal.
+- Revision compatibility is enforced by reconstruction, never by a claim-time
+  filter. Filtering claims by revision would strand work whenever the Active
+  configuration advances while a Worker stays live; reconstructing the
+  persisted revision lets either an older or a newer Worker execute the
+  transfer under exactly its pin. An unreconstructable revision releases the
+  claim rather than failing it.
+- The four blocker corrections share one claim-guard primitive
+  (`_transfer_claim_locked`) used by `upsert_item_guarded`,
+  `complete_item_with_evidence_guarded`, `update_task_guarded` and
+  `converge_files_transfer_failure`, so ownership, progress, items, Results and
+  the terminal aggregate commit or roll back together.
+- Failure convergence is a single atomic repository commitment rather than a
+  sequence of independent writes, so a process stop mid-convergence cannot
+  recreate the contradictory running projection the blocker reported.
+- The Web dialog keeps the admitted Task identity internal and renders only the
+  bounded projection, the submitted context and backend-advertised actions.
 
 ### Remaining In-Slice Work
 
@@ -757,48 +718,47 @@ not satisfy the browser assertion.
   Organize completion from Files, terminal Organize-to-FileIndex
   reconciliation.
 - Whether the V2 Operations/Task-detail surface should render the transfer
-  projection document (the backend already advertises it) is B's call; the
-  Files dialog journey is complete without it.
+  projection document is B's call; the Files dialog journey is complete without
+  it.
 
 ### Risks / Deviations
 
-- Full-suite FAIL is limited to the same 3 failures reproduced unchanged at
-  the Task Base (`test_configuration_status.ConfigurationSnapshotTests.
+- Full-suite FAIL is limited to the same 3 failures reproduced identically at
+  the clean Task Base worktree (`4954502`):
+  `test_configuration_status.ConfigurationSnapshotTests.
   test_hostile_configuration_content_is_never_exposed` and the two
   `test_manual_operations_contract.ManualOperationsContractTests.
-  test_real_api_documents_*` golden-fixture failures asserting 201).
-  Reproduced at a clean Task Base worktree before judging this correction;
-  pre-existing and unrelated to this Task, and the B PASS judgment on them
-  is not mine to make.
-- Full e2e FAIL is limited to 10 failures in the two spec files that fail
-  identically at a clean Task Base worktree (`web git stash` reproduction:
-  `library-file-detail` 7, `manual-operations` 3). The transfer e2e spec
-  (`library-files`) passes fully. Pre-existing and unrelated; B judges.
-- The Docker release-security gate remains UNAVAILABLE in this workspace
-  (daemon rejects the smoke context bind mounts); it needs a host where
-  Docker can bind-mount the smoke context.
-- Per-item durable progress stores the confirmed entry scope bounded at
-  `MAX_TRANSFER_PROGRESS_ENTRIES` (512): a fresh item executes fully from
-  the pinned authority, but an item whose recorded progress is truncated
-  cannot be continued after an interruption and stops with an actionable
+  test_real_api_documents_*` golden-fixture failures asserting 201. Pre-existing
+  and unrelated to this Task; whether they block PASS is B's judgment, not mine.
+- Full e2e FAIL is limited to the 10 failures in `library-file-detail` (7) and
+  `manual-operations` (3) that fail identically at the Task Base. Pre-existing
+  and unrelated; B judges.
+- The Docker release-security gate remains UNAVAILABLE in this workspace; it
+  needs a host where Docker can bind-mount the smoke context.
+- The lease keeper is a bounded daemon thread per invocation that stops with the
+  invocation; it adds no persistent background worker and never supervises
+  across process lifetimes.
+- Per-item durable progress still stores the confirmed entry scope bounded at
+  `MAX_TRANSFER_PROGRESS_ENTRIES` (512): a fresh item executes fully from the
+  pinned authority, but an item whose recorded progress is truncated cannot be
+  continued after an interruption and stops with an actionable
   `files_transfer_resume_scope_changed` state — the same bounded, documented
   recovery-authority limitation as the previous rounds, not silent scope
   expansion.
-- Vitest must run with `NODE_ENV=test` in this shell (see Tests and
-  Results).
-- The transfer Task aggregate reuses the existing `finish()` semantics: a
-  lone PARTIAL item aggregates to a `failed` Task row while the transfer
-  projection and Result keep the exact partial evidence — consistent with
-  how media-organize Tasks already aggregate, and the per-item truth stays
+- Vitest must run with `NODE_ENV=test` in this shell (see Tests and Results).
+- The transfer Task aggregate reuses the existing `finish()` semantics: a lone
+  PARTIAL item aggregates to a `failed` Task row while the transfer projection
+  and Result keep the exact partial evidence — consistent with how
+  media-organize Tasks already aggregate, and the per-item truth stays
   authoritative for recovery.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b52c04df18f14335e2d26f923bb13201b11bb9ba
-(the implementation checkpoint; the TASK.md record commit follows it)
+Head SHA: __HEAD_SHA__
 ```
+
 
 ## B Re-review Findings — 2026-09-17
 
@@ -969,7 +929,7 @@ The Developer must rerun the original T4 gate list, report the exact totals and 
 truthfully account for the three pre-existing full-suite failures and the unavailable Docker gate.
 No existing safety assertion may be removed, weakened or skipped to obtain a pass.
 
-## B Review Result
+## Prior B Review Result — 2026-09-17
 
 ```text
 Reviewed: 4954502c6493d57634a14461a7268120419319da..98e4175ceefd87ec327562379306918ab6ef43f9
@@ -1134,3 +1094,80 @@ coherent checkpoint and return this same Task to `READY FOR B REVIEW`.
   gates. The three previously reported full-suite failures may be treated as unrelated only if they
   are reproduced unchanged at the Task Base; no assertion, migration test, Worker safety test or
   private-file check may be removed, weakened or hidden.
+
+## B Review Result
+
+```text
+Reviewed: 4954502c6493d57634a14461a7268120419319da..b52c04df18f14335e2d26f923bb13201b11bb9ba
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- The real API-to-Web admission contract is broken after the Task has already been durably queued.
+  `_queued_document` returns `topLevelPaths=sorted(manifest.destinations)`, which serializes one
+  file as `[["a.mkv", "Movies/a.mkv"]]`; `normalizeTransferResult` requires a non-empty string for
+  every element and therefore reports `malformed_response`. B reproduced the real backend value as
+  `{'topLevelPaths': [('a.mkv', 'Movies/a.mkv')]}` while the focused Vitest/E2E fakes return the
+  different, valid shape `['a.mkv']`. The ordinary Files journey can consequently lose its handle
+  to an already admitted mutation and permit a dangerous resubmission. Correct one shared admission
+  contract across Python API, the TypeScript model/client and the fake server: return the exact
+  selected top-level path strings, keep the durable Task identity internal to the dialog, and retain
+  the duplicate-submit guard until the queued projection is accepted. The user-visible result must
+  be `提交 -> 已排队 -> 自动轮询` with the original source/destination/conflict context still visible;
+  no malformed-response banner, second confirmation, raw Task-ID handoff or apparently safe
+  resubmission is allowed after admission committed. Add a real API-response contract fixture or
+  equivalent cross-boundary test consumed by the TypeScript normalizer, plus Web regression proving
+  a single submit enters queued/polling state and cannot enqueue a second transfer while the first
+  admission response is being normalized.
+- The transfer lease does not fence an in-flight Storage mutation. Heartbeats run only at
+  per-entry boundaries; no heartbeat runs while a provider call is blocked, progress/TaskItem/
+  Result writes are not claim-token guarded, and `finish_files_transfer` does not require an
+  unexpired lease. B ran a one-second-lease fault probe with Worker A blocked inside native Copy;
+  Worker B claimed the same running transfer at `t+2s`, both Workers entered the mutation path
+  (`mutation_calls=2`), and both returned the completed transfer. Redesign the ownership boundary so
+  one long provider call cannot outlive the only ownership signal: keep the current claim live while
+  an OrganizerExecutor call is in flight, or use an equivalent owner-liveness/fence design that
+  makes takeover impossible until the prior mutation owner is provably gone. Do not hold a broad
+  SQLite transaction across remote I/O. Every post-mutation progress, TaskItem, Result, Task and
+  transfer-terminal publication must compare-and-set the current claim token; loss of ownership
+  stops further mutation and cannot publish stale success. Pause/cancel/claim observation must also
+  surround each source-directory removal. The user-visible result must remain one monotonically
+  advancing transfer even when SMB/OpenList/S3 stalls: no duplicate progress, contradictory result,
+  repeated Copy/Move/Delete or source cleanup from a second Worker. Add a two-Worker regression that
+  advances beyond the lease while one Storage call is blocked and proves the second Worker neither
+  claims nor invokes Storage until ownership is safely relinquished, then prove takeover continues
+  only from the last persisted safe checkpoint after the first Worker is genuinely lost.
+- Unexpected execution failures leave contradictory durable state and a permanently running Web
+  projection. B toggled a same-Storage provider to raise `OSError` after admission: the Worker
+  returned `files_transfers.status=failed`, but the Task remained `running`, the projection reported
+  `status=RUNNING`, `terminal=false`, and its next action said the transfer was still running.
+  Atomically or monotonically converge the transfer, Task, unfinished TaskItems and bounded Result/
+  recovery evidence on every Worker failure. A failure before mutation becomes terminal `FAILED`
+  with retained source and a safe retry action; completed known effects plus a later failure become
+  `PARTIAL`; an effect that cannot be proven becomes terminal `UNCERTAIN` and investigation-only.
+  The Files and Operations projections must agree, stop polling as running, retain independent item
+  outcomes and explain what exists, whether retry is safe and the exact refresh/inspect/resubmit
+  action without leaking the provider exception. Terminal publication itself must be idempotent and
+  recoverable if the process stops between item completion and aggregate completion. Add
+  fault-injection regressions for exceptions before the first mutation, during an item, after a
+  known effect, and during terminal publication/reload; assert the Task, transfer, every unfinished
+  TaskItem, Result and Web projection all converge to the same truthful terminal semantics.
+- Resident Worker snapshot compatibility is not enforced at claim. `_files_transfer_worker_context`
+  binds one `DirectFileTransferService` to the Active revision only when the Worker process starts,
+  while `claim_next_files_transfer` selects any admitted/running transfer without filtering its
+  pinned revision. B activated a successor revision, admitted a valid transfer under it, and let the
+  still-running old-revision Worker poll: it claimed the new transfer and irreversibly failed it as
+  stale before mutation (`worker_claimed=True`, transfer/projection `FAILED`). Make the pinned
+  revision/digest part of claim compatibility. Prefer reconstructing the exact persisted immutable
+  runtime and Storage bindings for the claimed transfer, consistent with the existing Worker
+  architecture; if a Worker cannot lawfully construct that snapshot, it must leave the transfer
+  queued with bounded readiness/recovery evidence for a compatible Worker rather than consuming it
+  as a business failure. A later Active may never replace the pinned authority of already admitted
+  work, and an older Worker may never execute or terminally fail newer compatible work merely due to
+  process age. The user-visible result must be that activating a ResourceLibrary does not require a
+  hidden Worker restart: transfers admitted before activation continue under their old snapshot,
+  transfers admitted afterward queue and execute under the new snapshot, and neither group silently
+  switches authority. Add a resident-Worker regression covering activation while the process stays
+  live, both older and newer pinned queued transfers, missing/corrupt pinned runtime recovery, and
+  proof that no incompatible Worker calls OrganizerExecutor or marks otherwise valid work failed.
