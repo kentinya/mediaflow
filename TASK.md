@@ -756,7 +756,7 @@ not satisfy the browser assertion.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: __HEAD_SHA__
+Head SHA: 1cc414b4f12f54b0f2db4aeb4fa17ac7f7876510
 ```
 
 
