@@ -889,7 +889,10 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertEqual(activated.status.value, "active")
                 self._assert_runtime_empty(runtime_database)
                 self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 10)
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 34)
+                # Runtime schema 35 adds the bounded in-flight
+                # transfer-progress column on task_items for interrupted
+                # Files transfer recovery.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 35)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

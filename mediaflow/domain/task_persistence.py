@@ -40,6 +40,13 @@ FILES_DELETE_TASK_COMMAND = "files_delete"
 #: independent per-item/per-entry outcomes.
 FILES_TRANSFER_TASK_COMMAND = "files_transfer"
 
+#: Task-item stage recorded for a transfer item the running process never
+#: completed: the process ended (or lost the item) between admission and the
+#: final per-item outcome record.  The recorded entry progress before the
+#: marker stays the only known-safe evidence; the item is an explicit
+#: interrupted/investigation state and is never silently retried.
+TRANSFER_INTERRUPTED_STAGE = "transfer_interrupted"
+
 
 class PersistentTaskStatus(StrEnum):
     PENDING = "pending"
@@ -121,6 +128,12 @@ class PersistentTaskItem:
     source_occurrence_id: str | None = None
     source_fingerprint: str | None = None
     source_fingerprint_state: str = "unverified"
+    # Added in runtime schema 35: the bounded in-flight transfer progress of one
+    # direct Files Copy/Move item.  A JSON object with aggregate counters and a
+    # truncated per-entry list, or None for non-transfer items.  It is only an
+    # in-flight marker: once the terminal item outcome is persisted, the field
+    # is cleared and the Result carries the authoritative identity/checkpoints.
+    progress: str | None = None
 
 
 @dataclass(frozen=True)

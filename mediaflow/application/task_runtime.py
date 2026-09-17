@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -336,6 +337,10 @@ class PersistentTaskCoordinator:
         error: str | None = None,
         effect_certainty: str = "none",
         uncertain_effects: tuple[str, ...] = (),
+        destination_storage_id: str | None = None,
+        completed_operations: tuple[str, ...] = (),
+        execution_status: str | None = None,
+        stage: str | None = None,
     ) -> None:
         """Persist one direct Files command outcome and release its lock.
 
@@ -343,6 +348,10 @@ class PersistentTaskCoordinator:
         durable record is the bounded operation, status and executor-owned
         effect evidence only.  The persisted source/target identity is the
         bounded logical ResourceLibrary-relative path, never the host root.
+        A transfer item persists its exact destination Storage identity and
+        its executor-owned completed checkpoints, so reloading the Task or
+        Result detail reproduces the truthful known state without the original
+        HTTP response.
         """
 
         now = datetime.now(UTC)
@@ -353,14 +362,18 @@ class PersistentTaskCoordinator:
         completed = replace(
             item,
             status=status,
-            stage="completed" if not status.retryable else "failed",
+            stage=stage or ("completed" if not status.retryable else "failed"),
             updated_at=now,
-            destination_storage_id=item.storage_id,
+            destination_storage_id=destination_storage_id or item.storage_id,
             destination_path=target_display,
             execution_status=(
-                ExecutionStatus.SUCCESS.value if status is TaskItemStatus.SUCCESS else None
+                execution_status
+                if execution_status is not None
+                else (ExecutionStatus.SUCCESS.value if status is TaskItemStatus.SUCCESS else None)
             ),
             error=error,
+            # The in-flight progress marker is consumed by the terminal outcome.
+            progress=None,
         )
         record = PersistentResultRecord(
             f"{item.item_id}:{item.attempts}",
@@ -368,7 +381,7 @@ class PersistentTaskCoordinator:
             item.item_id,
             item.storage_id,
             source_display,
-            item.storage_id,
+            completed.destination_storage_id,
             target_display,
             None,
             None,
@@ -381,6 +394,7 @@ class PersistentTaskCoordinator:
             status.value,
             now,
             error=error,
+            completed_operations=tuple(completed_operations),
             effect_certainty=effect_certainty,
             uncertain_effects=uncertain_effects,
         )
@@ -393,6 +407,66 @@ class PersistentTaskCoordinator:
                 self.repository.upsert_item(completed)
         finally:
             self.locks.release(item.storage_id, item.source_path, item.task_id)
+
+    def record_transfer_progress(
+        self,
+        item: PersistentTaskItem,
+        *,
+        destination_storage_id: str,
+        destination_resource_library_id: str,
+        destination_path: str,
+        operation: str,
+        conflict_mode: str,
+        status: TaskItemStatus,
+        confirmed_entries: tuple[tuple[str, str, str], ...],
+        confirmed_truncated: bool,
+        entries: tuple[dict[str, object], ...],
+        completed_entries: int,
+        failed_entries: int,
+        skipped_entries: int,
+        truncated: bool,
+    ) -> None:
+        """Persist the bounded in-flight progress of one transfer item.
+
+        The snapshot is the process-interruption authority: a TaskItem left
+        ``PROCESSING`` keeps its confirmed per-entry scope, its endpoint
+        identities and its recorded per-entry outcomes durable, so recovery
+        continues only from the recorded known-safe state instead of guessing
+        or re-enumerating a possibly changed source.  Both lists are bounded;
+        the aggregate counters stay exact even when a list is truncated.
+        """
+
+        payload = json.dumps(
+            {
+                "version": 1,
+                "status": status.value,
+                "operation": operation,
+                "conflictMode": conflict_mode,
+                "destinationStorageId": destination_storage_id,
+                "destinationResourceLibraryId": destination_resource_library_id,
+                "destinationPath": destination_path,
+                "confirmedEntries": [list(entry) for entry in confirmed_entries],
+                "confirmedTruncated": confirmed_truncated,
+                "completedEntries": completed_entries,
+                "failedEntries": failed_entries,
+                "skippedEntries": skipped_entries,
+                "truncated": truncated,
+                "entries": entries,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        snapshot = replace(
+            item,
+            status=status,
+            stage=item.stage,
+            updated_at=datetime.now(UTC),
+            destination_storage_id=destination_storage_id,
+            destination_path=destination_path,
+            progress=payload,
+        )
+        self.repository.upsert_item(snapshot)
 
     def wait_for_confirmation(
         self,

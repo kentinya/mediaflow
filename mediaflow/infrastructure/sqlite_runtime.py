@@ -203,7 +203,10 @@ from mediaflow.infrastructure.file_index_schema import (
 # 34 adds the durable Processing-Worker claim/lease columns on
 # ``manual_executions`` so an admitted exact manual Organize execution is
 # picked up by the resident Worker instead of running inside the API request.
-SCHEMA_VERSION = 34
+# 35 adds the bounded in-flight transfer-progress column on ``task_items`` so a
+# direct Files Copy/Move item interrupted mid-directory keeps its known-safe
+# per-entry progress durable and diagnosable instead of only in memory.
+SCHEMA_VERSION = 35
 
 _ATTENTION_TASK_ITEM_STATUSES = (
     TaskItemStatus.WAITING_CONFIRM.value,
@@ -823,7 +826,7 @@ class SQLiteTaskRepository:
             self._connection.execute(
                 """
                 INSERT INTO task_items VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(item_id) DO UPDATE SET
                     status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
@@ -831,6 +834,7 @@ class SQLiteTaskRepository:
                     destination_storage_id=excluded.destination_storage_id,
                     destination_path=excluded.destination_path,
                     execution_status=excluded.execution_status, error=excluded.error,
+                    progress=excluded.progress,
                     source_occurrence_id=COALESCE(
                         excluded.source_occurrence_id, task_items.source_occurrence_id
                     ),
@@ -2263,7 +2267,7 @@ class SQLiteTaskRepository:
             self._connection.execute(
                 """
                 INSERT INTO task_items VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                 )
                 ON CONFLICT(item_id) DO UPDATE SET
                     status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
@@ -2271,6 +2275,7 @@ class SQLiteTaskRepository:
                     destination_storage_id=excluded.destination_storage_id,
                     destination_path=excluded.destination_path,
                     execution_status=excluded.execution_status, error=excluded.error,
+                    progress=excluded.progress,
                     source_occurrence_id=COALESCE(
                         excluded.source_occurrence_id, task_items.source_occurrence_id
                     ),
@@ -7478,7 +7483,7 @@ class SQLiteTaskRepository:
                     task_item = self._bind_item_to_current_occurrence(task_item)
                     self._connection.execute(
                         "INSERT INTO task_items VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         self._item_values(task_item),
                     )
                     self._connection.execute(
@@ -7792,13 +7797,14 @@ class SQLiteTaskRepository:
                 task_item = self._bind_item_to_current_occurrence(task_item)
                 self._connection.execute(
                     """INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?)
+                    ?, ?, ?, ?, ?)
                     ON CONFLICT(item_id) DO UPDATE SET
                         status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
                         updated_at=excluded.updated_at, plan_id=excluded.plan_id,
                         destination_storage_id=excluded.destination_storage_id,
                         destination_path=excluded.destination_path,
                         execution_status=excluded.execution_status, error=excluded.error,
+                        progress=excluded.progress,
                         source_occurrence_id=COALESCE(
                             excluded.source_occurrence_id, task_items.source_occurrence_id
                         ),
@@ -7928,7 +7934,7 @@ class SQLiteTaskRepository:
                     task_item = self._bind_item_to_current_occurrence(task_item)
                     self._connection.execute(
                         """INSERT INTO task_items VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
                         )
                         ON CONFLICT(item_id) DO UPDATE SET
                             status=excluded.status, stage=excluded.stage,
@@ -7937,6 +7943,7 @@ class SQLiteTaskRepository:
                             destination_storage_id=excluded.destination_storage_id,
                             destination_path=excluded.destination_path,
                             execution_status=excluded.execution_status, error=excluded.error,
+                            progress=excluded.progress,
                             source_occurrence_id=COALESCE(
                                 excluded.source_occurrence_id, task_items.source_occurrence_id
                             ),
@@ -8594,7 +8601,7 @@ class SQLiteTaskRepository:
                     source_display TEXT NOT NULL, status TEXT NOT NULL, stage TEXT NOT NULL,
                     attempts INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     plan_id TEXT, destination_storage_id TEXT, destination_path TEXT,
-                    execution_status TEXT, error TEXT,
+                    execution_status TEXT, error TEXT, progress TEXT,
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
@@ -9320,6 +9327,12 @@ class SQLiteTaskRepository:
                 self._connection.execute(
                     "ALTER TABLE tasks ADD COLUMN configuration_snapshot_digest TEXT"
                 )
+            item_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(task_items)").fetchall()
+            }
+            if "progress" not in item_columns:
+                self._connection.execute("ALTER TABLE task_items ADD COLUMN progress TEXT")
             job_columns = {
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()
@@ -10102,6 +10115,10 @@ class SQLiteTaskRepository:
             item.destination_path,
             item.execution_status,
             item.error,
+            # task_items physical column order places ``progress`` directly
+            # after ``error``; the occurrence columns were appended by a later
+            # additive migration and therefore come last.
+            item.progress,
             item.source_occurrence_id,
             item.source_fingerprint,
             item.source_fingerprint_state,
@@ -10153,6 +10170,7 @@ class SQLiteTaskRepository:
             row["source_fingerprint_state"]
             if "source_fingerprint_state" in row.keys()
             else "unverified",
+            row["progress"] if "progress" in row.keys() else None,
         )
 
     @staticmethod

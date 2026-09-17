@@ -152,6 +152,7 @@ from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
 )
 from mediaflow.domain.task_persistence import (
+    FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
     PersistentTaskStatus,
 )
@@ -6195,11 +6196,20 @@ class MediaFlowApi:
             expected_version = self._control_version(environ, f"Task {parts[4]} control")
             service = TaskLifecycleService(self._repository)
             if action == "resume":
+                task = service.require(parts[3])
+                service.require_version(task, expected_version)
+                if task.command == FILES_TRANSFER_TASK_COMMAND and (
+                    binding.direct_transfers is not None
+                ):
+                    # The one Task kind with a persisted, bounded continuation
+                    # authority: the transfer continues only from each item's
+                    # recorded known-safe checkpoint, never by replaying an
+                    # uncertain mutation.
+                    resumed = binding.direct_transfers.resume_transfer(task.task_id)
+                    return self._response(start_response, 200, resumed)
                 # No durable queued continuation of one exact paused scope
                 # exists today, so the transition is refused with the same
                 # actionable reason the projection states.
-                task = service.require(parts[3])
-                service.require_version(task, expected_version)
                 raise OperationsLifecycleConflict(
                     "resume_unavailable",
                     "pausing is cooperative, but resuming one exact paused Task scope is not "

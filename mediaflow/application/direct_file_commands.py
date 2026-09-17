@@ -134,6 +134,7 @@ class DirectFileCommandService:
         self._revision = active_revision
         self._runtime_configuration = runtime_configuration
         self._storage_adapters = dict(storage_adapters or {})
+        self._storage_cache: dict[str, Storage] = {}
         self._executor = executor or OrganizerExecutor()
         self._tasks = PersistentTaskCoordinator(task_repository, task_repository)
         self._libraries: dict[str, ResourceLibrary] = {
@@ -760,6 +761,14 @@ class DirectFileCommandService:
             )
 
     def _open_storage(self, library: ResourceLibrary) -> Storage:
+        # One adapter instance per configured Storage identity for the whole
+        # service lifetime (the pinned Active snapshot boundary).  Normal
+        # runtime adapter construction may otherwise return a new object per
+        # call, and no business decision may depend on incidental object
+        # identity.
+        cached = self._storage_cache.get(library.storage_id)
+        if cached is not None:
+            return cached
         try:
             storages = self._runtime_configuration.create_storages(
                 external=dict(self._storage_adapters), storage_ids={library.storage_id}
@@ -776,6 +785,7 @@ class DirectFileCommandService:
                 resource_library_id=library.library_id,
                 next_action="check the Storage configuration and retry",
             )
+        self._storage_cache[library.storage_id] = storage
         return storage
 
     def _require_writable_storage(self, library: ResourceLibrary) -> Storage:

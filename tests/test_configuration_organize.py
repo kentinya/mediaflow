@@ -599,7 +599,9 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 34)
+                # Runtime schema 35 adds the bounded in-flight transfer-progress
+                # column on task_items for interrupted Files transfer recovery.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 35)
 
                 optional = copy.deepcopy(document)
                 optional.pop("organizePolicies")

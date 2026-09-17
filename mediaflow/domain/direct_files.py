@@ -51,6 +51,12 @@ MAX_TRANSFER_DEPTH = 32
 #: Largest total byte size one bounded transfer may cover.
 MAX_TRANSFER_BYTES = 20 * 1024**3
 
+#: Most manifest entries one durable transfer progress snapshot may record
+#: before later entry progress is folded into the aggregate counts.  Reloading
+#: a Task must always reproduce a bounded document, and the outcome of one
+#: truncated entry is independently derivable from the aggregate counters.
+MAX_TRANSFER_PROGRESS_ENTRIES = 512
+
 #: Reserved Windows device names that must never be created through a name
 #: field because SMB shares reject or dangerously reinterpret them.
 _WINDOWS_RESERVED_NAMES = frozenset(
