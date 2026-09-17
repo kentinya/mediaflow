@@ -571,6 +571,9 @@ function resourceLibraryState(session) {
       emptied: false,
       textStale: false,
       commandLog: [],
+      // The admitted Files transfers of this session, keyed by Task ID: the
+      // fake Worker advances each one through queued -> running -> terminal.
+      filesTransfers: new Map(),
     };
     RESOURCE_LIBRARY_STATES.set(key, value);
   }
@@ -5132,13 +5135,47 @@ const server = createServer(async (req, res) => {
         return;
       }
       const paths = fields.paths ?? [];
-      sendJson(res, 200, {
+      // One durable identity per admitted transfer, so concurrent/serial
+      // submissions keep independent projections.
+      const taskId = `task-e2e-transfer-${state.filesTransfers.size + 1}`;
+      // Durable admission: the queued identity returns immediately and no
+      // Storage mutation happens on this request.  The fake Worker advances
+      // the admitted transfer to its terminal projection asynchronously so
+      // the browser journey is the real queued -> running -> terminal one.
+      const transfer = {
+        taskId,
+        status: "QUEUED",
+        terminal: false,
+        version: new Date().toISOString(),
+        operation: fields.operation,
+        conflictMode: fields.conflictMode,
+        destinationResourceLibraryId: fields.destinationResourceLibraryId,
+        paths,
+      };
+      state.filesTransfers.set(taskId, transfer);
+      setTimeout(() => {
+        const current = state.filesTransfers.get(taskId);
+        if (current && !current.terminal && current.status === "QUEUED") {
+          current.status = "RUNNING";
+          current.version = new Date().toISOString();
+        }
+      }, 400);
+      setTimeout(() => {
+        const current = state.filesTransfers.get(taskId);
+        if (current && !current.terminal && current.status === "RUNNING") {
+          current.status = fields.operation === "move" ? "PARTIAL" : "SUCCESS";
+          current.terminal = true;
+          current.version = new Date().toISOString();
+        }
+      }, 900);
+      sendJson(res, 202, {
         operation: fields.operation,
         conflictMode: fields.conflictMode,
         sameStorage: fields.destinationResourceLibraryId === resourceLibraryId,
-        status: "SUCCESS",
-        taskId: "task-e2e-transfer",
-        taskStatus: "completed",
+        status: "QUEUED",
+        admitted: true,
+        taskId,
+        taskStatus: "pending",
         resourceLibraryId,
         destinationResourceLibraryId: fields.destinationResourceLibraryId,
         topLevelPaths: paths,
@@ -5149,35 +5186,121 @@ const server = createServer(async (req, res) => {
               ? ""
               : `${fields.destinationDirectory}/`) + path,
         })),
-        knownEffects: paths.map((path) => ({
-          path,
-          effect: "transferred",
-          status: "SUCCESS",
-        })),
-        checkpoints: paths.map((path) => ({
+        knownEffects: [],
+        itemOutcomes: paths.map((path) => ({
           path,
           destination: path,
-          checkpoints: ["COPY_WRITTEN", "DESTINATION_VERIFIED"],
-          status: "SUCCESS",
+          status: "QUEUED",
         })),
+        checkpoints: [],
         checkpointsTruncated: false,
-        totalItems: paths.length,
-        succeededItems: paths.length,
-        failedItems: 0,
-        outcomes: paths.map((path) => ({
-          path,
-          destination: path,
-          status: "SUCCESS",
-          checkpoints: ["COPY_WRITTEN", "DESTINATION_VERIFIED"],
-        })),
+        outcomes: [],
         outcomesTruncated: false,
-        sideEffects: "storage_mutations",
-        retrySafe: false,
+        totalItems: paths.length,
+        succeededItems: 0,
+        skippedItems: 0,
+        failedItems: 0,
+        sideEffects: "none",
+        retrySafe: true,
         nextAction:
-          "refresh the source and destination directories to see the current state",
+          "the transfer is admitted and queued; progress appears below",
       });
       return;
     }
+  }
+  const transferProjectionMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/transfers\/([^/]+)$/,
+  );
+  if (transferProjectionMatch && req.method === "GET") {
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const resourceLibraryId = decodeURIComponent(transferProjectionMatch[1]);
+    const transfer = resourceLibraryState(session).filesTransfers.get(
+      decodeURIComponent(transferProjectionMatch[2]),
+    );
+    if (!transfer) {
+      sendJson(res, 404, {
+        error: {
+          code: "not_found",
+          message: "no bounded Files transfer Task exists under this identity",
+        },
+      });
+      return;
+    }
+    const terminal = transfer.terminal;
+    const allDone = transfer.status === "SUCCESS";
+    sendJson(res, 200, {
+      operation: transfer.operation,
+      conflictMode: transfer.conflictMode,
+      taskId: transfer.taskId,
+      taskStatus: terminal
+        ? allDone
+          ? "completed"
+          : "partial_success"
+        : transfer.status === "QUEUED"
+          ? "pending"
+          : "running",
+      resourceLibraryId,
+      destinationResourceLibraryId: transfer.destinationResourceLibraryId,
+      topLevelPaths: transfer.paths,
+      knownEffects: transfer.paths.map((path) => ({
+        path,
+        effect: terminal
+          ? allDone
+            ? "transferred"
+            : "partial"
+          : "in_progress",
+        status: terminal ? "SUCCESS" : "RUNNING",
+      })),
+      itemOutcomes: transfer.paths.map((path) => ({
+        path,
+        destination: path,
+        status: terminal ? "SUCCESS" : "RUNNING",
+      })),
+      outcomes: transfer.paths.map((path) => ({
+        path,
+        destination: path,
+        status: terminal ? "SUCCESS" : "RUNNING",
+        checkpoints: terminal ? ["COPY"] : [],
+      })),
+      outcomesTruncated: false,
+      totalItems: transfer.paths.length,
+      succeededItems: terminal && allDone ? transfer.paths.length : 0,
+      skippedItems: 0,
+      failedItems: terminal && !allDone ? transfer.paths.length : 0,
+      status: terminal ? transfer.status : transfer.status,
+      terminal,
+      version: transfer.version,
+      actions: terminal
+        ? [
+            { action: "pause", available: false },
+            { action: "cancel", available: false },
+            { action: "resume", available: false },
+          ]
+        : [
+            {
+              action: "pause",
+              available: transfer.status === "RUNNING",
+              path: `/api/v1/tasks/${transfer.taskId}/pause`,
+            },
+            {
+              action: "cancel",
+              available: true,
+              path: `/api/v1/tasks/${transfer.taskId}/cancel`,
+            },
+            { action: "resume", available: false },
+          ],
+      sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
+      retrySafe: false,
+      nextAction: terminal
+        ? "refresh the source and destination directories to see the current state"
+        : "the transfer progress appears here; pause or cancel only when offered",
+    });
+    return;
   }
   const removalPreviewMatch = url.pathname.match(
     /^\/api\/v1\/resource-libraries\/([^/]+)\/removal-preview$/,
@@ -6082,6 +6205,53 @@ const server = createServer(async (req, res) => {
       return;
     }
     const taskId = decodeURIComponent(taskControlMatch[1]);
+    const admittedTransfer =
+      resourceLibraryState(session).filesTransfers.get(taskId);
+    if (admittedTransfer) {
+      const transfer = admittedTransfer;
+      if (transfer.terminal) {
+        sendJson(res, 409, {
+          error: {
+            code: "pause_unavailable",
+            details: {
+              category: "lifecycle_conflict",
+              durableState: "the transfer already reached a terminal state",
+              nextAction: "reload the transfer projection",
+            },
+          },
+        });
+        return;
+      }
+      if (action === "pause" && transfer.status !== "RUNNING") {
+        sendJson(res, 409, {
+          error: {
+            code: "pause_unavailable",
+            details: {
+              category: "lifecycle_conflict",
+              durableState: `a ${transfer.status.toLowerCase()} transfer cannot accept a pause request`,
+              nextAction: "reload the transfer projection and retry",
+            },
+          },
+        });
+        return;
+      }
+      transfer.status =
+        action === "resume"
+          ? "QUEUED"
+          : action === "pause"
+            ? "PAUSED"
+            : "CANCELLED";
+      transfer.terminal = action === "cancel";
+      transfer.version = new Date().toISOString();
+      sendJson(res, 200, {
+        action,
+        taskId: transfer.taskId,
+        sideEffects: "none",
+        retrySafe: false,
+        nextAction: "follow the transfer projection for the observed state",
+      });
+      return;
+    }
     const task = FAKE_TASKS.find((t) => t.task_id === taskId);
     if (!task) {
       sendJson(res, 404, { error: { code: "not_found" } });

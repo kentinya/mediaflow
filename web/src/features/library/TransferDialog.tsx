@@ -1,15 +1,20 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type TransferConflictMode,
   type TransferImpactModel,
   type TransferItemOutcome,
+  type TransferLifecycleAction,
   type TransferOperation,
-  type TransferResultModel,
+  type TransferProjectionModel,
 } from "../../entities/library/direct-files";
 import { ModalDialog } from "./FileCommandDialogs";
 import { storageFilesQueryOptions } from "./storage-files-query";
-import { fetchTransferImpact } from "../../shared/api/api-client";
+import {
+  fetchTransferImpact,
+  fetchTransferProjection,
+  mutateTransferLifecycle,
+} from "../../shared/api/api-client";
 import type { SystemResourceLibrary } from "../../entities/library/system-status";
 
 /**
@@ -19,9 +24,13 @@ import type { SystemResourceLibrary } from "../../entities/library/system-status
  * browser: the operator selects an enabled destination ResourceLibrary and a
  * confined directory, sees the exact selection and capability truth, and
  * submits once.  Opening, navigating and cancelling perform zero mutation and
- * create no Task; only the single explicit submit runs the impact-confirmed
- * transfer.  Entered context survives a recoverable failure, duplicate
- * submission is prevented, and Escape still cancels.
+ * create no Task; only the single explicit submit admits the transfer.  The
+ * submission returns the durable queued identity immediately (no Storage
+ * mutation happens on the browser request), the dialog then follows the
+ * bounded durable projection by polling, and pause/cancel/resume are offered
+ * only when the backend projection advertises them — never as raw Task-ID or
+ * execution-token ceremony.  Entered context survives a recoverable failure,
+ * duplicate submission is prevented, and Escape still closes.
  */
 
 export type TransferKind = TransferOperation;
@@ -52,6 +61,12 @@ const CONFLICT_CHOICES: readonly {
     hint: "为传输内容生成“名称 (1)”这样的唯一名称，两个版本都保留。",
   },
 ];
+
+const ACTION_LABELS: Record<string, string> = {
+  pause: "请求暂停",
+  cancel: "取消",
+  resume: "继续传输",
+};
 
 function transferFailureMessage(
   code: string,
@@ -98,7 +113,12 @@ function transferFailureMessage(
   }
 }
 
-export function transferResultMessage(model: TransferResultModel): string {
+export function transferStatusMessage(model: {
+  readonly status: string;
+  readonly succeededItems: number;
+  readonly skippedItems?: number;
+  readonly failedItems: number;
+}): string {
   switch (model.status) {
     case "SUCCESS":
       return `传输完成 ${model.succeededItems} 项；结果已记录。`;
@@ -106,8 +126,12 @@ export function transferResultMessage(model: TransferResultModel): string {
       return `所选项全部按冲突选择跳过（${model.skippedItems ?? 0} 项）；目标与来源均未改动。`;
     case "PARTIAL":
       return `传输部分完成：成功 ${model.succeededItems} 项，跳过 ${model.skippedItems ?? 0} 项，未完成 ${model.failedItems} 项；每项结果独立记录，未自动重试。`;
+    case "QUEUED":
+      return "传输已确认并排队等待执行；进度会显示在这里。";
+    case "RUNNING":
+      return "传输正在执行；每项进度会显示在这里。";
     case "PAUSED":
-      return "传输已暂停；已完成项保持有效，可从任务中继续。";
+      return "传输已在安全边界暂停；已完成部分保持有效，可继续传输。";
     case "CANCELLED":
       return "传输已取消；已完成项保持有效，其余项保持原状。";
     case "UNCERTAIN":
@@ -123,6 +147,19 @@ const OUTCOME_STATUS_LABELS: Record<string, string> = {
   PARTIAL: "部分完成",
   UNCERTAIN: "结果不确定",
   FAILED: "未完成",
+  QUEUED: "排队中",
+  RUNNING: "执行中",
+  PAUSED: "已暂停",
+  CANCELLED: "已取消",
+};
+
+const EFFECT_LABELS: Record<string, string> = {
+  transferred: "已传输",
+  skipped: "已跳过",
+  partial: "部分完成",
+  uncertain: "结果不确定",
+  retained: "未改动",
+  in_progress: "进行中",
 };
 
 /**
@@ -174,10 +211,11 @@ export function TransferDialog({
   currentLibraryId,
   token,
   submitting,
+  admittedTaskId,
   error,
-  result,
   onSubmit,
   onImpactFailure,
+  onTerminal,
   onClose,
 }: {
   readonly state: TransferDialogState;
@@ -185,31 +223,44 @@ export function TransferDialog({
   readonly currentLibraryId: string;
   readonly token: string | null;
   readonly submitting: boolean;
+  /** The durable identity returned by the admission response, if any. */
+  readonly admittedTaskId: string | null;
   readonly error: string | null;
-  readonly result: TransferResultModel | null;
   readonly onSubmit: (options: {
     readonly impact: TransferImpactModel;
     readonly conflictMode: TransferConflictMode;
   }) => void;
   readonly onImpactFailure: (message: string) => void;
+  /** Fired once when the followed transfer reaches a terminal projection. */
+  readonly onTerminal: (projection: TransferProjectionModel) => void;
   readonly onClose: () => void;
 }) {
+  const queryClient = useQueryClient();
   const [destinationLibraryId, setDestinationLibraryId] =
     useState(currentLibraryId);
   const [destinationPath, setDestinationPath] = useState("");
   const [conflictMode, setConflictMode] =
     useState<TransferConflictMode>("fail");
   // The impact fetch is part of one submission: the window between clicking
-  // the submit button and the execution mutation becoming pending must also
+  // the submit button and the admission mutation becoming pending must also
   // prevent duplicate submits.
   const [impactPending, setImpactPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionPending, setActionPending] = useState<string | null>(null);
+  // A synchronous guard across the whole impact+admission window: the async
+  // state flags alone leave one render turn in which a second click could
+  // start a duplicate submission.
+  const submitGuard = useRef(false);
   const working = submitting || impactPending;
+  const terminalNotified = useRef<string | null>(null);
+
   const destinationQuery = useQuery({
     ...storageFilesQueryOptions(token, {
       resourceLibraryId: destinationLibraryId,
       path: destinationPath,
       cursor: null,
     }),
+    enabled: admittedTaskId === null,
     retry: false,
   });
   const destinationModel = useMemo(
@@ -229,15 +280,59 @@ export function TransferDialog({
   // The destination browse failure is derived render state, not an effect:
   // the picker never fabricates a selectable directory after a failed read.
   const browseError =
-    destinationQuery.data !== undefined && !destinationQuery.data.ok
+    admittedTaskId === null &&
+    destinationQuery.data !== undefined &&
+    !destinationQuery.data.ok
       ? destinationQuery.data.failure.kind === "not_found"
         ? "目标目录不存在或已被移动；请返回上级目录重新选择。"
         : "目标目录读取失败；请刷新或返回根目录重试。"
       : null;
-  const done = result !== null;
+
+  // The durable projection is polled while the admitted transfer works; the
+  // interval stops once the Task reaches a terminal state.
+  const projectionQuery = useQuery({
+    queryKey: ["files-transfer", admittedTaskId],
+    queryFn: () => {
+      if (admittedTaskId === null) throw new Error("unreachable");
+      return fetchTransferProjection(token, currentLibraryId, admittedTaskId);
+    },
+    enabled: admittedTaskId !== null && token !== null,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && data.ok && data.model.terminal) {
+        return false;
+      }
+      return 1000;
+    },
+    retry: false,
+  });
+  const projection: TransferProjectionModel | null = useMemo(
+    () =>
+      projectionQuery.data !== undefined && projectionQuery.data.ok
+        ? projectionQuery.data.model
+        : null,
+    [projectionQuery.data],
+  );
+
+  // Terminal projection: hand the durable outcome to the page exactly once so
+  // it can refresh live source/destination truth and prune only selection
+  // whose physical truth changed.
+  useEffect(() => {
+    if (
+      projection !== null &&
+      projection.terminal &&
+      terminalNotified.current !== projection.taskId
+    ) {
+      terminalNotified.current = projection.taskId;
+      onTerminal(projection);
+    }
+  }, [projection, onTerminal]);
+
   const submit = async () => {
-    if (impactPending || submitting) return;
+    if (submitGuard.current || impactPending || submitting) return;
+    submitGuard.current = true;
     setImpactPending(true);
+    let admitted = false;
     try {
       const read = await fetchTransferImpact(token, currentLibraryId, {
         operation: state.operation,
@@ -254,112 +349,189 @@ export function TransferDialog({
         );
         return;
       }
+      admitted = true;
       onSubmit({ impact: read.model, conflictMode });
     } finally {
       setImpactPending(false);
+      if (!admitted) {
+        // A recoverable failure keeps the dialog editable; the guard opens
+        // again only after the failed attempt, never during the in-flight
+        // window.
+        submitGuard.current = false;
+      }
     }
   };
+
+  const runAction = async (action: TransferLifecycleAction) => {
+    if (projection === null || actionPending !== null || !action.available)
+      return;
+    setActionPending(action.action);
+    setActionError(null);
+    const result = await mutateTransferLifecycle(
+      token,
+      projection.taskId,
+      action.action as "pause" | "cancel" | "resume",
+      projection.version,
+    );
+    setActionPending(null);
+    if (!result.ok) {
+      setActionError(
+        action.action === "resume"
+          ? "继续传输未被执行；请刷新后重试，或提交一次新的传输。"
+          : action.action === "pause"
+            ? "暂停请求未生效；该传输可能刚刚到达终点。"
+            : "取消请求未生效；该传输可能刚刚到达终点。",
+      );
+      return;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["files-transfer", projection.taskId],
+    });
+  };
+
+  const done = admittedTaskId !== null;
+  const terminal = projection?.terminal === true;
+  // Once a transfer is admitted the dialog follows the durable projection;
+  // the title names the followed journey instead of a result-only state.
   const title = done
     ? state.operation === "copy"
-      ? "复制结果"
-      : "移动结果"
+      ? "复制进度"
+      : "移动进度"
     : state.operation === "copy"
       ? "复制到…"
       : "移动到…";
+  const availableActions = (projection?.actions ?? []).filter(
+    (action) => action.available,
+  );
   return (
     <ModalDialog
       title={title}
       onClose={onClose}
       busy={submitting}
       footer={
-        done ? (
-          <button
-            type="button"
-            className="mf-button mf-button-primary"
-            onClick={onClose}
-          >
-            关闭
-          </button>
-        ) : (
-          <>
+        <>
+          {terminal && admittedTaskId !== null ? (
+            <button
+              type="button"
+              className="mf-button mf-button-primary"
+              onClick={onClose}
+            >
+              关闭
+            </button>
+          ) : done ? (
             <button
               type="button"
               className="mf-button mf-button-secondary"
               onClick={onClose}
-              disabled={working}
             >
-              取消
+              后台跟踪
             </button>
-            <button
-              type="button"
-              className="mf-button mf-button-primary"
-              onClick={() => void submit()}
-              disabled={working || browseError !== null}
-              aria-busy={working}
-            >
-              {working
-                ? state.operation === "copy"
-                  ? "复制中…"
-                  : "移动中…"
-                : state.operation === "copy"
-                  ? "复制"
-                  : "移动"}
-            </button>
-          </>
-        )
+          ) : (
+            <>
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={onClose}
+                disabled={working}
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                className="mf-button mf-button-primary"
+                onClick={() => void submit()}
+                disabled={working || browseError !== null}
+                aria-busy={working}
+              >
+                {working
+                  ? state.operation === "copy"
+                    ? "复制中…"
+                    : "移动中…"
+                  : state.operation === "copy"
+                    ? "复制"
+                    : "移动"}
+              </button>
+            </>
+          )}
+        </>
       }
     >
       {done ? (
         <>
           <p className="mf-dialog-hint" role="status">
-            {transferResultMessage(result)}
+            {projection === null
+              ? "正在读取传输进度…"
+              : transferStatusMessage(projection)}
           </p>
-          {result.durableState === "mutation_effect_uncertain" && (
-            <p className="mf-dialog-error" role="alert">
-              存在不确定的结果（例如移动源删除未确认）；请刷新目录核实，未自动重试。
-            </p>
-          )}
-          <ul className="mf-impact-list">
-            {result.knownEffects.map((effect) => (
-              <li key={effect.path}>
-                <span>{effect.path}</span>
-                <span>
-                  {effect.effect === "transferred"
-                    ? "已传输"
-                    : effect.effect === "skipped"
-                      ? "已跳过"
-                      : effect.effect === "partial"
-                        ? "部分完成"
-                        : effect.effect === "uncertain"
-                          ? "结果不确定"
-                          : "未改动"}
-                </span>
-              </li>
-            ))}
-          </ul>
-          {result.outcomes.length > 0 && (
+          {projection !== null && (
             <>
-              <p className="mf-dialog-hint">逐项结果</p>
+              {projection.durableState === "mutation_effect_uncertain" && (
+                <p className="mf-dialog-error" role="alert">
+                  存在不确定的结果（例如移动源删除未确认）；请刷新目录核实，未自动重试。
+                </p>
+              )}
+              {actionError !== null && (
+                <p className="mf-dialog-error" role="alert">
+                  {actionError}
+                </p>
+              )}
               <ul className="mf-impact-list">
-                {result.outcomes.slice(0, 50).map((outcome) => (
-                  <li key={`${outcome.path}:${outcome.destination}`}>
-                    <span>{outcome.path}</span>
-                    <span>
-                      {OUTCOME_STATUS_LABELS[outcome.status] ?? outcome.status}
-                      {" · "}
-                      {outcomeStateLabel(outcome, result.operation)}
-                    </span>
+                {projection.knownEffects.map((effect) => (
+                  <li key={effect.path}>
+                    <span>{effect.path}</span>
+                    <span>{EFFECT_LABELS[effect.effect] ?? effect.effect}</span>
                   </li>
                 ))}
               </ul>
-              {result.outcomesTruncated && (
-                <p className="mf-dialog-hint">
-                  仅显示前 50 项的逐项结果；完整结果已记录在任务中。
-                </p>
+              {projection.outcomes.length > 0 && (
+                <>
+                  <p className="mf-dialog-hint">逐项结果</p>
+                  <ul className="mf-impact-list">
+                    {projection.outcomes.slice(0, 50).map((outcome, index) => (
+                      <li
+                        key={`${outcome.path}:${outcome.destination}:${index}`}
+                      >
+                        <span>{outcome.path}</span>
+                        <span>
+                          {OUTCOME_STATUS_LABELS[outcome.status] ??
+                            outcome.status}
+                          {" · "}
+                          {outcomeStateLabel(outcome, projection.operation)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                  {projection.outcomesTruncated && (
+                    <p className="mf-dialog-hint">
+                      仅显示前 50 项的逐项结果；完整结果已记录在任务中。
+                    </p>
+                  )}
+                </>
               )}
+              {availableActions.length > 0 && (
+                <div
+                  className="mf-transfer-actions"
+                  role="group"
+                  aria-label="传输控制"
+                >
+                  {availableActions.map((action) => (
+                    <button
+                      key={action.action}
+                      type="button"
+                      className="mf-button mf-button-secondary"
+                      disabled={actionPending !== null}
+                      onClick={() => void runAction(action)}
+                    >
+                      {actionPending === action.action
+                        ? "正在处理…"
+                        : (ACTION_LABELS[action.action] ?? action.action)}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <p className="mf-dialog-hint">{projection.nextAction}</p>
             </>
           )}
-          <p className="mf-dialog-hint">{result.nextAction}</p>
         </>
       ) : (
         <>

@@ -9,6 +9,7 @@ import os
 import re
 import secrets
 import signal
+import sys
 import threading
 import time
 from collections.abc import Callable
@@ -1217,46 +1218,58 @@ def final_main(
                 with _manual_organize_worker_context(
                     configuration, arguments.config, repository
                 ) as manual_organize_worker:
-                    worker_service = AutomationWorker(
-                        repository,
-                        lambda job, cancelled: _run_queued_workflow(
-                            job, arguments.config, cancelled, repository=repository
-                        ),
-                        NotificationPublisher(
+                    with _files_transfer_worker_context(
+                        configuration, arguments.config, repository
+                    ) as files_transfer_worker:
+                        worker_service = AutomationWorker(
                             repository,
-                            configuration.resolve_webhook_targets()
-                            if hasattr(configuration, "resolve_webhook_targets")
-                            else {},
-                        ),
-                        configuration_snapshot_id=bound_snapshot_id,
-                        configuration_snapshot_digest=bound_snapshot_digest,
-                        runtime_schema_version=SCHEMA_VERSION,
-                        manual_organize_worker=manual_organize_worker,
-                    )
-                    if arguments.worker_command == "run-next":
-                        job = worker_service.run_next()
-                        if job is not None:
-                            stdout.write(render_job(job))
-                            return 0 if job.status.value in {"completed", "cancelled"} else 1
-                        execution = manual_organize_worker.run_next()
-                        if execution is None:
-                            stdout.write("No pending automation jobs\n")
-                            return 0
-                        stdout.write(
-                            f"Manual execution ID: {execution.execution_id}\n"
-                            f"Status: {execution.status.value}\n"
+                            lambda job, cancelled: _run_queued_workflow(
+                                job, arguments.config, cancelled, repository=repository
+                            ),
+                            NotificationPublisher(
+                                repository,
+                                configuration.resolve_webhook_targets()
+                                if hasattr(configuration, "resolve_webhook_targets")
+                                else {},
+                            ),
+                            configuration_snapshot_id=bound_snapshot_id,
+                            configuration_snapshot_digest=bound_snapshot_digest,
+                            runtime_schema_version=SCHEMA_VERSION,
+                            manual_organize_worker=manual_organize_worker,
+                            files_transfer_worker=files_transfer_worker,
                         )
-                        return 0 if execution.status.value in {"completed", "cancelled"} else 1
-                    poll = arguments.poll_seconds or getattr(
-                        configuration, "worker_poll_seconds", 5.0
-                    )
-                    processed = _run_resident(
-                        lambda stop: worker_service.run(
-                            stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                        if arguments.worker_command == "run-next":
+                            job = worker_service.run_next()
+                            if job is not None:
+                                stdout.write(render_job(job))
+                                return 0 if job.status.value in {"completed", "cancelled"} else 1
+                            execution = manual_organize_worker.run_next()
+                            if execution is not None:
+                                stdout.write(
+                                    f"Manual execution ID: {execution.execution_id}\n"
+                                    f"Status: {execution.status.value}\n"
+                                )
+                                return (
+                                    0 if execution.status.value in {"completed", "cancelled"} else 1
+                                )
+                            transfer = files_transfer_worker.run_next()
+                            if transfer is None:
+                                stdout.write("No pending automation jobs\n")
+                                return 0
+                            stdout.write(
+                                f"Task ID: {transfer.task_id}\nStatus: {transfer.status.value}\n"
+                            )
+                            return 0 if transfer.status.terminal else 1
+                        poll = arguments.poll_seconds or getattr(
+                            configuration, "worker_poll_seconds", 5.0
                         )
-                    )
-                    stdout.write(f"Worker stopped; processed={processed}\n")
-                    return 0
+                        processed = _run_resident(
+                            lambda stop: worker_service.run(
+                                stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                            )
+                        )
+                        stdout.write(f"Worker stopped; processed={processed}\n")
+                        return 0
         if arguments.command == "scheduler":
             with SQLiteTaskRepository(configuration.database_path) as repository:
                 scheduler_service = IntervalScheduler(
@@ -3532,6 +3545,61 @@ def _manual_organize_worker_context(configuration, configured_path: str | None, 
             checkpoint_service=ProcessingCheckpointService(repository),
         )
         yield ManualOrganizeExecutionWorker(execution)
+
+
+@contextmanager
+def _files_transfer_worker_context(configuration, configured_path: str | None, repository):
+    """Yield the resident Worker's admitted Files Copy/Move transfer runner.
+
+    The runner reconstructs the pinned Active revision, the runtime snapshot
+    and the configured Storage adapters from durable state, so it never shares
+    in-memory authority with the API request that admitted the transfer.  The
+    admitting request performs zero Storage mutation; this Worker context is
+    the only place an admitted transfer becomes ``OrganizerExecutor`` work.
+    """
+
+    from mediaflow.application.direct_file_commands import DirectFileCommandService
+    from mediaflow.application.direct_file_transfers import DirectFileTransferService
+    from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+    with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
+        active = configuration_repository.get_active_revision()
+        if active is None:
+            # No Active configuration: there is no admitted transfer this
+            # Worker may lawfully execute, and nothing claimable exists.
+            yield _NullFilesTransferWorker()
+            return
+        try:
+            runtime = _configuration(
+                configured_path, snapshot_id=active.revision_id, snapshot_digest=active.digest
+            )
+            direct_files = DirectFileCommandService(
+                active_revision=active,
+                runtime_configuration=runtime,
+                task_repository=repository,
+            )
+            transfers = DirectFileTransferService(direct_files=direct_files)
+        except Exception as error:
+            # An unhealthy Active configuration must not disable this Worker's
+            # other duties (queued Jobs, admitted manual executions): a
+            # transfer admitted against it stays claimable and is executed
+            # only when a lawful Active execution context exists again.  A
+            # pinned transfer is never executed against a different snapshot.
+            sys.stderr.write(
+                "files transfer runner unavailable with the current Active configuration "
+                f"({type(error).__name__[:48]}); admitted transfers stay claimable\n"
+            )
+            yield _NullFilesTransferWorker()
+            return
+        yield FilesTransferWorker(transfers, repository)
+
+
+class _NullFilesTransferWorker:
+    """A no-op transfer runner for Workers without an Active configuration."""
+
+    @staticmethod
+    def run_next():
+        return None
 
 
 def _run_resident(run: Callable[[Callable[[], bool]], int]) -> int:

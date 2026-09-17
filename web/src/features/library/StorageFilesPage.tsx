@@ -1,4 +1,10 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -47,7 +53,7 @@ import {
 import type {
   TransferConflictMode,
   TransferImpactModel,
-  TransferResultModel,
+  TransferProjectionModel,
 } from "../../entities/library/direct-files";
 
 type FilesView = "list" | "grid";
@@ -1747,8 +1753,11 @@ export function StorageFilesPage() {
   const [commandResult, setCommandResult] =
     useState<DirectFileCommandResult | null>(null);
   const [transferError, setTransferError] = useState<string | null>(null);
-  const [transferResult, setTransferResult] =
-    useState<TransferResultModel | null>(null);
+  // The durable identity of the admitted transfer the dialog follows; the
+  // projection polling and lifecycle actions live inside the dialog.
+  const [admittedTransferId, setAdmittedTransferId] = useState<string | null>(
+    null,
+  );
   const [editorStale, setEditorStale] = useState(false);
   const [editorSaved, setEditorSaved] = useState(false);
   const [removalError, setRemovalError] = useState<string | null>(null);
@@ -1938,56 +1947,59 @@ export function StorageFilesPage() {
 
   // Rename/Delete success must clear or remap exactly the affected selection
   // and directory-tree state; unrelated sibling selections stay independent.
-  const pruneAffectedBrowseState = (
-    removedPaths: readonly string[],
-    renameRemap: { readonly from: string; readonly to: string } | null,
-  ) => {
-    if (renameRemap !== null) {
-      const { from, to } = renameRemap;
-      const remap = (value: string) =>
-        value === from
-          ? to
-          : value.startsWith(from + "/")
-            ? to + value.slice(from.length)
-            : value;
-      const changed = (list: readonly string[], next: readonly string[]) =>
-        next.length !== list.length ||
-        next.some((value, index) => value !== list[index]);
+  const pruneAffectedBrowseState = useCallback(
+    (
+      removedPaths: readonly string[],
+      renameRemap: { readonly from: string; readonly to: string } | null,
+    ) => {
+      if (renameRemap !== null) {
+        const { from, to } = renameRemap;
+        const remap = (value: string) =>
+          value === from
+            ? to
+            : value.startsWith(from + "/")
+              ? to + value.slice(from.length)
+              : value;
+        const changed = (list: readonly string[], next: readonly string[]) =>
+          next.length !== list.length ||
+          next.some((value, index) => value !== list[index]);
+        setSelectedFiles((current) => {
+          if (!current.has(from)) return current;
+          const next = new Set(current);
+          next.delete(from);
+          next.add(to);
+          return next;
+        });
+        setKnownDirectoryPaths((current) => {
+          const next = current.map(remap);
+          return changed(current, next) ? next : current;
+        });
+        setVisitedDirectories((current) => {
+          const next = current.map(remap);
+          return changed(current, next) ? next : current;
+        });
+        return;
+      }
+      if (removedPaths.length === 0) return;
+      const isRemoved = (value: string) =>
+        removedPaths.some(
+          (path) => value === path || value.startsWith(path + "/"),
+        );
       setSelectedFiles((current) => {
-        if (!current.has(from)) return current;
-        const next = new Set(current);
-        next.delete(from);
-        next.add(to);
-        return next;
+        const next = new Set([...current].filter((path) => !isRemoved(path)));
+        return next.size === current.size ? current : next;
       });
       setKnownDirectoryPaths((current) => {
-        const next = current.map(remap);
-        return changed(current, next) ? next : current;
+        const next = current.filter((path) => !isRemoved(path));
+        return next.length === current.length ? current : next;
       });
       setVisitedDirectories((current) => {
-        const next = current.map(remap);
-        return changed(current, next) ? next : current;
+        const next = current.filter((path) => !isRemoved(path));
+        return next.length === current.length ? current : next;
       });
-      return;
-    }
-    if (removedPaths.length === 0) return;
-    const isRemoved = (value: string) =>
-      removedPaths.some(
-        (path) => value === path || value.startsWith(path + "/"),
-      );
-    setSelectedFiles((current) => {
-      const next = new Set([...current].filter((path) => !isRemoved(path)));
-      return next.size === current.size ? current : next;
-    });
-    setKnownDirectoryPaths((current) => {
-      const next = current.filter((path) => !isRemoved(path));
-      return next.length === current.length ? current : next;
-    });
-    setVisitedDirectories((current) => {
-      const next = current.filter((path) => !isRemoved(path));
-      return next.length === current.length ? current : next;
-    });
-  };
+    },
+    [],
+  );
 
   const commandMutation = useMutation({
     mutationFn: ({ options }: { readonly options: DirectFileCommandOptions }) =>
@@ -2195,7 +2207,7 @@ export function StorageFilesPage() {
         manifestDigest: input.manifestDigest,
       }),
     retry: false,
-    onSuccess: (result, variables) => {
+    onSuccess: (result) => {
       if (!result.ok) {
         setTransferError(
           transferFailureMessage(result.code, {
@@ -2205,22 +2217,10 @@ export function StorageFilesPage() {
         return;
       }
       setTransferError(null);
-      setTransferResult(result.model);
-      // Success refreshes authoritative source/destination truth; only
-      // selection whose physical truth changed is cleared or remapped.  A
-      // Copy leaves the source present, so only a Move whose known effect
-      // proves the source no longer exists may prune the selection.
-      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
-      if (
-        variables.operation === "move" &&
-        (result.model.status === "SUCCESS" || result.model.status === "PARTIAL")
-      ) {
-        const removed = result.model.knownEffects
-          .filter((effect) => effect.effect === "transferred")
-          .map((effect) => effect.path);
-        pruneAffectedBrowseState(removed, null);
-      }
+      // Admission only: the response is the durable queued identity.  The
+      // dialog follows the bounded projection from here; live source and
+      // destination truth is refreshed when the terminal projection arrives.
+      setAdmittedTransferId(result.model.taskId);
     },
     onError: () => {
       setTransferError(
@@ -2229,6 +2229,28 @@ export function StorageFilesPage() {
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
   });
+
+  // Terminal projection: refresh authoritative source/destination truth and
+  // prune only selection whose physical truth changed.  A Copy leaves the
+  // source present, so only a Move whose known effect proves the source no
+  // longer exists may prune the selection; skipped, partial and uncertain
+  // sources keep their selection.
+  const handleTransferTerminal = useCallback(
+    (projection: TransferProjectionModel) => {
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      if (
+        projection.operation === "move" &&
+        (projection.status === "SUCCESS" || projection.status === "PARTIAL")
+      ) {
+        const removed = projection.knownEffects
+          .filter((effect) => effect.effect === "transferred")
+          .map((effect) => effect.path);
+        pruneAffectedBrowseState(removed, null);
+      }
+    },
+    [queryClient, pruneAffectedBrowseState],
+  );
 
   const removalTargetId = dialog?.kind === "remove_library" ? dialog.id : null;
   const removalPreviewQuery = useQuery({
@@ -2576,7 +2598,7 @@ export function StorageFilesPage() {
                         }}
                         onTransfer={(operation, paths) => {
                           setTransferError(null);
-                          setTransferResult(null);
+                          setAdmittedTransferId(null);
                           setDialog({ kind: "transfer", operation, paths });
                         }}
                         onDiscoverDirectories={(paths) => {
@@ -2855,8 +2877,9 @@ export function StorageFilesPage() {
           currentLibraryId={activeLibraryId}
           token={token}
           submitting={transferMutation.isPending}
+          admittedTaskId={admittedTransferId}
           error={transferError}
-          result={transferResult}
+          onTerminal={handleTransferTerminal}
           onSubmit={({
             impact,
             conflictMode,
@@ -2865,7 +2888,6 @@ export function StorageFilesPage() {
             readonly conflictMode: TransferConflictMode;
           }) => {
             setTransferError(null);
-            setTransferResult(null);
             transferMutation.mutate({
               operation: dialog.operation,
               paths: dialog.paths,
@@ -2877,11 +2899,10 @@ export function StorageFilesPage() {
           }}
           onImpactFailure={(message: string) => {
             setTransferError(message);
-            setTransferResult(null);
           }}
           onClose={() => {
             setTransferError(null);
-            setTransferResult(null);
+            setAdmittedTransferId(null);
             setDialog(null);
             void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
             void queryClient.invalidateQueries({ queryKey: ["system-status"] });

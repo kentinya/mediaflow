@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Protocol
 
@@ -34,11 +34,63 @@ FILES_DIRECT_COMMAND_TASK = "files_direct_command"
 #: It runs as one Task with independent per-item outcomes and recovery.
 FILES_DELETE_TASK_COMMAND = "files_delete"
 
-#: The command recorded by a bounded Files Copy/Move transfer.  A short
-#: same-Storage single-file transfer may complete inline, but directory,
-#: cross-Storage and multi-item work always runs as one durable Task with
+#: The command recorded by a bounded Files Copy/Move transfer.  Every transfer
+#: runs as one durable Task admitted before the first Storage mutation and
+#: executed by the resident Worker under a persisted claim fence, with
 #: independent per-item/per-entry outcomes.
 FILES_TRANSFER_TASK_COMMAND = "files_transfer"
+
+
+#: The durable admission/claim status of one bounded Files transfer.  The
+#: transfer row — not the Task row — is the Worker claim authority: only an
+#: ``admitted`` transfer (or one whose previous lease expired) can be claimed,
+#: and only the current claim owner may advance its progress or publish a
+#: terminal status.
+class FilesTransferStatus(StrEnum):
+    ADMITTED = "admitted"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    PARTIAL_SUCCESS = "partial_success"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+    @property
+    def terminal(self) -> bool:
+        return self in {
+            FilesTransferStatus.COMPLETED,
+            FilesTransferStatus.PARTIAL_SUCCESS,
+            FilesTransferStatus.FAILED,
+            FilesTransferStatus.CANCELLED,
+        }
+
+
+#: The files_transfers row: the bounded, claimable admission record of one
+#: Copy/Move transfer.  ``authority_json`` pins the exact confirmed operation
+#: (pinned configuration revision/digest, endpoint ResourceLibrary/Storage
+#: identities, normalized logical paths, operation, conflict choice, confirmed
+#: entry scope and pinned keep-both destinations) so a Worker reconstructs the
+#: exact confirmed work after a process restart.  It never carries host roots,
+#: credentials, provider payloads or content.
+@dataclass(frozen=True)
+class PersistentFilesTransfer:
+    transfer_id: str
+    task_id: str
+    status: FilesTransferStatus
+    authority_json: str
+    configuration_snapshot_id: str
+    configuration_snapshot_digest: str
+    worker_id: str | None = None
+    claim_token: str | None = None
+    claimed_at: datetime | None = None
+    claim_expires_at: datetime | None = None
+    attempts: int = 0
+    error: str | None = None
+    next_action: str | None = None
+    created_at: datetime = datetime.min.replace(tzinfo=UTC)
+    updated_at: datetime = datetime.min.replace(tzinfo=UTC)
+    completed_at: datetime | None = None
+
 
 #: Task-item stage recorded for a transfer item the running process never
 #: completed: the process ended (or lost the item) between admission and the
@@ -357,6 +409,46 @@ class PersistentTaskRepository(Protocol):
     ) -> None: ...
     def create_task(self, task: PersistentTask) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
+    def admit_files_transfer(
+        self,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...],
+        transfer: PersistentFilesTransfer,
+    ) -> None: ...
+    def get_files_transfer(self, transfer_id: str) -> PersistentFilesTransfer | None: ...
+    def get_files_transfer_for_task(self, task_id: str) -> PersistentFilesTransfer | None: ...
+    def claim_next_files_transfer(
+        self,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> PersistentFilesTransfer | None: ...
+    def begin_files_transfer(self, transfer_id: str, claim_token: str, now: datetime) -> bool: ...
+    def heartbeat_files_transfer_claim(
+        self,
+        transfer_id: str,
+        claim_token: str,
+        now: datetime,
+        lease_seconds: float,
+    ) -> bool: ...
+    def finish_files_transfer(
+        self,
+        transfer: PersistentFilesTransfer,
+        *,
+        claim_token: str,
+        now: datetime,
+    ) -> bool: ...
+    def pause_files_transfer(
+        self, transfer_id: str, *, claim_token: str, now: datetime
+    ) -> bool: ...
+    def requeue_files_transfer(
+        self, transfer_id: str, now: datetime
+    ) -> PersistentFilesTransfer: ...
+    def transfer_claim_is_current(
+        self, transfer_id: str, claim_token: str, now: datetime
+    ) -> bool: ...
     def request_task_pause(self, task_id: str, updated_at: datetime) -> PersistentTask: ...
     def pause_task_if_current(
         self,

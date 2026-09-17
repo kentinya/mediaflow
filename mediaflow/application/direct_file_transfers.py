@@ -18,7 +18,10 @@ from __future__ import annotations
 
 import json
 import posixpath
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
 from mediaflow.application.organizer import OrganizerExecutor
@@ -47,9 +50,12 @@ from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
-    FILES_DIRECT_COMMAND_TASK,
     FILES_TRANSFER_TASK_COMMAND,
     TRANSFER_INTERRUPTED_STAGE,
+    FilesTransferStatus,
+    PersistentFilesTransfer,
+    PersistentResultRecord,
+    PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
     TaskItemStatus,
@@ -122,10 +128,16 @@ def _conflict_outcome(
 def _item_status(entries: list[dict[str, object]]) -> str:
     """Aggregate one item's entry outcomes into its truthful item status.
 
-    Directory creation, file transfer and emptied-source-directory removal all
-    participate: an item whose every entry was skipped is itself skipped, a
-    known partial mutation is partial, an unknown effect is uncertain, and
-    only an item with no mutation at all is a plain failure.
+    One deterministic precedence, shared by the response, the TaskItem, the
+    durable Result and every reloaded detail:
+
+    * any uncertain mutation dominates as UNCERTAIN;
+    * all-success is SUCCESS and all-skipped is SKIPPED;
+    * any mixture of SUCCESS with SKIPPED is PARTIAL — a created destination
+      directory plus a skipped child is a partial item, never a completed
+      transfer;
+    * a failure beside a known mutation (or a PARTIAL entry) is PARTIAL;
+    * only a failure with zero recorded mutation is a plain FAILED.
     """
 
     statuses = {str(value["status"]) for value in entries}
@@ -133,21 +145,40 @@ def _item_status(entries: list[dict[str, object]]) -> str:
         return "FAILED"
     if "UNCERTAIN" in statuses:
         return "UNCERTAIN"
+    if statuses == {"SUCCESS"}:
+        return "SUCCESS"
     if statuses <= {"SKIPPED"}:
         return "SKIPPED"
+    if "SUCCESS" in statuses:
+        # A completed entry beside a skipped or failed sibling: the item's
+        # aggregate is partial, and the wholly transferred count never grows.
+        return "PARTIAL"
     if "FAILED" in statuses or "PARTIAL" in statuses:
         mutated = any(value.get("checkpoints") for value in entries)
         return "PARTIAL" if mutated else "FAILED"
-    return "SUCCESS"
+    return "PARTIAL"
 
 
 def _item_checkpoint_evidence(entries: list[dict[str, object]]) -> tuple[str, ...]:
-    """The bounded durable checkpoint annotations of one item's Result."""
+    """The bounded durable checkpoint/known-state annotations of one item.
+
+    Every completed executor checkpoint is recorded as ``checkpoint:path`` and
+    every skipped entry as ``skip_conflict:path``, so the durable Result (and
+    every reloaded detail) retains the exact skipped-child evidence beside the
+    completed directory/file checkpoints.
+    """
 
     values: list[str] = []
     for outcome in entries:
+        path = str(outcome.get("path", ""))
         for checkpoint in outcome.get("checkpoints") or ():
-            values.append(f"{checkpoint}:{outcome.get('path', '')}")
+            values.append(f"{checkpoint}:{path}")
+        # The per-entry status marker keeps the exact per-entry aggregate
+        # truth (including an uncertain or failed entry beside successful
+        # siblings) reproducible from the durable Result alone.
+        values.append(f"entry:{outcome.get('status', '')}:{path}")
+        if outcome.get("errorCategory"):
+            values.append(f"entry_error:{outcome.get('errorCategory')}:{path}")
     if len(values) > MAX_TRANSFER_PROGRESS_ENTRIES:
         values = values[:MAX_TRANSFER_PROGRESS_ENTRIES]
         values.append("transfer_checkpoints_truncated")
@@ -162,12 +193,32 @@ _ITEM_TASK_STATUS = {
     "FAILED": TaskItemStatus.FAILED,
 }
 
+#: The inverse projection of a terminal TaskItem status that has no Result
+#: record (a legacy or externally written row): the projection still names a
+#: truthful state instead of fabricating success.
+_ITEM_TASK_INVERSE = {value: key for key, value in _ITEM_TASK_STATUS.items()}
+
 _ITEM_KNOWN_EFFECT = {
     "SUCCESS": "transferred",
     "SKIPPED": "skipped",
     "PARTIAL": "partial",
     "UNCERTAIN": "uncertain",
     "FAILED": "retained",
+}
+
+#: The durable projection's effect vocabulary for one item.  Items still
+#: queued, running or paused are reported as in progress — never as
+#: transferred.
+_PROJECTION_EFFECT = {
+    "SUCCESS": "transferred",
+    "SKIPPED": "skipped",
+    "PARTIAL": "partial",
+    "UNCERTAIN": "uncertain",
+    "FAILED": "retained",
+    "CANCELLED": "retained",
+    "RUNNING": "in_progress",
+    "QUEUED": "in_progress",
+    "PAUSED": "in_progress",
 }
 
 
@@ -245,10 +296,10 @@ class DirectFileTransferService:
         )
 
     # ------------------------------------------------------------------
-    # Explicitly submitted execution phase
+    # Explicitly submitted durable admission
     # ------------------------------------------------------------------
 
-    def execute_transfer(
+    def submit_transfer(
         self,
         *,
         resource_library_id: str,
@@ -259,13 +310,16 @@ class DirectFileTransferService:
         conflict_mode: str | None = None,
         manifest_digest: str,
     ) -> dict[str, object]:
-        """Execute the confirmed bounded transfer through one durable Task.
+        """Admit the confirmed bounded transfer as one durable queued Task.
 
         The live manifest is rebuilt and compared with the submitted opaque
         digest first: a stale scope returns a stable error and creates no Task
-        and no mutation.  Every task item is an independently recoverable
-        top-level selection; a failing item never hides a completed sibling and
-        no uncertain effect is ever replayed automatically.
+        and no mutation.  Admission then atomically persists the PENDING Task,
+        every bounded per-item transfer authority and the claimable transfer
+        row, and returns the durable operator projection immediately — before
+        the first Storage mutation.  The resident Worker claims the admitted
+        transfer under its persisted fence and executes it; the admitting
+        request never runs a Storage mutation on its own stack.
         """
 
         if not isinstance(manifest_digest, str) or not manifest_digest:
@@ -295,19 +349,17 @@ class DirectFileTransferService:
                 resource_library_id=resource_library_id,
                 next_action="review the refreshed transfer impact summary and confirm again",
             )
-        source = self._direct.library(resource_library_id)
-        destination = self._direct.library(destination_resource_library_id)
-        source_storage = self._direct.open_storage(source)
-        destination_storage = self._direct.open_storage(destination)
-        single_file_inline = (
-            len(manifest.top_level_paths) == 1
-            and manifest.file_count == 1
-            and manifest.directory_count == 0
-            and manifest.same_storage
-        )
-        task = self._direct.tasks.create(
-            FILES_DIRECT_COMMAND_TASK if single_file_inline else FILES_TRANSFER_TASK_COMMAND,
-            execute_authorized=True,
+        now = datetime.now(UTC)
+        # The Task object is only built here: it is persisted atomically with
+        # the per-item authority and the claimable transfer row by the
+        # repository's single admission transaction below.
+        task = PersistentTask(
+            str(uuid4()),
+            FILES_TRANSFER_TASK_COMMAND,
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
             scope_path=(
                 posixpath.commonpath(manifest.top_level_paths)
                 if len(manifest.top_level_paths) > 1
@@ -317,256 +369,560 @@ class DirectFileTransferService:
             configuration_snapshot_id=self._direct.revision.revision_id,
             configuration_snapshot_digest=self._direct.revision.digest,
         )
-        plan = _TransferPlan(
-            operation=manifest.operation,
-            conflict_mode=manifest.conflict_mode,
-            same_storage=manifest.same_storage,
-            entries=manifest.entries,
-            destinations=dict(manifest.destinations),
-            top_levels=manifest.top_level_paths,
+        authority = _transfer_authority(manifest)
+        items = tuple(
+            _admitted_item(task.task_id, manifest, top_level)
+            for top_level in manifest.top_level_paths
         )
-        confirmed_scope, scope_truncated = _confirmed_entries(manifest)
-        return self._run_transfer_task(
-            task=task,
-            plan=plan,
-            confirmed_entries=confirmed_scope,
-            confirmed_truncated=scope_truncated,
+        transfer = PersistentFilesTransfer(
+            transfer_id=task.task_id,
+            task_id=task.task_id,
+            status=FilesTransferStatus.ADMITTED,
+            authority_json=authority,
+            configuration_snapshot_id=self._direct.revision.revision_id,
+            configuration_snapshot_digest=self._direct.revision.digest,
+            created_at=now,
+            updated_at=now,
+        )
+        self._direct.tasks.repository.admit_files_transfer(task, items, transfer)
+        return _queued_document(task, manifest, items)
+
+    def run_claimed_transfer(
+        self,
+        transfer: PersistentFilesTransfer,
+        *,
+        claim_token: str,
+        heartbeat: Callable[[], bool],
+        lease_seconds: float,
+    ) -> PersistentFilesTransfer:
+        """Execute one claimed transfer to its truthful terminal state.
+
+        Every top-level selection is an independently recoverable item.  An
+        item the claim owner never started is executed from the pinned
+        admission authority; a started item continues only from its recorded
+        known-safe checkpoint; a recorded uncertain effect is never replayed.
+        The claim is verified (via ``heartbeat``) at every safe boundary, the
+        bounded in-flight progress is persisted after each entry, and the
+        terminal status is published through a claim-guarded update — so only
+        the current claim owner may advance progress or finish the transfer.
+        """
+
+        repository = self._direct.tasks.repository
+        task_id = transfer.task_id
+        claimed_at = datetime.now(UTC)
+        if not repository.begin_files_transfer(transfer.transfer_id, claim_token, claimed_at):
+            raise DirectFileTransferError(
+                "files_transfer_claim_lost",
+                "claim_lost",
+                "the transfer claim is no longer owned by this Worker",
+                status=409,
+                next_action="the transfer stays claimable for the next Worker",
+            )
+        try:
+            self._execute_claimed_transfer(
+                transfer,
+                task_id=task_id,
+                heartbeat=heartbeat,
+                lease_seconds=lease_seconds,
+            )
+        except _TransferClaimLost:
+            # The lease was lost mid-flight: stop without publishing a
+            # terminal state.  The claim has already expired, so a replacement
+            # Worker takes over and continues from the persisted checkpoints.
+            return repository.require_files_transfer(transfer.transfer_id)
+        except TaskPauseRequested:
+            repository.pause_files_transfer(
+                transfer.transfer_id, claim_token=claim_token, now=datetime.now(UTC)
+            )
+            return repository.require_files_transfer(transfer.transfer_id)
+        except _TransferCancelled:
+            terminal = replace(
+                repository.require_files_transfer(transfer.transfer_id),
+                status=FilesTransferStatus.CANCELLED,
+                error=None,
+                next_action="the transfer was cancelled; completed effects stay terminal",
+                completed_at=datetime.now(UTC),
+            )
+        except Exception as error:
+            # A failed execution is a durable, bounded, secret-free outcome:
+            # items keep their recorded per-entry state and the transfer stops
+            # with an actionable reason instead of staying claimable forever.
+            terminal = replace(
+                repository.require_files_transfer(transfer.transfer_id),
+                status=FilesTransferStatus.FAILED,
+                error=_bounded_transfer_error(error),
+                next_action=(
+                    "inspect the recorded per-item outcomes and submit a fresh transfer "
+                    "for the remaining entries"
+                ),
+                completed_at=datetime.now(UTC),
+            )
+        else:
+            current = repository.require_files_transfer(transfer.transfer_id)
+            task = repository.get_task(task_id)
+            terminal = replace(
+                current,
+                status=(
+                    FilesTransferStatus.PARTIAL_SUCCESS
+                    if task is not None and task.status is PersistentTaskStatus.PARTIAL_SUCCESS
+                    else FilesTransferStatus.COMPLETED
+                    if task is not None and task.status is PersistentTaskStatus.COMPLETED
+                    else FilesTransferStatus.FAILED
+                ),
+                error=None,
+                next_action=None,
+                completed_at=datetime.now(UTC),
+            )
+        repository.finish_files_transfer(terminal, claim_token=claim_token, now=datetime.now(UTC))
+        return repository.require_files_transfer(transfer.transfer_id)
+
+    def _execute_claimed_transfer(
+        self,
+        transfer: PersistentFilesTransfer,
+        *,
+        task_id: str,
+        heartbeat: Callable[[], bool],
+        lease_seconds: float,
+    ) -> None:
+        """Drive one claimed transfer through its items to a terminal state."""
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        if task is None:
+            raise LookupError(f"transfer Task {task_id!r} was not found")
+        authority = _parse_authority(transfer.authority_json)
+        if (
+            authority.get("revisionId") != self._direct.revision.revision_id
+            or authority.get("revisionDigest") != self._direct.revision.digest
+        ):
+            # A pinned transfer is never executed against a different Active
+            # configuration: the stale admission stops with an actionable
+            # state instead of silently re-deciding under a new snapshot.
+            self._fail_stale_authority(task_id, transfer)
+            raise DirectFileTransferError(
+                "files_transfer_stale_snapshot",
+                "stale_snapshot",
+                "the admitted transfer was pinned to a different Active configuration",
+                status=409,
+                next_action=(
+                    "submit a fresh bounded transfer against the current Active configuration"
+                ),
+            )
+        paused = False
+        cancelled = False
+        errored = False
+        # The Task running boundary is published only now: after the claim
+        # fence and before the first mutation.  A queued Task starts here; a
+        # Task left running by a crashed Worker continues (takeover); a Task
+        # cancelled while it sat queued is never started — its accepted
+        # durable state stays the outcome.
+        if task.status is PersistentTaskStatus.CANCELLED:
+            raise _TransferCancelled()
+        if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
+            raise TaskPauseRequested(f"task {task_id!r} is {task.status.value}")
+        # A crashed Worker leaves its own item locks behind: the claim owner
+        # reclaims exactly this Task's locks before any further mutation, so
+        # the takeover continues instead of failing on its predecessor.
+        self._direct.tasks.locks.reclaim_task_locks(task_id)
+        self._direct.tasks.begin_queued(task_id)
+        heartbeat()
+        items = repository.list_items(task_id)
+        # The deterministic in-batch collisions pinned at admission (two
+        # selected roots resolving to one destination) stay pinned: a later
+        # sibling is reported through the selected conflict mode instead of
+        # merging into an earlier sibling's destination.
+        claimed_destinations: set[str] = set()
+        for item in items:
+            if self._direct.tasks.cancellation_observed(task_id):
+                cancelled = True
+                break
+            if item.status is TaskItemStatus.PENDING and item.attempts == 0:
+                try:
+                    plan, destination = self._plan_from_authority(authority, item)
+                except DirectFileTransferError:
+                    errored = True
+                    break
+                root_destination = plan.destinations.get(item.source_display, item.source_display)
+                batch_conflict = root_destination in claimed_destinations
+                claimed_destinations.add(root_destination)
+                stopped = self._run_admitted_item(
+                    plan,
+                    item,
+                    destination,
+                    task_id=task_id,
+                    authority=authority,
+                    batch_conflict=batch_conflict,
+                    heartbeat=heartbeat,
+                    lease_seconds=lease_seconds,
+                )
+            else:
+                stopped = self._continue_item(
+                    item,
+                    task_id=task_id,
+                    heartbeat=heartbeat,
+                    lease_seconds=lease_seconds,
+                )
+            if stopped == "pause":
+                self._direct.tasks.acknowledge_pause(task_id)
+                paused = True
+                break
+            if stopped == "cancel":
+                cancelled = True
+                break
+        if paused or cancelled:
+            raise TaskPauseRequested if paused else _TransferCancelled()
+        if errored:
+            raise _TransferExecutionFailed()
+        # The durable Task outcome is the transfer's terminal aggregate.
+        self._direct.tasks.finish(task_id, _empty_batch())
+        self._mark_uncertain_from_evidence(task_id)
+
+    def _fail_stale_authority(self, task_id: str, transfer: PersistentFilesTransfer) -> None:
+        """Record the stale-admission failure on the Task and its items."""
+
+        repository = self._direct.tasks.repository
+        now = datetime.now(UTC)
+        task = repository.get_task(task_id)
+        if task is not None and task.status in {
+            PersistentTaskStatus.PENDING,
+            PersistentTaskStatus.RUNNING,
+        }:
+            failed = replace(
+                task,
+                status=PersistentTaskStatus.FAILED,
+                updated_at=now,
+                completed_at=now,
+                error="the admitted transfer was pinned to a different Active configuration",
+            )
+            repository.update_task(failed)
+        for item in repository.list_items(task_id):
+            if item.status is TaskItemStatus.PENDING:
+                repository.upsert_item(
+                    replace(
+                        item,
+                        status=TaskItemStatus.FAILED,
+                        stage="stale_snapshot",
+                        error="files_transfer_stale_snapshot",
+                        updated_at=now,
+                        progress=None,
+                    )
+                )
+
+    def _run_admitted_item(
+        self,
+        plan: _TransferPlan,
+        item: PersistentTaskItem,
+        destination: ResourceLibrary,
+        *,
+        task_id: str,
+        authority: dict[str, object],
+        batch_conflict: bool = False,
+        heartbeat: Callable[[], bool],
+        lease_seconds: float,
+    ) -> str | None:
+        """Execute one never-started item from the pinned admission authority.
+
+        Returns the observed interruption, if any.  The per-entry execution
+        machinery (conflict revalidation, executor-only mutation, per-entry
+        pause/cancel/claim observation and durable progress) is exactly the
+        same machinery a resumed item uses, so a resumed Task cannot diverge
+        from a freshly executed one.
+        """
+
+        source = self._direct.library(_plan_source_library(authority))
+        source_storage = self._direct.open_storage(source)
+        destination_storage = self._direct.open_storage(destination)
+        try:
+            claimed_item = self._direct.tasks.begin_item(
+                task_id,
+                source.storage_id,
+                source.library_id,
+                _join_resource_library_path(source.root_path, item.source_display),
+                item.source_display,
+            )
+        except TaskPauseRequested:
+            return "pause"
+        except Exception:
+            self._direct.tasks.complete_direct_item(
+                item,
+                status=TaskItemStatus.FAILED,
+                operation=plan.operation.value,
+                error="source is locked by another active task",
+            )
+            return None
+        confirmed_scope = tuple(
+            (entry.path, plan.destination_for(entry.path) or entry.path, entry.kind.value)
+            for entry in plan.entries
+            if entry.path == claimed_item.source_display
+            or entry.path.startswith(f"{claimed_item.source_display}/")
+        )
+        truncated = len(confirmed_scope) > MAX_TRANSFER_PROGRESS_ENTRIES
+        return self._execute_item_with_fences(
+            plan,
+            claimed_item,
             source=source,
             destination=destination,
             source_storage=source_storage,
             destination_storage=destination_storage,
+            task_id=task_id,
+            heartbeat=heartbeat,
+            lease_seconds=lease_seconds,
+            confirmed_entries=confirmed_scope[:MAX_TRANSFER_PROGRESS_ENTRIES],
+            confirmed_truncated=truncated,
+            batch_conflict=batch_conflict,
         )
 
-    def _run_transfer_task(
+    def _continue_item(
         self,
+        item: PersistentTaskItem,
         *,
-        task,
+        task_id: str,
+        heartbeat: Callable[[], bool],
+        lease_seconds: float,
+    ) -> str | None:
+        """Continue one started item from its persisted checkpoint.
+
+        An item with no usable persisted checkpoint becomes an explicit
+        interrupted/investigation state instead of a blind retry; a confirmed
+        scope that no longer matches live Storage stops the item.
+        """
+
+        if item.status in {
+            TaskItemStatus.SUCCESS,
+            TaskItemStatus.SKIPPED,
+            TaskItemStatus.FAILED,
+            TaskItemStatus.CANCELLED,
+        }:
+            return None
+        try:
+            context = self._resume_item_plan(item)
+        except DirectFileTransferError as error:
+            if error.category != "scope_changed":
+                raise
+            self._mark_interrupted_item(item, error.code, mutated=error.mutated)
+            return None
+        if context is None:
+            # The claim owner never recorded a known-safe checkpoint for this
+            # item: it is an explicit interrupted/investigation state.
+            self._mark_interrupted_item(item, "files_transfer_interrupted_unknown")
+            return None
+        source = self._direct.library(item.resource_library_id)
+        try:
+            resumed_item = self._direct.tasks.begin_item(
+                task_id,
+                source.storage_id,
+                source.library_id,
+                _join_resource_library_path(source.root_path, item.source_display),
+                item.source_display,
+            )
+        except TaskPauseRequested:
+            return "pause"
+        except Exception:
+            return None
+        return self._execute_item_with_fences(
+            context.plan,
+            resumed_item,
+            source=source,
+            destination=context.destination,
+            source_storage=self._direct.open_storage(source),
+            destination_storage=context.destination_storage,
+            task_id=task_id,
+            heartbeat=heartbeat,
+            lease_seconds=lease_seconds,
+            skip_paths=context.skip_paths,
+            confirmed_entries=context.confirmed_entries,
+            confirmed_truncated=context.confirmed_truncated,
+        )
+
+    def _execute_item_with_fences(
+        self,
         plan: _TransferPlan,
-        confirmed_entries: tuple[tuple[str, str, str], ...],
-        confirmed_truncated: bool,
+        item: PersistentTaskItem,
+        *,
         source: ResourceLibrary,
         destination: ResourceLibrary,
         source_storage: Storage,
         destination_storage: Storage,
-    ) -> dict[str, object]:
-        """Drive one durable transfer Task to its truthful durable outcome.
+        task_id: str,
+        heartbeat: Callable[[], bool],
+        lease_seconds: float,
+        skip_paths: frozenset[str] = frozenset(),
+        confirmed_entries: tuple[tuple[str, str, str], ...] = (),
+        confirmed_truncated: bool = False,
+        batch_conflict: bool = False,
+    ) -> str | None:
+        """Run one item to its durable terminal outcome under claim fences.
 
-        Every top-level selection is an independently recoverable item: its
-        conflict intent is revalidated at the last safe boundary (including a
-        conflicting destination directory), every per-entry mutation crosses
-        ``OrganizerExecutor``, pause/cancel are observed at every per-entry
-        boundary, and the bounded in-flight progress is persisted after each
-        entry so a process interruption leaves a known-safe checkpoint.  A
-        failing item never hides a completed sibling and no uncertain effect
-        is ever replayed automatically.
+        Every per-entry boundary observes the durable pause/cancel requests
+        and verifies the Worker's live claim before the next progress write; a
+        lost claim raises ``_TransferClaimLost`` before anything further is
+        published.  The item's terminal TaskItem/Result publish is the claim
+        owner's last durable act for this item.
         """
+
+        def interruption() -> str | None:
+            if self._direct.tasks.cancellation_observed(task_id):
+                return "cancel"
+            if self._direct.tasks.pause_requested(task_id):
+                return "pause"
+            if not heartbeat():
+                raise _TransferClaimLost()
+            return None
 
         outcomes: list[dict[str, object]] = []
         checkpoints: list[dict[str, object]] = []
-        known_effects: list[dict[str, object]] = []
-        item_summaries: list[dict[str, object]] = []
-        uncertain = False
-        paused = False
-        cancelled = False
-        skipped_items = 0
-        transferred_items = 0
-        partial_items = 0
-        failed_items = 0
-        claimed: set[str] = set()
-        for target in plan.top_levels:
-            if self._direct.tasks.cancellation_observed(task.task_id):
-                cancelled = True
-                break
-            root_destination = plan.destination_for(target) or target
-            # Deterministic in-batch collision: a later sibling whose resolved
-            # destination equals an earlier sibling's is reported through the
-            # selected conflict mode instead of merging into it as if the
-            # destination were an external pre-existing entry.
-            batch_conflict = root_destination in claimed
-            claimed.add(root_destination)
-            full = _join_resource_library_path(source.root_path, target)
-            try:
-                item = self._direct.tasks.begin_item(
-                    task.task_id,
-                    source.storage_id,
-                    source.library_id,
-                    full,
-                    target,
-                )
-            except TaskPauseRequested:
-                self._direct.tasks.acknowledge_pause(task.task_id)
-                paused = True
-                break
-            except Exception:
-                outcomes.append(
-                    {"path": target, "status": "FAILED", "errorCategory": "path_locked"}
-                )
-                known_effects.append({"path": target, "effect": "retained", "status": "FAILED"})
-                item_summaries.append(
-                    {
-                        "path": target,
-                        "destination": root_destination,
-                        "status": "FAILED",
-                        "errorCategory": "path_locked",
-                    }
-                )
-                failed_items += 1
-                continue
-            item_entries, item_paused, item_cancelled = self._execute_item(
-                plan=plan,
-                top_level=target,
-                source=source,
-                destination=destination,
-                source_storage=source_storage,
-                destination_storage=destination_storage,
-                checkpoints=checkpoints,
-                task_id=task.task_id,
-                item=item,
-                batch_conflict=batch_conflict,
-                destination_root=root_destination,
-                confirmed_entries=confirmed_entries,
-                confirmed_truncated=confirmed_truncated,
-            )
-            if item_cancelled:
-                cancelled = True
-                break
-            if item_paused:
-                self._direct.tasks.acknowledge_pause(task.task_id)
-                paused = True
-                break
-            outcomes.extend(item_entries)
-            status = _item_status(item_entries)
-            unknown = status == "UNCERTAIN"
-            if unknown:
-                uncertain = True
-            if status == "SUCCESS":
-                transferred_items += 1
-            elif status == "SKIPPED":
-                skipped_items += 1
-            elif status == "PARTIAL":
-                partial_items += 1
-            else:
-                failed_items += 1
-            self._direct.tasks.complete_direct_item(
-                item,
-                status=_ITEM_TASK_STATUS[status],
-                operation=plan.operation.value,
-                target_path=root_destination,
-                error=(
-                    None
-                    if status == "SUCCESS"
-                    else str(
-                        next(
-                            (
-                                outcome.get("errorCategory")
-                                for outcome in item_entries
-                                if outcome.get("status") != "SUCCESS"
-                            ),
-                            "transfer_partial",
-                        )
-                    )
-                ),
-                effect_certainty=(
-                    ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
-                    if unknown
-                    else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
-                ),
-                uncertain_effects=("mutation_outcome",) if unknown else (),
-                destination_storage_id=destination.storage_id,
-                completed_operations=_item_checkpoint_evidence(item_entries),
-            )
-            known_effects.append(
-                {
-                    "path": target,
-                    "effect": _ITEM_KNOWN_EFFECT[status],
-                    "status": status,
-                }
-            )
-            item_summaries.append(
-                {
-                    "path": target,
-                    "destination": root_destination,
-                    "status": status,
-                    **{
-                        "errorCategory": outcome.get("errorCategory")
-                        for outcome in item_entries
-                        if outcome.get("status") != "SUCCESS" and outcome.get("errorCategory")
-                    },
-                }
-            )
-        if paused or cancelled:
-            final = self._direct.tasks.require(task.task_id)
-        else:
-            final = self._direct.tasks.finish(task.task_id, _empty_batch())
-        items = self._direct.tasks.repository.list_items(task.task_id)
-        succeeded = sum(1 for item in items if item.status is TaskItemStatus.SUCCESS)
-        failed_persisted = sum(
-            1 for item in items if item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
+        _, paused, cancelled = self._execute_item(
+            plan=plan,
+            top_level=item.source_display,
+            source=source,
+            destination=destination,
+            source_storage=source_storage,
+            destination_storage=destination_storage,
+            checkpoints=checkpoints,
+            task_id=task_id,
+            item=item,
+            batch_conflict=batch_conflict,
+            destination_root=plan.destinations.get(item.source_display, item.source_display),
+            confirmed_entries=confirmed_entries,
+            confirmed_truncated=confirmed_truncated,
+            skip_paths=skip_paths,
+            interruption=interruption,
+            collect=outcomes.extend,
         )
-        skipped_persisted = sum(1 for item in items if item.status is TaskItemStatus.SKIPPED)
-        document: dict[str, object] = {
-            "operation": plan.operation.value,
-            "conflictMode": plan.conflict_mode.value,
-            "sameStorage": plan.same_storage,
-            "status": _transfer_status(
-                uncertain=uncertain,
-                paused=paused,
-                cancelled=cancelled,
-                transferred=transferred_items,
-                partial=partial_items,
-                skipped=skipped_items,
-                failed=failed_items,
+        if paused or cancelled:
+            return "pause" if paused else "cancel"
+        status = _item_status(outcomes)
+        unknown = status == "UNCERTAIN"
+        self._direct.tasks.complete_direct_item(
+            item,
+            status=_ITEM_TASK_STATUS[status],
+            operation=plan.operation.value,
+            target_path=plan.destinations.get(item.source_display, item.source_display),
+            error=(
+                None
+                if status == "SUCCESS"
+                else str(
+                    next(
+                        (
+                            outcome.get("errorCategory")
+                            for outcome in outcomes
+                            if outcome.get("status") != "SUCCESS"
+                        ),
+                        "transfer_partial",
+                    )
+                )
             ),
-            "taskId": task.task_id,
-            "taskStatus": final.status.value,
-            "resourceLibraryId": source.library_id,
-            "destinationResourceLibraryId": destination.library_id,
-            "topLevelPaths": sorted(plan.destinations),
-            "destinations": [
-                {"path": path, "destination": value} for path, value in plan.destinations.items()
-            ],
-            "knownEffects": known_effects,
-            "itemOutcomes": item_summaries[:MAX_TRANSFER_PATHS],
-            "checkpoints": checkpoints[:MAX_TRANSFER_ENTRIES],
-            "checkpointsTruncated": len(checkpoints) > MAX_TRANSFER_ENTRIES,
-            "totalItems": len(items),
-            "succeededItems": succeeded,
-            "skippedItems": skipped_persisted,
-            "failedItems": failed_persisted,
-            "outcomes": outcomes[: MAX_TRANSFER_PATHS * 64],
-            "outcomesTruncated": len(outcomes) > MAX_TRANSFER_PATHS * 64,
-            "sideEffects": "storage_mutations",
-            "retrySafe": False,
-            "nextAction": (
-                "refresh the source and destination directories to see the current state"
-                if final.status.value in {"completed", "partial_success"}
-                else "refresh both directories; each item keeps its own durable outcome"
+            effect_certainty=(
+                ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+                if unknown
+                else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
             ),
-        }
-        if uncertain:
-            document["durableState"] = "mutation_effect_uncertain"
-            document["status"] = "UNCERTAIN"
-            document["nextAction"] = (
-                "refresh both directories and inspect the Task before any retry; "
-                "uncertain effects are never replayed automatically"
+            uncertain_effects=("mutation_outcome",) if unknown else (),
+            destination_storage_id=destination.storage_id,
+            completed_operations=_item_checkpoint_evidence(outcomes),
+        )
+        if unknown:
+            self._mark_transfer_uncertain(task_id)
+        return None
+
+    def _mark_transfer_uncertain(self, task_id: str) -> None:
+        """Record one uncertain mutation on the Task's durable error surface.
+
+        The marker is set on the still-running Task so a process interruption
+        after an uncertain mutation is durably visible before any terminal
+        aggregate exists.
+        """
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        if task is None or task.status is not PersistentTaskStatus.RUNNING:
+            return
+        repository.update_task(
+            replace(
+                task,
+                error="mutation_outcome",
+                updated_at=datetime.now(UTC),
             )
-        return document
+        )
+
+    def _mark_uncertain_from_evidence(self, task_id: str) -> None:
+        """Persist the uncertain marker from executor-owned effect evidence.
+
+        ``finish`` writes the terminal Task aggregate; this keeps an
+        attempted-unverified mutation visible on it, because a truthful
+        uncertain state must survive into every reloaded Task detail.
+        """
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        if task is None:
+            return
+        uncertain = any(
+            record.effect_certainty == ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+            for record in repository.list_results(task_id)
+        )
+        if not uncertain or task.error == "mutation_outcome":
+            return
+        repository.update_task(
+            replace(task, error="mutation_outcome", updated_at=datetime.now(UTC))
+        )
+
+    def _plan_from_authority(
+        self, authority: dict[str, object], item: PersistentTaskItem
+    ) -> tuple[_TransferPlan, ResourceLibrary]:
+        """Rebuild one never-started item's plan from the pinned authority."""
+
+        try:
+            operation = TransferOperation(str(authority.get("operation")))
+            conflict_mode = TransferConflictMode(str(authority.get("conflictMode")))
+        except (TypeError, ValueError):
+            raise DirectFileTransferError(
+                "files_transfer_invalid_authority",
+                "invalid_authority",
+                "the persisted transfer authority is not usable",
+                status=500,
+                next_action="submit a fresh bounded transfer",
+            ) from None
+        destination_library_id = str(authority.get("destinationResourceLibraryId", ""))
+        destination = self._direct.library(destination_library_id)
+        entries = [
+            TransferManifestEntry(
+                path=str(entry[0]),
+                kind=TransferEntryKind(str(entry[1])),
+                size=int(entry[2]),
+                modified_at=str(entry[3]),
+                fingerprint=str(entry[4]),
+            )
+            for entry in authority.get("entries") or ()
+        ]
+        destinations = {str(pair[0]): str(pair[1]) for pair in authority.get("destinations") or ()}
+        top_level = item.source_display
+        item_top_levels = tuple(authority.get("topLevelPaths") or ())
+        plan = _TransferPlan(
+            operation=operation,
+            conflict_mode=conflict_mode,
+            same_storage=bool(authority.get("sameStorage")),
+            entries=tuple(
+                entry
+                for entry in entries
+                if entry.path == top_level or entry.path.startswith(f"{top_level}/")
+            ),
+            destinations=destinations,
+            top_levels=(top_level,) if top_level in item_top_levels else (top_level,),
+        )
+        return plan, destination
 
     # ------------------------------------------------------------------
-    # Durable continuation of an interrupted transfer Task
+    # Durable continuation admission (resume without execution)
     # ------------------------------------------------------------------
 
-    def resume_transfer(self, task_id: str) -> dict[str, object]:
-        """Continue one paused or interrupted Files transfer Task.
+    def requeue_transfer(self, task_id: str) -> dict[str, object]:
+        """Re-admit one paused or abandoned transfer for Worker pickup.
 
-        Continuation proceeds only from each item's persisted known-safe
-        checkpoint: the confirmed per-entry scope recorded with the item must
-        still match live Storage exactly, completed entries are never replayed,
-        recorded uncertain effects stop the item with an investigation state,
-        and keep-both renames (whose unique names are admission-pinned) are
-        never re-derived.  Work outside the confirmed scope is never picked up;
-        a scope that changed stops that item with an actionable state instead
-        of expanding the confirmed transfer.
+        The HTTP resume request performs zero Storage work: it re-queues the
+        persisted authority and returns the durable operator projection.  The
+        resident Worker claims the transfer and continues only from each
+        item's recorded known-safe checkpoint.
         """
 
         task = self._direct.tasks.require(task_id)
@@ -578,270 +934,165 @@ class DirectFileTransferService:
                 status=409,
                 next_action="inspect the Task in Operations",
             )
-        if task.status is PersistentTaskStatus.RUNNING:
-            raise DirectFileTransferError(
-                "files_transfer_resume_running",
-                "resume_running",
-                "the transfer Task still reports a running execution; it must not be started twice",
-                status=409,
-                next_action="refresh the Task state and wait for it to finish or cancel it",
-            )
-        if task.status is not PersistentTaskStatus.PAUSED:
+        transfer = self._direct.tasks.repository.get_files_transfer_for_task(task_id)
+        if transfer is None:
             raise DirectFileTransferError(
                 "files_transfer_resume_unavailable",
                 "resume_unavailable",
-                "the transfer Task has no continuable paused work",
+                "the transfer has no durable continuation authority",
                 status=409,
                 next_action="submit a fresh bounded transfer instead",
             )
-        current = self._direct.revision
-        if (
-            task.configuration_snapshot_id != current.revision_id
-            or task.configuration_snapshot_digest != current.digest
+        if transfer.status is FilesTransferStatus.RUNNING and (
+            transfer.claim_expires_at is not None and transfer.claim_expires_at > datetime.now(UTC)
         ):
             raise DirectFileTransferError(
-                "files_transfer_resume_stale_snapshot",
-                "resume_stale_snapshot",
-                "the paused transfer was admitted against a different Active configuration",
+                "files_transfer_resume_running",
+                "resume_running",
+                "the transfer is still owned by a live Worker claim",
                 status=409,
-                next_action=(
-                    "submit a fresh bounded transfer against the current Active configuration"
-                ),
+                next_action="wait for it to finish, pause or cancel it",
             )
-        items = self._direct.tasks.repository.list_items(task.task_id)
-        continuable = [
-            item
-            for item in items
-            if item.status
-            in {TaskItemStatus.PAUSED, TaskItemStatus.PROCESSING, TaskItemStatus.PENDING}
-        ]
-        if not continuable:
+        if transfer.status in {
+            FilesTransferStatus.COMPLETED,
+            FilesTransferStatus.PARTIAL_SUCCESS,
+            FilesTransferStatus.FAILED,
+            FilesTransferStatus.CANCELLED,
+        }:
             raise DirectFileTransferError(
                 "files_transfer_resume_unavailable",
                 "resume_unavailable",
-                "the paused transfer has no continuable item",
+                "the transfer already reached a terminal state",
                 status=409,
-                next_action="inspect the recorded per-item outcomes and submit a fresh transfer",
+                next_action="inspect the recorded per-item outcomes",
             )
-        for item in continuable:
-            payload = _progress_payload(item)
-            if payload is None:
-                continue
-            if payload.get("conflictMode") == TransferConflictMode.KEEP_BOTH.value:
-                raise DirectFileTransferError(
-                    "files_transfer_resume_unavailable",
-                    "resume_unavailable",
-                    "the keep-both destination names were pinned at admission and cannot be "
-                    "re-derived after an interruption",
-                    status=409,
-                    next_action=(
-                        "inspect the recorded per-item outcomes and submit a fresh keep-both "
-                        "transfer for the remaining entries"
-                    ),
-                )
-        source = self._direct.library(continuable[0].resource_library_id)
-        self._direct.tasks.reopen(task.task_id, execute=True)
-        outcomes: list[dict[str, object]] = []
-        checkpoints: list[dict[str, object]] = []
+        self._direct.tasks.requeue(task_id)
+        transfer = self._direct.tasks.repository.requeue_files_transfer(
+            transfer.transfer_id, datetime.now(UTC)
+        )
+        return self.transfer_projection(task_id)
+
+    def transfer_projection(self, task_id: str) -> dict[str, object]:
+        """The durable, bounded operator projection of one transfer Task.
+
+        Rebuilt from the persisted Task, items, progress snapshots and
+        Results — never from a request-scoped execution result — so polling
+        after admission or a process restart reproduces the truthful state
+        with the backend-advertised lifecycle actions.
+        """
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        if task is None or task.command != FILES_TRANSFER_TASK_COMMAND:
+            raise DirectFileTransferError(
+                "files_transfer_unknown",
+                "not_found",
+                "no bounded Files transfer Task exists under this identity",
+                status=404,
+                next_action="return to the Files workspace and refresh",
+            )
+        transfer = repository.get_files_transfer_for_task(task_id)
+        items = repository.list_items(task_id)
+        results = {record.item_id: record for record in repository.list_results(task_id)}
         known_effects: list[dict[str, object]] = []
-        uncertain = False
-        paused = False
-        cancelled = False
-        transferred_items = 0
-        partial_items = 0
-        skipped_items = 0
-        failed_items = 0
-        source_storage = self._direct.open_storage(source)
-        operation_value = "transfer"
-        destination_library_id = ""
-        for item in continuable:
-            if self._direct.tasks.cancellation_observed(task.task_id):
-                cancelled = True
-                break
-            try:
-                context = self._resume_item_plan(item)
-            except DirectFileTransferError as error:
-                if error.category != "scope_changed":
-                    raise
-                self._mark_interrupted_item(item, error.code, mutated=error.mutated)
-                if error.mutated:
-                    partial_items += 1
-                    known_effects.append(
-                        {
-                            "path": item.source_display,
-                            "effect": "partial",
-                            "status": "PARTIAL",
-                        }
-                    )
-                else:
-                    failed_items += 1
-                    known_effects.append(
-                        {
-                            "path": item.source_display,
-                            "effect": "retained",
-                            "status": "FAILED",
-                        }
-                    )
-                continue
-            if context is None:
-                # No persisted known-safe checkpoint: the item is an explicit
-                # interrupted/investigation state, never a blind retry.
-                self._mark_interrupted_item(item, "files_transfer_interrupted_unknown")
-                uncertain = True
-                known_effects.append(
-                    {
-                        "path": item.source_display,
-                        "effect": "uncertain",
-                        "status": "UNCERTAIN",
-                    }
-                )
-                continue
-            operation_value = context.plan.operation.value
-            destination_library_id = context.destination.library_id
-            try:
-                resumed_item = self._direct.tasks.begin_item(
-                    task.task_id,
-                    source.storage_id,
-                    source.library_id,
-                    _join_resource_library_path(source.root_path, item.source_display),
-                    item.source_display,
-                )
-            except TaskPauseRequested:
-                self._direct.tasks.acknowledge_pause(task.task_id)
-                paused = True
-                break
-            except Exception:
-                failed_items += 1
-                known_effects.append(
-                    {
-                        "path": item.source_display,
-                        "effect": "retained",
-                        "status": "FAILED",
-                    }
-                )
-                continue
-            item_entries, item_paused, item_cancelled = self._execute_item(
-                plan=context.plan,
-                top_level=item.source_display,
-                source=source,
-                destination=context.destination,
-                source_storage=source_storage,
-                destination_storage=context.destination_storage,
-                checkpoints=checkpoints,
-                task_id=task.task_id,
-                item=resumed_item,
-                batch_conflict=False,
-                destination_root=context.plan.destinations.get(item.source_display, ""),
-                confirmed_entries=context.confirmed_entries,
-                confirmed_truncated=context.confirmed_truncated,
-                skip_paths=context.skip_paths,
-            )
-            if item_cancelled:
-                cancelled = True
-                break
-            if item_paused:
-                self._direct.tasks.acknowledge_pause(task.task_id)
-                paused = True
-                break
-            outcomes.extend(item_entries)
-            status = _item_status(item_entries)
-            unknown = status == "UNCERTAIN"
-            if unknown:
-                uncertain = True
-            if status == "SUCCESS":
-                transferred_items += 1
-            elif status == "SKIPPED":
-                skipped_items += 1
-            elif status == "PARTIAL":
-                partial_items += 1
-            else:
-                failed_items += 1
-            self._direct.tasks.complete_direct_item(
-                resumed_item,
-                status=_ITEM_TASK_STATUS[status],
-                operation=context.plan.operation.value,
-                target_path=context.plan.destinations.get(item.source_display, item.source_display),
-                error=(
-                    None
-                    if status == "SUCCESS"
-                    else str(
-                        next(
-                            (
-                                outcome.get("errorCategory")
-                                for outcome in item_entries
-                                if outcome.get("status") != "SUCCESS"
-                            ),
-                            "transfer_partial",
-                        )
-                    )
-                ),
-                effect_certainty=(
-                    ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
-                    if unknown
-                    else ExecutionEffectCertainty.VERIFIED_COMPLETE.value
-                ),
-                uncertain_effects=("mutation_outcome",) if unknown else (),
-                destination_storage_id=context.destination.storage_id,
-                completed_operations=_item_checkpoint_evidence(item_entries),
-            )
+        item_summaries: list[dict[str, object]] = []
+        outcomes: list[dict[str, object]] = []
+        truncated_outcomes = False
+        uncertain = task.error == "mutation_outcome"
+        succeeded = failed = skipped = partial = 0
+        for item in items:
+            record = results.get(item.item_id)
+            payload = _progress_payload(item)
+            outcome_status = _projection_item_status(item, record)
+            if (
+                outcome_status == "PARTIAL"
+                and record is not None
+                and record.effect_certainty == ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+            ):
+                outcome_status = "UNCERTAIN"
+            if outcome_status == "SUCCESS":
+                succeeded += 1
+            elif outcome_status == "SKIPPED":
+                skipped += 1
+            elif outcome_status == "PARTIAL":
+                partial += 1
+            elif outcome_status in {"FAILED", "UNCERTAIN"}:
+                if outcome_status == "UNCERTAIN":
+                    uncertain = True
+                failed += 1
             known_effects.append(
                 {
                     "path": item.source_display,
-                    "effect": _ITEM_KNOWN_EFFECT[status],
-                    "status": status,
+                    "effect": _PROJECTION_EFFECT.get(outcome_status, "in_progress"),
+                    "status": outcome_status,
                 }
             )
-        if paused or cancelled:
-            final = self._direct.tasks.require(task.task_id)
-        else:
-            final = self._direct.tasks.finish(task.task_id, _empty_batch())
-        persisted = self._direct.tasks.repository.list_items(task.task_id)
+            summary: dict[str, object] = {
+                "path": item.source_display,
+                "destination": item.destination_path or item.source_display,
+                "status": outcome_status,
+            }
+            if item.error and outcome_status not in {"SUCCESS", "SKIPPED"}:
+                summary["errorCategory"] = item.error
+            item_summaries.append(summary)
+            entry_outcomes, entry_truncated = _projection_item_outcomes(
+                item, payload, record, outcome_status
+            )
+            if truncated_outcomes or len(outcomes) + len(entry_outcomes) > _MAX_PROJECTION_OUTCOMES:
+                truncated_outcomes = True
+            outcomes.extend(entry_outcomes[: max(0, _MAX_PROJECTION_OUTCOMES - len(outcomes))])
+        transfer_status = _projection_transfer_status(
+            task=task,
+            transfer=transfer,
+            uncertain=uncertain,
+            succeeded=succeeded,
+            partial=partial,
+            skipped=skipped,
+            failed=failed,
+        )
+        terminal = task.status in {
+            PersistentTaskStatus.COMPLETED,
+            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.FAILED,
+            PersistentTaskStatus.CANCELLED,
+        }
+        claim_live = (
+            transfer is not None
+            and transfer.status is FilesTransferStatus.RUNNING
+            and transfer.claim_expires_at is not None
+            and transfer.claim_expires_at > datetime.now(UTC)
+        )
         document: dict[str, object] = {
-            "operation": operation_value,
-            "resumed": True,
-            "status": _transfer_status(
-                uncertain=uncertain,
-                paused=paused,
-                cancelled=cancelled,
-                transferred=transferred_items,
-                partial=partial_items,
-                skipped=skipped_items,
-                failed=failed_items,
-            ),
+            "operation": _projection_operation(transfer),
+            "conflictMode": _projection_conflict_mode(transfer),
             "taskId": task.task_id,
-            "taskStatus": final.status.value,
-            "resourceLibraryId": source.library_id,
-            "destinationResourceLibraryId": destination_library_id,
-            "topLevelPaths": [item.source_display for item in continuable],
+            "taskStatus": task.status.value,
+            "resourceLibraryId": _projection_source_library(transfer, items),
+            "destinationResourceLibraryId": _projection_destination_library(transfer, items),
+            "topLevelPaths": [item.source_display for item in items],
             "knownEffects": known_effects,
-            "checkpoints": checkpoints[:MAX_TRANSFER_ENTRIES],
-            "checkpointsTruncated": len(checkpoints) > MAX_TRANSFER_ENTRIES,
-            "totalItems": len(persisted),
-            "succeededItems": sum(1 for item in persisted if item.status is TaskItemStatus.SUCCESS),
-            "skippedItems": sum(1 for item in persisted if item.status is TaskItemStatus.SKIPPED),
-            "failedItems": sum(
-                1
-                for item in persisted
-                if item.status in {TaskItemStatus.FAILED, TaskItemStatus.PARTIAL}
-            ),
-            "outcomes": outcomes[: MAX_TRANSFER_PATHS * 64],
-            "outcomesTruncated": len(outcomes) > MAX_TRANSFER_PATHS * 64,
-            "sideEffects": "storage_mutations",
+            "itemOutcomes": item_summaries[:MAX_TRANSFER_PATHS],
+            "outcomes": outcomes,
+            "outcomesTruncated": truncated_outcomes,
+            "totalItems": len(items),
+            "succeededItems": succeeded,
+            "skippedItems": skipped,
+            "failedItems": failed + partial,
+            "status": transfer_status,
+            "terminal": terminal,
+            "actions": _transfer_actions(task, claim_live),
+            "version": task.updated_at.isoformat(),
+            "sideEffects": "storage_mutations" if any(item.attempts for item in items) else "none",
             "retrySafe": False,
-            "nextAction": (
-                "refresh both directories; each item keeps its own durable outcome"
-                if paused or cancelled
-                else "refresh the source and destination directories to see the current state"
-            ),
+            "nextAction": _projection_next_action(task, transfer_status, terminal),
         }
         if uncertain:
             document["durableState"] = "mutation_effect_uncertain"
-            document["status"] = "UNCERTAIN"
-            document["nextAction"] = (
-                "an interrupted item could not be safely continued; inspect the Task and "
-                "submit a fresh transfer for the remaining entries"
-            )
         return document
+
+    # ------------------------------------------------------------------
+    # Per-item execution
+    # ------------------------------------------------------------------
 
     def _mark_interrupted_item(
         self, item: PersistentTaskItem, code: str, *, mutated: bool = False
@@ -1602,6 +1853,8 @@ class DirectFileTransferService:
         confirmed_entries: tuple[tuple[str, str, str], ...] = (),
         confirmed_truncated: bool = False,
         skip_paths: frozenset[str] = frozenset(),
+        interruption: Callable[[], str | None] | None = None,
+        collect: Callable[[list[dict[str, object]]], None] | None = None,
     ) -> tuple[list[dict[str, object]], bool, bool]:
         """Run one top-level selection to its truthful per-entry outcomes.
 
@@ -1614,7 +1867,10 @@ class DirectFileTransferService:
         crosses ``OrganizerExecutor``; pause/cancel are observed at every
         per-entry boundary and the bounded in-flight progress is persisted
         after each recorded entry so an interruption leaves a known-safe
-        checkpoint instead of an unknown state.
+        checkpoint instead of an unknown state.  A Worker-driven item passes
+        ``interruption`` (which additionally verifies the live claim) and
+        ``collect`` (which accumulates its outcomes for the durable
+        completion publish).
         """
 
         entries = [
@@ -1636,12 +1892,89 @@ class DirectFileTransferService:
                 confirmed_truncated=confirmed_truncated,
             )
 
-        def interruption() -> str | None:
-            if self._direct.tasks.cancellation_observed(task_id):
-                return "cancel"
-            if self._direct.tasks.pause_requested(task_id):
-                return "pause"
-            return None
+        if interruption is None:
+
+            def interruption() -> str | None:
+                if self._direct.tasks.cancellation_observed(task_id):
+                    return "cancel"
+                if self._direct.tasks.pause_requested(task_id):
+                    return "pause"
+                return None
+
+        # The Worker-driven caller receives every recorded outcome through
+        # ``collect`` exactly once — including each early return (batch
+        # conflict, top-level conflict refusal, failed directory creation,
+        # pause/cancel) — so its terminal publish covers the whole item.
+        if collect is not None:
+            try:
+                return self._execute_item_entries(
+                    plan=plan,
+                    top_level=top_level,
+                    source=source,
+                    destination=destination,
+                    source_storage=source_storage,
+                    destination_storage=destination_storage,
+                    checkpoints=checkpoints,
+                    task_id=task_id,
+                    item=item,
+                    batch_conflict=batch_conflict,
+                    destination_root=destination_root,
+                    confirmed_entries=confirmed_entries,
+                    confirmed_truncated=confirmed_truncated,
+                    skip_paths=skip_paths,
+                    interruption=interruption,
+                    progress=progress,
+                    entries=entries,
+                    recorded=recorded,
+                    collect=collect,
+                )
+            finally:
+                collect(recorded)
+        return self._execute_item_entries(
+            plan=plan,
+            top_level=top_level,
+            source=source,
+            destination=destination,
+            source_storage=source_storage,
+            destination_storage=destination_storage,
+            checkpoints=checkpoints,
+            task_id=task_id,
+            item=item,
+            batch_conflict=batch_conflict,
+            destination_root=destination_root,
+            confirmed_entries=confirmed_entries,
+            confirmed_truncated=confirmed_truncated,
+            skip_paths=skip_paths,
+            interruption=interruption,
+            progress=progress,
+            entries=entries,
+            recorded=recorded,
+            collect=None,
+        )
+
+    def _execute_item_entries(
+        self,
+        *,
+        plan: _TransferPlan,
+        top_level: str,
+        source: ResourceLibrary,
+        destination: ResourceLibrary,
+        source_storage: Storage,
+        destination_storage: Storage,
+        checkpoints: list[dict[str, object]],
+        task_id: str,
+        item: PersistentTaskItem,
+        batch_conflict: bool,
+        destination_root: str,
+        confirmed_entries: tuple[tuple[str, str, str], ...],
+        confirmed_truncated: bool,
+        skip_paths: frozenset[str],
+        interruption: Callable[[], str | None],
+        progress: Callable[[], None],
+        entries: list[TransferManifestEntry],
+        recorded: list[dict[str, object]],
+        collect: Callable[[list[dict[str, object]]], None] | None,
+    ) -> tuple[list[dict[str, object]], bool, bool]:
 
         if batch_conflict:
             recorded.append(
@@ -1850,6 +2183,11 @@ class DirectFileTransferService:
                     "path": str(value.get("path", "")),
                     "destination": str(value.get("destination", "")),
                     "status": str(value.get("status", "")),
+                    **(
+                        {"errorCategory": str(value.get("errorCategory"))}
+                        if value.get("errorCategory")
+                        else {}
+                    ),
                 }
                 for value in recorded[:MAX_TRANSFER_PROGRESS_ENTRIES]
             ),
@@ -2269,3 +2607,466 @@ def _empty_batch():
     from mediaflow.application.media_organizer import MediaOrganizerBatchResult
 
     return MediaOrganizerBatchResult(items=())
+
+
+class _TransferClaimLost(RuntimeError):
+    """The Worker's lease expired or was taken over mid-execution."""
+
+
+class _TransferCancelled(RuntimeError):
+    """One durable cooperative cancellation was observed at a safe boundary."""
+
+
+class _TransferExecutionFailed(RuntimeError):
+    """One claimed transfer failed before it could reach its Task aggregate."""
+
+
+def _bounded_transfer_error(error: BaseException) -> str:
+    """A bounded, secret-free error identity for one failed transfer."""
+
+    if isinstance(error, DirectFileTransferError):
+        return error.code
+    return f"files_transfer_worker_failed_{type(error).__name__}"
+
+
+def _transfer_authority(manifest: TransferManifest) -> str:
+    """The bounded, claimable admission authority of one confirmed transfer.
+
+    It pins everything a Worker must reconstruct the exact confirmed
+    operation after a process restart: the configuration revision/digest,
+    both endpoint ResourceLibrary/Storage identities, the normalized logical
+    paths, the operation, the conflict choice, the confirmed per-entry scope
+    and the pinned keep-both destinations.  Host roots, credentials, provider
+    payloads and content never enter the authority.
+    """
+
+    document = {
+        "version": 1,
+        "revisionId": manifest.revision_id,
+        "revisionDigest": manifest.revision_digest,
+        "sourceResourceLibraryId": manifest.source_resource_library_id,
+        "sourceStorageId": manifest.source_storage_id,
+        "destinationResourceLibraryId": manifest.destination_resource_library_id,
+        "destinationStorageId": manifest.destination_storage_id,
+        "destinationDirectory": manifest.destination_directory,
+        "operation": manifest.operation.value,
+        "conflictMode": manifest.conflict_mode.value,
+        "sameStorage": manifest.same_storage,
+        "topLevelPaths": list(manifest.top_level_paths),
+        "entries": [
+            [entry.path, entry.kind.value, entry.size, entry.modified_at, entry.fingerprint]
+            for entry in manifest.entries
+        ],
+        "destinations": [[path, destination] for path, destination in manifest.destinations],
+        "keepBothNames": [[path, destination] for path, destination in manifest.keep_both_names],
+        "manifestDigest": manifest.digest,
+    }
+    return json.dumps(document, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _parse_authority(authority_json: str) -> dict[str, object]:
+    """The parsed persisted authority, or a fail-closed empty document."""
+
+    try:
+        parsed = json.loads(authority_json)
+    except ValueError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _plan_source_library(authority: dict[str, object]) -> str:
+    return str(authority.get("sourceResourceLibraryId", ""))
+
+
+def _admitted_item(
+    task_id: str,
+    manifest: TransferManifest,
+    top_level: str,
+) -> PersistentTaskItem:
+    """The queued TaskItem of one top-level selection with its authority.
+
+    The per-item authority is the same bounded progress shape the in-flight
+    execution later maintains: confirmed per-entry scope (this item's slice,
+    bounded), endpoint identities, operation and conflict choice.  A Worker
+    that never started the item executes it from the full pinned admission
+    authority instead, so a scope larger than the per-item continuation bound
+    still transfers once.
+    """
+
+    source_storage_id = manifest.source_storage_id
+    item_id = str(
+        uuid5(
+            NAMESPACE_URL, f"{task_id}:{source_storage_id}:{_item_full_path(manifest, top_level)}"
+        )
+    )
+    confirmed_scope = tuple(
+        (entry.path, manifest.destination_for(entry.path) or entry.path, entry.kind.value)
+        for entry in manifest.entries
+        if entry.path == top_level or entry.path.startswith(f"{top_level}/")
+    )
+    truncated = len(confirmed_scope) > MAX_TRANSFER_PROGRESS_ENTRIES
+    payload = {
+        "version": 1,
+        "status": "pending",
+        "operation": manifest.operation.value,
+        "conflictMode": manifest.conflict_mode.value,
+        "destinationStorageId": manifest.destination_storage_id,
+        "destinationResourceLibraryId": manifest.destination_resource_library_id,
+        "destinationPath": manifest.destination_for(top_level) or top_level,
+        "confirmedEntries": [
+            list(entry) for entry in confirmed_scope[:MAX_TRANSFER_PROGRESS_ENTRIES]
+        ],
+        "confirmedTruncated": truncated,
+        "completedEntries": 0,
+        "failedEntries": 0,
+        "skippedEntries": 0,
+        "truncated": False,
+        "entries": [],
+    }
+    now = datetime.now(UTC)
+    return PersistentTaskItem(
+        item_id,
+        task_id,
+        source_storage_id,
+        manifest.source_resource_library_id,
+        _item_full_path(manifest, top_level),
+        top_level,
+        TaskItemStatus.PENDING,
+        "admitted",
+        0,
+        now,
+        now,
+        destination_storage_id=manifest.destination_storage_id,
+        destination_path=payload["destinationPath"],
+        progress=json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
+
+
+def _item_full_path(manifest: TransferManifest, relative: str) -> str:
+    return f"{manifest.source_root}/{relative}" if manifest.source_root else relative
+
+
+def _queued_document(
+    task: PersistentTask,
+    manifest: TransferManifest,
+    items: tuple[PersistentTaskItem, ...],
+) -> dict[str, object]:
+    """The immediate durable operator projection of one admitted transfer.
+
+    The mutation request returns this before the first Storage mutation: the
+    Web follows the queued transfer through the projection read instead of
+    holding a request open, and no raw Task ID copy/paste or execution token
+    is needed.
+    """
+
+    return {
+        "operation": manifest.operation.value,
+        "conflictMode": manifest.conflict_mode.value,
+        "sameStorage": manifest.same_storage,
+        "status": "QUEUED",
+        "admitted": True,
+        "taskId": task.task_id,
+        "taskStatus": task.status.value,
+        "resourceLibraryId": manifest.source_resource_library_id,
+        "destinationResourceLibraryId": manifest.destination_resource_library_id,
+        "topLevelPaths": sorted(manifest.destinations),
+        "destinations": [
+            {"path": path, "destination": value} for path, value in manifest.destinations
+        ],
+        "knownEffects": [],
+        "itemOutcomes": [
+            {
+                "path": item.source_display,
+                "destination": item.destination_path or item.source_display,
+                "status": "QUEUED",
+            }
+            for item in items
+        ],
+        "checkpoints": [],
+        "checkpointsTruncated": False,
+        "totalItems": len(items),
+        "succeededItems": 0,
+        "skippedItems": 0,
+        "failedItems": 0,
+        "outcomes": [],
+        "outcomesTruncated": False,
+        "sideEffects": "none",
+        "retrySafe": True,
+        "nextAction": (
+            "the transfer is admitted and queued for execution; its progress appears below"
+        ),
+    }
+
+
+def _projection_item_status(item: PersistentTaskItem, record: PersistentResultRecord | None) -> str:
+    """The truthful projection status of one transfer item."""
+
+    if item.status is TaskItemStatus.PENDING:
+        return "QUEUED"
+    if item.status in {TaskItemStatus.PROCESSING}:
+        return "RUNNING"
+    if item.status is TaskItemStatus.PAUSED:
+        return "PAUSED"
+    if item.status is TaskItemStatus.CANCELLED:
+        return "CANCELLED"
+    if record is not None:
+        record_status = record.status.upper()
+        if record_status == "PARTIAL":
+            return "PARTIAL"
+        if record_status == "SKIPPED":
+            return "SKIPPED"
+        if record_status == "FAILED":
+            return "FAILED"
+        if record_status == "SUCCESS":
+            return "SUCCESS"
+    return _ITEM_TASK_INVERSE.get(item.status, "FAILED")
+
+
+#: The bounded per-entry outcome surface of one projection.
+_MAX_PROJECTION_OUTCOMES = MAX_TRANSFER_PATHS * 64
+
+
+def _projection_item_outcomes(
+    item: PersistentTaskItem,
+    payload: dict[str, object] | None,
+    record: PersistentResultRecord | None,
+    outcome_status: str,
+) -> tuple[list[dict[str, object]], bool]:
+    """The durable per-entry outcomes of one transfer item.
+
+    A started item's recorded per-entry progress is the source of truth while
+    it stays unfinished; a finished item's Result annotations (completed
+    executor checkpoints plus the retained skipped-child evidence) reproduce
+    the same per-entry truth after the progress marker was consumed.
+    """
+
+    outcomes: list[dict[str, object]] = []
+    if payload is not None and item.status in {
+        TaskItemStatus.PROCESSING,
+        TaskItemStatus.PAUSED,
+        TaskItemStatus.PENDING,
+    }:
+        for entry in payload.get("entries") or ():
+            if not isinstance(entry, dict):
+                continue
+            outcome: dict[str, object] = {
+                "path": str(entry.get("path", "")),
+                "destination": str(entry.get("destination", "")),
+                "status": str(entry.get("status", "")),
+                "checkpoints": [],
+            }
+            if entry.get("errorCategory"):
+                outcome["errorCategory"] = str(entry.get("errorCategory"))
+            outcomes.append(outcome)
+        return outcomes, bool(payload.get("truncated"))
+    if record is None:
+        return outcomes, False
+    destination = item.destination_path or ""
+    if not record.completed_operations:
+        # A refused/failed item records no executor checkpoint: its single
+        # truthful outcome is the item's own durable failure evidence.
+        outcomes.append(
+            {
+                "path": item.source_display,
+                "destination": destination,
+                "status": outcome_status,
+                "checkpoints": [],
+                **({"errorCategory": record.error} if record.error else {}),
+            }
+        )
+        return outcomes, False
+    # The Result annotations group into one outcome per entry path, keeping
+    # each compound checkpoint order (copy_written, destination_verified,
+    # source_deleted), the exact per-entry status and the skipped-child
+    # evidence beside the entry it belongs to.
+    grouped: dict[str, dict[str, object]] = {}
+
+    def entry_for(path: str) -> dict[str, object]:
+        return grouped.setdefault(
+            path,
+            {
+                "path": path,
+                "destination": destination,
+                "status": outcome_status,
+                "checkpoints": [],
+            },
+        )
+
+    for annotation in record.completed_operations:
+        name, separator, rest = str(annotation).partition(":")
+        if not separator or not rest:
+            entry_for(item.source_display)["checkpoints"].append(name)
+            continue
+        if name == "entry":
+            status, _, path = rest.partition(":")
+            if path:
+                entry_for(path)["status"] = status or outcome_status
+            continue
+        if name == "entry_error":
+            category, _, path = rest.partition(":")
+            if path:
+                entry_for(path)["errorCategory"] = category
+            continue
+        if name == "skip_conflict":
+            entry = entry_for(rest)
+            entry["status"] = "SKIPPED"
+            entry["errorCategory"] = "target_exists"
+            continue
+        entry_for(rest)["checkpoints"].append(name)
+    outcomes.extend(grouped.values())
+    return outcomes, False
+
+
+def _projection_transfer_status(
+    *,
+    task: PersistentTask,
+    transfer: PersistentFilesTransfer | None,
+    uncertain: bool,
+    succeeded: int,
+    partial: int,
+    skipped: int,
+    failed: int,
+) -> str:
+    """The aggregate projection status of one durable transfer Task."""
+
+    if uncertain:
+        return "UNCERTAIN"
+    if task.status is PersistentTaskStatus.PENDING:
+        return "QUEUED"
+    if task.status is PersistentTaskStatus.RUNNING:
+        return "RUNNING"
+    if task.status is PersistentTaskStatus.PAUSED:
+        return "PAUSED"
+    if task.status is PersistentTaskStatus.CANCELLED:
+        return "CANCELLED"
+    if succeeded and not (partial or failed or skipped):
+        return "SUCCESS"
+    if skipped and not (succeeded or partial or failed):
+        return "SKIPPED"
+    if succeeded or partial or skipped:
+        return "PARTIAL"
+    return "FAILED" if failed else "FAILED"
+
+
+def _projection_operation(transfer: PersistentFilesTransfer | None) -> str:
+    if transfer is None:
+        return "transfer"
+    authority = _parse_authority(transfer.authority_json)
+    return str(authority.get("operation", "transfer"))
+
+
+def _projection_conflict_mode(transfer: PersistentFilesTransfer | None) -> str:
+    if transfer is None:
+        return "fail"
+    authority = _parse_authority(transfer.authority_json)
+    return str(authority.get("conflictMode", "fail"))
+
+
+def _projection_source_library(
+    transfer: PersistentFilesTransfer | None, items: tuple[PersistentTaskItem, ...]
+) -> str:
+    if transfer is not None:
+        return _plan_source_library(_parse_authority(transfer.authority_json))
+    return items[0].resource_library_id if items else ""
+
+
+def _projection_destination_library(
+    transfer: PersistentFilesTransfer | None, items: tuple[PersistentTaskItem, ...]
+) -> str:
+    if transfer is not None:
+        return str(
+            _parse_authority(transfer.authority_json).get("destinationResourceLibraryId", "")
+        )
+    return items[0].destination_storage_id or "" if items else ""
+
+
+def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, object]]:
+    """The backend-advertised lifecycle actions of one durable transfer."""
+
+    permitted = True
+    actions: list[dict[str, object]] = []
+    if task.status is PersistentTaskStatus.RUNNING and not task.pause_requested:
+        actions.append(
+            {
+                "action": "pause",
+                "available": True,
+                "path": f"/api/v1/tasks/{task.task_id}/pause",
+            }
+        )
+    else:
+        actions.append(
+            {
+                "action": "pause",
+                "available": False,
+                "reason": f"a {task.status.value} transfer cannot be paused",
+            }
+        )
+    if task.status in {
+        PersistentTaskStatus.PENDING,
+        PersistentTaskStatus.RUNNING,
+        PersistentTaskStatus.PAUSED,
+    }:
+        actions.append(
+            {
+                "action": "cancel",
+                "available": True,
+                "path": f"/api/v1/tasks/{task.task_id}/cancel",
+            }
+        )
+    else:
+        actions.append(
+            {
+                "action": "cancel",
+                "available": False,
+                "reason": "the transfer already reached a terminal state",
+            }
+        )
+    if task.status is PersistentTaskStatus.PAUSED or (
+        task.status is PersistentTaskStatus.RUNNING and not claim_live
+    ):
+        actions.append(
+            {
+                "action": "resume",
+                "available": True,
+                "path": f"/api/v1/tasks/{task.task_id}/resume",
+            }
+        )
+    else:
+        actions.append(
+            {
+                "action": "resume",
+                "available": False,
+                "reason": (
+                    "the transfer is queued or running"
+                    if not claim_live
+                    else "the transfer is running under a live Worker claim"
+                ),
+            }
+        )
+    del permitted
+    return actions
+
+
+def _projection_next_action(task: PersistentTask, transfer_status: str, terminal: bool) -> str:
+    if transfer_status == "UNCERTAIN":
+        return (
+            "an interrupted item could not be safely continued; refresh both directories and "
+            "inspect the Task before any retry — uncertain effects are never replayed"
+        )
+    if task.status is PersistentTaskStatus.PENDING:
+        return "the transfer is queued for the resident Worker; its progress appears here"
+    if task.status is PersistentTaskStatus.RUNNING:
+        return "the transfer is running; its per-item progress appears here"
+    if task.status is PersistentTaskStatus.PAUSED:
+        return (
+            "the transfer is paused at a safe boundary; resume continues from the "
+            "recorded checkpoints"
+        )
+    if task.status is PersistentTaskStatus.CANCELLED:
+        return (
+            "the transfer was cancelled; completed effects stay terminal and each item "
+            "keeps its durable outcome"
+        )
+    if terminal:
+        return "refresh the source and destination directories to see the current state"
+    return "refresh both directories; each item keeps its own durable outcome"

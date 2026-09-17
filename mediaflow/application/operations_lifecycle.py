@@ -37,6 +37,7 @@ from mediaflow.domain.failure import failure_document
 from mediaflow.domain.manual_safety import redact_manual_text
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
+    FILES_TRANSFER_TASK_COMMAND,
     MANUAL_ORGANIZE_TASK_COMMAND,
     PersistentResultRecord,
     PersistentTask,
@@ -179,6 +180,10 @@ class TaskExecutionContext:
     path: TaskExecutionPath
     #: Whether the manual Scan service already stores a cancellation request.
     cancellation_requested: bool = False
+    #: Whether this Task kind has a durable queued continuation authority, so
+    #: a paused Task may be re-queued for the resident Worker (currently only
+    #: the bounded Files Copy/Move transfer Tasks).
+    resumable: bool = False
 
 
 class OperationsLifecycleConflict(RuntimeError):
@@ -1856,18 +1861,47 @@ def task_lifecycle_document(
         next_action=pause_next_action,
     )
 
-    resume = _action(
-        action="resume",
-        label="Resume Task",
-        path=f"/api/v1/tasks/{task.task_id}/resume",
-        available=False,
-        unavailable_reason=permission_reason or RESUME_UNAVAILABLE_REASON,
-        durable_outcome=(
-            "not offered: no durable queued continuation of this exact paused scope exists"
-        ),
-        side_effects="none",
-        next_action=RESUME_NEXT_ACTION,
-    )
+    if execution.resumable:
+        # A bounded Files transfer Task carries a durable per-item continuation
+        # authority: the resume request re-queues it for the resident Worker,
+        # which continues only from each item's recorded known-safe checkpoint.
+        resume = _action(
+            action="resume",
+            label="Resume Task",
+            path=f"/api/v1/tasks/{task.task_id}/resume",
+            available=permitted,
+            unavailable_reason=(
+                permission_reason or "resume requires the Task control permission"
+                if not permitted
+                else None
+            ),
+            durable_outcome=(
+                "the transfer is re-queued for the resident Worker; it continues only from "
+                "each item's recorded known-safe checkpoint and never replays completed or "
+                "uncertain mutations"
+            ),
+            side_effects=(
+                "no Storage mutation in this request; the Worker later continues the "
+                "remaining transfer through OrganizerExecutor"
+            ),
+            next_action=(
+                "resume re-queues the transfer; follow its progress in the Files workspace "
+                "or Operations"
+            ),
+        )
+    else:
+        resume = _action(
+            action="resume",
+            label="Resume Task",
+            path=f"/api/v1/tasks/{task.task_id}/resume",
+            available=False,
+            unavailable_reason=permission_reason or RESUME_UNAVAILABLE_REASON,
+            durable_outcome=(
+                "not offered: no durable queued continuation of this exact paused scope exists"
+            ),
+            side_effects="none",
+            next_action=RESUME_NEXT_ACTION,
+        )
 
     return {
         "objectType": "task",
@@ -1993,7 +2027,13 @@ class TaskLifecycleService:
             )
         if task.command == MANUAL_ORGANIZE_TASK_COMMAND:
             return TaskExecutionContext(TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE)
-        return TaskExecutionContext(TaskExecutionPath.OPERATOR_WORKFLOW)
+        return TaskExecutionContext(
+            TaskExecutionPath.OPERATOR_WORKFLOW,
+            resumable=(
+                task.command == FILES_TRANSFER_TASK_COMMAND
+                and task.status is PersistentTaskStatus.PAUSED
+            ),
+        )
 
     def require_version(self, task: PersistentTask, expected_version: str | None) -> None:
         """Reject a control submitted against a state that is no longer current."""

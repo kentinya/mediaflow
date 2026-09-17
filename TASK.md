@@ -533,114 +533,132 @@ not satisfy the browser assertion.
 
 ## Developer Completion Report
 
-> Correction round 2026-09-17: the report below covers the F-1..F-6 correction
-> checkpoint; the superseded first-round report content has been replaced. The
-> correction commit sits after the original Task 37.4 checkpoint
-> `9eafe9e3fef11e993670b42b762d747cbc0dee5a` without amending it.
+> Correction round 2, 2026-09-17: the report below covers the B-2.1..B-2.3
+> correction checkpoint; the superseded first-round and F-1..F-6 correction
+> report content has been replaced. The correction commit sits after the
+> previous correction checkpoint `98e4175ceefd87ec327562379306918ab6ef43f9`
+> without amending it.
 
 ### Changed Files
 
-- `mediaflow/domain/direct_files.py` — `MAX_TRANSFER_PROGRESS_ENTRIES` bound
-  (the durable per-item confirmed-scope/progress cap).
-- `mediaflow/domain/task_persistence.py` — `TRANSFER_INTERRUPTED_STAGE` and the
-  bounded in-flight transfer `progress` field on `PersistentTaskItem`.
-- `mediaflow/infrastructure/sqlite_runtime.py` — runtime schema 35: additive
-  `task_items.progress` column (CREATE TABLE + ALTER migration) and the
-  reordered `_item_values`/row mapping that persist it.
-- `mediaflow/application/task_runtime.py` — `complete_direct_item` now persists
-  the exact destination Storage identity, the bounded per-entry checkpoint
-  annotations, an optional interrupted stage and `SKIPPED` status;
-  `record_transfer_progress` persists the bounded in-flight authority (operation,
-  conflict mode, endpoint identities, confirmed per-entry scope, recorded entry
-  outcomes, exact aggregate counters).
-- `mediaflow/application/direct_file_commands.py` — one cached adapter instance
-  per configured Storage identity for the whole pinned-snapshot service
-  lifetime (F-2), so no business decision depends on incidental object identity.
-- `mediaflow/application/organizer.py` — `execute_direct_copy/move` accept an
-  explicit validated `same_storage` decision (object identity stays only as the
-  conservative fallback); `verify_streamed_copy` recovery evidence primitive;
-  `_cross_storage_move` accepts a `verified_destination` continuation that
-  adopts the persisted Copy/verify checkpoints instead of re-copying.
-- `mediaflow/application/direct_file_transfers.py` — the F-1..F-5 core:
-  `_TransferPlan`/`_ResumeContext` execution model; the selected conflict mode
-  now binds every top-level AND directory destination with fresh last-boundary
-  revalidation (a conflicting directory is never merged, a directory Move
-  removes no source when the item must fail or skip); in-batch destination
-  collisions are detected at impact (`batch_conflict`) and reported per sibling
-  at execution (deterministic sorted order); keep-both names are pinned against
-  batch-assigned destinations too; destination-state checks resolve through the
-  destination ResourceLibrary root (latent wrong-root bug found by the new
-  nested-root fixtures); truthful per-item aggregation (`_item_status`) that
-  includes directory creation/removal outcomes and `SKIPPED`; `SKIPPED` items
-  persist as `TaskItemStatus.SKIPPED`; per-entry pause/cancel observation with
-  bounded durable progress snapshots; `resume_transfer` continues a paused or
-  interrupted transfer Task only from its persisted known-safe checkpoint
-  (confirmed-scope match required, completed entries never replayed, uncertain
-  effects never continued, keep-both never re-derived, RUNNING refused,
-  stale-Active refused) with a verified-destination continuation of an
-  interrupted compound Move and explicit investigation states for items
-  without a usable checkpoint; `_transfer_status` gains truthful SKIPPED and
-  mixed-batch states and `itemOutcomes`/`skippedItems` in the response.
-- `mediaflow/interfaces/service_api.py` — `POST /api/v1/tasks/{id}/resume` now
-  continues `files_transfer` Tasks through the same application service while
-  every other command keeps its actionable refusal.
-- `web/src/entities/library/direct-files.ts` — optional `skippedItems` on the
-  transfer result model.
-- `web/src/features/library/TransferDialog.tsx` — the impact fetch is part of
-  one submission (duplicate-submit window closed); the result view shows
-  skipped/mixed aggregates, bounded per-entry outcomes with known-state
-  explanations (including the verified-copy/source-retained compound state)
-  and truncation notes.
-- `web/src/features/library/StorageFilesPage.tsx` — transfer success pruning
-  distinguishes Copy from Move: only a Move whose known effect proves the
-  source is gone clears the selection.
-- Tests: `tests/test_direct_file_transfers.py` (+17 tests: directory/in-batch
-  conflict intent, production-factory and explicit same-Storage decisions,
-  resolved-root overlap, aggregation truth, durable Result identity, durable
-  pause/resume/interruption), schema-pin fixtures updated for runtime schema
-  35 (`tests/test_configuration_organize.py`, `test_configuration_classification.py`,
+- `mediaflow/infrastructure/sqlite_runtime.py` — runtime schema 36: the new
+  `files_transfers` admission/claim table (DDL + index); every `task_items`
+  INSERT now names its columns explicitly through the shared
+  `_TASK_ITEM_COLUMNS`/`_TASK_ITEM_INSERT`/`_TASK_ITEM_UPSERT` definitions
+  (order-independent on a fresh or an in-place-upgraded database); the
+  repository methods `admit_files_transfer`, `get_files_transfer(_for_task)`,
+  `claim_next_files_transfer`, `begin_files_transfer`,
+  `heartbeat_files_transfer_claim`, `finish_files_transfer`,
+  `pause_files_transfer`, `requeue_files_transfer`, `require_files_transfer`
+  and `transfer_claim_is_current`.
+- `mediaflow/domain/task_persistence.py` — `FilesTransferStatus`,
+  `PersistentFilesTransfer`, the new `PersistentTaskRepository` transfer
+  protocol methods, and the truthful FILES_TRANSFER_TASK_COMMAND semantics
+  (every transfer executes through the durable runner).
+- `mediaflow/application/direct_file_transfers.py` — `submit_transfer`
+  (atomic durable admission: PENDING Task + per-item transfer authority +
+  claimable transfer row, returned before the first Storage mutation),
+  `run_claimed_transfer`/`_execute_claimed_transfer` (the Worker execution
+  engine: snapshot-compatibility check, claim-fenced per-entry observation,
+  fresh items from the pinned authority, started items only from their
+  persisted checkpoints), `requeue_transfer` (resume re-queues only — zero
+  Storage work in the resume request), `transfer_projection` (the durable
+  poll document with backend-advertised lifecycle actions and per-entry
+  outcomes rebuilt from Task/items/progress/Results), the truthful
+  `_item_status` precedence (any mixed SUCCESS+SKIPPED aggregate is PARTIAL),
+  per-entry status/error evidence in the Result annotations, `_execute_item`
+  `interruption`/`collect` extension, and the claim-guarded engine helpers.
+- `mediaflow/application/files_transfer_worker.py` (new) —
+  `FilesTransferWorker`: atomic claim of an admitted (or lease-expired)
+  transfer, guarded running boundary, heartbeat at every safe boundary, and a
+  bounded truthful pre-mutation failure when a claim cannot start.
+- `mediaflow/application/task_runtime.py` — queued Task creation
+  (`status=PENDING`), `begin_queued` (the Worker-side running boundary) and
+  `requeue` (PAUSED -> PENDING without execution).
+- `mediaflow/application/operations_lifecycle.py` — `TaskExecutionContext
+  .resumable`; the lifecycle projection now advertises `resume` for a paused
+  `files_transfer` Task with the durable re-queue outcome.
+- `mediaflow/application/automation.py` — `AutomationWorker` serves admitted
+  transfers through the injected `files_transfer_worker` runner; the
+  readiness default pins runtime schema 36.
+- `mediaflow/final_cli.py` — `_files_transfer_worker_context` (the resident
+  Worker reconstructs the Active revision/runtime/Storage from durable state;
+  an unhealthy Active config disables only the transfer runner, never the
+  Worker's other duties); `worker run`/`worker run-next` drive it.
+- `mediaflow/interfaces/service_api.py` — `POST
+  .../files/transfers` returns 202 with the durable queued projection (no
+  inline execution); new `GET .../files/transfers/{task_id}` bounded durable
+  projection read; `POST /tasks/{id}/resume` for `files_transfer` re-queues
+  (202) instead of executing inline; `DirectFileTransferError` import.
+- `web/src/entities/library/direct-files.ts` — `TransferProjectionModel`,
+  `TransferLifecycleAction`, `normalizeTransferProjection`.
+- `web/src/shared/api/api-client.ts` — `fetchTransferProjection` (polling
+  read) and `mutateTransferLifecycle` (pause/cancel/resume with the
+  projection version as the optimistic-concurrency value).
+- `web/src/features/library/TransferDialog.tsx` — after admission the dialog
+  polls the durable projection, shows queued/running/paused/terminal
+  per-item state and known-state explanations, offers exactly the
+  backend-advertised pause/cancel/resume actions, keeps the operator's
+  destination/conflict context, and keeps the synchronous duplicate-submit
+  guard across the whole impact+admission window; no Task ID or token
+  ceremony.
+- `web/src/features/library/StorageFilesPage.tsx` — the admission response
+  only stores the durable Task identity; terminal projections refresh live
+  truth and prune only a Move's provably-gone sources;
+  `pruneAffectedBrowseState` is a stable callback.
+- Tests: `tests/test_direct_file_transfers.py` (async admission/worker
+  journeys, gated pause/cancel from a control request, takeover after process
+  loss at every compound checkpoint, single-file process loss, atomic fenced
+  claims, projection reads, truthful aggregation), `tests/test_task_persistence.py`
+  (production-shaped schema 34 -> 35 migration regression + insert
+  order-independence guard), schema-version pins updated to 36
+  (`tests/test_configuration_organize.py`, `test_configuration_classification.py`,
   `test_configuration_destination.py`, `test_configuration_destination_activation.py`,
   `test_configuration_destination_precheck.py`),
-  `web/src/features/library/StorageFilesPage.test.tsx` (+3).
+  `web/src/features/library/StorageFilesPage.test.tsx` (async dialog flow,
+  deterministic duplicate-submit window, projection-driven outcomes),
+  `web/tests/fake-server.mjs` + `web/tests/e2e/library-files.spec.ts`
+  (admission -> polling -> terminal journey, no raw Task-ID ceremony).
 
 ### Implemented
 
-- F-1: the selected conflict mode now applies to every top-level and directory
-  destination with fresh last-boundary revalidation. A directory `MOVE` with
-  `FAIL` performs zero mutation for that item (the B reproduction now returns
-  `FAILED`, the complete source stays, nothing merges); `SKIP` records a
-  truthful skipped item; `KEEP_BOTH` pins one unique root and every descendant
-  beneath it; in-batch destination collisions are detected at impact and
-  reported deterministically per sibling instead of merging.
-- F-2: the same-Storage decision is the validated configured-Storage-identity
-  decision (adapter cache per pinned snapshot plus an explicit executor
-  argument); the production-style factory path is proven to invoke only native
-  `Storage.copy`/`Storage.move` with zero streaming/Delete fallback; overlap
-  checks compare fully resolved logical Storage paths across ResourceLibrary
-  roots (a latent destination-root resolution bug found by these tests is
-  fixed).
-- F-3: `SKIPPED` persists as `TaskItemStatus.SKIPPED` with a skipped known
-  effect; destination-directory creation/removal participates in aggregation;
-  a failed emptied-source removal is an uncertain/partial item, never a wholly
-  successful directory Move; all-skipped/mixed/partial/uncertain aggregates are
-  truthful; the Web prunes selection only for a Move and keeps it after a Copy.
-- F-4: the durable Result and TaskItem now carry the exact destination
-  Storage/ResourceLibrary identity, logical source/target, bounded per-entry
-  checkpoint annotations and effect certainty; Task/Result detail reloads
-  reproduce the truthful state without the original response.
-- F-5: directory, cross-Storage and multi-item transfers observe pause/cancel
-  at every per-entry boundary; each item persists a bounded progress authority
-  (confirmed per-entry scope, endpoint identities, recorded outcomes); a new
-  `resume_transfer` continues only from that persisted known-safe checkpoint,
-  stops with explicit interrupted/investigation states otherwise, never
-  replays completed or uncertain effects, and is reachable through the
-  existing Task lifecycle route; a short same-Storage single-file command
-  keeps the identical persistence/audit/executor semantics.
-- F-6: the transfer dialog closes the duplicate-submit window during impact
-  acquisition, shows bounded per-item progress/outcomes with a known-state
-  explanation and the safe next action, and preserves destination/conflict
-  input on recoverable failure; selection pruning distinguishes Copy from
-  Move.
+- B-2.1 (schema 35 upgrade safety): every `task_items` insert statement names
+  its 20 columns explicitly through one shared definition. A fresh schema-36
+  database and a schema-34 database upgraded in place (occurrence columns
+  appended, then `progress` at the physical end) store and load identical
+  values; the isolated migration fixture proves an ordinary TaskItem round
+  trip, a transfer TaskItem's bounded progress round trip, unchanged
+  occurrence fields, terminal completion clearing progress without corrupting
+  the row or its Result, and a source-level guard that fails when a positional
+  `INSERT INTO task_items VALUES` reappears.
+- B-2.2 (durable admission split from execution): the mutation request
+  revalidates the submitted manifest digest, then atomically persists the
+  PENDING Task, every bounded per-item transfer authority and the claimable
+  transfer row, and returns 202 with the queued projection before the first
+  Storage mutation. The resident Worker claims the transfer under a persisted
+  claim/lease fence (atomic claim SQL, guarded running boundary, heartbeat at
+  every per-entry boundary, claim-guarded terminal publish), executes it
+  through the existing OrganizerExecutor-only path, and publishes per-entry
+  progress after each safe entry. Pause/cancel arrive through the normal
+  authenticated Task lifecycle API and are observed at safe boundaries; a
+  permitted resume re-queues the persisted authority and the Worker
+  continues it — never inline in the resume request. On process loss a
+  replacement Worker claims the expired lease and continues only from the
+  persisted checkpoints (verified destinations adopted, uncertain effects
+  never replayed, missing checkpoints becoming explicit investigation
+  states); the same-Storage single-file fast path is routed through this one
+  durable runner, so Copy/Move has exactly one recovery model. The API
+  process creates no implicit worker; the runner is served by the existing
+  resident Worker loop (`mediaflow worker run`).
+- B-2.3 (truthful mixed-outcome aggregation): one deterministic precedence —
+  any UNCERTAIN dominates, all-SUCCESS/SKIPPED stay truthful, any
+  SUCCESS+SKIPPED mixture is PARTIAL, a failure beside a known mutation is
+  PARTIAL, and only a failure with zero recorded mutation is FAILED. The
+  aggregate counts, the top-level known effect (`partial`), the durable
+  TaskItem/Result and every reloaded detail agree; the exact skipped child
+  and completed directory/file checkpoints persist as bounded Result
+  evidence (`entry:STATUS:path`, `entry_error:*`, `skip_conflict:*`
+  annotations) and the Web prunes selection only by physical source truth.
 
 ### Tests and Results
 
@@ -650,75 +668,83 @@ not satisfy the browser assertion.
 - `.venv/bin/python -m pip check` — PASS.
 - `test -z "$(grep -rn -i -E 'ffprobe|ffmpeg' mediaflow pyproject.toml)"`
   (rg unavailable in this environment; equivalent grep) — PASS, no matches.
-- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (38).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (44).
 - `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (55).
 - `.venv/bin/python -m unittest tests.test_source_directory_cleanup
   tests.test_manual_organize_execution tests.test_configuration_organize` — PASS.
 - `.venv/bin/python -m unittest tests.test_organizer
-  tests.test_organizer_mutation_authority tests.test_organizer_rollback` — PASS (45).
+  tests.test_organizer_mutation_authority tests.test_organizer_rollback` — PASS.
 - `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage
-  tests.test_openlist_storage tests.test_s3_storage` — PASS (94).
+  tests.test_openlist_storage tests.test_s3_storage` — PASS.
 - `.venv/bin/python -m unittest tests.test_runtime_files_browser
   tests.test_api_security tests.test_task_persistence
-  tests.test_task_pause_resume tests.test_task_retry` — PASS.
-- `.venv/bin/python -m unittest discover -s tests` — 1637 tests: FAIL with only
-  the same 3 failures reproduced identically at a clean Task Base worktree
-  (`4954502`, see Risks); all schema-version fixture pins updated for runtime
-  schema 35.
+  tests.test_task_pause_resume tests.test_task_retry` — PASS (45).
+- `.venv/bin/python -m unittest discover -s tests` — 1645 tests: FAIL with
+  only the same 3 failures reproduced identically at a clean Task Base
+  worktree (`4954502`, see Risks); the schema-version fixture pins were
+  updated for runtime schema 36 (five configuration modules).
 - `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE, same
-  environment limitation as the first round: the Docker daemon rejects the
-  smoke harness's bind mounts (`bind source path does not exist:
+  environment limitation as both previous rounds: the Docker daemon rejects
+  the smoke harness's bind mounts (`bind source path does not exist:
   /tmp/mediaflow-smoke-security-*/…`); the script fails visibly, nothing is
   hidden or asserted as PASS.
-- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS;
-  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
-  (SHA-256 641763b8…); wheel artifacts removed after the check.
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` —
+  PASS; `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` —
+  PASS (SHA-256 50dcbdf5…); wheel artifacts removed after the check.
 - `cd web && npm run format:check` — PASS; `npm run typecheck` — PASS;
-  `npm run lint` — PASS.
-- `cd web && NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx`
-  — PASS (32; the required `npx vitest run` invocation needs `NODE_ENV=test`
-  in this shell, otherwise vitest resolves the production React build and
-  every jsdom test errors with `React.act is not a function` — an environment
-  invocation detail, reported as observed).
+  `npm run lint` — PASS (0 errors).
+- `cd web && NODE_ENV=test npx vitest run
+  src/features/library/StorageFilesPage.test.tsx` — PASS (32; the
+  `NODE_ENV=test` shell requirement is unchanged from the previous rounds).
 - `cd web && npm run test -- --run` — PASS (33 files / 451 tests).
 - `cd web && npm run build` — PASS.
 - `cd web && npx playwright test tests/e2e/library-files.spec.ts
-  --project=chromium` — PASS (28); `npm run test:e2e` — PASS (106).
+  --project=chromium` — PASS (28); `npm run test:e2e` — 116 tests: FAIL with
+  only the 10 failures of the two spec files reproduced identically at a
+  clean Task Base worktree (`library-file-detail` 7 + `manual-operations` 3,
+  verified by `git stash` reproduction; see Risks).
 - `git diff --check` — PASS; staged manifest inspected: no
   `config/alist.json`, credentials or unrelated files; the pre-existing dirty
   `docs/pics/文件页.png` is preserved and deliberately not staged.
 
 ### Decisions
 
-- The correction uses one coherent execution model (`_TransferPlan`) instead
-  of patching the old manifest-driven loop: both fresh execution and durable
-  continuation drive the same per-entry admission, conflict and progress
-  semantics, so a resumed Task cannot diverge from a freshly confirmed one.
-- The durable continuation authority is the per-item bounded progress
-  snapshot (runtime schema 35, `task_items.progress`): confirmed per-entry
-  scope plus endpoint identities plus recorded outcomes.  An item without a
-  persisted known-safe checkpoint becomes an explicit interrupted/investigation
-  state (`transfer_interrupted`, `files_transfer_interrupted_unknown`) and is
-  never blind-retried; keep-both continuations are refused because their
-  unique names were admission-pinned and cannot be re-derived.
-- A cross-Storage Move interrupted after the Copy is continued by
-  digest-verifying the existing destination (`verify_streamed_copy`) and
-  finishing only the destructive source step with fresh exact evidence
-  (`verified_destination=True`); a truncated/foreign destination falls through
-  to the selected no-overwrite conflict behavior instead of being overwritten
-  or deleted.
-- Mixed skip/success aggregates report PARTIAL (not fabricated SUCCESS);
-  all-skipped reports SKIPPED; the per-item known effects stay exact either
-  way.  A failed emptied-source-directory removal surfaces the executor's
-  uncertain delete certainty as an uncertain item — it is never reported as a
-  wholly successful directory Move.
-- The same-Storage decision is enforced at two layers (per-snapshot adapter
-  cache and the explicit executor argument) so neither the service nor the
-  executor can silently drift back to object identity.
-- Destination-state checks now resolve through the destination ResourceLibrary
-  root; this latent wrong-location bug was invisible while every fixture
-  library sat at a Storage root and is a direct root cause of truthful
-  conflict revalidation (F-1 family).
+- One recovery model for Copy/Move: every transfer — including the short
+  same-Storage single-file command — is admitted into the same durable
+  Task + claimable transfer authority and executed by the same resident
+  Worker. The B plan prefers this over retaining an inline fast path, and it
+  removes the `files_direct_command` orphaned-running recovery hole entirely.
+- The Worker claim fence lives on the new `files_transfers` row (not the Task
+  row): atomic claim SQL accepts only a non-terminal transfer whose previous
+  lease expired, the running boundary is a guarded claim-token update before
+  the first mutation, every per-entry boundary heartbeats the claim, and the
+  terminal status is published through a claim-token-guarded update — so only
+  the current claim owner advances progress or finishes a transfer. Task rows
+  stay the projection surface; the fence stays the Worker's.
+- Admission persists the full pinned manifest authority
+  (`files_transfers.authority_json`, bounded by the existing entry limits)
+  beside per-item TaskItems that each carry their own bounded confirmed
+  scope. Fresh items execute from the pinned authority (so a directory larger
+  than the per-item continuation bound still transfers once); a started item
+  continues only from its recorded progress, where the existing documented
+  512-entry continuation bound applies.
+- Keep-both continuation is now legal because the pinned unique names travel
+  inside the persisted authority (root destination + per-entry destinations);
+  a conflicting keep-both destination that appears after admission still
+  resolves through the selected conflict behavior at the last safe boundary
+  and is never silently replaced.
+- The uncertain-effect marker is derived from executor-owned effect
+  certainty (`attempted_unverified` Results), so the projection reproduces
+  UNCERTAIN after a restart without trusting status inference; a mid-flight
+  interruption also writes the marker onto the running Task row.
+- A lifecycle resume is a durable re-queue (202), never an execution: the
+  Worker owns every mutation. The projection advertises resume for a paused
+  transfer (and the backend refuses a live-claim re-queue), so the Operations
+  and Files surfaces agree with the route behavior.
+- The fake e2e server emulates the same journey (202 admission, polling
+  projection, advertised actions) so the browser tests exercise the real
+  Web contract; the genuine claim/fence/restart evidence lives in the Python
+  Worker tests.
 - `TASK.md` (B's correction text plus this report) travels with the
   correction checkpoint per the workflow; `docs/pics/文件页.png` remains
   unstaged/dirty.
@@ -728,40 +754,49 @@ not satisfy the browser assertion.
 - Upload and Download journeys (browser multipart/resumable upload, bounded
   streamed archive download) are untouched by this Task.
 - The remaining media-Organize/FileIndex reconciliation journey: multi-item
-  Organize completion from Files, terminal Organize-to-FileIndex reconciliation.
-- Web-side resume affordance: the durable transfer continuation is reachable
-  through the Task lifecycle API (`POST /api/v1/tasks/{id}/resume`); whether
-  the V2 Task detail should surface a resume control for `files_transfer`
-  Tasks is B's call.
+  Organize completion from Files, terminal Organize-to-FileIndex
+  reconciliation.
+- Whether the V2 Operations/Task-detail surface should render the transfer
+  projection document (the backend already advertises it) is B's call; the
+  Files dialog journey is complete without it.
 
 ### Risks / Deviations
 
-- Full-suite FAIL is limited to the same 3 failures already present at the
-  Task Base (`test_configuration_status.ConfigurationSnapshotTests.test_hostile_configuration_content_is_never_exposed`
-  and the two
-  `test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_*`
-  golden-fixture failures asserting 201). Reproduced at a clean Task Base
-  worktree before judging this correction; pre-existing and unrelated to this
-  Task, and the B PASS judgment on them is not mine to make.
+- Full-suite FAIL is limited to the same 3 failures reproduced unchanged at
+  the Task Base (`test_configuration_status.ConfigurationSnapshotTests.
+  test_hostile_configuration_content_is_never_exposed` and the two
+  `test_manual_operations_contract.ManualOperationsContractTests.
+  test_real_api_documents_*` golden-fixture failures asserting 201).
+  Reproduced at a clean Task Base worktree before judging this correction;
+  pre-existing and unrelated to this Task, and the B PASS judgment on them
+  is not mine to make.
+- Full e2e FAIL is limited to 10 failures in the two spec files that fail
+  identically at a clean Task Base worktree (`web git stash` reproduction:
+  `library-file-detail` 7, `manual-operations` 3). The transfer e2e spec
+  (`library-files`) passes fully. Pre-existing and unrelated; B judges.
 - The Docker release-security gate remains UNAVAILABLE in this workspace
-  (daemon rejects the smoke context bind mounts); it needs a host where Docker
-  can bind-mount the smoke context.
-- Runtime schema 34 → 35 is an additive migration (`task_items.progress`);
-  legacy rows read `None` and behave exactly as before.  Five test modules pin
-  the schema version and were updated with the bump; no safety assertion was
-  removed, weakened or skipped.
+  (daemon rejects the smoke context bind mounts); it needs a host where
+  Docker can bind-mount the smoke context.
 - Per-item durable progress stores the confirmed entry scope bounded at
-  `MAX_TRANSFER_PROGRESS_ENTRIES` (512); an item whose confirmed scope is
-  larger cannot be safely continued after an interruption and stops with an
-  actionable `files_transfer_resume_scope_changed` state — a bounded,
-  documented limitation of the recovery authority, not silent scope expansion.
-- Vitest must run with `NODE_ENV=test` in this shell (see Tests and Results).
+  `MAX_TRANSFER_PROGRESS_ENTRIES` (512): a fresh item executes fully from
+  the pinned authority, but an item whose recorded progress is truncated
+  cannot be continued after an interruption and stops with an actionable
+  `files_transfer_resume_scope_changed` state — the same bounded, documented
+  recovery-authority limitation as the previous rounds, not silent scope
+  expansion.
+- Vitest must run with `NODE_ENV=test` in this shell (see Tests and
+  Results).
+- The transfer Task aggregate reuses the existing `finish()` semantics: a
+  lone PARTIAL item aggregates to a `failed` Task row while the transfer
+  projection and Result keep the exact partial evidence — consistent with
+  how media-organize Tasks already aggregate, and the per-item truth stays
+  authoritative for recovery.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 98e4175ceefd87ec327562379306918ab6ef43f9
+Head SHA: 57f096c645773dba39b12bb31168bd30a84f05cd
 ```
 
 ## B Re-review Findings — 2026-09-17
@@ -936,8 +971,165 @@ No existing safety assertion may be removed, weakened or skipped to obtain a pas
 ## B Review Result
 
 ```text
-Reviewed: 4954502c6493d57634a14461a7268120419319da..9eafe9e3fef11e993670b42b762d747cbc0dee5a
+Reviewed: 4954502c6493d57634a14461a7268120419319da..98e4175ceefd87ec327562379306918ab6ef43f9
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: Developer corrects Task 37.4 in the same correction loop; Task 37.5 is not active.
+Next: SAME TASK FIX LOOP
 ```
+
+- Runtime schema 34 -> 35 migration is broken for every subsequent TaskItem insert. On an upgraded
+  database, `ensure_task_occurrence_columns` has already appended the three source-occurrence
+  columns, then schema 35 appends `progress` at the physical end; `_item_values` and every
+  positional `INSERT INTO task_items VALUES (...)` instead place `progress` immediately after
+  `error`. B's isolated schema-34 reproduction fails in `SQLiteTaskRepository.upsert_item` with
+  `sqlite3.IntegrityError: NOT NULL constraint failed: task_items.source_fingerprint_state`.
+  Replace positional inserts with explicit column lists (including all alternate/atomic insert
+  paths), make fresh and upgraded layouts order-independent, and add a real 34 -> 35 migration
+  regression that persists/reloads both an ordinary TaskItem and transfer progress without
+  corrupting occurrence fields.
+- Directory/cross-Storage/multi-item transfer execution is still performed synchronously inside
+  the mutation HTTP request: `MediaFlowApi` calls `execute_transfer`, which creates the Task and
+  immediately calls `_run_transfer_task` before returning. There is no queued/claimed resident
+  worker boundary, so the Web receives no durable identity until all Storage work finishes and can
+  show only a request spinner plus the terminal response; the new pause test requests pause from a
+  Storage callback inside that same request, and the Web has no progress polling or usable resume
+  action. A same-Storage single-file process loss also leaves a `files_direct_command` Task in
+  `RUNNING`/`PROCESSING` with no transfer continuation path. Move long work behind genuine durable
+  Task admission/claim/fencing so the request returns the Task identity immediately, persist safe
+  per-entry/checkpoint progress, and make Files show/poll progress and expose the advertised safe
+  continuation or investigation action without raw-ID ceremony. Add API/Web and restart tests that
+  prove this actual asynchronous journey rather than callback-injected pause inside a synchronous
+  call.
+- Mixed entry outcomes inside one top-level directory are still collapsed to fabricated success.
+  B's direct reproduction of `_item_status([SUCCESS-with-CREATE_DIRECTORY, SKIPPED])` returns
+  `SUCCESS`; `_run_transfer_task` consequently persists the whole TaskItem/Result as successful and
+  reports its known effect as `transferred`, despite a child being skipped. Aggregate any mixed
+  success/skipped directory outcome as `PARTIAL`, retain the skipped child evidence, and add a
+  directory regression where the root is created but a child encounters a late conflict under
+  `SKIP`, proving response, TaskItem, Result and reloaded detail all remain truthful.
+
+## Same-Task Correction Plan — 2026-09-17
+
+This plan remains inside Task 37.4. It does not change the Task ID, Task Base, Goal, parent Slice,
+original Acceptance Criteria or Non-goals. The Developer must correct all three blockers in one
+coherent checkpoint and return this same Task to `READY FOR B REVIEW`.
+
+### 1. Make schema 35 TaskItem persistence upgrade-safe
+
+- Replace every positional `INSERT INTO task_items VALUES (...)` path with an explicit, identical
+  column list. Cover ordinary upsert, atomic TaskItem/Result completion, manual-execution completion
+  and every other alternate insert path; do not fix only the transfer-specific caller.
+- Keep `_item_values` and `_item` semantically aligned with the named columns, but do not depend on
+  their physical SQLite order. A fresh schema 35 database and a schema 34 database upgraded in
+  place must produce the same loaded `PersistentTaskItem` values.
+- Preserve existing occurrence identity. Migration and later writes must not move, overwrite or
+  reinterpret `source_occurrence_id`, `source_fingerprint` or
+  `source_fingerprint_state`; non-transfer TaskItems must continue to store `progress = NULL`.
+- Add an isolated 34 -> 35 migration fixture whose schema-34 `task_items` layout already contains
+  the occurrence columns. Initialize it through the production repository migration, then prove:
+  an ordinary TaskItem can be inserted and reloaded; a transfer TaskItem can persist/reload bounded
+  progress; pre-existing occurrence fields survive unchanged; terminal completion clears progress
+  without corrupting occurrence or Result evidence.
+- Inspect all `task_items` insert statements after the correction and add a regression assertion or
+  helper that prevents a later caller from reintroducing physical-column-order dependence.
+
+### 2. Split durable transfer admission from execution
+
+- Refactor the transfer command into two explicit application boundaries:
+
+  ```text
+  impact/read-only admission
+  -> exact submitted manifest revalidation
+  -> atomically persist PENDING Task + bounded per-item transfer authority
+  -> return durable operator projection immediately
+  -> resident Worker claims under a persisted fence
+  -> per-entry OrganizerExecutor execution and durable progress
+  -> terminal TaskItem/Result projection
+  ```
+
+- For directory, cross-Storage and multi-item work, the mutation HTTP request must not call
+  `_run_transfer_task` inline. It returns only after durable admission, before the first Storage
+  mutation, with an ordinary Files-facing state that the Web can follow without exposing a raw
+  token or requiring Task-ID copy/paste.
+- Persist enough bounded authority before returning to reconstruct the exact confirmed operation
+  after process restart: pinned configuration revision/digest, source/destination ResourceLibrary
+  and Storage identities, normalized logical paths, operation, conflict choice, confirmed entry
+  scope and pinned keep-both destinations. Do not persist host roots, credentials, provider payloads
+  or content.
+- Execute through the existing resident Worker ownership model or an equivalent existing durable
+  Task runner with atomic claim, lease/fence and compatible-snapshot checks. The API process must not
+  create or supervise an implicit worker. Only the current claim owner may advance progress or
+  publish a terminal result.
+- Persist progress after each safe entry or compound checkpoint. Pause/cancel must be requested via
+  the normal authenticated Task lifecycle API and observed at a safe boundary; completed effects
+  remain terminal. Resume must enqueue/claim the same persisted authority and must not execute the
+  remaining transfer synchronously inside the resume HTTP request.
+- On process loss, a replacement Worker may continue only from a persisted known-safe checkpoint.
+  Missing, truncated, stale or uncertain authority becomes a durable
+  `transfer_interrupted`/investigation outcome with the exact known effects and next action; it is
+  never blindly replayed.
+- Prefer routing the permitted same-Storage single-file fast path through this same durable runner
+  so Copy/Move has one recovery model. If the inline optimization is retained, it must atomically
+  reach a truthful terminal state or be recoverable after process loss; it may not leave a
+  `files_direct_command` Task indefinitely `RUNNING`/`PROCESSING` with no supported continuation or
+  investigation transition.
+- Update Files to retain the source ResourceLibrary, directory, destination, conflict choice and
+  unaffected selection after admission. Poll or otherwise read the bounded transfer projection and
+  show queued/running/paused/cancelled/completed/partial/uncertain per-item state, known checkpoints
+  and the backend-advertised safe next action. Provide pause/cancel/resume or investigation actions
+  only when the backend lifecycle projection advertises them; do not expose execution tokens or
+  require the operator to copy a Task ID.
+- Keep all mutation in `OrganizerExecutor`, preserve same-Storage native-only behavior and the
+  explicit cross-Storage Copy -> verify -> Delete-source boundary, and retain current Active
+  snapshot, RBAC, confinement, conflict and no-uncertain-replay rules across Worker reconstruction.
+
+### 3. Make nested mixed-outcome aggregation truthful
+
+- Define one deterministic per-item status precedence used by response, TaskItem, Result and reloaded
+  detail:
+
+  ```text
+  any UNCERTAIN                      -> UNCERTAIN
+  all SUCCESS                        -> SUCCESS
+  all SKIPPED                        -> SKIPPED
+  SUCCESS + SKIPPED                  -> PARTIAL
+  any known mutation + FAILED/PARTIAL -> PARTIAL
+  failure with zero known mutation   -> FAILED
+  ```
+
+- Count directory creation and removal, file Copy/Move and skipped children in that same aggregate.
+  A created destination directory plus a skipped child is a partial item, not a completed transfer.
+- Persist the exact skipped child and completed directory/file checkpoints in bounded Result
+  evidence. The top-level known effect must be `partial`, aggregate counts must not increment the
+  wholly transferred count, and reloaded Task/Result detail must reproduce the same state.
+- Keep Web selection pruning tied to physical source truth rather than the aggregate label: Copy
+  retains the source selection; Move clears only a source whose known effect proves it is gone;
+  skipped, partial and uncertain sources remain selected or are refreshed before any pruning.
+
+### Correction Acceptance and Required Tests
+
+- A production-shaped schema 34 -> 35 migration test passes for ordinary, transfer-progress and
+  terminal TaskItem writes, and verifies unchanged occurrence fields. Run the repository's existing
+  migration/upgrade regression group in addition to the Task's original T4 commands.
+- A blocking/fault-injecting Storage test proves a long transfer submission returns a durable Task
+  identity before the first mutation completes. A separately invoked Worker claim advances it;
+  execution does not occur on the API request stack.
+- API lifecycle tests pause and cancel a genuinely running directory transfer from a separate
+  request, then prove a permitted resume is worker-driven and never replays completed or uncertain
+  entries. Do not satisfy this criterion by making the Storage callback mutate Task rows itself.
+- Restart tests cover process loss before mutation, after one safe entry, after destination Copy,
+  after verification and around source deletion. Each case either continues from persisted safe
+  authority or stops in an actionable investigation state; no completed/uncertain mutation is
+  repeated.
+- A same-Storage single-file process-loss test proves the selected implementation cannot leave an
+  indefinitely running, non-continuable Task.
+- One bounded directory test creates the destination root successfully, introduces a child conflict
+  after admission and applies `SKIP`; response, durable TaskItem, Result, reloaded detail and Web
+  presentation must all report partial completion and retain the skipped child evidence.
+- Web tests prove immediate admitted/running state, bounded progress refresh, backend-advertised
+  pause/cancel/resume or investigation action, context preservation and duplicate-submit
+  prevention. The ordinary flow must not require a raw Task ID or internal checkpoint value.
+- Rerun every original Task 37.4 T4 command and report exact totals, skips and unavailable external
+  gates. The three previously reported full-suite failures may be treated as unrelated only if they
+  are reproduced unchanged at the Task Base; no assertion, migration test, Worker safety test or
+  private-file check may be removed, weakened or hidden.

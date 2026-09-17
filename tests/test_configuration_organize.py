@@ -601,7 +601,7 @@ class ManagedOrganizePolicyJourneyTests(unittest.TestCase):
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
                 # Runtime schema 35 adds the bounded in-flight transfer-progress
                 # column on task_items for interrupted Files transfer recovery.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 35)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 36)
 
                 optional = copy.deepcopy(document)
                 optional.pop("organizePolicies")
