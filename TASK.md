@@ -719,7 +719,7 @@ not satisfy the browser assertion.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: PENDING_COMMIT
+Head SHA: 9eafe9e3fef11e993670b42b762d747cbc0dee5a
 ```
 
 ## B Review Result
