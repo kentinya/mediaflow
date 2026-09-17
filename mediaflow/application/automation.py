@@ -174,7 +174,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 35,
+        runtime_schema_version: int = 36,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -509,6 +509,7 @@ class AutomationWorker:
         configuration_snapshot_digest: str | None = None,
         runtime_schema_version: int = 34,
         manual_organize_worker=None,
+        files_transfer_worker=None,
     ) -> None:
         self._repository = repository
         self._handler = handler
@@ -532,6 +533,11 @@ class AutomationWorker:
         # always constructed with a real runtime Task repository, so a missing
         # value simply means this Worker serves queued Jobs only.
         self._manual_organize_worker = manual_organize_worker
+        # Optional admitted Files Copy/Move transfer runner sharing this
+        # Worker's resident loop.  It owns its own durable claim/lease fence
+        # and only executes transfers the API durably admitted; a missing
+        # value means no Worker serves queued transfers.
+        self._files_transfer_worker = files_transfer_worker
         # Preserve the legacy in-process helper path unless the caller supplies
         # the identity needed for durable Worker ownership and snapshot fencing.
         self._worker_registration_enabled = (
@@ -760,7 +766,7 @@ class AutomationWorker:
                         f"processing worker {self._worker_id!r} lost registration or was stopped"
                     )
                 if self.run_next() is None:
-                    if self._run_manual_organize_work():
+                    if self._run_manual_organize_work() or self._run_files_transfer_work():
                         processed += 1
                     else:
                         sleep(poll_seconds)
@@ -782,6 +788,22 @@ class AutomationWorker:
         """
 
         runner = self._manual_organize_worker
+        if runner is None:
+            return False
+        try:
+            return runner.run_next() is not None
+        except Exception:
+            return False
+
+    def _run_files_transfer_work(self) -> bool:
+        """Serve one admitted Files transfer without holding a Job.
+
+        The runner records its own bounded, secret-free notice and durable
+        outcome, so a rejected transfer never stops this Worker from serving
+        queued Jobs or other admitted work.
+        """
+
+        runner = self._files_transfer_worker
         if runner is None:
             return False
         try:

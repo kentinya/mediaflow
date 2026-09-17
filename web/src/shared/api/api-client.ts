@@ -32,6 +32,7 @@ import {
   normalizeResourceLibraryRemoval,
   normalizeTextFileDocument,
   normalizeTransferImpact,
+  normalizeTransferProjection,
   normalizeTransferResult,
   type DeleteImpactModel,
   type DirectFileCommandResult,
@@ -42,6 +43,7 @@ import {
   type TransferConflictMode,
   type TransferImpactModel,
   type TransferOperation,
+  type TransferProjectionModel,
   type TransferResultModel,
 } from "../../entities/library/direct-files";
 import {
@@ -2400,9 +2402,143 @@ export async function fetchTransferImpact(
 }
 
 /**
+ * Reads the durable bounded projection of one admitted transfer Task.
+ * Polling this read is how the dialog follows queued/running/paused progress
+ * with the backend-advertised lifecycle actions; the projection never
+ * contains a claim token, lease value or raw Task-ID ceremony.
+ */
+export async function fetchTransferProjection(
+  token: string | null,
+  resourceLibraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TransferProjectionModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (resourceLibraryId.trim().length === 0 || !isSafeIdentifier(taskId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfers/${encodeURIComponent(taskId)}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeTransferProjection(await response.json()),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * One advertised transfer lifecycle action (pause/cancel/resume) submitted
+ * through the normal authenticated Task lifecycle API.  The projection's
+ * version travels as the optimistic-concurrency value, so a control against
+ * changed state is refused stale.
+ */
+export async function mutateTransferLifecycle(
+  token: string | null,
+  taskId: string,
+  action: "pause" | "cancel" | "resume",
+  expectedVersion: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | {
+      readonly ok: true;
+      readonly status: number;
+      readonly model?: TransferProjectionModel;
+      readonly nextAction?: string;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (!isSafeIdentifier(taskId) || expectedVersion.length > 128) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/${action}`,
+      {
+        method: "POST",
+        headers: operationsMutationHeaders(token),
+        body: JSON.stringify({ expectedUpdatedAt: expectedVersion }),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    body = null;
+  }
+  if (!response.ok) {
+    const envelope =
+      body !== null && typeof body === "object" && !Array.isArray(body)
+        ? (body as Record<string, unknown>)
+        : {};
+    const error =
+      envelope.error !== null && typeof envelope.error === "object"
+        ? (envelope.error as Record<string, unknown>)
+        : {};
+    return {
+      ok: false,
+      status: response.status,
+      code: typeof error.code === "string" ? error.code : "request_rejected",
+      ...failureDetailsSpread(error.details),
+    };
+  }
+  if (action === "resume" && body !== null && typeof body === "object") {
+    try {
+      return {
+        ok: true,
+        status: response.status,
+        model: normalizeTransferProjection(body),
+      };
+    } catch {
+      return { ok: false, status: response.status, code: "malformed_response" };
+    }
+  }
+  return { ok: true, status: response.status };
+}
+
+/**
  * Executes the confirmed bounded Copy/Move.  The opaque manifest digest binds
  * the execution to the exact impact the operator confirmed; a changed scope is
- * refused stale and never mutated.
+ * refused stale and never mutated.  Submission only *admits* the durable
+ * transfer: the response is the queued projection and the resident Worker
+ * executes it off the request stack.
  */
 export async function submitTransfer(
   token: string | null,

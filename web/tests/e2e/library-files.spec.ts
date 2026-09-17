@@ -980,11 +980,15 @@ test("copy completes through the live destination picker with one confirmed subm
 }) => {
   const impactUrls: string[] = [];
   const transferBodies: string[] = [];
+  const projectionUrls: string[] = [];
   page.on("request", (request) => {
     const url = request.url();
     if (url.includes("/files/transfer-impact")) impactUrls.push(url);
     if (request.method() === "POST" && url.includes("/files/transfers")) {
       transferBodies.push(request.postData() ?? "");
+    }
+    if (request.method() === "GET" && /files\/transfers\/task-/.test(url)) {
+      projectionUrls.push(url);
     }
   });
   await openFiles(page);
@@ -1004,10 +1008,16 @@ test("copy completes through the live destination picker with one confirmed subm
   await expect(dialog.getByText("目标：/Movies")).toBeVisible();
   await dialog.getByRole("button", { name: "复制", exact: true }).click();
 
-  await expect(page.getByRole("dialog", { name: "复制结果" })).toBeVisible();
-  await expect(page.getByText(/传输完成/)).toBeVisible();
-  await page
-    .getByRole("dialog", { name: "复制结果" })
+  // Admission returns the durable queued identity immediately: the dialog
+  // switches to the progress view and follows the queued -> running ->
+  // terminal projection without any raw Task-ID copy/paste or execution-token
+  // ceremony.
+  const progressDialog = page.getByRole("dialog", { name: "复制进度" });
+  await expect(progressDialog).toBeVisible({ timeout: 5_000 });
+  await expect(progressDialog.getByText(/传输完成/)).toBeVisible({
+    timeout: 10_000,
+  });
+  await progressDialog
     .getByRole("button", { name: "关闭", exact: true })
     .click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
@@ -1020,6 +1030,8 @@ test("copy completes through the live destination picker with one confirmed subm
     '"manifestDigest":"t1.fake-manifest-sample.mkv-resources-Movies-copy-fail"',
   );
   expect(transferBodies[0]).toContain('"conflictMode":"fail"');
+  // The Web followed the durable transfer projection by polling.
+  expect(projectionUrls.length).toBeGreaterThan(0);
 });
 
 test("move exposes the compound cross-storage truth and per-item outcomes", async ({
@@ -1037,11 +1049,13 @@ test("move exposes the compound cross-storage truth and per-item outcomes", asyn
     .getByRole("combobox", { name: "目标资源库" })
     .selectOption({ label: "source" });
   await dialog.getByRole("button", { name: "移动", exact: true }).click();
-  await expect(page.getByRole("dialog", { name: "移动结果" })).toBeVisible();
-  await expect(page.getByText(/传输完成/)).toBeVisible();
-  await page
-    .getByRole("dialog", { name: "移动结果" })
-    .getByRole("button", { name: "关闭", exact: true })
-    .click();
+  // The admitted transfer is followed through the durable projection; the
+  // fake Worker drives it to the terminal partial aggregate.
+  const moveProgress = page.getByRole("dialog", { name: "移动进度" });
+  await expect(moveProgress).toBeVisible({ timeout: 5_000 });
+  await expect(moveProgress.getByText(/传输部分完成/)).toBeVisible({
+    timeout: 10_000,
+  });
+  await moveProgress.getByRole("button", { name: "关闭", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });

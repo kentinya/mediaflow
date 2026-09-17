@@ -28,7 +28,10 @@ from mediaflow.application.direct_file_commands import (
     DirectFileCommandService,
     DirectFileError,
 )
-from mediaflow.application.direct_file_transfers import DirectFileTransferService
+from mediaflow.application.direct_file_transfers import (
+    DirectFileTransferError,
+    DirectFileTransferService,
+)
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
@@ -4663,7 +4666,7 @@ class MediaFlowApi:
                 )
             if not isinstance(document["paths"], list):
                 raise ValueError("Files transfer paths must be an array")
-            result = binding.direct_transfers.execute_transfer(
+            result = binding.direct_transfers.submit_transfer(
                 resource_library_id=parts[3],
                 paths=document["paths"],
                 destination_resource_library_id=document["destinationResourceLibraryId"],
@@ -4672,7 +4675,32 @@ class MediaFlowApi:
                 conflict_mode=document["conflictMode"],
                 manifest_digest=document["manifestDigest"],
             )
-            return self._response(start_response, 200, result)
+            # 202: the transfer is durably admitted and queued for the resident
+            # Worker; the response carries the durable operator projection and
+            # no Storage mutation has happened on this request's stack.
+            return self._response(start_response, 202, result)
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "transfers"
+            and method == "GET"
+        ):
+            # The bounded durable projection of one admitted transfer.  The Web
+            # polls this read to follow queued/running/paused progress with the
+            # backend-advertised lifecycle actions; it never needs a raw
+            # execution token and never learns claim/lease internals.
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_transfers is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files transfer status")
+            try:
+                projection = binding.direct_transfers.transfer_projection(parts[6])
+            except DirectFileTransferError as error:
+                if error.category == "not_found":
+                    raise LookupError(f"task {parts[6]!r} was not found") from None
+                raise
+            return self._response(start_response, 200, projection)
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -6202,11 +6230,12 @@ class MediaFlowApi:
                     binding.direct_transfers is not None
                 ):
                     # The one Task kind with a persisted, bounded continuation
-                    # authority: the transfer continues only from each item's
-                    # recorded known-safe checkpoint, never by replaying an
-                    # uncertain mutation.
-                    resumed = binding.direct_transfers.resume_transfer(task.task_id)
-                    return self._response(start_response, 200, resumed)
+                    # authority: the resume request only re-queues the durable
+                    # authority — the resident Worker later claims it and
+                    # continues from each item's recorded known-safe
+                    # checkpoint, never by replaying an uncertain mutation.
+                    requeued = binding.direct_transfers.requeue_transfer(task.task_id)
+                    return self._response(start_response, 202, requeued)
                 # No durable queued continuation of one exact paused scope
                 # exists today, so the transition is refused with the same
                 # actionable reason the projection states.

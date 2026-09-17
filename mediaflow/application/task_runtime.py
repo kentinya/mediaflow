@@ -56,6 +56,7 @@ class PersistentTaskCoordinator:
         configuration_snapshot_id: str | None = None,
         configuration_snapshot_digest: str | None = None,
         require_configuration_snapshot: bool = False,
+        status: PersistentTaskStatus | None = None,
     ) -> PersistentTask:
         if item_limit is not None and item_limit < 1:
             raise ValueError("task item limit must be positive")
@@ -69,11 +70,11 @@ class PersistentTaskCoordinator:
         task = PersistentTask(
             str(uuid4()),
             command,
-            PersistentTaskStatus.RUNNING,
+            status or PersistentTaskStatus.RUNNING,
             execute_authorized,
             now,
             now,
-            started_at=now,
+            started_at=now if status is PersistentTaskStatus.RUNNING or status is None else None,
             scope_path=scope_path,
             item_limit=item_limit,
             configuration_snapshot_id=configuration_snapshot_id,
@@ -81,6 +82,30 @@ class PersistentTaskCoordinator:
         )
         self.repository.create_task(task)
         return task
+
+    def begin_queued(self, task_id: str) -> PersistentTask:
+        """Publish the running boundary of one admitted (queued) Task.
+
+        The resident Worker calls this after a successful claim, immediately
+        before the first OrganizerExecutor call: a queued transfer Task only
+        becomes running under the Worker's claim fence, never inside the
+        admitting HTTP request.
+        """
+
+        task = self.require(task_id)
+        if task.status is PersistentTaskStatus.RUNNING:
+            return task
+        if task.status is not PersistentTaskStatus.PENDING:
+            raise RuntimeError(f"task {task_id!r} is not queued")
+        now = datetime.now(UTC)
+        running = replace(
+            task,
+            status=PersistentTaskStatus.RUNNING,
+            updated_at=now,
+            started_at=now,
+        )
+        self.repository.update_task(running)
+        return running
 
     def reopen(self, task_id: str, *, execute: bool) -> PersistentTask:
         task = self.require(task_id)
@@ -183,6 +208,31 @@ class PersistentTaskCoordinator:
 
     def request_pause(self, task_id: str) -> PersistentTask:
         return self.repository.request_task_pause(task_id, datetime.now(UTC))
+
+    def requeue(self, task_id: str) -> PersistentTask:
+        """Re-admit one paused Task for Worker pickup without executing it.
+
+        The queued state is only an admission state: the resident Worker later
+        publishes the running boundary under its own claim fence.  No Storage
+        work happens inside the caller's request.
+        """
+
+        task = self.require(task_id)
+        if task.status is PersistentTaskStatus.PENDING:
+            return task
+        if task.status is not PersistentTaskStatus.PAUSED:
+            raise ValueError("only a paused task can be re-queued")
+        now = datetime.now(UTC)
+        queued = replace(
+            task,
+            status=PersistentTaskStatus.PENDING,
+            updated_at=now,
+            completed_at=None,
+            error=None,
+            pause_requested=False,
+        )
+        self.repository.update_task(queued)
+        return queued
 
     def pause_requested(self, task_id: str) -> bool:
         return self.repository.task_pause_requested(task_id)

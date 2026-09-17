@@ -178,6 +178,8 @@ from mediaflow.domain.task_persistence import (
     ConfirmationStatus,
     ConflictConfirmation,
     ConflictDecisionAudit,
+    FilesTransferStatus,
+    PersistentFilesTransfer,
     PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
@@ -206,7 +208,70 @@ from mediaflow.infrastructure.file_index_schema import (
 # 35 adds the bounded in-flight transfer-progress column on ``task_items`` so a
 # direct Files Copy/Move item interrupted mid-directory keeps its known-safe
 # per-entry progress durable and diagnosable instead of only in memory.
-SCHEMA_VERSION = 35
+# 36 adds the ``files_transfers`` admission/claim table so a bounded Files
+# Copy/Move is durably admitted (Task + per-item transfer authority) before the
+# first Storage mutation and executed by the resident Worker under a persisted
+# claim/lease fence instead of inside the admitting API request.
+SCHEMA_VERSION = 36
+
+# The canonical named column order of one ``task_items`` row.  Every INSERT
+# names these columns explicitly, so a statement never depends on the physical
+# SQLite column order: a database upgraded in place (whose additive columns
+# were appended in migration order — e.g. the occurrence columns before
+# ``progress``) and a freshly created one (whose CREATE TABLE declares its own
+# order) store and load identical values either way.
+_TASK_ITEM_COLUMNS = (
+    "item_id",
+    "task_id",
+    "storage_id",
+    "resource_library_id",
+    "source_path",
+    "source_display",
+    "status",
+    "stage",
+    "attempts",
+    "created_at",
+    "updated_at",
+    "plan_id",
+    "destination_storage_id",
+    "destination_path",
+    "execution_status",
+    "error",
+    "progress",
+    "source_occurrence_id",
+    "source_fingerprint",
+    "source_fingerprint_state",
+)
+
+_TASK_ITEM_INSERT = (
+    f"INSERT INTO task_items ({', '.join(_TASK_ITEM_COLUMNS)}) VALUES "
+    f"({', '.join('?' for _ in _TASK_ITEM_COLUMNS)})"
+)
+
+# The shared upsert tail: the occurrence identity of an existing row is
+# preserved unless the incoming item binds a newer occurrence.
+_TASK_ITEM_UPSERT = (
+    _TASK_ITEM_INSERT
+    + """
+    ON CONFLICT(item_id) DO UPDATE SET
+        status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
+        updated_at=excluded.updated_at, plan_id=excluded.plan_id,
+        destination_storage_id=excluded.destination_storage_id,
+        destination_path=excluded.destination_path,
+        execution_status=excluded.execution_status, error=excluded.error,
+        progress=excluded.progress,
+        source_occurrence_id=COALESCE(
+            excluded.source_occurrence_id, task_items.source_occurrence_id
+        ),
+        source_fingerprint=COALESCE(
+            excluded.source_fingerprint, task_items.source_fingerprint
+        ),
+        source_fingerprint_state=CASE
+            WHEN excluded.source_occurrence_id IS NULL
+            THEN task_items.source_fingerprint_state
+            ELSE excluded.source_fingerprint_state
+        END"""
+)
 
 _ATTENTION_TASK_ITEM_STATUSES = (
     TaskItemStatus.WAITING_CONFIRM.value,
@@ -824,29 +889,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             item = self._bind_item_to_current_occurrence(item)
             self._connection.execute(
-                """
-                INSERT INTO task_items VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                ON CONFLICT(item_id) DO UPDATE SET
-                    status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
-                    updated_at=excluded.updated_at, plan_id=excluded.plan_id,
-                    destination_storage_id=excluded.destination_storage_id,
-                    destination_path=excluded.destination_path,
-                    execution_status=excluded.execution_status, error=excluded.error,
-                    progress=excluded.progress,
-                    source_occurrence_id=COALESCE(
-                        excluded.source_occurrence_id, task_items.source_occurrence_id
-                    ),
-                    source_fingerprint=COALESCE(
-                        excluded.source_fingerprint, task_items.source_fingerprint
-                    ),
-                    source_fingerprint_state=CASE
-                        WHEN excluded.source_occurrence_id IS NULL
-                        THEN task_items.source_fingerprint_state
-                        ELSE excluded.source_fingerprint_state
-                    END
-                """,
+                _TASK_ITEM_UPSERT,
                 self._item_values(item),
             )
 
@@ -2265,29 +2308,7 @@ class SQLiteTaskRepository:
             self._insert_result_locked(result)
             item = self._bind_item_to_current_occurrence(item)
             self._connection.execute(
-                """
-                INSERT INTO task_items VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                )
-                ON CONFLICT(item_id) DO UPDATE SET
-                    status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
-                    updated_at=excluded.updated_at, plan_id=excluded.plan_id,
-                    destination_storage_id=excluded.destination_storage_id,
-                    destination_path=excluded.destination_path,
-                    execution_status=excluded.execution_status, error=excluded.error,
-                    progress=excluded.progress,
-                    source_occurrence_id=COALESCE(
-                        excluded.source_occurrence_id, task_items.source_occurrence_id
-                    ),
-                    source_fingerprint=COALESCE(
-                        excluded.source_fingerprint, task_items.source_fingerprint
-                    ),
-                    source_fingerprint_state=CASE
-                        WHEN excluded.source_occurrence_id IS NULL
-                        THEN task_items.source_fingerprint_state
-                        ELSE excluded.source_fingerprint_state
-                    END
-                """,
+                _TASK_ITEM_UPSERT,
                 self._item_values(item),
             )
             if evidence is not None:
@@ -7482,8 +7503,7 @@ class SQLiteTaskRepository:
                     task_item = self._manual_task_item(item, execution, now)
                     task_item = self._bind_item_to_current_occurrence(task_item)
                     self._connection.execute(
-                        "INSERT INTO task_items VALUES "
-                        "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        _TASK_ITEM_INSERT,
                         self._item_values(task_item),
                     )
                     self._connection.execute(
@@ -7737,6 +7757,343 @@ class SQLiteTaskRepository:
             )
         return cursor.rowcount == 1
 
+    # ------------------------------------------------------------------
+    # Durable Files Copy/Move transfer admission and Worker claim fence
+    # ------------------------------------------------------------------
+
+    def admit_files_transfer(
+        self,
+        task: PersistentTask,
+        items: tuple[PersistentTaskItem, ...],
+        transfer: PersistentFilesTransfer,
+    ) -> None:
+        """Atomically persist one admitted transfer and its durable authority.
+
+        The Task (queued, with its configuration pin), every bounded per-item
+        transfer authority and the claimable transfer row commit in one
+        transaction, so no admitted transfer can exist without its Task, and
+        no Task can be returned as admitted without its Worker authority.
+        """
+
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                self._connection.execute(
+                    "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._task_values(task),
+                )
+                for item in items:
+                    item = self._bind_item_to_current_occurrence(item)
+                    self._connection.execute(_TASK_ITEM_INSERT, self._item_values(item))
+                self._insert_files_transfer_locked(transfer)
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+
+    def _insert_files_transfer_locked(self, transfer: PersistentFilesTransfer) -> None:
+        self._connection.execute(
+            """INSERT INTO files_transfers (
+                transfer_id, task_id, status, authority_json,
+                configuration_snapshot_id, configuration_snapshot_digest,
+                worker_id, claim_token, claimed_at, claim_expires_at, attempts,
+                error, next_action, created_at, updated_at, completed_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            self._files_transfer_values(transfer),
+        )
+
+    @staticmethod
+    def _files_transfer_values(transfer: PersistentFilesTransfer) -> tuple[object, ...]:
+        return (
+            transfer.transfer_id,
+            transfer.task_id,
+            transfer.status.value,
+            transfer.authority_json,
+            transfer.configuration_snapshot_id,
+            transfer.configuration_snapshot_digest,
+            transfer.worker_id,
+            transfer.claim_token,
+            transfer.claimed_at.isoformat() if transfer.claimed_at else None,
+            transfer.claim_expires_at.isoformat() if transfer.claim_expires_at else None,
+            transfer.attempts,
+            transfer.error,
+            transfer.next_action,
+            transfer.created_at.isoformat(),
+            transfer.updated_at.isoformat(),
+            transfer.completed_at.isoformat() if transfer.completed_at else None,
+        )
+
+    @staticmethod
+    def _files_transfer(row: sqlite3.Row) -> PersistentFilesTransfer:
+        return PersistentFilesTransfer(
+            row["transfer_id"],
+            row["task_id"],
+            FilesTransferStatus(row["status"]),
+            row["authority_json"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["worker_id"],
+            row["claim_token"],
+            datetime.fromisoformat(row["claimed_at"]) if row["claimed_at"] else None,
+            datetime.fromisoformat(row["claim_expires_at"]) if row["claim_expires_at"] else None,
+            row["attempts"],
+            row["error"],
+            row["next_action"],
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+        )
+
+    def get_files_transfer(self, transfer_id: str) -> PersistentFilesTransfer | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM files_transfers WHERE transfer_id = ?", (transfer_id,)
+            ).fetchone()
+        return self._files_transfer(row) if row else None
+
+    def get_files_transfer_for_task(self, task_id: str) -> PersistentFilesTransfer | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM files_transfers WHERE task_id = ?", (task_id,)
+            ).fetchone()
+        return self._files_transfer(row) if row else None
+
+    def claim_next_files_transfer(
+        self,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> PersistentFilesTransfer | None:
+        """Atomically lease the oldest admitted (or abandoned) transfer.
+
+        Only a non-terminal transfer whose previous lease (if any) expired can
+        be claimed, so a crashed Worker's transfer is safe to take over while
+        a live Worker's transfer is never handed to a second Worker.  The
+        claim alone does not publish the running boundary: only
+        ``begin_files_transfer`` does, immediately before execution starts.
+        """
+
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("files transfer claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """SELECT transfer_id FROM files_transfers
+                WHERE status IN (?, ?) AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+                ORDER BY created_at, transfer_id LIMIT 1""",
+                (
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET worker_id=?, claim_token=?, claimed_at=?,
+                claim_expires_at=?, attempts=attempts+1, updated_at=?
+                WHERE transfer_id=? AND status IN (?, ?)
+                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)""",
+                (
+                    worker_id,
+                    claim_token,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    row["transfer_id"],
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_files_transfer(row["transfer_id"])
+
+    def begin_files_transfer(self, transfer_id: str, claim_token: str, now: datetime) -> bool:
+        """Publish the running boundary for the exact lease owner.
+
+        The guarded update is the fence between admission and the first
+        OrganizerExecutor call: a lease owner that no longer holds the claim
+        is never promoted, and a paused transfer is never resumed without a
+        fresh claim.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET status=?, error=NULL, next_action=NULL,
+                updated_at=? WHERE transfer_id=? AND claim_token=?
+                AND status IN (?, ?) AND (claim_expires_at IS NULL OR claim_expires_at > ?)""",
+                (
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                    transfer_id,
+                    claim_token,
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def heartbeat_files_transfer_claim(
+        self,
+        transfer_id: str,
+        claim_token: str,
+        now: datetime,
+        lease_seconds: float,
+    ) -> bool:
+        """Extend the live lease of the Worker that owns this transfer."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET claim_expires_at=?, updated_at=?
+                WHERE transfer_id=? AND claim_token=? AND status=?
+                AND (claim_expires_at IS NULL OR claim_expires_at > ?)""",
+                (
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    transfer_id,
+                    claim_token,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def finish_files_transfer(
+        self,
+        transfer: PersistentFilesTransfer,
+        *,
+        claim_token: str,
+        now: datetime,
+    ) -> bool:
+        """Publish one terminal transfer status for the exact claim owner.
+
+        A claim owner that lost the lease never downgrades or overwrites the
+        terminal state a replacement Worker (or a cancellation) recorded.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET status=?, error=?, next_action=?,
+                updated_at=?, completed_at=? WHERE transfer_id=? AND claim_token=?
+                AND status IN (?, ?)""",
+                (
+                    transfer.status.value,
+                    transfer.error,
+                    transfer.next_action,
+                    now.isoformat(),
+                    now.isoformat(),
+                    transfer.transfer_id,
+                    claim_token,
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def pause_files_transfer(self, transfer_id: str, *, claim_token: str, now: datetime) -> bool:
+        """Record the paused state at a safe boundary for the claim owner."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
+                claimed_at=NULL, claim_expires_at=NULL, updated_at=?
+                WHERE transfer_id=? AND claim_token=? AND status=?""",
+                (
+                    FilesTransferStatus.PAUSED.value,
+                    now.isoformat(),
+                    transfer_id,
+                    claim_token,
+                    FilesTransferStatus.RUNNING.value,
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def requeue_files_transfer(self, transfer_id: str, now: datetime) -> PersistentFilesTransfer:
+        """Re-admit one paused (or abandoned) transfer for Worker pickup.
+
+        The persisted per-item authority is untouched: the Worker continues
+        from each item's recorded known-safe checkpoint.  A transfer with a
+        live claim is refused instead of being re-queued beneath its owner.
+        """
+
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
+                claimed_at=NULL, claim_expires_at=NULL, error=NULL, next_action=NULL,
+                updated_at=? WHERE transfer_id=? AND status IN (?, ?)
+                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)""",
+                (
+                    FilesTransferStatus.ADMITTED.value,
+                    now.isoformat(),
+                    transfer_id,
+                    FilesTransferStatus.PAUSED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                row = self._connection.execute(
+                    "SELECT * FROM files_transfers WHERE transfer_id=?", (transfer_id,)
+                ).fetchone()
+                if row is None:
+                    raise LookupError(f"files transfer {transfer_id!r} was not found")
+                current = self._files_transfer(row)
+                if current.claim_expires_at is not None and current.claim_expires_at > now:
+                    raise ValueError("the transfer is still owned by a live Worker claim")
+                raise ValueError(f"a {current.status.value} transfer cannot be re-queued")
+        return self.require_files_transfer(transfer_id)
+
+    def require_files_transfer(self, transfer_id: str) -> PersistentFilesTransfer:
+        transfer = self.get_files_transfer(transfer_id)
+        if transfer is None:
+            raise LookupError(f"files transfer {transfer_id!r} was not found")
+        return transfer
+
+    def transfer_claim_is_current(self, transfer_id: str, claim_token: str, now: datetime) -> bool:
+        """Whether this Worker still owns the live claim of one transfer."""
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            return False
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT 1 FROM files_transfers WHERE transfer_id=? AND claim_token=?
+                AND status=? AND (claim_expires_at IS NULL OR claim_expires_at > ?)""",
+                (
+                    transfer_id,
+                    claim_token,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+        return row is not None
+
     def update_manual_execution(self, execution: ManualExecution) -> None:
         with self._lock, self._connection:
             cursor = self._connection.execute(
@@ -7796,26 +8153,7 @@ class SQLiteTaskRepository:
                 self._insert_result_locked(result)
                 task_item = self._bind_item_to_current_occurrence(task_item)
                 self._connection.execute(
-                    """INSERT INTO task_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?)
-                    ON CONFLICT(item_id) DO UPDATE SET
-                        status=excluded.status, stage=excluded.stage, attempts=excluded.attempts,
-                        updated_at=excluded.updated_at, plan_id=excluded.plan_id,
-                        destination_storage_id=excluded.destination_storage_id,
-                        destination_path=excluded.destination_path,
-                        execution_status=excluded.execution_status, error=excluded.error,
-                        progress=excluded.progress,
-                        source_occurrence_id=COALESCE(
-                            excluded.source_occurrence_id, task_items.source_occurrence_id
-                        ),
-                        source_fingerprint=COALESCE(
-                            excluded.source_fingerprint, task_items.source_fingerprint
-                        ),
-                        source_fingerprint_state=CASE
-                            WHEN excluded.source_occurrence_id IS NULL
-                            THEN task_items.source_fingerprint_state
-                            ELSE excluded.source_fingerprint_state
-                        END""",
+                    _TASK_ITEM_UPSERT,
                     self._item_values(task_item),
                 )
                 self._connection.execute(
@@ -7933,28 +8271,7 @@ class SQLiteTaskRepository:
                 for task_item in task_items:
                     task_item = self._bind_item_to_current_occurrence(task_item)
                     self._connection.execute(
-                        """INSERT INTO task_items VALUES (
-                            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-                        )
-                        ON CONFLICT(item_id) DO UPDATE SET
-                            status=excluded.status, stage=excluded.stage,
-                            attempts=excluded.attempts,
-                            updated_at=excluded.updated_at, plan_id=excluded.plan_id,
-                            destination_storage_id=excluded.destination_storage_id,
-                            destination_path=excluded.destination_path,
-                            execution_status=excluded.execution_status, error=excluded.error,
-                            progress=excluded.progress,
-                            source_occurrence_id=COALESCE(
-                                excluded.source_occurrence_id, task_items.source_occurrence_id
-                            ),
-                            source_fingerprint=COALESCE(
-                                excluded.source_fingerprint, task_items.source_fingerprint
-                            ),
-                            source_fingerprint_state=CASE
-                                WHEN excluded.source_occurrence_id IS NULL
-                                THEN task_items.source_fingerprint_state
-                                ELSE excluded.source_fingerprint_state
-                            END""",
+                        _TASK_ITEM_UPSERT,
                         self._item_values(task_item),
                     )
                 for item in items:
@@ -8605,6 +8922,19 @@ class SQLiteTaskRepository:
                     UNIQUE(task_id, storage_id, source_path),
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
+                CREATE TABLE IF NOT EXISTS files_transfers (
+                    transfer_id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL, authority_json TEXT NOT NULL,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    worker_id TEXT, claim_token TEXT, claimed_at TEXT, claim_expires_at TEXT,
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    error TEXT, next_action TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+                CREATE INDEX IF NOT EXISTS files_transfers_status_created
+                    ON files_transfers(status, created_at, transfer_id);
                 CREATE TABLE IF NOT EXISTS manual_scan_tasks (
                     task_id TEXT PRIMARY KEY, scope_kind TEXT NOT NULL, scope_id TEXT NOT NULL,
                     resource_library_id TEXT NOT NULL, mode TEXT NOT NULL, file_id TEXT,
@@ -10115,9 +10445,9 @@ class SQLiteTaskRepository:
             item.destination_path,
             item.execution_status,
             item.error,
-            # task_items physical column order places ``progress`` directly
-            # after ``error``; the occurrence columns were appended by a later
-            # additive migration and therefore come last.
+            # The named-column INSERT keeps this order independent of the
+            # physical SQLite layout, which differs between a fresh database
+            # and one upgraded through the additive migrations.
             item.progress,
             item.source_occurrence_id,
             item.source_fingerprint,

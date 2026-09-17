@@ -484,22 +484,171 @@ export interface TransferResultModel {
   readonly durableState?: string;
 }
 
-export function normalizeTransferResult(payload: unknown): TransferResultModel {
-  const record = expectObject(payload);
-  const operation = expectString(record, "operation");
-  if (operation !== "copy" && operation !== "move") {
+/**
+ * One backend-advertised lifecycle action of a durable transfer projection.
+ * The dialog renders a control only when the projection marks it available;
+ * no raw Task ID, claim token or internal checkpoint value is exposed.
+ */
+export interface TransferLifecycleAction {
+  readonly action: string;
+  readonly available: boolean;
+  readonly path?: string;
+  readonly reason?: string;
+}
+
+/**
+ * The durable projection of one admitted transfer Task: the same bounded
+ * document shape as the execution result, rebuilt from persisted Task, item,
+ * progress and Result state so polling after admission or a process restart
+ * reproduces the truthful state.
+ */
+export interface TransferProjectionModel {
+  readonly operation: TransferOperation;
+  readonly conflictMode: TransferConflictMode;
+  readonly status: string;
+  readonly taskId: string;
+  readonly taskStatus: string;
+  readonly resourceLibraryId: string;
+  readonly destinationResourceLibraryId: string;
+  readonly topLevelPaths: readonly string[];
+  readonly knownEffects: readonly DirectFileKnownEffect[];
+  readonly itemOutcomes: readonly TransferItemOutcome[];
+  readonly outcomes: readonly TransferItemOutcome[];
+  readonly outcomesTruncated: boolean;
+  readonly totalItems: number;
+  readonly succeededItems: number;
+  readonly skippedItems: number;
+  readonly failedItems: number;
+  readonly terminal: boolean;
+  readonly actions: readonly TransferLifecycleAction[];
+  readonly version: string;
+  readonly nextAction: string;
+  readonly durableState?: string;
+}
+
+function normalizeTransferOperation(value: unknown): TransferOperation {
+  if (value !== "copy" && value !== "move") {
     throw new DirectFilesNormalizationError("unsupported transfer operation");
   }
-  const conflictMode = expectString(record, "conflictMode");
-  if (
-    conflictMode !== "fail" &&
-    conflictMode !== "skip" &&
-    conflictMode !== "keep_both"
-  ) {
+  return value;
+}
+
+function normalizeTransferConflictMode(value: unknown): TransferConflictMode {
+  if (value !== "fail" && value !== "skip" && value !== "keep_both") {
     throw new DirectFilesNormalizationError(
       "unsupported transfer conflict mode",
     );
   }
+  return value;
+}
+
+export function normalizeTransferProjection(
+  payload: unknown,
+): TransferProjectionModel {
+  const record = expectObject(payload);
+  const operation = normalizeTransferOperation(record.operation);
+  const conflictMode = normalizeTransferConflictMode(record.conflictMode);
+  for (const name of [
+    "topLevelPaths",
+    "knownEffects",
+    "itemOutcomes",
+    "outcomes",
+    "actions",
+  ]) {
+    if (!Array.isArray(record[name])) {
+      throw new DirectFilesNormalizationError(`expected bounded ${name}`);
+    }
+  }
+  const outcomes = (record.outcomes as unknown[]).slice(0, 3200).map((item) => {
+    const outcome = expectObject(item);
+    return {
+      path: expectString(outcome, "path"),
+      destination: expectString(outcome, "destination"),
+      status: expectString(outcome, "status"),
+      checkpoints: Array.isArray(outcome.checkpoints)
+        ? outcome.checkpoints.filter(
+            (value): value is string => typeof value === "string",
+          )
+        : [],
+      errorCategory:
+        typeof outcome.errorCategory === "string"
+          ? outcome.errorCategory
+          : undefined,
+      durableState:
+        typeof outcome.durableState === "string"
+          ? outcome.durableState
+          : undefined,
+    } satisfies TransferItemOutcome;
+  });
+  const itemOutcomes = (record.itemOutcomes as unknown[])
+    .slice(0, 50)
+    .map((item) => {
+      const outcome = expectObject(item);
+      return {
+        path: expectString(outcome, "path"),
+        destination: expectString(outcome, "destination"),
+        status: expectString(outcome, "status"),
+        checkpoints: [],
+        errorCategory:
+          typeof outcome.errorCategory === "string"
+            ? outcome.errorCategory
+            : undefined,
+      } satisfies TransferItemOutcome;
+    });
+  return {
+    operation,
+    conflictMode,
+    status: expectString(record, "status"),
+    taskId: expectString(record, "taskId"),
+    taskStatus: expectString(record, "taskStatus"),
+    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    destinationResourceLibraryId: expectString(
+      record,
+      "destinationResourceLibraryId",
+    ),
+    topLevelPaths: (record.topLevelPaths as unknown[]).map((path) => {
+      if (typeof path !== "string" || path.length === 0) {
+        throw new DirectFilesNormalizationError("invalid top-level path");
+      }
+      return path;
+    }),
+    knownEffects: (record.knownEffects as unknown[]).map((item) => {
+      const effect = expectObject(item);
+      return {
+        path: expectString(effect, "path"),
+        effect: expectString(effect, "effect"),
+        status: expectString(effect, "status"),
+      } satisfies DirectFileKnownEffect;
+    }),
+    itemOutcomes,
+    outcomes,
+    outcomesTruncated: record.outcomesTruncated === true,
+    totalItems: expectNumber(record, "totalItems"),
+    succeededItems: expectNumber(record, "succeededItems"),
+    skippedItems: expectNumber(record, "skippedItems"),
+    failedItems: expectNumber(record, "failedItems"),
+    terminal: record.terminal === true,
+    actions: (record.actions as unknown[]).map((item) => {
+      const action = expectObject(item);
+      return {
+        action: expectString(action, "action"),
+        available: action.available === true,
+        ...(typeof action.path === "string" ? { path: action.path } : {}),
+        ...(typeof action.reason === "string" ? { reason: action.reason } : {}),
+      } satisfies TransferLifecycleAction;
+    }),
+    version: expectString(record, "version"),
+    nextAction: expectString(record, "nextAction"),
+    ...(typeof record.durableState === "string"
+      ? { durableState: record.durableState }
+      : {}),
+  };
+}
+
+export function normalizeTransferResult(payload: unknown): TransferResultModel {
+  const record = expectObject(payload);
+  const operation = normalizeTransferOperation(record.operation);
+  const conflictMode = normalizeTransferConflictMode(record.conflictMode);
   const arrays = {
     topLevelPaths: record.topLevelPaths,
     destinations: record.destinations,

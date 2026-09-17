@@ -415,8 +415,12 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onImpact?: () => Response;
     onFiles?: () => Response;
     onRenameEvidence?: () => Response;
-    onTransferImpact?: (query: URLSearchParams) => Response;
+    onTransferImpact?:
+      | ((query: URLSearchParams) => Response)
+      | ((query: URLSearchParams) => Promise<Response>);
     onTransfer?: (body: Record<string, unknown>) => Response;
+    /** The durable projection read for one admitted transfer Task. */
+    onTransferProjection?: (taskId: string) => Response;
   }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -513,7 +517,8 @@ describe("Files entry state and ResourceLibrary strip", () => {
       }
       if (url.includes("/files/transfer-impact")) {
         const query = new URL(url, "http://x").searchParams;
-        if (options.onTransferImpact) return options.onTransferImpact(query);
+        if (options.onTransferImpact)
+          return await options.onTransferImpact(query);
         return jsonResponse({
           resourceLibraryId: "lib-a",
           destinationResourceLibraryId: query.get("to") ?? "lib-a",
@@ -543,6 +548,42 @@ describe("Files entry state and ResourceLibrary strip", () => {
           retrySafe: true,
         });
       }
+      if (/\/files\/transfers\/task-/.test(url) && init?.method === undefined) {
+        const taskId = url.split("/files/transfers/")[1] ?? "";
+        return options.onTransferProjection
+          ? options.onTransferProjection(taskId)
+          : jsonResponse({
+              operation: "copy",
+              conflictMode: "fail",
+              status: "SUCCESS",
+              taskId,
+              taskStatus: "completed",
+              resourceLibraryId: "lib-a",
+              destinationResourceLibraryId: "lib-a",
+              topLevelPaths: ["notes.txt"],
+              knownEffects: [
+                { path: "notes.txt", effect: "transferred", status: "SUCCESS" },
+              ],
+              itemOutcomes: [
+                {
+                  path: "notes.txt",
+                  destination: "Movies/notes.txt",
+                  status: "SUCCESS",
+                },
+              ],
+              outcomes: [],
+              outcomesTruncated: false,
+              totalItems: 1,
+              succeededItems: 1,
+              skippedItems: 0,
+              failedItems: 0,
+              terminal: true,
+              actions: [],
+              version: "2026-09-17T00:00:00Z",
+              nextAction: "refresh the source and destination directories",
+              sideEffects: "storage_mutations",
+            });
+      }
       if (url.includes("/files/transfers")) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<
           string,
@@ -553,9 +594,10 @@ describe("Files entry state and ResourceLibrary strip", () => {
           operation: body.operation,
           conflictMode: body.conflictMode,
           sameStorage: true,
-          status: "SUCCESS",
+          status: "QUEUED",
+          admitted: true,
           taskId: "task-transfer-1",
-          taskStatus: "completed",
+          taskStatus: "pending",
           resourceLibraryId: "lib-a",
           destinationResourceLibraryId: body.destinationResourceLibraryId,
           topLevelPaths: body.paths,
@@ -563,20 +605,22 @@ describe("Files entry state and ResourceLibrary strip", () => {
             path,
             destination: `Movies/${path}`,
           })),
-          knownEffects: (body.paths as string[]).map((path: string) => ({
+          knownEffects: [],
+          itemOutcomes: (body.paths as string[]).map((path: string) => ({
             path,
-            effect: "transferred",
-            status: "SUCCESS",
+            destination: path,
+            status: "QUEUED",
           })),
-          checkpoints: [],
-          checkpointsTruncated: false,
-          totalItems: (body.paths as string[]).length,
-          succeededItems: (body.paths as string[]).length,
-          failedItems: 0,
           outcomes: [],
           outcomesTruncated: false,
-          nextAction: "refresh the source and destination directories",
-          sideEffects: "storage_mutations",
+          totalItems: (body.paths as string[]).length,
+          succeededItems: 0,
+          skippedItems: 0,
+          failedItems: 0,
+          nextAction:
+            "the transfer is admitted and queued; progress appears below",
+          sideEffects: "none",
+          retrySafe: true,
         });
       }
       if (url.includes("/files/delete-impact")) {
@@ -1923,41 +1967,53 @@ describe("Files entry state and ResourceLibrary strip", () => {
   it("prevents duplicate submission while the impact fetch is in flight", async () => {
     const user = userEvent.setup();
     let impactRequests = 0;
+    // The impact fetch stays in flight until the test releases it, so the
+    // impact-acquisition window is deterministic instead of racing the mock.
+    let releaseImpact: () => void = () => {};
+    const impactGate = new Promise<void>((resolve) => {
+      releaseImpact = resolve;
+    });
     vi.stubGlobal(
       "fetch",
       stripFetchMock({
         status: activeStatus([libraryItem("lib-a", "local-1")]),
         onTransferImpact: () => {
           impactRequests += 1;
-          return new Response(
-            JSON.stringify({
-              resourceLibraryId: "lib-a",
-              destinationResourceLibraryId: "lib-a",
-              operation: "copy",
-              conflictMode: "fail",
-              sameStorage: true,
-              sourceLibraryRoot: "/lib-a",
-              destinationDirectory: "",
-              capability: "native_copy",
-              topLevelPaths: ["notes.txt"],
-              destinations: [
-                { path: "notes.txt", destination: "Movies/notes.txt" },
-              ],
-              entries: [
+          return impactGate.then(
+            () =>
+              new Response(
+                JSON.stringify({
+                  resourceLibraryId: "lib-a",
+                  destinationResourceLibraryId: "lib-a",
+                  operation: "copy",
+                  conflictMode: "fail",
+                  sameStorage: true,
+                  sourceLibraryRoot: "/lib-a",
+                  destinationDirectory: "",
+                  capability: "native_copy",
+                  topLevelPaths: ["notes.txt"],
+                  destinations: [
+                    { path: "notes.txt", destination: "Movies/notes.txt" },
+                  ],
+                  entries: [
+                    {
+                      path: "notes.txt",
+                      isDirectory: false,
+                      size: 32,
+                      modifiedAt: "2026-08-23T11:15:00Z",
+                    },
+                  ],
+                  fileCount: 1,
+                  directoryCount: 0,
+                  totalBytes: 32,
+                  conflicts: [],
+                  manifestDigest: "t1.manifest-digest-9",
+                }),
                 {
-                  path: "notes.txt",
-                  isDirectory: false,
-                  size: 32,
-                  modifiedAt: "2026-08-23T11:15:00Z",
+                  status: 200,
+                  headers: { "Content-Type": "application/json" },
                 },
-              ],
-              fileCount: 1,
-              directoryCount: 0,
-              totalBytes: 32,
-              conflicts: [],
-              manifestDigest: "t1.manifest-digest-9",
-            }),
-            { status: 200, headers: { "Content-Type": "application/json" } },
+              ),
           );
         },
       }),
@@ -1972,14 +2028,15 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(await screen.findByRole("menuitem", { name: "复制" }));
     const dialog = await screen.findByRole("dialog", { name: "复制到…" });
     const submit = within(dialog).getByRole("button", { name: "复制" });
-    // Two clicks land inside the impact-acquisition window before the
-    // execution mutation becomes pending; only one submission may start.
+    // The first click starts the impact fetch; the second click lands inside
+    // the in-flight window and is refused instead of starting a duplicate
+    // submission.
     await user.click(submit);
-    await user.click(submit);
-    // The second click lands while the impact fetch is still in flight; the
-    // dialog is busy and refuses it instead of starting a second submission.
     await waitFor(() => expect(impactRequests).toBe(1));
     expect(submit).toBeDisabled();
+    await user.click(submit);
+    expect(impactRequests).toBe(1);
+    releaseImpact();
   });
 
   it("keeps the selection after a Copy and shows per-item outcomes after a Move", async () => {
@@ -1995,39 +2052,73 @@ describe("Files entry state and ResourceLibrary strip", () => {
             operation: body.operation,
             conflictMode: body.conflictMode,
             sameStorage: true,
-            status: "PARTIAL",
+            status: "QUEUED",
+            admitted: true,
             taskId: "task-move-1",
-            taskStatus: "partial_success",
+            taskStatus: "pending",
             resourceLibraryId: "lib-a",
             destinationResourceLibraryId: body.destinationResourceLibraryId,
             topLevelPaths: body.paths,
             destinations: [],
+            knownEffects: [],
+            itemOutcomes: [],
+            checkpoints: [],
+            checkpointsTruncated: false,
+            totalItems: 1,
+            succeededItems: 0,
+            skippedItems: 0,
+            failedItems: 0,
+            outcomes: [],
+            outcomesTruncated: false,
+            nextAction:
+              "the transfer is admitted and queued; progress appears below",
+            sideEffects: "none",
+            retrySafe: true,
+          });
+        },
+        onTransferProjection: () =>
+          jsonResponse({
+            operation: "move",
+            conflictMode: "fail",
+            status: "SUCCESS",
+            taskId: "task-move-1",
+            taskStatus: "completed",
+            resourceLibraryId: "lib-a",
+            destinationResourceLibraryId: "lib-a",
+            topLevelPaths: ["notes.txt"],
             knownEffects: [
               {
-                path: (body.paths as string[])[0],
+                path: "notes.txt",
                 effect: "transferred",
                 status: "SUCCESS",
               },
             ],
-            checkpoints: [],
-            checkpointsTruncated: false,
-            totalItems: 1,
-            succeededItems: 1,
-            skippedItems: 0,
-            failedItems: 0,
+            itemOutcomes: [
+              {
+                path: "notes.txt",
+                destination: "Movies/notes.txt",
+                status: "SUCCESS",
+              },
+            ],
             outcomes: [
               {
-                path: (body.paths as string[])[0],
-                destination: `Movies/${(body.paths as string[])[0]}`,
+                path: "notes.txt",
+                destination: "Movies/notes.txt",
                 status: "SUCCESS",
                 checkpoints: ["MOVE"],
               },
             ],
             outcomesTruncated: false,
+            totalItems: 1,
+            succeededItems: 1,
+            skippedItems: 0,
+            failedItems: 0,
+            terminal: true,
+            actions: [],
+            version: "2026-09-17T00:00:00Z",
             nextAction: "refresh the source and destination directories",
             sideEffects: "storage_mutations",
-          });
-        },
+          }),
       }),
     );
     authStore.setToken("test-token");
@@ -2048,9 +2139,11 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.click(within(moveDialog).getByRole("button", { name: "移动" }));
     await waitFor(() => expect(moveBodies).toHaveLength(1));
     const resultDialog = await screen.findByRole("dialog", {
-      name: "移动结果",
+      name: "移动进度",
     });
-    expect(within(resultDialog).getByText("逐项结果")).toBeVisible();
+    await waitFor(() =>
+      expect(within(resultDialog).getByText("逐项结果")).toBeVisible(),
+    );
     expect(within(resultDialog).getByText(/已完成/)).toBeVisible();
     await waitFor(() =>
       expect(
@@ -2073,23 +2166,55 @@ describe("Files entry state and ResourceLibrary strip", () => {
             operation: body.operation,
             conflictMode: body.conflictMode,
             sameStorage: true,
-            status: "PARTIAL",
+            status: "QUEUED",
+            admitted: true,
             taskId: "task-copy-2",
-            taskStatus: "partial_success",
+            taskStatus: "pending",
             resourceLibraryId: "lib-a",
             destinationResourceLibraryId: body.destinationResourceLibraryId,
             topLevelPaths: body.paths,
             destinations: [],
+            knownEffects: [],
+            itemOutcomes: [],
+            checkpoints: [],
+            checkpointsTruncated: false,
+            totalItems: 2,
+            succeededItems: 0,
+            skippedItems: 0,
+            failedItems: 0,
+            outcomes: [],
+            outcomesTruncated: false,
+            nextAction:
+              "the transfer is admitted and queued; progress appears below",
+            sideEffects: "none",
+            retrySafe: true,
+          }),
+        onTransferProjection: () =>
+          jsonResponse({
+            operation: "copy",
+            conflictMode: "fail",
+            status: "PARTIAL",
+            taskId: "task-copy-2",
+            taskStatus: "partial_success",
+            resourceLibraryId: "lib-a",
+            destinationResourceLibraryId: "lib-a",
+            topLevelPaths: ["notes.txt", "Season"],
             knownEffects: [
               { path: "notes.txt", effect: "transferred", status: "SUCCESS" },
               { path: "Season", effect: "skipped", status: "SKIPPED" },
             ],
-            checkpoints: [],
-            checkpointsTruncated: false,
-            totalItems: 2,
-            succeededItems: 1,
-            skippedItems: 1,
-            failedItems: 0,
+            itemOutcomes: [
+              {
+                path: "notes.txt",
+                destination: "Movies/notes.txt",
+                status: "SUCCESS",
+              },
+              {
+                path: "Season",
+                destination: "Movies/Season",
+                status: "SKIPPED",
+              },
+            ],
             outcomes: [
               {
                 path: "Season",
@@ -2099,6 +2224,13 @@ describe("Files entry state and ResourceLibrary strip", () => {
               },
             ],
             outcomesTruncated: false,
+            totalItems: 2,
+            succeededItems: 1,
+            skippedItems: 1,
+            failedItems: 0,
+            terminal: true,
+            actions: [],
+            version: "2026-09-17T00:00:00Z",
             nextAction: "refresh both directories",
             sideEffects: "storage_mutations",
           }),
@@ -2114,10 +2246,12 @@ describe("Files entry state and ResourceLibrary strip", () => {
     const dialog = await screen.findByRole("dialog", { name: "复制到…" });
     await user.click(within(dialog).getByRole("button", { name: "复制" }));
     const resultDialog = await screen.findByRole("dialog", {
-      name: "复制结果",
+      name: "复制进度",
     });
     // A skipped item is named as skipped, never folded into success.
-    expect(within(resultDialog).getByText("已跳过")).toBeVisible();
+    await waitFor(() =>
+      expect(within(resultDialog).getByText("已跳过")).toBeVisible(),
+    );
     // A Copy keeps the source present: the selection stays even though the
     // backend recorded transferred effects.
     expect(
@@ -2190,12 +2324,15 @@ describe("Files entry state and ResourceLibrary strip", () => {
       conflictMode: "fail",
       manifestDigest: "t1.manifest-digest-1",
     });
+    // The admission returns the queued identity immediately; the dialog then
+    // follows the durable projection to the terminal state (the projection
+    // mock answers the polling read).
     expect(
-      await screen.findByRole("dialog", { name: "复制结果" }),
+      await screen.findByRole("dialog", { name: "复制进度" }),
     ).toBeVisible();
-    expect(screen.getByText("已传输")).toBeVisible();
+    await waitFor(() => expect(screen.getByText("已传输")).toBeVisible());
     await user.click(
-      within(screen.getByRole("dialog", { name: "复制结果" })).getByRole(
+      within(screen.getByRole("dialog", { name: "复制进度" })).getByRole(
         "button",
         { name: "关闭" },
       ),
