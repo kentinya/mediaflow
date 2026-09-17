@@ -79,6 +79,23 @@ export interface ManualPreviewAttachmentModel {
   readonly storageId: string | null;
 }
 
+/**
+ * The read-only explanation of a pinned `sourceDirectoryCleanup` policy:
+ * exact configured patterns/bounds, the currently matched regular files and
+ * every blocking entry.  Explanatory evidence only — never a Delete token.
+ */
+export interface ManualPreviewCleanupModel {
+  readonly parent: string;
+  readonly mode: string;
+  readonly ignorePatterns: readonly string[];
+  readonly maxParentDirectories: number;
+  readonly maxEntries: number;
+  readonly matchedFiles: readonly string[];
+  readonly blockingEntries: readonly string[];
+  readonly expectedDirectoryOutcome: string;
+  readonly permanentDelete: boolean;
+}
+
 /** One persisted conflict finding. */
 export interface ManualPreviewConflictModel {
   readonly type: string | null;
@@ -271,6 +288,7 @@ export interface ManualPreviewItemModel {
   readonly planStatus: string | null;
   readonly destination: ManualPreviewDestinationModel | null;
   readonly attachments: readonly ManualPreviewAttachmentModel[];
+  readonly cleanupProjection: ManualPreviewCleanupModel | null;
   readonly conflicts: readonly ManualPreviewConflictModel[];
   readonly warnings: readonly string[];
   readonly capabilities: ManualPreviewCapabilitiesModel | null;
@@ -444,6 +462,54 @@ function normalizeAttachment(value: unknown): ManualPreviewAttachmentModel {
   } catch {
     return fail();
   }
+}
+
+function normalizeCleanupProjection(
+  value: unknown,
+): ManualPreviewCleanupModel | null {
+  if (value === null || value === undefined) return null;
+  const source = readRecord(value, "plan.cleanupProjection");
+  const mode = optionalText(source, "mode");
+  if (mode === null || mode === "none") return null;
+  const patterns = source["ignorePatterns"] ?? [];
+  const matched = source["matchedFiles"] ?? [];
+  const blocking = source["blockingEntries"] ?? [];
+  if (
+    !Array.isArray(patterns) ||
+    !Array.isArray(matched) ||
+    !Array.isArray(blocking)
+  ) {
+    fail();
+  }
+  return {
+    parent: text(source, "parent"),
+    mode,
+    ignorePatterns: patterns.map((item, index) =>
+      normalizeBoundedText(
+        item,
+        `plan.cleanupProjection.ignorePatterns[${index}]`,
+      ),
+    ),
+    maxParentDirectories: normalizeBoundedCount(
+      source["maxParentDirectories"],
+      "maxParentDirectories",
+    ),
+    maxEntries: normalizeBoundedCount(source["maxEntries"], "maxEntries"),
+    matchedFiles: matched.map((item, index) =>
+      normalizeBoundedText(
+        item,
+        `plan.cleanupProjection.matchedFiles[${index}]`,
+      ),
+    ),
+    blockingEntries: blocking.map((item, index) =>
+      normalizeBoundedText(
+        item,
+        `plan.cleanupProjection.blockingEntries[${index}]`,
+      ),
+    ),
+    expectedDirectoryOutcome: text(source, "expectedDirectoryOutcome"),
+    permanentDelete: flag(source, "permanentDelete"),
+  };
 }
 
 function normalizeConflict(value: unknown): ManualPreviewConflictModel {
@@ -863,6 +929,9 @@ function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
       planStatus: plan === null ? null : optionalText(plan, "planStatus"),
       destination,
       attachments: rawAttachments.map((item) => normalizeAttachment(item)),
+      cleanupProjection: normalizeCleanupProjection(
+        plan?.["cleanupProjection"] ?? null,
+      ),
       conflicts: rawConflicts.map((item) => normalizeConflict(item)),
       warnings: rawWarnings.map((item, index) =>
         normalizeBoundedText(item, `plan.warnings[${index}]`),

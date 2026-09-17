@@ -452,6 +452,7 @@ export function TaskDetailPage() {
                           <th>Status</th>
                           <th>Operation</th>
                           <th>Effect certainty</th>
+                          <th>Cleanup</th>
                           <th>Destination</th>
                           <th>Failure evidence</th>
                         </tr>
@@ -466,6 +467,7 @@ export function TaskDetailPage() {
                             </td>
                             <td>{result.operation ?? "—"}</td>
                             <td>{result.effectCertainty}</td>
+                            <td>{result.cleanupStatus ?? "—"}</td>
                             <td>{result.destinationPath ?? "—"}</td>
                             <td>
                               {result.failure

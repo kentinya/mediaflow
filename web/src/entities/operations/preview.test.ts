@@ -202,6 +202,50 @@ describe("normalizeManualPreview", () => {
     ]);
   });
 
+  it("projects the pinned source cleanup policy with matched files and blockers", () => {
+    const item = firstItem(previewPayload());
+    const plan = item["plan"] as Json;
+    const model = normalizeManualPreview(
+      previewPayload({
+        items: [
+          {
+            ...item,
+            plan: {
+              ...plan,
+              cleanupProjection: {
+                parent: "media/incoming/movie",
+                mode: "ignorable",
+                ignorePatterns: ["*.txt", "ad*"],
+                maxParentDirectories: 2,
+                maxEntries: 20,
+                matchedFiles: ["media/incoming/movie/ad.txt"],
+                blockingEntries: ["media/incoming/movie/keep.mkv"],
+                expectedDirectoryOutcome: "blocked_unknown_entries",
+                permanentDelete: true,
+              },
+            },
+          },
+        ],
+      }),
+    );
+    const projection = model.items[0]?.cleanupProjection;
+    expect(projection).not.toBeNull();
+    expect(projection?.mode).toBe("ignorable");
+    expect(projection?.ignorePatterns).toEqual(["*.txt", "ad*"]);
+    expect(projection?.matchedFiles).toEqual(["media/incoming/movie/ad.txt"]);
+    expect(projection?.blockingEntries).toEqual([
+      "media/incoming/movie/keep.mkv",
+    ]);
+    expect(projection?.permanentDelete).toBe(true);
+
+    // A plan without a configured cleanup keeps the surface absent entirely:
+    // the Preview never invents a destructive policy the operator did not pin.
+    const withoutCleanup = normalizeManualPreview(
+      previewPayload({ items: [{ ...item, plan: { ...plan } }] }),
+    );
+    expect(withoutCleanup.items[0]?.cleanupProjection).toBeNull();
+  });
+
   it("never carries a hostile historical record into the model", () => {
     const model = normalizeManualPreview(
       previewPayload({

@@ -1932,6 +1932,7 @@ button.mf-grid-button {
   border: 1px solid #dfe6ef;
   border-radius: 5px;
   background: #ffffff;
+  overflow-y: auto;
 }
 
 .mf-files-tree h3 {
@@ -1999,12 +2000,19 @@ button.mf-grid-button {
   border: 1px solid #dfe6ef;
   border-radius: 5px;
   background: #ffffff;
+  /* Constrained column layout: sticky toolbar, scrollable row viewport with
+     min-height 0, footer outside the viewport. */
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .mf-files-toolbar {
   height: 52px;
   margin: 0;
   border-bottom: 1px solid #eef2f7;
+  flex: 0 0 auto;
 }
 
 .mf-files-page .mf-breadcrumbs {
@@ -2078,7 +2086,19 @@ button.mf-grid-button {
 }
 
 .mf-files-table-scroll {
-  overflow: hidden;
+  /* The real bounded row viewport: vertical scrolling inside the fixed pane
+     while the toolbar stays fixed and the footer remains outside the scroll. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+.mf-files-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #ffffff;
 }
 
 .mf-files-table {
@@ -2602,12 +2622,12 @@ button.mf-grid-button {
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
+  /* The selection button owns the card geometry; the card itself only
+     positions the sibling action-menu overlay above that surface. */
+  padding: 0;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 10px;
-  cursor: pointer;
   font: inherit;
   color: var(--ink);
   text-align: left;
@@ -2622,23 +2642,35 @@ button.mf-grid-button {
   border-width: 2px;
   background: #eff5ff;
   color: var(--accent);
-  font-weight: 700;
-  padding: 13px 15px;
 }
 
+/* The one selection control covers the full card, so a click on the padding,
+   border, icon or label selects the library exactly once. */
 .mf-library-card-select {
   flex: 1 1 auto;
   min-width: 0;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
+  padding: 14px 16px;
   background: transparent;
   border: 0;
-  padding: 0;
+  border-radius: inherit;
   font: inherit;
   color: inherit;
   cursor: pointer;
   text-align: left;
+}
+
+.mf-library-card-select.is-selected {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+.mf-library-card-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .mf-library-card-icon {
@@ -2664,7 +2696,24 @@ button.mf-grid-button {
   display: inline-flex;
 }
 
+/* The row action menu trigger sits inline in its cell; the menu itself renders
+   through the page-level portal layer above the clipping contexts. */
+.mf-row-menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+.mf-row-menu-portal {
+  z-index: 80;
+}
+
+/* The selected card's `…` action is a sibling overlay above the full-card
+   selection surface with its own z-index and event boundary. */
 .mf-card-menu-anchor {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 2;
   flex: 0 0 auto;
 }
 

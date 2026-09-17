@@ -34,6 +34,12 @@ FILES_DIRECT_COMMAND_TASK = "files_direct_command"
 #: It runs as one Task with independent per-item outcomes and recovery.
 FILES_DELETE_TASK_COMMAND = "files_delete"
 
+#: The command recorded by a bounded Files Copy/Move transfer.  A short
+#: same-Storage single-file transfer may complete inline, but directory,
+#: cross-Storage and multi-item work always runs as one durable Task with
+#: independent per-item/per-entry outcomes.
+FILES_TRANSFER_TASK_COMMAND = "files_transfer"
+
 
 class PersistentTaskStatus(StrEnum):
     PENDING = "pending"

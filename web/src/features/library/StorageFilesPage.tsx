@@ -28,6 +28,8 @@ import {
   TextEditorDialog,
   type TextEditorState,
 } from "./FileCommandDialogs";
+import { TransferDialog } from "./TransferDialog";
+import { RowActionMenu } from "./RowActionMenu";
 import {
   fetchDeleteImpact,
   fetchRenameEvidence,
@@ -37,10 +39,16 @@ import {
   saveResourceLibrary,
   submitDirectFileCommand,
   submitServerBoundPreview,
+  submitTransfer,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
+import type {
+  TransferConflictMode,
+  TransferImpactModel,
+  TransferResultModel,
+} from "../../entities/library/direct-files";
 
 type FilesView = "list" | "grid";
 
@@ -54,6 +62,11 @@ type FilesDialog =
       readonly expected: { readonly size: number; readonly modifiedAt: string };
     }
   | { readonly kind: "delete"; readonly paths: readonly string[] }
+  | {
+      readonly kind: "transfer";
+      readonly operation: "copy" | "move";
+      readonly paths: readonly string[];
+    }
   | { readonly kind: "editor"; readonly path: string }
   | { readonly kind: "remove_library"; readonly id: string }
   | null;
@@ -339,6 +352,52 @@ function directFileCommandFailure(
       return "当前账号没有执行该操作所需权限，请切换有权限的账号。";
     default:
       return "命令未执行，当前数据未被修改；请根据原因修正后重试或刷新目录。";
+  }
+}
+
+function transferFailureMessage(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  if (details?.durableState === "mutation_effect_uncertain") {
+    return "传输结果不确定，未自动重试；请刷新来源与目标目录核实实际状态。";
+  }
+  switch (code) {
+    case "files_transfer_stale_manifest":
+      return "传输范围已变化，本次未执行；请重新确认最新的影响摘要后再试。";
+    case "files_transfer_invalid_manifest":
+      return "缺少有效的传输确认证据；请重新获取影响摘要后再试。";
+    case "files_transfer_overlap":
+      return "目标不能是来源本身或其子目录；请选择范围之外的目标。";
+    case "files_transfer_not_a_directory":
+      return "目标目录不存在或不是文件夹；请选择现有目录后重试。";
+    case "files_transfer_capability_denied":
+      return "目标存储为只读，不能执行该操作；请选择可写的目标资源库。";
+    case "files_transfer_unsupported_capability":
+      return "当前存储不支持该传输操作；请改用支持该能力的存储。";
+    case "files_transfer_unsupported_entry":
+      return "所选内容包含不受支持的条目类型（如符号链接），未执行任何修改。";
+    case "files_transfer_entry_limit_exceeded":
+    case "files_transfer_depth_limit_exceeded":
+    case "files_transfer_size_limit_exceeded":
+      return "传输范围超出限制，未执行任何修改；请选择更小的范围分批传输。";
+    case "files_transfer_root_protected":
+      return "资源库根目录不能被传输；请选择内部的文件或文件夹。";
+    case "files_transfer_invalid_request":
+    case "invalid_request":
+      return "传输请求无效，未执行任何修改；请检查所选内容和目标后重试。";
+    case "files_direct_storage_unavailable":
+    case "files_transfer_storage_unavailable":
+    case "files_transfer_connection_failed":
+    case "files_transfer_timeout":
+    case "files_transfer_authentication_failed":
+    case "files_transfer_rate_limited":
+    case "files_transfer_storage_failure":
+      return "存储暂不可用，未做任何修改；请等待存储恢复后重试。";
+    case "forbidden":
+      return "当前账号没有执行传输所需权限，请切换有权限的账号。";
+    default:
+      return "传输未执行，来源与目标均未被修改；请修正原因后重试或刷新目录。";
   }
 }
 
@@ -807,6 +866,7 @@ function FileBrowseView({
   onRename,
   onEdit,
   onDelete,
+  onTransfer,
   onDiscoverDirectories,
   onToggle,
   onToggleAll,
@@ -843,6 +903,10 @@ function FileBrowseView({
   ) => void;
   readonly onEdit: (path: string) => void;
   readonly onDelete: (paths: readonly string[]) => void;
+  readonly onTransfer: (
+    operation: "copy" | "move",
+    paths: readonly string[],
+  ) => void;
   readonly onDiscoverDirectories: (paths: readonly string[]) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
@@ -1144,13 +1208,14 @@ function FileBrowseView({
                             查看
                           </button>
                         )}
-                        <div className="mf-card-menu-anchor">
+                        <div className="mf-row-menu-anchor">
                           <button
                             type="button"
                             className="mf-row-more"
                             aria-label={`更多操作 ${row.name}`}
                             aria-haspopup="menu"
                             aria-expanded={rowMenuPath === row.path}
+                            data-row-menu={row.path}
                             onClick={() =>
                               setRowMenuPath((current) =>
                                 current === row.path ? null : row.path,
@@ -1160,11 +1225,33 @@ function FileBrowseView({
                             <Icon name="more" />
                           </button>
                           {rowMenuPath === row.path && (
-                            <div
-                              className="mf-card-menu"
-                              role="menu"
-                              aria-label={`更多操作 ${row.name}`}
+                            <RowActionMenu
+                              path={row.path}
+                              label={`更多操作 ${row.name}`}
+                              onClose={() => setRowMenuPath(null)}
                             >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onTransfer("copy", [row.path]);
+                                }}
+                              >
+                                复制
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onTransfer("move", [row.path]);
+                                }}
+                              >
+                                移动
+                              </button>
                               <button
                                 type="button"
                                 role="menuitem"
@@ -1203,7 +1290,7 @@ function FileBrowseView({
                               >
                                 删除
                               </button>
-                            </div>
+                            </RowActionMenu>
                           )}
                         </div>
                       </td>
@@ -1239,6 +1326,28 @@ function FileBrowseView({
           disabled={organizeCount === 0 || previewing}
         >
           批量整理
+        </button>
+        <button
+          className="mf-button mf-button-secondary"
+          type="button"
+          onClick={() => onTransfer("copy", selectedPaths)}
+          disabled={selectedCount === 0 || selectedPaths.length > 50}
+          title={
+            selectedPaths.length > 50 ? "单次复制最多选择 50 项" : undefined
+          }
+        >
+          复制
+        </button>
+        <button
+          className="mf-button mf-button-secondary"
+          type="button"
+          onClick={() => onTransfer("move", selectedPaths)}
+          disabled={selectedCount === 0 || selectedPaths.length > 50}
+          title={
+            selectedPaths.length > 50 ? "单次移动最多选择 50 项" : undefined
+          }
+        >
+          移动
         </button>
         <button
           className="mf-button mf-button-danger"
@@ -1637,6 +1746,9 @@ export function StorageFilesPage() {
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandResult, setCommandResult] =
     useState<DirectFileCommandResult | null>(null);
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [transferResult, setTransferResult] =
+    useState<TransferResultModel | null>(null);
   const [editorStale, setEditorStale] = useState(false);
   const [editorSaved, setEditorSaved] = useState(false);
   const [removalError, setRemovalError] = useState<string | null>(null);
@@ -2065,6 +2177,57 @@ export function StorageFilesPage() {
       ? renameEvidenceQuery.data.model
       : null;
 
+  const transferMutation = useMutation({
+    mutationFn: (input: {
+      readonly operation: "copy" | "move";
+      readonly paths: readonly string[];
+      readonly destinationResourceLibraryId: string;
+      readonly destinationDirectory: string;
+      readonly conflictMode: TransferConflictMode;
+      readonly manifestDigest: string;
+    }) =>
+      submitTransfer(token, activeLibraryId, {
+        operation: input.operation,
+        paths: input.paths,
+        destinationResourceLibraryId: input.destinationResourceLibraryId,
+        destinationDirectory: input.destinationDirectory,
+        conflictMode: input.conflictMode,
+        manifestDigest: input.manifestDigest,
+      }),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setTransferError(
+          transferFailureMessage(result.code, {
+            durableState: result.details?.durableState,
+          }),
+        );
+        return;
+      }
+      setTransferError(null);
+      setTransferResult(result.model);
+      // Success refreshes authoritative source/destination truth; only
+      // selection whose physical truth changed is cleared or remapped.
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      if (
+        result.model.status === "SUCCESS" ||
+        result.model.status === "PARTIAL"
+      ) {
+        const removed = result.model.knownEffects
+          .filter((effect) => effect.effect === "transferred")
+          .map((effect) => effect.path);
+        pruneAffectedBrowseState(removed, null);
+      }
+    },
+    onError: () => {
+      setTransferError(
+        "传输结果未知，未自动重试；请刷新来源与目标目录核实当前状态后再决定下一步。",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+    },
+  });
+
   const removalTargetId = dialog?.kind === "remove_library" ? dialog.id : null;
   const removalPreviewQuery = useQuery({
     queryKey: ["resource-library-removal", removalTargetId],
@@ -2409,6 +2572,11 @@ export function StorageFilesPage() {
                           setCommandResult(null);
                           setDialog({ kind: "delete", paths });
                         }}
+                        onTransfer={(operation, paths) => {
+                          setTransferError(null);
+                          setTransferResult(null);
+                          setDialog({ kind: "transfer", operation, paths });
+                        }}
                         onDiscoverDirectories={(paths) => {
                           setKnownDirectoryPaths((current) => {
                             const next = new Set(current);
@@ -2672,6 +2840,49 @@ export function StorageFilesPage() {
             setCommandResult(null);
             setDialog(null);
             void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+          }}
+        />
+      )}
+      {dialog?.kind === "transfer" && (
+        <TransferDialog
+          state={{
+            operation: dialog.operation,
+            paths: dialog.paths,
+          }}
+          libraries={libraries}
+          currentLibraryId={activeLibraryId}
+          token={token}
+          submitting={transferMutation.isPending}
+          error={transferError}
+          result={transferResult}
+          onSubmit={({
+            impact,
+            conflictMode,
+          }: {
+            readonly impact: TransferImpactModel;
+            readonly conflictMode: TransferConflictMode;
+          }) => {
+            setTransferError(null);
+            setTransferResult(null);
+            transferMutation.mutate({
+              operation: dialog.operation,
+              paths: dialog.paths,
+              destinationResourceLibraryId: impact.destinationResourceLibraryId,
+              destinationDirectory: impact.destinationDirectory,
+              conflictMode,
+              manifestDigest: impact.manifestDigest,
+            });
+          }}
+          onImpactFailure={(message: string) => {
+            setTransferError(message);
+            setTransferResult(null);
+          }}
+          onClose={() => {
+            setTransferError(null);
+            setTransferResult(null);
+            setDialog(null);
+            void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+            void queryClient.invalidateQueries({ queryKey: ["system-status"] });
           }}
         />
       )}

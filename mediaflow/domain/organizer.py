@@ -219,6 +219,7 @@ class DirectoryCleanupStatus(StrEnum):
     SUCCESS = "success"
     STOPPED = "stopped"
     REFUSED = "refused"
+    PARTIAL = "partial"
     FAILED = "failed"
 
 

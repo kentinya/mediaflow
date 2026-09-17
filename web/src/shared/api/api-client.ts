@@ -31,12 +31,18 @@ import {
   normalizeRenameEvidence,
   normalizeResourceLibraryRemoval,
   normalizeTextFileDocument,
+  normalizeTransferImpact,
+  normalizeTransferResult,
   type DeleteImpactModel,
   type DirectFileCommandResult,
   type RemovalPreviewModel,
   type RenameEvidenceModel,
   type ResourceLibraryRemovalModel,
   type TextFileDocument,
+  type TransferConflictMode,
+  type TransferImpactModel,
+  type TransferOperation,
+  type TransferResultModel,
 } from "../../entities/library/direct-files";
 import {
   DashboardApiError,
@@ -2313,6 +2319,129 @@ export async function fetchRenameEvidence(
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }
+}
+
+/** One confirmed bounded Copy/Move request the backend validates as a unit. */
+export interface TransferRequestOptions {
+  readonly operation: TransferOperation;
+  readonly paths: readonly string[];
+  readonly destinationResourceLibraryId: string;
+  readonly destinationDirectory: string;
+  readonly conflictMode: TransferConflictMode;
+  readonly manifestDigest: string;
+}
+
+/**
+ * Bounded zero-mutation impact/admission read for one proposed Copy/Move.
+ * The paths are encoded as repeated `path` values; the response carries the
+ * opaque manifest digest the later execution must return.
+ */
+export async function fetchTransferImpact(
+  token: string | null,
+  resourceLibraryId: string,
+  options: {
+    readonly operation: TransferOperation;
+    readonly paths: readonly string[];
+    readonly destinationResourceLibraryId: string;
+    readonly destinationDirectory: string;
+    readonly conflictMode: TransferConflictMode;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TransferImpactModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    resourceLibraryId.trim().length === 0 ||
+    options.paths.length === 0 ||
+    options.paths.length > 50 ||
+    options.destinationResourceLibraryId.trim().length === 0
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const query = [
+    ...options.paths.map((path) => `path=${encodeURIComponent(path)}`),
+    `to=${encodeURIComponent(options.destinationResourceLibraryId)}`,
+    `toPath=${encodeURIComponent(options.destinationDirectory)}`,
+    `operation=${encodeURIComponent(options.operation)}`,
+    `conflict=${encodeURIComponent(options.conflictMode)}`,
+  ].join("&");
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfer-impact?${query}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return { ok: true, model: normalizeTransferImpact(await response.json()) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Executes the confirmed bounded Copy/Move.  The opaque manifest digest binds
+ * the execution to the exact impact the operator confirmed; a changed scope is
+ * refused stale and never mutated.
+ */
+export async function submitTransfer(
+  token: string | null,
+  resourceLibraryId: string,
+  options: TransferRequestOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TransferResultModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    resourceLibraryId.trim().length === 0 ||
+    options.paths.length === 0 ||
+    options.paths.length > 50 ||
+    options.destinationResourceLibraryId.trim().length === 0 ||
+    options.manifestDigest.trim().length === 0
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfers`,
+    {
+      operation: options.operation,
+      paths: [...options.paths],
+      destinationResourceLibraryId: options.destinationResourceLibraryId,
+      destinationDirectory: options.destinationDirectory,
+      conflictMode: options.conflictMode,
+      manifestDigest: options.manifestDigest,
+    },
+    normalizeTransferResult,
+    fetchImpl,
+  );
 }
 
 /** Bounded secret-free removal preview from the current Active snapshot. */

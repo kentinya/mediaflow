@@ -6,7 +6,12 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 
 from mediaflow.domain.classification import ClassificationResult
-from mediaflow.domain.direct_files import DirectEntryEvidence, EntryVersionEvidence
+from mediaflow.domain.direct_files import (
+    DirectEntryEvidence,
+    EntryVersionEvidence,
+    SourceCleanupProjection,
+    TransferCheckpoint,
+)
 from mediaflow.domain.library import MediaLibrary
 from mediaflow.domain.logging import Logger, LogLevel
 from mediaflow.domain.metadata import MediaIdentity
@@ -33,7 +38,12 @@ from mediaflow.domain.organizer import (
     unsafe_relative_destination_path,
 )
 from mediaflow.domain.recognition import RecognitionResult, RecognitionTypePolicy
-from mediaflow.domain.storage import Storage, StorageEntryType, StorageError
+from mediaflow.domain.storage import (
+    Storage,
+    StorageEntryType,
+    StorageError,
+    StorageErrorCode,
+)
 
 
 class PlanningError(ValueError):
@@ -665,6 +675,25 @@ class OrganizerExecutor:
                 effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
                 uncertain_effects=("mutation_outcome",),
             )
+        if cleanup.status is DirectoryCleanupStatus.PARTIAL:
+            # Some admitted cleanup effects are known complete and an unknown
+            # leftover/blocker stopped the rest: the primary Move stays
+            # successful and the partial cleanup is reported with its exact
+            # per-entry known effects instead of being collapsed into an
+            # all-or-nothing failure.
+            return self._result(
+                plan,
+                ExecutionStatus.PARTIAL,
+                started,
+                plan_id,
+                tuple(created),
+                tuple(completed),
+                errors=(cleanup.error or "source directory cleanup stopped partially",),
+                resolved_destination=display_destination,
+                cleanup_status=cleanup.status,
+                cleanup_steps=cleanup.steps,
+                effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            )
         return self._result(
             plan,
             ExecutionStatus.SUCCESS,
@@ -811,6 +840,575 @@ class OrganizerExecutor:
             verify=lambda: self._direct_gone_verified(storage, path),
         )
 
+    # ------------------------------------------------------------------
+    # Direct Files Copy / Move / emptied-source-directory removal
+    #
+    # The same sole-mutation boundary extended to the bounded Files transfer
+    # commands.  A same-Storage Copy calls only ``Storage.copy`` and a
+    # same-Storage Move calls only ``Storage.move``; a cross-Storage Copy is an
+    # explicitly admitted bounded streaming write that is verified before it is
+    # reported successful; a cross-Storage Move is the explicit compound
+    # Copy -> verify -> Delete source with durable checkpoints.  There is no
+    # hidden cross-operation fallback anywhere in this block.
+    # ------------------------------------------------------------------
+
+    def execute_direct_copy(
+        self,
+        source_storage: Storage,
+        target_storage: Storage,
+        source: str,
+        target: str,
+        *,
+        source_evidence: DirectEntryEvidence | None = None,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Copy exactly one regular file; a directory is composed by the caller.
+
+        Same-Storage uses the provider's advertised native ``copy`` only.
+        Cross-Storage streams the source in bounded chunks through
+        executor-owned ``write`` and only reports success after the produced
+        destination has been re-read and verified against the source digest and
+        size.  A truncated or changed transfer is never reported as a completed
+        Copy.  The source is never deleted.
+        """
+
+        started = time.monotonic()
+        if unsafe_relative_destination_path(source) or unsafe_relative_destination_path(target):
+            return self._direct_result(
+                PlanOperation.COPY,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("invalid destination",),
+            )
+        if not execute:
+            return self._direct_result(
+                PlanOperation.COPY,
+                source,
+                target,
+                started,
+                ExecutionStatus.DRY_RUN,
+                warnings=("dry-run: no Storage mutation was executed",),
+            )
+        same_storage = source_storage is target_storage
+        capability_error = _transfer_capability_error(
+            PlanOperation.COPY,
+            source_storage,
+            None if same_storage else target_storage,
+        )
+        if capability_error:
+            return self._direct_result(
+                PlanOperation.COPY,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(capability_error,),
+            )
+        preflight_error = _transfer_source_preflight(
+            source_storage, source, source_evidence, require_exact_authority=False
+        )
+        if preflight_error:
+            return self._direct_result(
+                PlanOperation.COPY,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(preflight_error,),
+            )
+        if target_storage.exists(target):
+            return self._direct_result(
+                PlanOperation.COPY,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("destination already exists",),
+            )
+        if mutation_authority is not None:
+            try:
+                self._check_mutation_authority(
+                    _DirectCommandPlan(PlanOperation.COPY, source, target),
+                    "DIRECT:COPY",
+                    mutation_authority,
+                )
+            except MutationAuthorityRefused as error:
+                return self._direct_result(
+                    PlanOperation.COPY,
+                    source,
+                    target,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=(_authority_error(error),),
+                )
+        try:
+            if same_storage:
+                source_storage.copy(source, target, overwrite=False)
+                written = "COPY"
+                if not target_storage.exists(target):
+                    raise RuntimeError("copy verification failed")
+                observed = target_storage.stat(target)
+                if observed.entry_type is not StorageEntryType.FILE:
+                    raise RuntimeError("copy verification failed: destination type mismatch")
+                if source_evidence is not None and observed.size != source_evidence.size:
+                    raise RuntimeError("copy verification failed: size mismatch")
+            else:
+                written = self._cross_storage_copy(
+                    source_storage, target_storage, source, target, source_evidence
+                )
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                PlanOperation.COPY,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(_bounded_error(error),),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("destination_write",),
+            )
+        return self._direct_result(
+            PlanOperation.COPY,
+            source,
+            target,
+            started,
+            ExecutionStatus.SUCCESS,
+            completed=(written,),
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
+
+    def execute_direct_move(
+        self,
+        source_storage: Storage,
+        target_storage: Storage,
+        source: str,
+        target: str,
+        *,
+        source_evidence: DirectEntryEvidence | None = None,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Move exactly one file or directory entry.
+
+        Same-Storage uses the provider's advertised native ``move`` only.  A
+        cross-Storage Move is the explicit compound ``Copy destination ->
+        verify destination -> Delete source``: the source is deleted only after
+        a verified Copy and a fresh exact source revalidation, and a failure or
+        authority loss after the verified Copy ends as a recoverable
+        verified-copy/source-retained partial outcome (never an auto-replayed
+        whole Move).
+        """
+
+        started = time.monotonic()
+        if unsafe_relative_destination_path(source) or unsafe_relative_destination_path(target):
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("invalid destination",),
+            )
+        if not execute:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.DRY_RUN,
+                warnings=("dry-run: no Storage mutation was executed",),
+            )
+        same_storage = source_storage is target_storage
+        capability_error = _transfer_capability_error(
+            PlanOperation.MOVE,
+            source_storage,
+            None if same_storage else target_storage,
+        )
+        if capability_error:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(capability_error,),
+            )
+        # A cross-Storage Move first performs a safe, non-destructive Copy; the
+        # exact destructive authority for deleting the source is required only
+        # at the destructive checkpoint, *after* the destination is verified.
+        preflight_error = _transfer_source_preflight(
+            source_storage, source, source_evidence, require_exact_authority=False
+        )
+        if preflight_error:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(preflight_error,),
+            )
+        if target_storage.exists(target):
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("destination already exists",),
+            )
+        plan = _DirectCommandPlan(PlanOperation.MOVE, source, target)
+        if same_storage:
+            if mutation_authority is not None:
+                try:
+                    self._check_mutation_authority(plan, "DIRECT:MOVE", mutation_authority)
+                except MutationAuthorityRefused as error:
+                    return self._direct_result(
+                        PlanOperation.MOVE,
+                        source,
+                        target,
+                        started,
+                        ExecutionStatus.FAILED,
+                        errors=(_authority_error(error),),
+                    )
+            try:
+                source_storage.move(source, target, overwrite=False)
+            except (StorageError, RuntimeError, OSError) as error:
+                return self._direct_result(
+                    PlanOperation.MOVE,
+                    source,
+                    target,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=(_bounded_error(error),),
+                    effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                    uncertain_effects=("move_outcome",),
+                )
+            if source_storage.exists(source) or not target_storage.exists(target):
+                return self._direct_result(
+                    PlanOperation.MOVE,
+                    source,
+                    target,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=("move verification failed",),
+                    effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                    uncertain_effects=("move_outcome",),
+                )
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.SUCCESS,
+                completed=("MOVE",),
+                effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            )
+        return self._cross_storage_move(
+            source_storage,
+            target_storage,
+            source,
+            target,
+            source_evidence,
+            plan,
+            mutation_authority,
+            started,
+        )
+
+    def execute_direct_remove_empty_directory(
+        self,
+        storage: Storage,
+        path: str,
+        *,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Remove one directory the caller just emptied inside this boundary.
+
+        This is the compound-Move/cleanup support primitive, not an operator
+        Delete: it re-lists the directory immediately before the mutation and
+        refuses when any entry remains, so an unknown or newly appeared entry is
+        never recursively removed.  An already-absent virtual prefix (S3/R2) is
+        truthfully reported as already cleaned without a fictional delete.
+        """
+
+        started = time.monotonic()
+        if unsafe_relative_destination_path(path):
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("invalid destination",),
+            )
+        if not execute:
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.DRY_RUN,
+                warnings=("dry-run: no Storage mutation was executed",),
+            )
+        capability_error = _transfer_capability_error(PlanOperation.DELETE, storage, None)
+        if capability_error:
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(capability_error,),
+            )
+        try:
+            present = storage.exists(path)
+            if present:
+                entry = storage.stat(path)
+                if entry.entry_type is not StorageEntryType.DIRECTORY:
+                    return self._direct_result(
+                        PlanOperation.DELETE,
+                        path,
+                        path,
+                        started,
+                        ExecutionStatus.FAILED,
+                        errors=("source is not a directory",),
+                    )
+                if storage.list(path):
+                    return self._direct_result(
+                        PlanOperation.DELETE,
+                        path,
+                        path,
+                        started,
+                        ExecutionStatus.FAILED,
+                        errors=("directory is not empty",),
+                    )
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(_bounded_error(error),),
+            )
+        if not present:
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.SUCCESS,
+                completed=("DIRECTORY_ALREADY_ABSENT",),
+                effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            )
+        if mutation_authority is not None:
+            try:
+                self._check_mutation_authority(
+                    _DirectCommandPlan(PlanOperation.DELETE, path, path),
+                    "DIRECT:DELETE_EMPTY_DIRECTORY",
+                    mutation_authority,
+                )
+            except MutationAuthorityRefused as error:
+                return self._direct_result(
+                    PlanOperation.DELETE,
+                    path,
+                    path,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=(_authority_error(error),),
+                )
+        try:
+            storage.delete(path)
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(_bounded_error(error),),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("directory_delete",),
+            )
+        if storage.exists(path):
+            return self._direct_result(
+                PlanOperation.DELETE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("directory removal verification failed",),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("directory_delete",),
+            )
+        return self._direct_result(
+            PlanOperation.DELETE,
+            path,
+            path,
+            started,
+            ExecutionStatus.SUCCESS,
+            completed=("DELETE_EMPTY_DIRECTORY",),
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
+
+    def _cross_storage_copy(
+        self,
+        source_storage: Storage,
+        target_storage: Storage,
+        source: str,
+        target: str,
+        source_evidence: DirectEntryEvidence | None,
+    ) -> str:
+        """Stream one bounded source→target copy and verify the destination.
+
+        The source is read in bounded chunks while its digest and byte count are
+        accumulated; the target is published only through executor-owned
+        ``write``; then the produced destination is re-read in bounded chunks
+        and compared.  A digest or size mismatch raises, so a truncated or
+        changed transfer is never reported as a successful Copy and no media
+        file is ever loaded wholly into memory.
+        """
+
+        expected_size = source_evidence.size if source_evidence is not None else None
+        self._stream_copy_verified(source_storage, target_storage, source, target, expected_size)
+        return "COPY"
+
+    def _stream_copy_verified(
+        self,
+        source_storage: Storage,
+        target_storage: Storage,
+        source: str,
+        target: str,
+        expected_size: int | None,
+    ) -> int:
+        """Stream one bounded copy and prove the produced destination.
+
+        Returns the transferred byte count.  Raises when the destination is
+        missing, the wrong type, the wrong size, or its streamed digest differs
+        from the source digest, so a truncated or changed transfer can never be
+        reported as a completed Copy/Move.
+        """
+
+        digest = hashlib.sha256()
+        with source_storage.read(source) as stream:
+            reader = _HashingReader(stream, digest)
+            target_storage.write(target, reader, overwrite=False)
+            transferred = reader.count
+        source_digest = digest.hexdigest()
+        if not target_storage.exists(target):
+            raise RuntimeError("transfer destination verification failed")
+        observed = target_storage.stat(target)
+        if observed.entry_type is not StorageEntryType.FILE:
+            raise RuntimeError("transfer destination verification failed: wrong entry type")
+        if expected_size is not None and observed.size != expected_size:
+            raise RuntimeError("transfer destination verification failed: size mismatch")
+        if transferred != observed.size:
+            raise RuntimeError("transfer destination verification failed: size mismatch")
+        if _stream_digest(target_storage, target) != source_digest:
+            raise RuntimeError("transfer destination verification failed: digest mismatch")
+        return transferred
+
+    def _cross_storage_move(
+        self,
+        source_storage: Storage,
+        target_storage: Storage,
+        source: str,
+        target: str,
+        source_evidence: DirectEntryEvidence | None,
+        plan: "_DirectCommandPlan",
+        mutation_authority: MutationAuthority | None,
+        started: float,
+    ) -> ExecutionResult:
+        completed: list[str] = []
+        expected_size = source_evidence.size if source_evidence is not None else None
+        try:
+            self._stream_copy_verified(
+                source_storage, target_storage, source, target, expected_size
+            )
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(_bounded_error(error),),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("destination_write",),
+            )
+        completed.append(TransferCheckpoint.COPY_WRITTEN.value)
+        completed.append(TransferCheckpoint.DESTINATION_VERIFIED.value)
+        # Fresh exact source revalidation immediately before the destructive step.
+        missing_authority = _transfer_source_preflight(
+            source_storage, source, source_evidence, require_exact_authority=True
+        )
+        if missing_authority:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.PARTIAL,
+                errors=(missing_authority,),
+                completed=tuple(completed),
+                effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            )
+        try:
+            self._check_mutation_authority(
+                plan, "DIRECT:CROSS_STORAGE_DELETE_SOURCE", mutation_authority
+            )
+        except MutationAuthorityRefused as error:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.PARTIAL,
+                errors=(_authority_error(error),),
+                completed=tuple(completed),
+                effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+            )
+        try:
+            source_storage.delete(source)
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.PARTIAL,
+                errors=(_bounded_error(error),),
+                completed=tuple(completed),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("source_deletion",),
+            )
+        if source_storage.exists(source):
+            return self._direct_result(
+                PlanOperation.MOVE,
+                source,
+                target,
+                started,
+                ExecutionStatus.PARTIAL,
+                errors=("cross-storage move source deletion was not verified",),
+                completed=tuple(completed),
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("source_deletion",),
+            )
+        completed.append(TransferCheckpoint.SOURCE_DELETED.value)
+        return self._direct_result(
+            PlanOperation.MOVE,
+            source,
+            target,
+            started,
+            ExecutionStatus.SUCCESS,
+            completed=tuple(completed),
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
+
     def _execute_direct(
         self,
         storage: Storage,
@@ -927,6 +1525,7 @@ class OrganizerExecutor:
         *,
         warnings: tuple[str, ...] = (),
         errors: tuple[str, ...] = (),
+        completed: tuple[str, ...] = (),
         effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.NONE,
         uncertain_effects: tuple[str, ...] = (),
     ) -> ExecutionResult:
@@ -935,6 +1534,7 @@ class OrganizerExecutor:
             operation=operation,
             source=source,
             destination=target,
+            completed_operations=completed,
             warnings=warnings,
             errors=errors,
             duration=max(0, time.monotonic() - started),
@@ -1049,6 +1649,72 @@ class OrganizerExecutor:
     def _direct_gone_verified(storage: Storage, path: str) -> bool:
         return not storage.exists(path)
 
+    def project_source_cleanup(
+        self,
+        plan: OrganizePlan,
+        storage: Storage,
+        storage_source: str,
+    ) -> SourceCleanupProjection:
+        """Bounded zero-mutation explanation of the pinned cleanup policy.
+
+        Lists the exact confined source parent, matches the currently present
+        regular files against the explicitly configured patterns and reports
+        every blocking entry.  It performs no mutation and returns no reusable
+        Delete token; it is explanatory evidence for the already-pinned
+        OrganizePolicy only.
+        """
+
+        policy = plan.source_directory_cleanup
+        source = posixpath.normpath(storage_source)
+        root = posixpath.normpath(plan.source_library_root) if plan.source_library_root else ""
+        parent = posixpath.dirname(source)
+        matched: list[str] = []
+        blocking: list[str] = []
+        outcome = "not_applicable"
+        confined = (
+            bool(parent)
+            and parent != root
+            and (not root or parent == root or parent.startswith(f"{root}/"))
+        )
+        if policy.mode is DirectoryCleanupMode.NONE:
+            outcome = "disabled"
+        elif plan.operation is not PlanOperation.MOVE:
+            outcome = "not_applicable"
+        elif not confined or parent.startswith("/"):
+            outcome = "blocked_boundary"
+        else:
+            try:
+                entries = tuple(storage.list(parent))
+            except (StorageError, RuntimeError, OSError):
+                entries = ()
+                outcome = "unavailable"
+            else:
+                if len(entries) > policy.max_entries:
+                    outcome = "blocked_entry_limit"
+                else:
+                    for entry in entries:
+                        if self._cleanup_entry_matches(parent, entry, policy):
+                            matched.append(entry.path)
+                        else:
+                            blocking.append(entry.path)
+                    outcome = (
+                        "blocked_unknown_entries"
+                        if blocking
+                        else "will_delete_matched_files_then_empty_directory"
+                        if matched
+                        else "directory_would_be_removed"
+                    )
+        return SourceCleanupProjection(
+            parent=parent,
+            mode=policy.mode.value,
+            ignore_patterns=tuple(policy.ignore_patterns),
+            max_parent_directories=policy.max_parent_directories,
+            max_entries=policy.max_entries,
+            matched_files=tuple(sorted(matched)),
+            blocking_entries=tuple(sorted(blocking)),
+            expected_directory_outcome=outcome,
+        )
+
     def _cleanup_source_directories(
         self,
         plan: OrganizePlan,
@@ -1056,6 +1722,23 @@ class OrganizerExecutor:
         storage_source: str,
         mutation_authority: MutationAuthority | None,
     ) -> _CleanupOutcome:
+        """Bounded, explicitly-policy-matched source cleanup after a verified Move.
+
+        Every deletion and every directory outcome is recorded independently as
+        a :class:`DirectoryCleanupStep` with its known effect.  The cleanup
+        starts from a fresh listing of the exact confined source parent,
+        re-checks ``maxParentDirectories`` and ``maxEntries``, and requires
+        every remaining entry to be a direct regular-file child whose basename
+        matches at least one explicitly configured ``ignorePatterns`` rule.
+        This is a current-name predicate, not exact-object confirmation: a
+        same-name replacement that still matches the declared pattern stays
+        inside the policy intent, while any directory, symlink, unknown file,
+        changed type, exceeded bound or Storage error stops the not-yet-processed
+        scope with a partial known-effect result.  A failure after deleting some
+        matched files is a partial cleanup with exact known effects and is never
+        automatically replayed.
+        """
+
         policy = plan.source_directory_cleanup
         if policy.mode is DirectoryCleanupMode.NONE:
             return _CleanupOutcome(DirectoryCleanupStatus.DISABLED)
@@ -1081,64 +1764,98 @@ class OrganizerExecutor:
                 if not candidate or candidate == root:
                     break
                 if root and not candidate.startswith(f"{root}/"):
-                    return _CleanupOutcome(
-                        DirectoryCleanupStatus.FAILED,
-                        tuple(steps),
-                        "source cleanup crossed ResourceLibrary root",
+                    return self._cleanup_stop(
+                        steps, self._cleanup_failure_status(steps), "source cleanup crossed root"
                     )
-                entries = tuple(storage.list(candidate))
-                if len(entries) > policy.max_entries:
+                listed = tuple(storage.list(candidate))
+                if len(listed) > policy.max_entries:
                     steps.append(
                         DirectoryCleanupStep(
                             "STOP_DIRECTORY", candidate, False, "entry limit exceeded"
                         )
                     )
-                    return _CleanupOutcome(DirectoryCleanupStatus.STOPPED, tuple(steps))
-                ignored = ()
-                if entries:
+                    return self._cleanup_stop(steps, DirectoryCleanupStatus.STOPPED)
+                if listed:
                     if policy.mode is DirectoryCleanupMode.EMPTY:
                         steps.append(
                             DirectoryCleanupStep(
                                 "STOP_DIRECTORY", candidate, False, "directory is not empty"
                             )
                         )
-                        return _CleanupOutcome(DirectoryCleanupStatus.STOPPED, tuple(steps))
+                        return self._cleanup_stop(steps, DirectoryCleanupStatus.STOPPED)
                     if not all(
-                        entry.entry_type is StorageEntryType.FILE
-                        and entry.path == posixpath.join(candidate, entry.name)
-                        and posixpath.basename(entry.name) == entry.name
-                        and any(
-                            fnmatch.fnmatchcase(entry.name, pattern)
-                            for pattern in policy.ignore_patterns
-                        )
-                        for entry in entries
+                        self._cleanup_entry_matches(candidate, entry, policy) for entry in listed
                     ):
                         steps.append(
                             DirectoryCleanupStep(
                                 "STOP_DIRECTORY", candidate, False, "unknown entry present"
                             )
                         )
-                        return _CleanupOutcome(DirectoryCleanupStatus.STOPPED, tuple(steps))
-                    ignored = entries
-                for entry in ignored:
-                    observed = storage.stat(entry.path)
-                    if (
-                        observed.entry_type is not StorageEntryType.FILE
-                        or observed.size != entry.size
-                        or observed.modified_at != entry.modified_at
-                    ):
-                        raise RuntimeError("ignored entry changed before cleanup")
-                for entry in ignored:
-                    self._check_mutation_authority(
-                        plan, "CLEANUP_DELETE_IGNORED_FILE", mutation_authority
+                        return self._cleanup_stop(steps, DirectoryCleanupStatus.STOPPED)
+                    # Re-stat every admitted entry immediately before its delete.
+                    # A same-name replacement that is still a matching regular
+                    # file remains inside the declared policy; a changed entry
+                    # type or a vanished entry stops the remaining scope.
+                    for entry in listed:
+                        observed = storage.stat(entry.path)
+                        if observed.entry_type is not StorageEntryType.FILE:
+                            steps.append(
+                                DirectoryCleanupStep(
+                                    "STOP_DIRECTORY",
+                                    candidate,
+                                    False,
+                                    "matched entry type changed",
+                                )
+                            )
+                            return self._cleanup_stop(steps, self._cleanup_failure_status(steps))
+                    for entry in listed:
+                        self._check_mutation_authority(
+                            plan, "CLEANUP_DELETE_IGNORED_FILE", mutation_authority
+                        )
+                        storage.delete(posixpath.join(candidate, entry.name))
+                        steps.append(DirectoryCleanupStep("DELETE_IGNORED_FILE", entry.path, True))
+                try:
+                    leftover = tuple(storage.list(candidate))
+                except StorageError as error:
+                    if error.code is not StorageErrorCode.NOT_FOUND:
+                        raise
+                    # Providers that only enumerate existing prefixes report a
+                    # fully emptied virtual prefix as absent rather than empty.
+                    leftover = ()
+                if leftover:
+                    steps.append(
+                        DirectoryCleanupStep(
+                            "STOP_DIRECTORY", candidate, False, "directory changed before cleanup"
+                        )
                     )
-                    storage.delete(entry.path)
-                    steps.append(DirectoryCleanupStep("DELETE_IGNORED_FILE", entry.path, True))
-                if storage.list(candidate):
-                    raise RuntimeError("source directory changed before cleanup")
+                    return self._cleanup_stop(steps, self._cleanup_failure_status(steps))
                 self._check_mutation_authority(plan, "CLEANUP_DELETE_DIRECTORY", mutation_authority)
-                storage.delete(candidate)
-                steps.append(DirectoryCleanupStep("DELETE_EMPTY_DIRECTORY", candidate, True))
+                already_absent = False
+                try:
+                    still_present = storage.exists(candidate)
+                except StorageError as error:
+                    if error.code is StorageErrorCode.NOT_FOUND:
+                        # Providers that only enumerate existing prefixes report a
+                        # fully emptied virtual prefix as absent.
+                        still_present = False
+                    else:
+                        raise
+                if not still_present:
+                    already_absent = True
+                if already_absent:
+                    # S3/R2 virtual-prefix semantics: after every admitted
+                    # object is removed, a prefix with no remaining objects and
+                    # no explicit marker is already absent.  Record the truthful
+                    # outcome instead of attempting to delete a fictional
+                    # directory object.
+                    steps.append(
+                        DirectoryCleanupStep(
+                            "DIRECTORY_ALREADY_ABSENT", candidate, True, "prefix is already absent"
+                        )
+                    )
+                else:
+                    storage.delete(candidate)
+                    steps.append(DirectoryCleanupStep("DELETE_EMPTY_DIRECTORY", candidate, True))
                 candidate = posixpath.dirname(candidate)
         except MutationAuthorityRefused as error:
             return _CleanupOutcome(
@@ -1147,13 +1864,61 @@ class OrganizerExecutor:
                 _authority_error(error),
             )
         except (StorageError, RuntimeError, OSError) as error:
-            return _CleanupOutcome(
-                DirectoryCleanupStatus.FAILED, tuple(steps), _bounded_error(error)
-            )
+            # Some admitted cleanup effects may already be known complete: that
+            # is a partial cleanup with exact known effects, never a fabricated
+            # all-or-nothing result and never an automatic replay.
+            status = DirectoryCleanupStatus.PARTIAL if steps else DirectoryCleanupStatus.FAILED
+            return _CleanupOutcome(status, tuple(steps), _bounded_error(error))
         return _CleanupOutcome(
             DirectoryCleanupStatus.SUCCESS if steps else DirectoryCleanupStatus.NOT_APPLICABLE,
             tuple(steps),
         )
+
+    @staticmethod
+    def _cleanup_stop(
+        steps: list[DirectoryCleanupStep],
+        status: DirectoryCleanupStatus,
+        reason: str | None = None,
+    ) -> _CleanupOutcome:
+        return _CleanupOutcome(status, tuple(steps), reason)
+
+    @staticmethod
+    def _cleanup_failure_status(steps: list[DirectoryCleanupStep]) -> DirectoryCleanupStatus:
+        """The truthful status of a cleanup that failed or stopped unpredictably.
+
+        A cleanup that already produced at least one known deletion is a PARTIAL
+        cleanup with exact known effects; one with no known effect yet is a plain
+        FAILED outcome.  This is deliberately distinct from the predictable
+        STOPPED cases (an unknown entry, a non-empty EMPTY-mode directory or an
+        exceeded bound), which remain STOPPED.
+        """
+
+        return (
+            DirectoryCleanupStatus.PARTIAL
+            if any(
+                step.success and step.action in {"DELETE_IGNORED_FILE", "DELETE_EMPTY_DIRECTORY"}
+                for step in steps
+            )
+            else DirectoryCleanupStatus.FAILED
+        )
+
+    @staticmethod
+    def _cleanup_entry_matches(candidate: str, entry, policy) -> bool:
+        """Whether one listed entry is a deletable policy-matched regular file.
+
+        The admission requires a direct regular-file child of the exact source
+        parent whose basename matches at least one configured ``ignorePatterns``
+        rule.  A directory, symlink, provider-unknown type, nested path or
+        pattern mismatch is never admitted.
+        """
+
+        if entry.entry_type is not StorageEntryType.FILE:
+            return False
+        if entry.path != posixpath.join(candidate, entry.name):
+            return False
+        if posixpath.basename(entry.name) != entry.name or entry.name in {"", ".", ".."}:
+            return False
+        return any(fnmatch.fnmatchcase(entry.name, pattern) for pattern in policy.ignore_patterns)
 
     def _mutate(
         self,
@@ -1667,6 +2432,155 @@ def _bounded_error(error: Exception) -> str:
     if isinstance(error, OSError):
         return "os_error"
     return "rollback_safety_error"
+
+
+#: Bounded transfer chunk.  Media files are streamed; they are never loaded
+#: wholly into memory.
+_TRANSFER_CHUNK_BYTES = 1024 * 1024
+
+
+class _HashingReader:
+    """A bounded read-through wrapper that accumulates size and SHA-256.
+
+    ``Storage.write`` accepts a ``BinaryIO`` and copies it with a bounded
+    ``copyfileobj`` chunk, so wrapping the source stream lets the executor
+    compute the transferred byte count and digest without loading the media
+    file into memory and without a second source read.
+    """
+
+    def __init__(self, stream, digest) -> None:
+        self._stream = stream
+        self._digest = digest
+        self.count = 0
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._stream.read(size)
+        if chunk:
+            self._digest.update(chunk)
+            self.count += len(chunk)
+        return chunk
+
+    def seekable(self) -> bool:
+        return False
+
+
+def _stream_digest(storage: Storage, path: str) -> str:
+    """The streamed SHA-256 of one stored entry, read in bounded chunks."""
+
+    digest = hashlib.sha256()
+    with storage.read(path) as stream:
+        while chunk := stream.read(_TRANSFER_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _transfer_capability_error(
+    operation: PlanOperation,
+    source_storage: Storage | None,
+    target_storage: Storage | None,
+) -> str | None:
+    """Refuse an unsupported or denied transfer before any mutation.
+
+    Same-Storage COPY needs the provider's native ``copy``; same-Storage MOVE
+    needs its native ``move``.  Cross-Storage COPY needs a writable target and
+    streams through the bounded executor path; cross-Storage MOVE additionally
+    needs the source provider's ``delete`` for the compound source deletion.
+    A read-only source is fine for a Copy — it is only read.
+    """
+
+    def denied_or_unsupported(operation_name: str, storage: Storage, supported: bool) -> str | None:
+        if supported:
+            return None
+        if getattr(storage, "read_only", False):
+            return f"capability denied: {operation_name} requires writable Storage"
+        return f"unsupported capability: {operation_name} is not supported"
+
+    def writable(storage: Storage | None) -> str | None:
+        if storage is not None and getattr(storage, "read_only", False):
+            return f"capability denied: {operation.value} requires writable Storage"
+        return None
+
+    if operation is PlanOperation.COPY:
+        # Same-Storage copy writes through the same provider; cross-Storage copy
+        # writes to the target only.
+        return writable(source_storage if target_storage is None else target_storage)
+    if operation is PlanOperation.MOVE:
+        if target_storage is None:
+            # Same-Storage: only the provider's native move is admitted, and the
+            # native move is what both relocates and removes the source.
+            assert source_storage is not None
+            capabilities = getattr(source_storage, "capabilities", None)
+            if capabilities is None:
+                return writable(source_storage)
+            return denied_or_unsupported("MOVE", source_storage, capabilities.can_move)
+        # Cross-Storage: the compound Move writes the verified copy to the
+        # target and later deletes the source.
+        error = writable(target_storage)
+        if error:
+            return error
+        capabilities = getattr(source_storage, "capabilities", None)
+        if capabilities is None:
+            return writable(source_storage)
+        return denied_or_unsupported("MOVE source DELETE", source_storage, capabilities.can_delete)
+    if operation is PlanOperation.DELETE:
+        storage = source_storage
+        assert storage is not None
+        capabilities = getattr(storage, "capabilities", None)
+        if capabilities is None:
+            return writable(storage)
+        return denied_or_unsupported("DELETE", storage, capabilities.can_delete)
+    return f"unsupported capability: {operation.value} is not supported"
+
+
+def _transfer_source_preflight(
+    storage: Storage,
+    source: str,
+    evidence: DirectEntryEvidence | None,
+    *,
+    require_exact_authority: bool,
+) -> str | None:
+    """Revalidate the source immediately before one transfer mutation.
+
+    Every transfer re-checks that the source still exists and still has the
+    observed entry type.  When ``require_exact_authority`` is set — the
+    cross-Storage compound Move that will delete the source itself — the
+    provider's verifiable entry identity is mandatory and is re-compared with
+    one metadata query, so the source is deleted only under exact evidence and
+    never under size/``mtime`` alone.  A same-Storage provider-native move does
+    not delete a separately resolved object: it re-checks the observed entry
+    identity when the provider publishes one, and otherwise refuses a changed
+    regular file by its observed size/``modified time`` without pretending that
+    is an exact destructive identity.
+    """
+
+    if not storage.exists(source):
+        return "source does not exist"
+    observed = storage.stat(source)
+    observed_is_directory = observed.entry_type is StorageEntryType.DIRECTORY
+    if evidence is None:
+        if require_exact_authority:
+            return "entry version evidence is required before this Storage mutation"
+        return None
+    if observed_is_directory != evidence.is_directory:
+        return "source changed since it was observed"
+    if require_exact_authority:
+        if not evidence.fingerprint:
+            return "entry version evidence is required before this Storage mutation"
+        return _direct_entry_version_mismatch(
+            observed, evidence, "source changed since it was observed"
+        )
+    if evidence.fingerprint:
+        return _direct_entry_version_mismatch(
+            observed, evidence, "source changed since it was observed"
+        )
+    if observed_is_directory:
+        # A directory Move relocates the whole confirmed directory; its own
+        # deletion time legitimately moves when children change, so only the
+        # observed entry type is authoritative for the provider-native move.
+        return None
+    if observed.size != evidence.size or observed.modified_at.isoformat() != evidence.modified_at:
+        return "source changed since it was observed"
+    return None
 
 
 def _authority_error(error: MutationAuthorityRefused) -> str:

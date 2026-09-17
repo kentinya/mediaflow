@@ -415,6 +415,8 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onImpact?: () => Response;
     onFiles?: () => Response;
     onRenameEvidence?: () => Response;
+    onTransferImpact?: (query: URLSearchParams) => Response;
+    onTransfer?: (body: Record<string, unknown>) => Response;
   }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -507,6 +509,74 @@ describe("Files entry state and ResourceLibrary strip", () => {
           evidence: `v1.evidence-${path}`,
           sideEffects: "none",
           retrySafe: true,
+        });
+      }
+      if (url.includes("/files/transfer-impact")) {
+        const query = new URL(url, "http://x").searchParams;
+        if (options.onTransferImpact) return options.onTransferImpact(query);
+        return jsonResponse({
+          resourceLibraryId: "lib-a",
+          destinationResourceLibraryId: query.get("to") ?? "lib-a",
+          operation: query.get("operation") ?? "copy",
+          conflictMode: query.get("conflict") ?? "fail",
+          sameStorage: true,
+          sourceLibraryRoot: "/lib-a",
+          destinationDirectory: query.get("toPath") ?? "",
+          capability: "native_copy",
+          topLevelPaths: query.getAll("path"),
+          destinations: query.getAll("path").map((path) => ({
+            path,
+            destination: `Movies/${path}`,
+          })),
+          entries: query.getAll("path").map((path) => ({
+            path,
+            isDirectory: false,
+            size: 32,
+            modifiedAt: "2026-08-23T11:15:00Z",
+          })),
+          fileCount: query.getAll("path").length,
+          directoryCount: 0,
+          totalBytes: 32 * query.getAll("path").length,
+          conflicts: [],
+          manifestDigest: "t1.manifest-digest-1",
+          sideEffects: "none",
+          retrySafe: true,
+        });
+      }
+      if (url.includes("/files/transfers")) {
+        const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+          string,
+          unknown
+        >;
+        if (options.onTransfer) return options.onTransfer(body);
+        return jsonResponse({
+          operation: body.operation,
+          conflictMode: body.conflictMode,
+          sameStorage: true,
+          status: "SUCCESS",
+          taskId: "task-transfer-1",
+          taskStatus: "completed",
+          resourceLibraryId: "lib-a",
+          destinationResourceLibraryId: body.destinationResourceLibraryId,
+          topLevelPaths: body.paths,
+          destinations: (body.paths as string[]).map((path: string) => ({
+            path,
+            destination: `Movies/${path}`,
+          })),
+          knownEffects: (body.paths as string[]).map((path: string) => ({
+            path,
+            effect: "transferred",
+            status: "SUCCESS",
+          })),
+          checkpoints: [],
+          checkpointsTruncated: false,
+          totalItems: (body.paths as string[]).length,
+          succeededItems: (body.paths as string[]).length,
+          failedItems: 0,
+          outcomes: [],
+          outcomesTruncated: false,
+          nextAction: "refresh the source and destination directories",
+          sideEffects: "storage_mutations",
         });
       }
       if (url.includes("/files/delete-impact")) {
@@ -1652,5 +1722,275 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(saveBodies[1]).toMatchObject({
       expected: { size: 8, digest: "digest-2" },
     });
+  });
+  it("selects a library from every non-menu point of the card and never from its action menu", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([
+          libraryItem("lib-a", "local-1"),
+          libraryItem("lib-b", "local-1"),
+        ]),
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    await screen.findByText("notes.txt");
+    await screen.findByText("notes.txt");
+    const strip = document.querySelector(
+      ".mf-library-strip",
+    ) as HTMLElement | null;
+    expect(strip).not.toBeNull();
+
+    // Structural hit-target contract: the card wrapper is not itself a click
+    // target — the selection button is its only interactive child and owns the
+    // card geometry, so the browser suite can prove the on-screen hit testing
+    // at real coordinates.  The `…` action is a separate sibling control with
+    // its own boundary and is never inside the selection control.
+    for (const id of ["lib-a", "lib-b"]) {
+      const cards = within(strip as HTMLElement).getAllByRole("button", {
+        name: new RegExp(`资源库${id.slice(-1).toUpperCase()}`),
+      });
+      expect(cards.length).toBeGreaterThan(0);
+      const selection = cards.find((button) =>
+        button.className.includes("mf-library-card-select"),
+      );
+      expect(selection).toBeDefined();
+      const wrapper = selection!.closest(".mf-library-card") as HTMLElement;
+      expect(wrapper).not.toBeNull();
+      // The selection control is the card's direct child covering the card.
+      expect(wrapper.contains(selection as Node)).toBe(true);
+      // No interactive control is nested inside the selection control.
+      expect(
+        (selection as HTMLElement).querySelectorAll("button, input, a").length,
+      ).toBe(0);
+    }
+    const otherCard = within(strip as HTMLElement)
+      .getAllByRole("button", { name: /资源库A/ })
+      .find((button) => button.getAttribute("aria-pressed") !== "true");
+    expect(otherCard).toBeDefined();
+    await user.click(otherCard!);
+    const selectedA = within(strip as HTMLElement)
+      .getAllByRole("button", { name: /资源库A/ })
+      .find((button) => button.getAttribute("aria-pressed") !== null);
+    expect(selectedA!.getAttribute("aria-pressed")).toBe("true");
+
+    // The selected card's `…` action opens its menu without switching.
+    const menuTrigger = within(strip as HTMLElement).getByRole("button", {
+      name: /资源库操作 资源库A/,
+    });
+    await user.click(menuTrigger);
+    expect(
+      await screen.findByRole("menu", { name: /资源库操作 资源库A/ }),
+    ).toBeVisible();
+    // Selection is unchanged by opening the action menu.
+    expect(selectedA!.getAttribute("aria-pressed")).toBe("true");
+    await user.keyboard("{Escape}");
+  });
+
+  it("encodes a two- and fifty-path Delete selection as repeated path values", async () => {
+    const user = userEvent.setup();
+    const impactUrls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onImpact: () => {
+          return jsonResponse({
+            resourceLibraryId: "lib-a",
+            topLevelPaths: [],
+            entries: [],
+            fileCount: 0,
+            directoryCount: 0,
+            totalBytes: 0,
+            truncated: false,
+            scopeDigest: "scope-digest-multi",
+          });
+        },
+      }),
+    );
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    const original = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/files/delete-impact")) {
+        impactUrls.push(url);
+      }
+      return (original as (input: RequestInfo | URL) => Promise<Response>)(
+        input,
+      );
+    });
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByLabelText("选择 notes.txt"));
+    await user.click(screen.getByRole("button", { name: "删除" }));
+    const dialog = await screen.findByRole("dialog", { name: "删除确认" });
+    expect(
+      within(dialog).getByRole("button", { name: "删除" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+
+    // The Web request is the explicit repeated-array serialization: the
+    // backend accepts only repeated `path` values as the bounded array field.
+    expect(impactUrls).toHaveLength(1);
+    expect(impactUrls[0]).toContain("path=notes.txt");
+    expect(impactUrls[0].split("path=")).toHaveLength(2);
+
+    // Fifty bounded paths are still one selection in one request.
+    const manyPaths = Array.from({ length: 50 }, (_, index) => `f${index}.txt`);
+    const { fetchDeleteImpact } = await import("../../shared/api/api-client");
+    const bounded = await fetchDeleteImpact("test-token", "lib-a", manyPaths);
+    expect(bounded.ok).toBe(true);
+    expect(impactUrls).toHaveLength(2);
+    expect(impactUrls[1].split("path=")).toHaveLength(51);
+  });
+
+  it("scrolls a ten-row viewport to the final row and keeps the portal menu interactive", async () => {
+    const user = userEvent.setup();
+    const rows = Array.from({ length: 12 }, (_, index) => ({
+      name: `episode-${index + 1}.mkv`,
+      path: `episode-${index + 1}.mkv`,
+      type: "file",
+      size: 32 + index,
+      modifiedAt: "2026-08-23T11:15:00Z",
+      isDirectory: false,
+      isSymlink: false,
+      traversable: false,
+      selectable: true,
+      recognitionResult: null,
+      businessStatus: null,
+    }));
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => {
+          const payload = filesPayload("lib-a", null);
+          return jsonResponse({ ...payload, entries: rows });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("共 12 个项目")).toBeVisible();
+    const viewport = document.querySelector(
+      ".mf-files-table-scroll",
+    ) as HTMLElement;
+    expect(viewport).not.toBeNull();
+    // jsdom applies no stylesheet, so the real `overflow-y: auto` /
+    // `min-height: 0` viewport geometry is proven by the browser suite; the
+    // structural contract — one scrollable viewport owning every row, the
+    // final row reachable inside it, and an unclipped portal menu — is
+    // asserted here against the live DOM.
+    const lastRowTrigger = screen.getByRole("button", {
+      name: "更多操作 episode-12.mkv",
+    });
+    // The final row is inside the same scrollable viewport, so scrolling to it
+    // is the operator's real path to the bottom-row actions.
+    expect(viewport.contains(lastRowTrigger)).toBe(true);
+    await user.click(lastRowTrigger);
+    const menu = await screen.findByRole("menu", {
+      name: "更多操作 episode-12.mkv",
+    });
+    // The menu renders through the page-level portal layer, not inside the
+    // clipping table cell: its parent is the document body.
+    expect(menu.parentElement).toBe(document.body);
+    expect(viewport.querySelector(".mf-row-menu-portal")).toBeNull();
+    for (const item of ["复制", "移动", "重命名", "删除"]) {
+      expect(within(menu).getByRole("menuitem", { name: item })).toBeVisible();
+    }
+    // Every advertised action is a real menu item of the portal layer; the
+    // browser suite additionally proves the on-screen hit testing that jsdom
+    // cannot lay out.
+    expect(
+      within(menu).getByRole("menuitem", { name: "复制" }),
+    ).toBeInTheDocument();
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("menu", { name: "更多操作 episode-12.mkv" }),
+      ).not.toBeInTheDocument(),
+    );
+    // Focus returns to the exact invoking row control.
+    await waitFor(() => expect(document.activeElement).toBe(lastRowTrigger));
+  });
+
+  it("copies one file through the live destination picker and one confirmed submission", async () => {
+    const user = userEvent.setup();
+    const transferBodies: Record<string, unknown>[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onTransfer: (body) => {
+          transferBodies.push(body);
+          return jsonResponse({
+            operation: body.operation,
+            conflictMode: body.conflictMode,
+            sameStorage: true,
+            status: "SUCCESS",
+            taskId: "task-transfer-1",
+            taskStatus: "completed",
+            resourceLibraryId: "lib-a",
+            destinationResourceLibraryId: body.destinationResourceLibraryId,
+            topLevelPaths: body.paths,
+            destinations: [],
+            knownEffects: [
+              {
+                path: (body.paths as string[])[0],
+                effect: "transferred",
+                status: "SUCCESS",
+              },
+            ],
+            checkpoints: [],
+            checkpointsTruncated: false,
+            totalItems: 1,
+            succeededItems: 1,
+            failedItems: 0,
+            outcomes: [],
+            outcomesTruncated: false,
+            nextAction: "refresh the source and destination directories",
+            sideEffects: "storage_mutations",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(
+      screen.getByRole("button", { name: "更多操作 notes.txt" }),
+    );
+    await user.click(await screen.findByRole("menuitem", { name: "复制" }));
+    const dialog = await screen.findByRole("dialog", { name: "复制到…" });
+    // The destination picker is live-Storage authoritative and zero-mutation.
+    expect(within(dialog).getByLabelText("目标资源库")).toHaveValue("lib-a");
+    expect(within(dialog).getByText("目标：/（根目录）")).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "复制" }));
+    await waitFor(() => expect(transferBodies).toHaveLength(1));
+    expect(transferBodies[0]).toMatchObject({
+      operation: "copy",
+      paths: ["notes.txt"],
+      destinationResourceLibraryId: "lib-a",
+      destinationDirectory: "",
+      conflictMode: "fail",
+      manifestDigest: "t1.manifest-digest-1",
+    });
+    expect(
+      await screen.findByRole("dialog", { name: "复制结果" }),
+    ).toBeVisible();
+    expect(screen.getByText("已传输")).toBeVisible();
+    await user.click(
+      within(screen.getByRole("dialog", { name: "复制结果" })).getByRole(
+        "button",
+        { name: "关闭" },
+      ),
+    );
   });
 });
