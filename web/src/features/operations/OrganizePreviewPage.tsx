@@ -105,6 +105,38 @@ function ItemFindings({ item }: { readonly item: ManualPreviewItemModel }) {
       <dd>{item.warnings.length === 0 ? "none" : item.warnings.join("; ")}</dd>
       <dt>Destructive implications</dt>
       <dd>{implications === null ? "—" : implications.statement}</dd>
+      <dt>Source directory cleanup</dt>
+      <dd>
+        {item.cleanupProjection === null ? (
+          "not configured"
+        ) : (
+          <span className="mf-preview-cleanup">
+            <strong>
+              mode {item.cleanupProjection.mode}
+              {item.cleanupProjection.permanentDelete
+                ? "（整理成功后永久删除匹配文件）"
+                : ""}
+            </strong>
+            <br />
+            patterns: {item.cleanupProjection.ignorePatterns.join(", ") || "—"}
+            <br />
+            bounds: {item.cleanupProjection.maxParentDirectories} 个父目录 ·{" "}
+            {item.cleanupProjection.maxEntries} 个条目
+            <br />
+            matched:{" "}
+            {item.cleanupProjection.matchedFiles.length === 0
+              ? "none"
+              : item.cleanupProjection.matchedFiles.join(", ")}
+            <br />
+            blockers:{" "}
+            {item.cleanupProjection.blockingEntries.length === 0
+              ? "none"
+              : item.cleanupProjection.blockingEntries.join(", ")}
+            <br />
+            expected: {item.cleanupProjection.expectedDirectoryOutcome}
+          </span>
+        )}
+      </dd>
     </dl>
   );
 }

@@ -761,3 +761,287 @@ test("a stale removal confirmation keeps the dialog open with a re-review action
     page.getByRole("button", { name: "资源库A" }).first(),
   ).toBeVisible();
 });
+
+test("every non-menu point of a ResourceLibrary card selects it and the menu never does", async ({
+  page,
+}) => {
+  await openFiles(page);
+  const strip = page.locator(".mf-library-strip");
+  await expect(strip).toBeVisible();
+
+  const selection = strip.getByRole("button", { name: "source", exact: true });
+  await expect(selection).toBeVisible();
+  // The selection control covers the complete card geometry, so the corners
+  // and padding edges — the previous pointer dead zones — all select.
+  const card = selection.locator(
+    "xpath=ancestor::div[contains(@class,'mf-library-card')]",
+  );
+  const box = (await card.boundingBox())!;
+  expect(box).not.toBeNull();
+  const points: Array<[number, number]> = [
+    [box.x + 6, box.y + 6],
+    [box.x + box.width - 6, box.y + 6],
+    [box.x + 6, box.y + box.height - 6],
+    [box.x + box.width / 2, box.y + 6],
+    [box.x + 6, box.y + box.height / 2],
+  ];
+  // A pre-condition: the hit target resolves to the selection control itself.
+  for (const [x, y] of points) {
+    const hit = await page.evaluate(
+      ([px, py]) =>
+        (document.elementFromPoint(px, py) as Element | null)?.closest(
+          ".mf-library-card-select",
+        )?.tagName ?? null,
+      [x, y],
+    );
+    expect(hit).toBe("BUTTON");
+  }
+  // Selecting from any non-menu point of the card: one click selects exactly
+  // once and the `…` sibling appears without switching anything.
+  await selection.click();
+  await expect(selection).toHaveAttribute("aria-pressed", "true");
+
+  // The selected card's `…` action never switches the library.
+  const menuTrigger = card.locator(".mf-card-more");
+  await expect(menuTrigger).toBeVisible();
+  await menuTrigger.click();
+  const menu = page.getByRole("menu", { name: /资源库操作 source/ });
+  await expect(menu).toBeVisible();
+  await expect(selection).toHaveAttribute("aria-pressed", "true");
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await expect(selection).toHaveAttribute("aria-pressed", "true");
+});
+
+test("the bounded multi-selection Delete encodes repeated path values end to end", async ({
+  page,
+}) => {
+  const impactUrls: string[] = [];
+  const commandBodies: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("/files/delete-impact")) impactUrls.push(url);
+    if (request.method() === "POST" && url.includes("/files/commands")) {
+      commandBodies.push(request.postData() ?? "");
+    }
+  });
+  await openFiles(page);
+
+  // One directory plus one file: two confirmed top-level paths in one request.
+  await page.getByRole("checkbox", { name: "选择 Movies" }).check();
+  await page.getByRole("checkbox", { name: "选择 readme.txt" }).check();
+  await page.getByRole("button", { name: "删除", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "删除确认" });
+  await expect(dialog.getByText(/即将永久删除/)).toBeVisible();
+  await dialog.getByRole("button", { name: "删除", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "删除结果" })).toBeVisible();
+  await expect(page.getByText(/删除已完成 2 项/)).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "删除结果" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  expect(impactUrls).toHaveLength(1);
+  const query = new URL(impactUrls[0]).search;
+  expect(query).toContain("path=Movies");
+  expect(query).toContain("path=readme.txt");
+  expect(commandBodies).toHaveLength(1);
+  expect(commandBodies[0]).toContain(
+    '"confirmationDigest":"fake-scope-digest-Movies,readme.txt"',
+  );
+});
+
+test("a ten-row directory scrolls to the final row with an unclipped portal menu", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  await openFiles(page);
+
+  await directoryTree(page)
+    .getByRole("button", { name: "TV", exact: true })
+    .click();
+  await expect(page.getByText("共 12 个项目")).toBeVisible();
+  const viewport = page.locator(".mf-files-table-scroll");
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const element = document.querySelector(
+          ".mf-files-table-scroll",
+        ) as HTMLElement | null;
+        if (element === null) return null;
+        return { scroll: element.scrollHeight, client: element.clientHeight };
+      }),
+    )
+    .toEqual({ scroll: expect.any(Number), client: expect.any(Number) });
+  const geometry = await page.evaluate(() => {
+    const element = document.querySelector(
+      ".mf-files-table-scroll",
+    ) as HTMLElement | null;
+    if (element === null) return null;
+    const style = window.getComputedStyle(element);
+    return {
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+      overflowY: style.overflowY,
+      minHeight: style.minHeight,
+    };
+  });
+  expect(geometry).not.toBeNull();
+  expect(geometry!.overflowY).toBe("auto");
+  expect(geometry!.minHeight).toBe("0px");
+  expect(geometry!.scrollHeight).toBeGreaterThan(geometry!.clientHeight);
+
+  // Wheel to the bottom: the viewport itself scrolls, not the page.
+  await viewport.hover();
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const element = document.querySelector(
+          ".mf-files-table-scroll",
+        ) as HTMLElement | null;
+        if (element === null) return -1;
+        element.scrollTop = element.scrollHeight;
+        return element.scrollTop;
+      }),
+    )
+    .toBeGreaterThan(0);
+  for (let index = 0; index < 4; index += 1) {
+    await page.mouse.wheel(0, 400);
+  }
+  await expect
+    .poll(async () =>
+      page.evaluate(() => {
+        const viewport = document.querySelector(
+          ".mf-files-table-scroll",
+        ) as HTMLElement | null;
+        const trigger = viewport
+          ? ([...viewport.querySelectorAll("button[data-row-menu]")].at(
+              -1,
+            ) as HTMLElement | null)
+          : null;
+        if (viewport === null || trigger === null) return false;
+        const row = trigger.closest("tr") as HTMLElement;
+        const rowRect = row.getBoundingClientRect();
+        const viewportRect = viewport.getBoundingClientRect();
+        return (
+          rowRect.bottom <= viewportRect.bottom + 1 &&
+          rowRect.top >= viewportRect.top + 1
+        );
+      }),
+    )
+    .toBe(true);
+  await expect(page.getByText("共 12 个项目")).toBeVisible();
+
+  // The bottom-row menu renders through the portal layer above the clipping
+  // context and every action is hit-testable on screen.
+  await page.getByRole("button", { name: "更多操作 Show.S01E12.mkv" }).click();
+  const menu = page.getByRole("menu", { name: "更多操作 Show.S01E12.mkv" });
+  await expect(menu).toBeVisible();
+  const menuGeometry = await menu.evaluate((element) => {
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return {
+      position: style.position,
+      parent: element.parentElement?.tagName ?? "",
+      top: rect.top,
+      bottom: rect.bottom,
+      height: rect.height,
+    };
+  });
+  expect(menuGeometry.parent).toBe("BODY");
+  expect(menuGeometry.position).toBe("fixed");
+  expect(menuGeometry.top).toBeGreaterThanOrEqual(0);
+  expect(menuGeometry.bottom).toBeLessThanOrEqual(1024);
+  expect(menuGeometry.height).toBeGreaterThan(0);
+  for (const item of ["复制", "移动", "重命名", "删除"]) {
+    const entry = menu.getByRole("menuitem", { name: item });
+    await expect(entry).toBeVisible();
+    const box = (await entry.boundingBox())!;
+    const hit = await page.evaluate(
+      ([px, py]) =>
+        (document.elementFromPoint(px, py) as Element | null)?.closest(
+          ".mf-row-menu-portal",
+        )?.tagName ?? null,
+      [box.x + box.width / 2, box.y + box.height / 2],
+    );
+    expect(hit).toBe("DIV");
+  }
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  // Focus returns to the exact invoking row control.
+  await expect(
+    page.getByRole("button", { name: "更多操作 Show.S01E12.mkv" }),
+  ).toBeFocused();
+});
+
+test("copy completes through the live destination picker with one confirmed submission", async ({
+  page,
+}) => {
+  const impactUrls: string[] = [];
+  const transferBodies: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("/files/transfer-impact")) impactUrls.push(url);
+    if (request.method() === "POST" && url.includes("/files/transfers")) {
+      transferBodies.push(request.postData() ?? "");
+    }
+  });
+  await openFiles(page);
+
+  await page.getByRole("button", { name: "更多操作 sample.mkv" }).click();
+  await page.getByRole("menuitem", { name: "复制" }).click();
+  const dialog = page.getByRole("dialog", { name: "复制到…" });
+  await expect(dialog).toBeVisible();
+  // The picker is live-Storage authoritative and zero-mutation: navigating the
+  // destination tree issues bounded reads and no mutation request.
+  await expect(dialog.getByText(/到所选资源库/)).toBeVisible();
+  await expect(dialog.getByText("目标：/（根目录）")).toBeVisible();
+  await dialog
+    .getByRole("listbox", { name: "目标子目录" })
+    .getByRole("option", { name: "Movies", exact: true })
+    .click();
+  await expect(dialog.getByText("目标：/Movies")).toBeVisible();
+  await dialog.getByRole("button", { name: "复制", exact: true }).click();
+
+  await expect(page.getByRole("dialog", { name: "复制结果" })).toBeVisible();
+  await expect(page.getByText(/传输完成/)).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "复制结果" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  expect(impactUrls).toHaveLength(1);
+  expect(impactUrls[0]).toContain("operation=copy");
+  expect(impactUrls[0]).toContain("toPath=Movies");
+  expect(transferBodies).toHaveLength(1);
+  expect(transferBodies[0]).toContain(
+    '"manifestDigest":"t1.fake-manifest-sample.mkv-resources-Movies-copy-fail"',
+  );
+  expect(transferBodies[0]).toContain('"conflictMode":"fail"');
+});
+
+test("move exposes the compound cross-storage truth and per-item outcomes", async ({
+  page,
+}) => {
+  await openFiles(page);
+  await page.getByRole("button", { name: "更多操作 sample.mkv" }).click();
+  await page.getByRole("menuitem", { name: "移动" }).click();
+  const dialog = page.getByRole("dialog", { name: "移动到…" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText(/复制→校验→删除来源/)).toBeVisible();
+  // A cross-Storage destination is selectable and the submission carries the
+  // backend-issued conflict choice and manifest digest.
+  await dialog
+    .getByRole("combobox", { name: "目标资源库" })
+    .selectOption({ label: "source" });
+  await dialog.getByRole("button", { name: "移动", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "移动结果" })).toBeVisible();
+  await expect(page.getByText(/传输完成/)).toBeVisible();
+  await page
+    .getByRole("dialog", { name: "移动结果" })
+    .getByRole("button", { name: "关闭", exact: true })
+    .click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+});

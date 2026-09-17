@@ -35,6 +35,22 @@ MAX_IMPACT_DEPTH = 32
 #: Largest total byte size one bounded Delete impact may cover.
 MAX_IMPACT_BYTES = 20 * 1024**3
 
+#: Most top-level source paths one Copy/Move command may name.  Bounded so the
+#: confirmed logical transfer manifest stays reviewable and independently
+#: recoverable per top-level selection, matching the Delete selection bound.
+MAX_TRANSFER_PATHS = 50
+
+#: Most entries one bounded transfer may enumerate across every selected tree
+#: before it refuses to continue.  The same bounded scope protects admission
+#: and every durable per-entry checkpoint.
+MAX_TRANSFER_ENTRIES = 5000
+
+#: Deepest directory nesting one bounded transfer enumeration may descend.
+MAX_TRANSFER_DEPTH = 32
+
+#: Largest total byte size one bounded transfer may cover.
+MAX_TRANSFER_BYTES = 20 * 1024**3
+
 #: Reserved Windows device names that must never be created through a name
 #: field because SMB shares reject or dangerously reinterpret them.
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -72,6 +88,237 @@ class DirectFileOperation(StrEnum):
     RENAME = "rename"
     SAVE_TEXT = "save_text"
     DELETE = "delete"
+
+
+class TransferOperation(StrEnum):
+    """The two explicitly requested Files transfer operations.
+
+    There is deliberately no implicit third value: a Copy is never executed as a
+    Move, a Move is never executed as a Copy, and no organize operation is
+    reused as a stand-in.
+    """
+
+    COPY = "copy"
+    MOVE = "move"
+
+
+class TransferConflictMode(StrEnum):
+    """The explicit destination-conflict choice of one bounded transfer.
+
+    ``FAIL`` is the default no-overwrite behavior: a conflicting destination is
+    reported as an exact affected-item failure and nothing is replaced.
+    ``SKIP`` leaves the conflicting destination and source untouched.
+    ``KEEP_BOTH`` publishes the transfer at a backend-generated unique name.
+    Replace is intentionally absent: it would require one destination-bound
+    destructive confirmation and is not implemented by this Task.
+    """
+
+    FAIL = "fail"
+    SKIP = "skip"
+    KEEP_BOTH = "keep_both"
+
+
+class TransferCheckpoint(StrEnum):
+    """The durable per-entry checkpoint of one compound cross-Storage Move."""
+
+    SOURCE_OBSERVED = "source_observed"
+    COPY_WRITTEN = "copy_written"
+    DESTINATION_VERIFIED = "destination_verified"
+    SOURCE_DELETED = "source_deleted"
+
+
+class TransferEntryKind(StrEnum):
+    FILE = "file"
+    DIRECTORY = "directory"
+
+
+@dataclass(frozen=True)
+class TransferManifestEntry:
+    """One bounded, provider-neutral source entry of a transfer manifest.
+
+    ``fingerprint`` is the provider's verifiable entry identity when the
+    provider publishes one; it is empty when it does not (OpenList and SMB
+    regular entries, S3 virtual directories).  Size and ``modified_at`` are
+    always the exact observed provider metadata.  No host path, credential or
+    provider DTO ever appears here.
+    """
+
+    path: str
+    kind: TransferEntryKind
+    size: int
+    modified_at: str
+    fingerprint: str
+
+    @property
+    def is_directory(self) -> bool:
+        return self.kind is TransferEntryKind.DIRECTORY
+
+
+@dataclass(frozen=True)
+class TransferManifest:
+    """The pinned, confirmed logical scope of one bounded Copy/Move command.
+
+    The manifest binds the exact Active configuration revision/digest, the
+    source and destination ResourceLibrary/Storage identities, the normalized
+    relative roots, the requested operation, the explicit conflict choice, the
+    deterministic per-entry destination paths and the bounded entry scope.  Only
+    an opaque digest of this server-side value is returned to the browser.
+    """
+
+    revision_id: str
+    revision_digest: str
+    source_resource_library_id: str
+    source_storage_id: str
+    source_root: str
+    destination_resource_library_id: str
+    destination_storage_id: str
+    destination_root: str
+    destination_directory: str
+    operation: TransferOperation
+    conflict_mode: TransferConflictMode
+    same_storage: bool
+    top_level_paths: tuple[str, ...]
+    entries: tuple[TransferManifestEntry, ...]
+    destinations: tuple[tuple[str, str], ...]
+    keep_both_names: tuple[tuple[str, str], ...]
+    digest: str
+
+    @property
+    def entry_count(self) -> int:
+        return len(self.entries)
+
+    @property
+    def total_bytes(self) -> int:
+        return sum(entry.size for entry in self.entries if not entry.is_directory)
+
+    @property
+    def file_count(self) -> int:
+        return sum(1 for entry in self.entries if not entry.is_directory)
+
+    @property
+    def directory_count(self) -> int:
+        return sum(1 for entry in self.entries if entry.is_directory)
+
+    def destination_for(self, path: str) -> str | None:
+        return dict(self.destinations).get(path)
+
+
+@dataclass(frozen=True)
+class TransferConflict:
+    """One exact destination conflict of the bounded transfer scope."""
+
+    path: str
+    destination: str
+    resolution: str
+
+
+@dataclass(frozen=True)
+class TransferImpact:
+    """The zero-mutation impact/admission result one transfer confirmation holds.
+
+    ``manifest`` is the exact pinned scope; ``conflicts`` names every current
+    destination conflict together with the deterministic resolution the chosen
+    mode would apply.  The browser receives only the bounded document and the
+    opaque ``digest``.
+    """
+
+    manifest: TransferManifest
+    conflicts: tuple[TransferConflict, ...]
+    capability: str
+    unavailable: tuple[str, ...] = ()
+
+    def document(self) -> dict[str, object]:
+        return {
+            "resourceLibraryId": self.manifest.source_resource_library_id,
+            "destinationResourceLibraryId": self.manifest.destination_resource_library_id,
+            "operation": self.manifest.operation.value,
+            "conflictMode": self.manifest.conflict_mode.value,
+            "sameStorage": self.manifest.same_storage,
+            "sourceLibraryRoot": self.manifest.source_root,
+            "destinationDirectory": self.manifest.destination_directory,
+            "capability": self.capability,
+            "topLevelPaths": list(self.manifest.top_level_paths),
+            "destinations": [
+                {"path": path, "destination": destination}
+                for path, destination in self.manifest.destinations
+            ],
+            "entries": [
+                {
+                    "path": entry.path,
+                    "isDirectory": entry.is_directory,
+                    "size": entry.size,
+                    "modifiedAt": entry.modified_at,
+                }
+                for entry in self.manifest.entries
+            ],
+            "fileCount": self.manifest.file_count,
+            "directoryCount": self.manifest.directory_count,
+            "totalBytes": self.manifest.total_bytes,
+            "conflicts": [
+                {
+                    "path": conflict.path,
+                    "destination": conflict.destination,
+                    "resolution": conflict.resolution,
+                }
+                for conflict in self.conflicts
+            ],
+            "unavailable": list(self.unavailable),
+            "manifestDigest": self.manifest.digest,
+            "sideEffects": "none",
+            "retrySafe": True,
+            "nextAction": (
+                "confirm this exact bounded transfer to execute it"
+                if not self.unavailable
+                else "correct the reported limitation before submitting the transfer"
+            ),
+        }
+
+
+@dataclass(frozen=True)
+class SourceCleanupProjection:
+    """Read-only evidence of one OrganizePolicy ``sourceDirectoryCleanup``.
+
+    This explains the already-pinned destructive policy exactly: the configured
+    mode/patterns/bounds, the currently matched regular files, every blocking
+    entry and the expected directory/prefix outcome.  It is explanatory evidence
+    for the pinned OrganizePolicy, never a reusable direct Delete token.
+    """
+
+    parent: str
+    mode: str
+    ignore_patterns: tuple[str, ...]
+    max_parent_directories: int
+    max_entries: int
+    matched_files: tuple[str, ...]
+    blocking_entries: tuple[str, ...]
+    expected_directory_outcome: str
+
+    def document(self) -> dict[str, object]:
+        return {
+            "parent": self.parent,
+            "mode": self.mode,
+            "ignorePatterns": list(self.ignore_patterns),
+            "maxParentDirectories": self.max_parent_directories,
+            "maxEntries": self.max_entries,
+            "matchedFiles": list(self.matched_files),
+            "blockingEntries": list(self.blocking_entries),
+            "expectedDirectoryOutcome": self.expected_directory_outcome,
+            "permanentDelete": self.mode == "ignorable",
+            "sideEffects": "none",
+            "retrySafe": True,
+        }
+
+
+def transfer_manifest_digest(payload: dict[str, object]) -> str:
+    """The opaque, secret-free digest of one server-side transfer manifest."""
+
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "t1." + hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
 
 
 def unsafe_direct_basename(value: object) -> bool:

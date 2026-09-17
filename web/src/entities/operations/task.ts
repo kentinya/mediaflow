@@ -178,6 +178,8 @@ export interface TaskResultSummary {
   readonly completedOperations: readonly string[];
   readonly effectCertainty: ResultEffectCertainty;
   readonly uncertainEffects: readonly string[];
+  /** The Organize cleanup outcome attached to this result, when any. */
+  readonly cleanupStatus: string | null;
 }
 
 export interface TaskDetailPage {
@@ -435,6 +437,7 @@ function normalizeTaskResultSummary(
     completedOperations,
     effectCertainty,
     uncertainEffects,
+    cleanupStatus: optionalText(source, "cleanup_status"),
   };
 }
 

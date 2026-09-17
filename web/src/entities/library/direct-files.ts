@@ -299,6 +299,301 @@ export function normalizeDirectFileCommandResult(
   };
 }
 
+/** The two explicitly supported transfer operations; no implicit third value. */
+export type TransferOperation = "copy" | "move";
+
+/**
+ * The explicit destination-conflict choices.  Replace is deliberately absent:
+ * it would require one destination-bound destructive confirmation and is not
+ * implemented.  The backend default is no-overwrite.
+ */
+export type TransferConflictMode = "fail" | "skip" | "keep_both";
+
+export interface TransferManifestEntry {
+  readonly path: string;
+  readonly isDirectory: boolean;
+  readonly size: number;
+  readonly modifiedAt: string;
+}
+
+export interface TransferDestination {
+  readonly path: string;
+  readonly destination: string;
+}
+
+export interface TransferConflict {
+  readonly path: string;
+  readonly destination: string;
+  readonly resolution: string;
+}
+
+export interface TransferCheckpointEntry {
+  readonly path: string;
+  readonly destination: string;
+  readonly checkpoints: readonly string[];
+  readonly status: string;
+}
+
+/**
+ * The zero-mutation impact summary one Copy/Move confirmation holds.  The
+ * manifest digest is opaque server-side evidence: the page only echoes it back
+ * and never learns host roots, fingerprints or provider payloads.
+ */
+export interface TransferImpactModel {
+  readonly resourceLibraryId: string;
+  readonly destinationResourceLibraryId: string;
+  readonly operation: TransferOperation;
+  readonly conflictMode: TransferConflictMode;
+  readonly sameStorage: boolean;
+  readonly sourceLibraryRoot: string;
+  readonly destinationDirectory: string;
+  readonly capability: string;
+  readonly topLevelPaths: readonly string[];
+  readonly destinations: readonly TransferDestination[];
+  readonly entries: readonly TransferManifestEntry[];
+  readonly fileCount: number;
+  readonly directoryCount: number;
+  readonly totalBytes: number;
+  readonly conflicts: readonly TransferConflict[];
+  readonly manifestDigest: string;
+}
+
+export function normalizeTransferImpact(payload: unknown): TransferImpactModel {
+  const record = expectObject(payload);
+  const operation = expectString(record, "operation");
+  if (operation !== "copy" && operation !== "move") {
+    throw new DirectFilesNormalizationError("unsupported transfer operation");
+  }
+  const conflictMode = expectString(record, "conflictMode");
+  if (
+    conflictMode !== "fail" &&
+    conflictMode !== "skip" &&
+    conflictMode !== "keep_both"
+  ) {
+    throw new DirectFilesNormalizationError(
+      "unsupported transfer conflict mode",
+    );
+  }
+  const rawPaths = record.topLevelPaths;
+  const rawDestinations = record.destinations;
+  const rawEntries = record.entries;
+  const rawConflicts = record.conflicts;
+  if (
+    !Array.isArray(rawPaths) ||
+    !Array.isArray(rawDestinations) ||
+    !Array.isArray(rawEntries) ||
+    !Array.isArray(rawConflicts)
+  ) {
+    throw new DirectFilesNormalizationError("expected bounded transfer arrays");
+  }
+  if (rawEntries.length > 5000) {
+    throw new DirectFilesNormalizationError(
+      "transfer entries exceed the bounded page",
+    );
+  }
+  const digest = expectString(record, "manifestDigest");
+  if (digest.length === 0 || digest.length > 128) {
+    throw new DirectFilesNormalizationError(
+      "expected bounded transfer manifest evidence",
+    );
+  }
+  return {
+    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    destinationResourceLibraryId: expectString(
+      record,
+      "destinationResourceLibraryId",
+    ),
+    operation,
+    conflictMode,
+    sameStorage: record.sameStorage === true,
+    sourceLibraryRoot: expectString(record, "sourceLibraryRoot"),
+    destinationDirectory: expectString(record, "destinationDirectory"),
+    capability: expectString(record, "capability"),
+    topLevelPaths: rawPaths.map((path) => {
+      if (typeof path !== "string" || path.length === 0) {
+        throw new DirectFilesNormalizationError("invalid top-level path");
+      }
+      return path;
+    }),
+    destinations: rawDestinations.map((item) => {
+      const destination = expectObject(item);
+      return {
+        path: expectString(destination, "path"),
+        destination: expectString(destination, "destination"),
+      } satisfies TransferDestination;
+    }),
+    entries: rawEntries.map((item) => {
+      const entry = expectObject(item);
+      return {
+        path: expectString(entry, "path"),
+        isDirectory: entry.isDirectory === true,
+        size: expectNumber(entry, "size"),
+        modifiedAt: expectString(entry, "modifiedAt"),
+      } satisfies TransferManifestEntry;
+    }),
+    fileCount: expectNumber(record, "fileCount"),
+    directoryCount: expectNumber(record, "directoryCount"),
+    totalBytes: expectNumber(record, "totalBytes"),
+    conflicts: rawConflicts.map((item) => {
+      const conflict = expectObject(item);
+      return {
+        path: expectString(conflict, "path"),
+        destination: expectString(conflict, "destination"),
+        resolution: expectString(conflict, "resolution"),
+      } satisfies TransferConflict;
+    }),
+    manifestDigest: digest,
+  };
+}
+
+export interface TransferItemOutcome {
+  readonly path: string;
+  readonly destination: string;
+  readonly status: string;
+  readonly checkpoints: readonly string[];
+  readonly errorCategory?: string;
+  readonly durableState?: string;
+}
+
+/**
+ * The durable bounded transfer result.  Every top-level selection keeps its own
+ * known effect and per-entry checkpoints, so a verified-copy/source-retained
+ * item or one failed item among successful siblings is never hidden.
+ */
+export interface TransferResultModel {
+  readonly operation: TransferOperation;
+  readonly conflictMode: TransferConflictMode;
+  readonly sameStorage: boolean;
+  readonly status: string;
+  readonly taskId: string;
+  readonly taskStatus: string;
+  readonly resourceLibraryId: string;
+  readonly destinationResourceLibraryId: string;
+  readonly topLevelPaths: readonly string[];
+  readonly destinations: readonly TransferDestination[];
+  readonly knownEffects: readonly DirectFileKnownEffect[];
+  readonly checkpoints: readonly TransferCheckpointEntry[];
+  readonly checkpointsTruncated: boolean;
+  readonly totalItems: number;
+  readonly succeededItems: number;
+  readonly failedItems: number;
+  readonly outcomes: readonly TransferItemOutcome[];
+  readonly outcomesTruncated: boolean;
+  readonly nextAction: string;
+  readonly durableState?: string;
+}
+
+export function normalizeTransferResult(payload: unknown): TransferResultModel {
+  const record = expectObject(payload);
+  const operation = expectString(record, "operation");
+  if (operation !== "copy" && operation !== "move") {
+    throw new DirectFilesNormalizationError("unsupported transfer operation");
+  }
+  const conflictMode = expectString(record, "conflictMode");
+  if (
+    conflictMode !== "fail" &&
+    conflictMode !== "skip" &&
+    conflictMode !== "keep_both"
+  ) {
+    throw new DirectFilesNormalizationError(
+      "unsupported transfer conflict mode",
+    );
+  }
+  const arrays = {
+    topLevelPaths: record.topLevelPaths,
+    destinations: record.destinations,
+    knownEffects: record.knownEffects,
+    checkpoints: record.checkpoints,
+    outcomes: record.outcomes,
+  };
+  for (const [name, value] of Object.entries(arrays)) {
+    if (!Array.isArray(value)) {
+      throw new DirectFilesNormalizationError(`expected bounded ${name}`);
+    }
+  }
+  const outcomes = (arrays.outcomes as unknown[]).slice(0, 3200).map((item) => {
+    const outcome = expectObject(item);
+    return {
+      path: expectString(outcome, "path"),
+      destination: expectString(outcome, "destination"),
+      status: expectString(outcome, "status"),
+      checkpoints: Array.isArray(outcome.checkpoints)
+        ? outcome.checkpoints.filter(
+            (value): value is string => typeof value === "string",
+          )
+        : [],
+      errorCategory:
+        typeof outcome.errorCategory === "string"
+          ? outcome.errorCategory
+          : undefined,
+      durableState:
+        typeof outcome.durableState === "string"
+          ? outcome.durableState
+          : undefined,
+    } satisfies TransferItemOutcome;
+  });
+  const checkpoints = (arrays.checkpoints as unknown[])
+    .slice(0, 5000)
+    .map((item) => {
+      const checkpoint = expectObject(item);
+      return {
+        path: expectString(checkpoint, "path"),
+        destination: expectString(checkpoint, "destination"),
+        status: expectString(checkpoint, "status"),
+        checkpoints: Array.isArray(checkpoint.checkpoints)
+          ? checkpoint.checkpoints.filter(
+              (value): value is string => typeof value === "string",
+            )
+          : [],
+      } satisfies TransferCheckpointEntry;
+    });
+  return {
+    operation,
+    conflictMode,
+    sameStorage: record.sameStorage === true,
+    status: expectString(record, "status"),
+    taskId: expectString(record, "taskId"),
+    taskStatus: expectString(record, "taskStatus"),
+    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    destinationResourceLibraryId: expectString(
+      record,
+      "destinationResourceLibraryId",
+    ),
+    topLevelPaths: (arrays.topLevelPaths as unknown[]).map((path) => {
+      if (typeof path !== "string" || path.length === 0) {
+        throw new DirectFilesNormalizationError("invalid top-level path");
+      }
+      return path;
+    }),
+    destinations: (arrays.destinations as unknown[]).map((item) => {
+      const destination = expectObject(item);
+      return {
+        path: expectString(destination, "path"),
+        destination: expectString(destination, "destination"),
+      } satisfies TransferDestination;
+    }),
+    knownEffects: (arrays.knownEffects as unknown[]).map((item) => {
+      const effect = expectObject(item);
+      return {
+        path: expectString(effect, "path"),
+        effect: expectString(effect, "effect"),
+        status: expectString(effect, "status"),
+      } satisfies DirectFileKnownEffect;
+    }),
+    checkpoints,
+    checkpointsTruncated: record.checkpointsTruncated === true,
+    totalItems: expectNumber(record, "totalItems"),
+    succeededItems: expectNumber(record, "succeededItems"),
+    failedItems: expectNumber(record, "failedItems"),
+    outcomes,
+    outcomesTruncated: record.outcomesTruncated === true,
+    nextAction: expectString(record, "nextAction"),
+    ...(typeof record.durableState === "string"
+      ? { durableState: record.durableState }
+      : {}),
+  };
+}
+
 export interface RemovalReferenceItem {
   readonly section: string;
   readonly id: string;

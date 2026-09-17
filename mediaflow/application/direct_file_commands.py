@@ -149,6 +149,27 @@ class DirectFileCommandService:
         }
 
     # ------------------------------------------------------------------
+    # Shared admission state for the composed Files transfer service
+    # ------------------------------------------------------------------
+
+    @property
+    def revision(self) -> ManagedConfigurationRevision:
+        return self._revision
+
+    @property
+    def tasks(self) -> PersistentTaskCoordinator:
+        return self._tasks
+
+    def library(self, resource_library_id: str) -> ResourceLibrary:
+        return self._library(resource_library_id)
+
+    def relative_path(self, path: object) -> str:
+        return self._relative_path(path)
+
+    def open_storage(self, library: ResourceLibrary) -> Storage:
+        return self._open_storage(library)
+
+    # ------------------------------------------------------------------
     # Bounded zero-mutation text read
     # ------------------------------------------------------------------
 

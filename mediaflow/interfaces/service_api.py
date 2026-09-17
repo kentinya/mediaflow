@@ -28,6 +28,7 @@ from mediaflow.application.direct_file_commands import (
     DirectFileCommandService,
     DirectFileError,
 )
+from mediaflow.application.direct_file_transfers import DirectFileTransferService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
@@ -105,7 +106,11 @@ from mediaflow.domain.configuration_management import (
     RuntimeConfigurationNotConfigured,
     RuntimeSnapshotUnavailable,
 )
-from mediaflow.domain.direct_files import DirectFileOperation
+from mediaflow.domain.direct_files import (
+    MAX_DELETE_PATHS,
+    MAX_TRANSFER_PATHS,
+    DirectFileOperation,
+)
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.file_lifecycle import (
     FileIndexLifecycleError,
@@ -249,6 +254,7 @@ class _ApiRuntimeBinding:
     dashboard: DashboardService
     files_browser: RuntimeFilesBrowserService | None = None
     direct_files: DirectFileCommandService | None = None
+    direct_transfers: DirectFileTransferService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
 
@@ -4612,6 +4618,64 @@ class MediaFlowApi:
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "files"
+            and parts[5] == "transfer-impact"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_transfers is None:
+                return self._files_browser_unavailable(start_response)
+            query = self._files_transfer_impact_query(environ)
+            impact = binding.direct_transfers.transfer_impact(
+                resource_library_id=parts[3],
+                paths=query["paths"],
+                destination_resource_library_id=query["destination"],
+                destination_directory=query["destination_path"],
+                operation=query["operation"],
+                conflict_mode=query["conflict_mode"],
+            )
+            return self._response(start_response, 200, impact.document())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "transfers"
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_transfers is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files transfer")
+            document = self._document(environ)
+            required = {
+                "operation",
+                "paths",
+                "destinationResourceLibraryId",
+                "destinationDirectory",
+                "conflictMode",
+                "manifestDigest",
+            }
+            if not isinstance(document, dict) or set(document) != required:
+                raise ValueError(
+                    "a Files transfer requires only operation, paths, "
+                    "destinationResourceLibraryId, destinationDirectory, conflictMode, "
+                    "and manifestDigest"
+                )
+            if not isinstance(document["paths"], list):
+                raise ValueError("Files transfer paths must be an array")
+            result = binding.direct_transfers.execute_transfer(
+                resource_library_id=parts[3],
+                paths=document["paths"],
+                destination_resource_library_id=document["destinationResourceLibraryId"],
+                destination_directory=document["destinationDirectory"],
+                operation=document["operation"],
+                conflict_mode=document["conflictMode"],
+                manifest_digest=document["manifestDigest"],
+            )
+            return self._response(start_response, 200, result)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
             and parts[5] == "commands"
             and method == "POST"
         ):
@@ -7169,6 +7233,7 @@ class MediaFlowApi:
     ) -> _ApiRuntimeBinding:
         files_browser = None
         direct_files = None
+        direct_transfers = None
         if runtime_revision is not None and runtime_configuration is not None:
             files_browser = RuntimeFilesBrowserService(
                 self._configuration_service,
@@ -7184,6 +7249,7 @@ class MediaFlowApi:
                 task_repository=self._repository,
                 storage_adapters=self._storage_adapters,
             )
+            direct_transfers = DirectFileTransferService(direct_files=direct_files)
         manual_scans = self._manual_scans_override
         if (
             manual_scans is None
@@ -7273,6 +7339,7 @@ class MediaFlowApi:
             ),
             files_browser,
             direct_files,
+            direct_transfers,
             manual_scans,
             runtime_settings,
         )
@@ -7486,7 +7553,15 @@ class MediaFlowApi:
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "files"
-            and parts[5] in {"text", "delete-impact", "commands"}
+            and parts[5]
+            in {
+                "text",
+                "delete-impact",
+                "rename-evidence",
+                "transfer-impact",
+                "commands",
+                "transfers",
+            }
         ):
             return f"/api/v1/resource-libraries/{{id}}/files/{parts[5]}"
         if (
@@ -8558,14 +8633,113 @@ class MediaFlowApi:
 
     @classmethod
     def _files_delete_impact_query(cls, environ: dict) -> list[str]:
+        """The bounded multi-selection Delete impact query.
+
+        ``path`` is the one deliberately repeatable field: the Web encodes a
+        bounded selection as repeated ``?path=a&path=b`` values.  Every other
+        field must appear exactly once, blank values are rejected, and the
+        selection bound is enforced here so a valid multi-selection is not
+        collapsed into a generic request error while unknown keys, empty values
+        or an excessive selection still fail closed and actionably.
+        """
+
         query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"path"}
-        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
-            raise ValueError("Files Delete impact query contains unsupported or repeated fields")
+        if set(query).difference({"path"}):
+            raise DirectFileError(
+                "files_direct_invalid_request",
+                "invalid_request",
+                "the Delete impact query contains an unsupported field",
+                status=400,
+                next_action="request the impact summary with only bounded path values",
+            )
         paths = query.get("path", [])
         if not paths:
-            raise ValueError("Files Delete impact query requires at least one selected path")
+            raise DirectFileError(
+                "files_direct_invalid_request",
+                "invalid_request",
+                "the Delete impact query requires at least one selected path",
+                status=400,
+                next_action="select one or more files or directories and retry",
+            )
+        if any(not isinstance(path, str) or path == "" for path in paths):
+            raise DirectFileError(
+                "files_direct_invalid_request",
+                "invalid_request",
+                "the Delete impact query contains an empty path value",
+                status=400,
+                next_action="remove the empty selection and retry",
+            )
+        if len(paths) > MAX_DELETE_PATHS:
+            raise DirectFileError(
+                "files_direct_invalid_request",
+                "invalid_request",
+                "the Delete selection exceeds the bounded multi-selection limit",
+                status=400,
+                next_action=f"select at most {MAX_DELETE_PATHS} items per Delete command",
+            )
         return paths
+
+    @classmethod
+    def _files_transfer_impact_query(cls, environ: dict) -> dict[str, object]:
+        """The bounded zero-mutation Copy/Move impact query.
+
+        ``path`` is the one deliberately repeatable field.  The destination
+        ResourceLibrary, destination directory, operation and explicit conflict
+        choice each appear exactly once; an unknown key, a blank value or an
+        excessive selection fails closed with an actionable stable error.
+        """
+
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path", "to", "toPath", "operation", "conflict"}
+        if set(query).difference(allowed):
+            raise DirectFileError(
+                "files_transfer_invalid_request",
+                "invalid_request",
+                "the transfer impact query contains an unsupported field",
+                status=400,
+                next_action="request the transfer impact with only supported fields",
+            )
+        if any(len(value) != 1 for key, value in query.items() if key != "path"):
+            raise DirectFileError(
+                "files_transfer_invalid_request",
+                "invalid_request",
+                "the transfer impact query repeats a single-valued field",
+                status=400,
+                next_action="send each transfer field exactly once",
+            )
+        paths = query.get("path", [])
+        if not paths or any(not isinstance(path, str) or path == "" for path in paths):
+            raise DirectFileError(
+                "files_transfer_invalid_request",
+                "invalid_request",
+                "the transfer impact query requires bounded non-empty source paths",
+                status=400,
+                next_action="select one or more files or directories and retry",
+            )
+        if len(paths) > MAX_TRANSFER_PATHS:
+            raise DirectFileError(
+                "files_transfer_invalid_request",
+                "invalid_request",
+                "the transfer selection exceeds the bounded multi-selection limit",
+                status=400,
+                next_action=f"transfer at most {MAX_TRANSFER_PATHS} items per command",
+            )
+        destination = query.get("to", [""])[0]
+        if not isinstance(destination, str) or not destination:
+            raise DirectFileError(
+                "files_transfer_invalid_request",
+                "invalid_request",
+                "the transfer impact query requires a destination ResourceLibrary",
+                status=400,
+                next_action="choose an enabled destination ResourceLibrary and retry",
+            )
+        return {
+            "paths": paths,
+            "destination": destination,
+            "destination_path": query.get("toPath", [""])[0],
+            "operation": query.get("operation", [""])[0],
+            "conflict_mode": query.get("conflict", [None])[0],
+        }
 
     @classmethod
     def _files_direct_rename_evidence_query(cls, environ: dict) -> str:

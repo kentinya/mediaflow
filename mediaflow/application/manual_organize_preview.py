@@ -21,7 +21,7 @@ from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPla
 from mediaflow.application.conflict_resolution import ConflictResolver
 from mediaflow.application.duplicates import apply_hash_duplicate_detection
 from mediaflow.application.metadata import MetadataProviderRegistry
-from mediaflow.application.organizer import OrganizePlanner
+from mediaflow.application.organizer import OrganizePlanner, OrganizerExecutor
 from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
@@ -63,6 +63,7 @@ from mediaflow.domain.metadata_correction import MetadataCorrectionSelection
 from mediaflow.domain.metadata_review import MetadataSelection
 from mediaflow.domain.organizer import (
     ConflictStrategy,
+    DirectoryCleanupMode,
     MediaFileSet,
     OrganizePlan,
     PlanOperation,
@@ -2381,6 +2382,7 @@ class ManualOrganizePreviewService:
             # payload, so execution can reload the reviewed target without
             # rebuilding it from a later Active snapshot.
             "executionPlan": self._execution_plan_document(plan, exact_attachment_documents),
+            "cleanupProjection": self._cleanup_projection(plan, source_storage),
             "capabilities": self._capabilities(plan, type_policy, source_storage, target_storage),
             "conflicts": [
                 {
@@ -2497,6 +2499,28 @@ class ManualOrganizePreviewService:
             },
             "attachments": attachments,
         }
+
+    @staticmethod
+    def _cleanup_projection(plan, source_storage) -> dict[str, object] | None:
+        """The bounded read-only explanation of the pinned cleanup policy.
+
+        A pinned plan with no configured cleanup returns ``None`` so the
+        Preview does not invent a destructive surface the policy does not have.
+        The projection is read-only, confined to the exact source parent and
+        names only logical relative paths.
+        """
+
+        if plan.source_directory_cleanup.mode is DirectoryCleanupMode.NONE:
+            return None
+        try:
+            projection = OrganizerExecutor().project_source_cleanup(
+                plan,
+                source_storage,
+                plan.source_location.path if plan.source_location else plan.source,
+            )
+        except Exception:
+            return None
+        return projection.document()
 
     def _analysis_document(self, strategy) -> dict[str, object]:
         parsed = strategy.parsed

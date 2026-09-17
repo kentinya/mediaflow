@@ -1088,6 +1088,20 @@ function referenceDirectoryEntries(path) {
       ),
     ];
   }
+  if (path === "TV") {
+    return [
+      ...Array.from({ length: 12 }, (_, index) => {
+        const name = `Show.S01E${String(index + 1).padStart(2, "0")}.mkv`;
+        return fileEntry(
+          name,
+          `TV/${name}`,
+          1_073_741_824 + index,
+          REFERENCE_MODIFIED_LATEST,
+          { selectable: true, businessStatus: "pending" },
+        );
+      }),
+    ];
+  }
   if (path === "Movies") {
     return [
       directoryEntry(
@@ -4842,7 +4856,7 @@ const server = createServer(async (req, res) => {
     return;
   }
   const directCommandMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence)$/,
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
   );
   if (directCommandMatch) {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
@@ -5020,6 +5034,148 @@ const server = createServer(async (req, res) => {
     if (action === "delete-impact" && req.method === "GET") {
       const paths = url.searchParams.getAll("path");
       sendJson(res, 200, deleteImpactDocument(resourceLibraryId, paths));
+      return;
+    }
+    if (action === "transfer-impact" && req.method === "GET") {
+      const paths = url.searchParams.getAll("path");
+      const to = url.searchParams.get("to") ?? resourceLibraryId;
+      const toPath = url.searchParams.get("toPath") ?? "";
+      const operation = url.searchParams.get("operation") ?? "copy";
+      const conflict = url.searchParams.get("conflict") ?? "fail";
+      if (paths.length === 0 || paths.length > 50) {
+        sendJson(res, 400, {
+          error: {
+            code: "files_transfer_invalid_request",
+            details: {
+              category: "invalid_request",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "select one or more bounded items and retry",
+            },
+          },
+        });
+        return;
+      }
+      const destinations = paths.map((path) => ({
+        path,
+        destination: (toPath === "" ? "" : `${toPath}/`) + path,
+      }));
+      const conflicts = destinations
+        .filter(
+          (item) =>
+            operation === "move" &&
+            to === resourceLibraryId &&
+            fixtureEntry("local-media", item.destination) !== undefined,
+        )
+        .map((item) => ({
+          path: item.path,
+          destination: item.destination,
+          resolution:
+            conflict === "skip"
+              ? "skip"
+              : conflict === "keep_both"
+                ? "keep_both"
+                : "fail_no_overwrite",
+        }));
+      sendJson(res, 200, {
+        resourceLibraryId,
+        destinationResourceLibraryId: to,
+        operation,
+        conflictMode: conflict,
+        sameStorage: to === resourceLibraryId,
+        sourceLibraryRoot: "/media/incoming",
+        destinationDirectory: toPath,
+        capability:
+          to === resourceLibraryId
+            ? `native_${operation}`
+            : "cross_storage_stream",
+        topLevelPaths: paths,
+        destinations,
+        entries: paths.map((path) => ({
+          path,
+          isDirectory: false,
+          size: fixtureEntry("local-media", path)?.size ?? 32,
+          modifiedAt: "2026-08-23T11:15:00Z",
+        })),
+        fileCount: paths.length,
+        directoryCount: 0,
+        totalBytes: paths.length * 32,
+        conflicts,
+        manifestDigest: `t1.fake-manifest-${paths.join(",")}-${to}-${toPath}-${operation}-${conflict}`,
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "confirm this exact bounded transfer to execute it",
+      });
+      return;
+    }
+    if (action === "transfers" && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const fields = parsed.document;
+      state.commandLog.push({ ...fields });
+      const expectedDigest = `t1.fake-manifest-${(fields.paths ?? []).join(",")}-${fields.destinationResourceLibraryId}-${fields.destinationDirectory}-${fields.operation}-${fields.conflictMode}`;
+      if (fields.manifestDigest !== expectedDigest) {
+        sendJson(res, 409, {
+          error: {
+            code: "files_transfer_stale_manifest",
+            details: {
+              category: "stale_manifest",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "review the refreshed transfer impact and confirm again",
+            },
+          },
+        });
+        return;
+      }
+      const paths = fields.paths ?? [];
+      sendJson(res, 200, {
+        operation: fields.operation,
+        conflictMode: fields.conflictMode,
+        sameStorage: fields.destinationResourceLibraryId === resourceLibraryId,
+        status: "SUCCESS",
+        taskId: "task-e2e-transfer",
+        taskStatus: "completed",
+        resourceLibraryId,
+        destinationResourceLibraryId: fields.destinationResourceLibraryId,
+        topLevelPaths: paths,
+        destinations: paths.map((path) => ({
+          path,
+          destination:
+            (fields.destinationDirectory === ""
+              ? ""
+              : `${fields.destinationDirectory}/`) + path,
+        })),
+        knownEffects: paths.map((path) => ({
+          path,
+          effect: "transferred",
+          status: "SUCCESS",
+        })),
+        checkpoints: paths.map((path) => ({
+          path,
+          destination: path,
+          checkpoints: ["COPY_WRITTEN", "DESTINATION_VERIFIED"],
+          status: "SUCCESS",
+        })),
+        checkpointsTruncated: false,
+        totalItems: paths.length,
+        succeededItems: paths.length,
+        failedItems: 0,
+        outcomes: paths.map((path) => ({
+          path,
+          destination: path,
+          status: "SUCCESS",
+          checkpoints: ["COPY_WRITTEN", "DESTINATION_VERIFIED"],
+        })),
+        outcomesTruncated: false,
+        sideEffects: "storage_mutations",
+        retrySafe: false,
+        nextAction:
+          "refresh the source and destination directories to see the current state",
+      });
       return;
     }
   }

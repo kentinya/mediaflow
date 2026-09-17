@@ -163,9 +163,18 @@ function LibraryCard({
     <div
       className={selected ? "mf-library-card is-selected" : "mf-library-card"}
     >
+      {/* One semantic selection control owns the complete visible card
+          geometry — padding, border, icon and label — so every non-menu point
+          of the card selects this library exactly once.  The `…` action menu
+          below is a non-nested sibling overlay with its own focus and event
+          boundary and never switches libraries. */}
       <button
         type="button"
-        className="mf-library-card-select"
+        className={
+          selected
+            ? "mf-library-card-select is-selected"
+            : "mf-library-card-select"
+        }
         aria-pressed={selected}
         onClick={() => onLibraryChange(library.id)}
       >
