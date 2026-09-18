@@ -533,113 +533,102 @@ not satisfy the browser assertion.
 
 ## Developer Completion Report
 
-> Correction round 6, 2026-09-18: this report covers the single blocker of the B
-> review of `4954502..95cf8ae` (claim fencing still did not fence release of the
-> per-source file lock: a stale Worker A could delete the replacement Worker B's
-> lock for the same Task/path). It supersedes the round-5 report. The correction
-> commit sits after the round-5 checkpoint `60bfc9d` without amending it.
+> Correction round 7, 2026-09-18: this report covers the single blocker of the B
+> review of `4954502..e0217d9` (the replacement Worker still opened an
+> unprotected delete/reacquire window before a safe continuation). It supersedes
+> the round-6 report. The correction commit sits after the round-6 checkpoint
+> `e0217d9` without amending it.
 
 ### Changed Files
 
-- `mediaflow/domain/task_persistence.py` — `PersistentTaskItem` gains an
-  in-memory-only `lock_owner_token` (never a `task_items` column, never an
-  operator document); `FileOperationLockRepository` documents and exposes the
-  exact owner generation on `acquire`/`lock_owned`/`release`, each keeping
-  `owner_token: str | None = None` so the historical Task-level behaviour is
-  preserved for the manual-execution path and legacy rows.
-- `mediaflow/infrastructure/sqlite_runtime.py` — `SCHEMA_VERSION` 38; `file_locks`
-  gains `owner_token TEXT NOT NULL DEFAULT 'legacy-owner-generation'` with an
-  additive in-place `ALTER TABLE` migration; `acquire` mints a fresh opaque
-  `secrets.token_urlsafe(24)` when none is supplied and inserts by named columns;
-  `lock_owned`/`release` compare the exact generation (or fall back to the
-  historical Task-level form when none is named); `reclaim_task_locks` accepts an
-  optional generation; the manual-execution admission insert names its columns and
-  keeps the conservative legacy identity.
-- `mediaflow/application/task_runtime.py` — `begin_item` mints a per-acquisition
-  `f"{task_id}:{uuid4().hex}"` generation, acquires with it and carries it on the
-  returned frame; the new public `release_item_lock` releases **only** the
-  generation the frame actually owns and is a no-op for a tokenless frame; every
-  former unconditional `locks.release(...)` call site (`complete_item`,
-  `complete_direct_item`, and the five waiting/confirmation boundaries) now routes
-  through it.
-- `mediaflow/application/direct_file_transfers.py` — `_execute_item_with_fences`
-  releases the frame's own generation on the pause/cancel path and in an
-  `except BaseException` guard, so a lost claim, an observed pause/cancel or an
-  unexpected provider failure can neither remove a replacement owner's lock nor
-  leak this frame's own exclusion.
-- `mediaflow/interfaces/service_api.py` — `lock_owner_token` is added to
-  `_HIDDEN_DOCUMENT_FIELDS` so the fence can never appear in a Files/Operations
-  document.
-- `mediaflow/application/automation.py` — `ProcessingWorkerService`'s
-  `runtime_schema_version` default follows `SCHEMA_VERSION` to 38, as its own
-  comment requires.
-- `tests/test_task_persistence.py` — new `Schema37To38UpgradeTests` (upgrade from a
-  real schema-37 database with a pre-existing lock row; the row survives with the
-  legacy identity, is still Task-level releasable, is never matched by a
-  generation release, normalized-path uniqueness across Tasks holds, and a fresh
-  schema-38 table and an upgraded one load identical values).
-- `tests/test_direct_file_transfers.py` — new `SourceLockGenerationTests` (B's
-  failed-CAS probe, the post-publication expiry window, a production-shaped
-  continuation, the live-mutation in-flight convergence and the
-  no-generation-in-operator-documents guard) plus the `_BlockingContinuationSource`
-  double.
-- `tests/test_configuration_classification.py`,
-  `tests/test_configuration_destination.py`,
-  `tests/test_configuration_destination_activation.py`,
-  `tests/test_configuration_destination_precheck.py`,
-  `tests/test_configuration_organize.py` — the runtime-schema marker assertions
-  follow the authorized additive migration to 38, with the reason updated.
+- `mediaflow/domain/task_persistence.py` — `FileOperationLockRepository` gains
+  the gap-free same-Task handoff: `adopt_or_acquire` (rotate one existing
+  same-Task row to a new generation in place, or insert when no row exists) and
+  `rotate_task_locks` (the same handoff applied to every row one Task holds in
+  one statement). Both are optional-capability methods with documented
+  semantics; no existing method changed.
+- `mediaflow/infrastructure/sqlite_runtime.py` — implements `adopt_or_acquire`
+  and `rotate_task_locks` as single `BEGIN IMMEDIATE` transactions. Neither ever
+  deletes a row: an existing same-Task row is updated in place, a row owned by a
+  different Task fails closed and is left untouched, and an absent row is
+  inserted (ordinary first acquisition). `rotate_task_locks` and
+  `adopt_or_acquire` take an optional `transfer_fence` and compare-and-set the
+  rotation against the live Worker claim, so a lapsed owner cannot rotate a
+  replacement owner's rows.
+- `mediaflow/application/task_runtime.py` — `begin_item` gains
+  `transfer_fence` and `adopt_existing` keyword-only parameters. With
+  `adopt_existing=True` it acquires through `adopt_or_acquire`, so a
+  continuation rotates its own row instead of racing a delete/reinsert; a
+  failed acquisition whose claim is no longer current raises `TaskClaimLost`
+  rather than persisting a fabricated item failure. Default behaviour (no
+  `adopt_existing`) is byte-for-byte the previous `acquire` path, so Organize,
+  manual-execution and every other caller are unchanged.
+- `mediaflow/application/direct_file_transfers.py` — `_execute_claimed_transfer`
+  no longer calls `reclaim_task_locks(task_id)` before `begin_item`. The Task's
+  rows are rotated atomically to one takeover generation under the claim fence;
+  each continued item then rotates its own row again inside `begin_item` via the
+  new `adopt_existing=True`/`transfer_fence` arguments (both the
+  never-started `_run_admitted_item` and the resumed `_continue_item` paths).
+  `TaskClaimLost` from the acquisition propagates as `_TransferClaimLost`
+  instead of being swallowed. The item loop moved unchanged into
+  `_run_claimed_items` so the takeover setup and its cleanup wrap it in one
+  `try/finally`. That `finally` retires only rows still carrying this
+  takeover's own generation, after every continuation has finished, naming the
+  exact generation so it can never remove a replacement's rows.
+- `tests/test_direct_file_transfers.py` — the misleading
+  `test_production_shaped_continuation_denies_a_competing_task` is replaced by a
+  genuine lease-expiry multi-Worker takeover; new
+  `test_takeover_handoff_never_leaves_the_source_path_unowned` is the direct
+  handoff-boundary interleaving assertion; new `_HandoffProbeRepository` races a
+  competing Task into the exact handoff boundary; new `_GatedAfterCopySource`
+  double lands a complete Copy then blocks; the now-unused
+  `_BlockingContinuationSource` double is deleted.
 
 ### Implemented
 
-- **The blocker — release is now bound to the exact acquisition generation.**
-  `begin_item` mints a fresh opaque generation per successful acquisition and
-  persists it on the `file_locks` row; the same generation rides the in-memory
-  execution frame. `release`/`lock_owned` are exact conditional matches on
-  `(storage_id, path, task_id, owner_token)`, so a stale Worker's late `finally`
-  is a successful no-op against a replacement owner's row instead of a delete.
-  Both Workers legitimately share the Task ID and path on takeover, so the Task ID
-  alone could never distinguish them; the generation does.
-- **Both races the plan named are closed, not just the failed-CAS one.** The fix
-  is not `if guarded_publish: release(...)`. Because ownership is carried on the
-  frame and compared exactly, it protects the failed-publication race *and* the
-  post-publication expiry window (A publishes successfully, its lease expires
-  before its release, B reacquires, and A's late release is still a no-op).
-- **The durable and in-memory fences stay separate.** The TaskItem/Result/transfer
-  claim CAS continues to prevent stale durable publication; the file-lock
-  generation independently prevents a stale execution frame from removing the
-  current source-operation exclusion. Neither substitutes for the other.
-- **Takeover retires only the stale generation.** `reclaim_task_locks` still
-  supports the authoritative Task-level transition used by takeover start,
-  `cancel`, `acknowledge_pause` and the `final_cli` retry path, and now also
-  accepts an exact generation for a caller that knows it.
-- **No permanent lock leaks and no unsafe early unlock.** Every terminal,
-  pause/cancel, pre-mutation failure and uncertain convergence path releases only
-  the generation it owns: the coordinator's per-item boundaries and the transfer
-  frame's own terminals do the release, and the transfer frame additionally
-  releases in its `except BaseException` and pause/cancel branches. I explicitly
-  did **not** retire locks from the `files_transfers` convergence write itself:
-  a transfer converged *from* a recorded in-flight boundary may still have its
-  predecessor's provider call physically running, and deleting the exclusion there
-  would let a competing Task acquire the same path during that live mutation
-  (I reproduced that as a P0 during development and removed it). The owning frame
-  releases it when it returns. Repeated cleanup is idempotent.
-- **Migration is conservative.** Existing rows receive the non-null sentinel
-  `legacy-owner-generation`, so they are neither silently unlocked nor broadly
-  releasable; a generation-carrying release simply does not match them, while the
-  Task-level form still releases them exactly. Normalized-path uniqueness across
-  Tasks is unchanged.
-- **The generation never becomes an operator value.** It is absent from the
-  `file_locks`-derived operator documents (`_HIDDEN_DOCUMENT_FIELDS`), from the
-  Result evidence and from any log; it is an execution fence, not a display field.
+- **The blocker — the handoff is now a rotation, not a delete-then-insert.**
+  B's interleaving probe was reproduced first against the round-6 code
+  (`a_rows_retired_by_b_takeover=1`, `task_c_acquired_in_gap=True`,
+  `worker_b_reacquired_after_c=False`), then closed. `_execute_claimed_transfer`
+  rotates the Task's existing rows to a takeover generation in one transaction
+  under the claim fence; `begin_item(adopt_existing=True, transfer_fence=...)`
+  then rotates each item's own row to that frame's generation inside its
+  acquisition. The normalized path is therefore owned continuously: a competing
+  Task is denied before, during and after the handoff.
+- **An unprovable live mutation is never handed off.** Rotation is reached only
+  after `_resolve_in_flight_mutation` has already resolved any recorded
+  `mutation_in_flight` boundary, and the rotation itself is claim-guarded; the
+  `_commit_convergence` investigation path never reaches it. B's existing
+  in-flight-fence regressions
+  (`test_owner_loss_during_mutation_converges_without_replay`,
+  `test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it`, the
+  failed/raising-heartbeat pair) still pass unchanged.
+- **No stolen exclusion and no lock leak.** A row belonging to another Task
+  fails closed and is left untouched, so a takeover can never widen to an
+  unrelated Task's path. A takeover retains only the rows it actually owns;
+  rows for items it never continued are retired in the `finally` after all
+  continuations finish, matching the exact generation. The lifecycle/cancel
+  paths (`reopen`, `cancel`, `acknowledge_pause`) and the terminal convergence
+  still retire locks exactly as at the base.
+- **The exact-generation release contract is preserved.** The predecessor's
+  generation disappears with the rotation, so its late `release_item_lock` is a
+  successful no-op against the replacement's row — the round-6 fix keeps
+  working, now without a window in which the row is absent.
+- **The direct interleaving assertion is falsifiable, and I verified it.**
+  `_HandoffProbeRepository` attempts the same acquisition a competing Task would
+  attempt immediately after the handoff; with the rotation it records `False`.
+  I temporarily restored the old `reclaim_task_locks` shape and re-ran the test:
+  it failed with `probes == [True]`, i.e. the probe genuinely detects the
+  window rather than passing vacuously. The old shape was then reverted.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/ruff format --check .` — PASS (307 files already formatted);
   `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (78,
-  was 73; 5 new regressions).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (79,
+  was 78 in round 6: one retired misleading regression replaced by two focused
+  regressions, plus the deleted unused double).
 - `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (55).
 - `.venv/bin/python -m unittest tests.test_source_directory_cleanup
   tests.test_manual_organize_execution tests.test_configuration_organize` —
@@ -651,25 +640,22 @@ not satisfy the browser assertion.
   tests.test_openlist_storage tests.test_s3_storage` — PASS (94).
 - `.venv/bin/python -m unittest tests.test_runtime_files_browser
   tests.test_api_security tests.test_task_persistence tests.test_task_pause_resume
-  tests.test_task_retry` — PASS (48; `test_task_persistence` is 13, was 11).
-- `.venv/bin/python -m unittest discover -s tests` — 1682 tests: 3 failures,
+  tests.test_task_retry` — PASS (48).
+- `.venv/bin/python -m unittest discover -s tests` — 1683 tests: 3 failures,
   7 skips. The 3 failures are exactly the Task Base baseline and were reproduced
-  identically at a clean `4954502` worktree:
+  identically at a clean `4954502` worktree during this round:
   `test_configuration_status.ConfigurationSnapshotTests.
   test_hostile_configuration_content_is_never_exposed` and the two
   `test_manual_operations_contract.ManualOperationsContractTests.
   test_real_api_documents_*` golden-fixture failures asserting 201. Pre-existing
-  and unrelated; whether they block PASS is B's judgment, not mine. (The hostile
-  test's rendered payload still contains the server host path "root" at the Base
-  as well; only the reported `runtime_schema_version` differs, which is the
-  intended additive bump.)
+  and unrelated; whether they block PASS is B's judgment, not mine.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS;
   `.venv/bin/python -m pip check` — PASS (no broken requirements).
 - `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE in this
-  workspace, and still so after this correction: `docker compose up -d --no-build`
-  fails with `invalid mount config for type "bind": bind source path does not
-  exist: /tmp/mediaflow-smoke-security-*/mediaflow.json`, i.e. the smoke context
-  cannot be bind-mounted here. Not a product failure. `rg` is also absent in this
+  workspace, unchanged from round 6: `docker compose up -d --no-build` fails with
+  `invalid mount config for type "bind": bind source path does not exist:
+  /tmp/mediaflow-smoke-security-*/mediaflow.json`, i.e. the smoke context cannot
+  be bind-mounted here. Not a product failure. `rg` is also absent in this
   workspace, so the ffprobe/ffmpeg gate was run with
   `grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml` — PASS (no match).
 - `cd web && npm run format:check` — PASS; `npm run typecheck` — PASS;
@@ -682,72 +668,71 @@ not satisfy the browser assertion.
 - `cd web && npm run build` — PASS.
 - `cd web && NODE_ENV=test npx playwright test
   tests/e2e/library-files.spec.ts --project=chromium` — PASS (28).
-- `cd web && NODE_ENV=test npm run test:e2e` — 106 passed, 10 failed; the same 10
-  failures (`library-file-detail` 7 + `manual-operations` 3) reproduce identically
-  at a clean `4954502` worktree that was built and run the same way. Pre-existing
-  and unrelated; B judges.
+- `cd web && NODE_ENV=test npm run test:e2e` — 106 passed, 10 failed; the same
+  10 failures (`library-file-detail` 7 + `manual-operations` 3) reproduce
+  identically at a clean `4954502` worktree that was built and run the same way
+  (verified in round 6 and unchanged here; this correction touches no web file).
+  Pre-existing and unrelated; B judges.
 - `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS;
   `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
   (schema 38, database verify OK).
 - `git diff --check` — PASS (no whitespace errors).
 
-New regression evidence for this correction:
+New regression evidence for this correction, run explicitly:
 
-- `SourceLockGenerationTests.test_failed_cas_never_removes_the_replacement_generation`
-  — B's probe reproduced directly on the coordinator: A acquires, B retires the
-  stale generation and acquires its own, A's guarded publication returns `False`,
-  A's `finally` runs, and B's exact row is still owned while A's generation is
-  gone; a competing Task C raises `TaskLockError` and the lock row count is
-  unchanged (zero mutation). Verified falsifiable: reverting
-  `release_item_lock` to an unconditional Task-level release makes this test fail
-  with "the replacement Worker's lock was removed by a stale owner".
-- `SourceLockGenerationTests.test_post_publication_expiry_window_keeps_the_replacement_generation`
-  — A publishes successfully, B reacquires the same Task/path, and A's late
-  generation release is `False` with B's lock intact.
 - `SourceLockGenerationTests.test_production_shaped_continuation_denies_a_competing_task`
-  — A is genuinely blocked inside an admitted mutation; a second Worker claims
-  nothing and performs zero mutation; C is denied; A then completes; the Task is
-  `completed`; its own release retires the lock; a later lawful acquisition
-  succeeds.
-- `SourceLockGenerationTests.test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it`
-  — A is blocked *inside* its provider call, its lease expires, B converges the
-  recorded in-flight boundary to a bounded `failed` outcome; while A is still
-  physically running the single lock row stays present and C is denied with zero
-  mutation; when A returns, its frame retires exactly its generation so no
-  permanent lock leaks and a later lawful acquisition succeeds. Verified
-  falsifiable: removing the frame-owned release in
-  `_execute_item_with_fences` makes this test fail with a leaked lock row.
-- `SourceLockGenerationTests.test_lock_generations_never_reach_operator_documents`
-  — the Operations task document, the Files transfer projection and the persisted
-  Result evidence contain no `lock_owner_token`/`owner_token` at any depth.
-- `Schema37To38UpgradeTests` — the migration case above, including the
-  pre-existing lock row.
+  — A blocks inside a native Copy whose destination already holds the confirmed
+  bytes; its ownership signal then raises, its lease genuinely expires, and B
+  claims the expired in-flight boundary. B adopts the proven checkpoint and
+  blocks in the next distinct admitted mutation. `_HandoffProbeRepository`
+  records `probes == [False]` at B's handoff (the competing Task is refused), a
+  competing Task C is denied before and after A returns with
+  `source.copy_calls == 2`, A's late release leaves B's row owned, and only B's
+  terminal release empties the lock table and permits a later acquisition.
+  Verified falsifiable: restoring the old `reclaim_task_locks` shape makes the
+  probe record `[True]` and the test fail.
+- `SourceLockGenerationTests.test_takeover_handoff_never_leaves_the_source_path_unowned`
+  — the direct boundary assertion: `_HandoffProbeRepository` armed around
+  `rotate_task_locks` records `[False]`, the predecessor's generation release is
+  `False`, the takeover generation still owns the row, and the falsifiability
+  block run against `reclaim_task_locks` records `[True]`.
+- Round-6 regressions all still pass: `test_failed_cas_never_removes_the_replacement_generation`,
+  `test_post_publication_expiry_window_keeps_the_replacement_generation`,
+  `test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it`,
+  `test_lock_generations_never_reach_operator_documents`.
 
-No existing assertion was weakened, hidden, relaxed or skipped, and the Task Base
-was not changed.
+No existing assertion was weakened, hidden, relaxed or skipped, and the Task
+Base was not changed.
 
 ### Decisions
 
-- **Fence the release, do not remove the lock.** Both Workers legitimately share
-  the Task ID and path on takeover, so the only durable discriminator is a
-  per-acquisition generation. Introducing `owner_token` is the minimal,
-  backward-compatible way to make release exact without weakening the exclusion.
-- **A tokenless frame releases nothing.** A frame reloaded from the repository (or
-  produced by an older adapter) has no generation, and treating it as a Task-level
-  release would reintroduce exactly the stale-owner delete. Such a frame therefore
-  leaves the lock to the authoritative Task-level transition (takeover, cancel,
-  pause, reclaim) that genuinely owns the Task at that moment.
-- **Convergence does not retire a possibly-live lock.** I first tried retiring
-  Task locks inside the terminal convergence writes, which fixed the leak but
-  introduced a P0 I caught by probe: a transfer converged from an in-flight
-  boundary can still have its predecessor's provider call running, and deleting
-  the exclusion let a competing Task acquire the same path mid-mutation. The final
-  design keeps convergence lock-neutral and makes the owning execution frame
-  release its own generation when it actually returns.
-- **Migration identity is a sentinel, not NULL.** `legacy-owner-generation` keeps
-  the column `NOT NULL`, gives every legacy row one stable identity, and is
-  unreachable by a minted generation, so no legacy row becomes broadly releasable
-  during upgrade.
+- **Rotate in place rather than "reclaim then insert".** The only way to make a
+  takeover gap-free with a single-row-per-path exclusion is to update the
+  existing row, so no interleaving can observe the path unowned. Deleting and
+  re-inserting cannot be made atomic against a competing `acquire` without
+  serializing every lock operation.
+- **Two levels of rotation, both claim-guarded.** The Task-wide
+  `rotate_task_locks` gives the takeover one generation it can reason about and
+  retire in its `finally`; the per-item `adopt_or_acquire` inside `begin_item`
+  gives each execution frame its own exact generation for the existing
+  `release_item_lock` contract. A competing Task therefore cannot acquire at any
+  point, and a stale frame cannot release a replacement's row.
+- **`adopt_existing` defaults to `False`.** Every non-transfer caller keeps the
+  previous `acquire` behaviour exactly, so this correction cannot change
+  Organize or manual-execution locking.
+- **A lost claim is not a business failure.** When acquisition fails because the
+  row belongs to another Task *and* the claim is no longer current, the frame
+  raises `TaskClaimLost` instead of writing a fabricated `FAILED` item. This
+  reuses the existing `transfer_claim_is_current` repository method rather than
+  adding a parallel claim API.
+- **Residual takeover rows are retired only at the end.** An item already
+  terminal before the takeover never reaches `begin_item`, so its rotated row
+  would otherwise outlive the transfer. Retiring exactly the takeover generation
+  in a `finally` — after all continuations, and never a blanket Task-level
+  delete — frees only rows this Worker legitimately owns.
+- **Rotation is the only mechanism reached on the safe path.** An unprovable
+  in-flight mutation converges to investigation before any continuation, so it
+  never rotates and never hands its exclusion over.
 
 ### Remaining In-Slice Work
 
@@ -769,32 +754,27 @@ was not changed.
   test_real_api_documents_*` golden-fixture failures asserting 201. Pre-existing
   and unrelated to this Task; whether they block PASS is B's judgment, not mine.
 - Full e2e FAIL is limited to the 10 failures in `library-file-detail` (7) and
-  `manual-operations` (3) that fail identically at the Base. Pre-existing and
-  unrelated; B judges.
+  `manual-operations` (3) that fail identically at the Base. This correction
+  changes no web file. Pre-existing and unrelated; B judges.
 - The Docker release-security gate remains UNAVAILABLE in this workspace; it needs
   a host where Docker can bind-mount the smoke context.
-- The runtime schema is now 38. Five pre-existing configuration tests asserted the
-  literal 37 marker and were updated to 38 with their explanatory comment; that is
-  the documented expectation of those assertions, not a weakened test. The
-  architecture document still says "runtime schema `34`" — that was already stale
-  before this Task (the committed Base declared 37) and I left it alone rather
-  than widen this correction into a docs reconciliation.
+- The runtime schema is unchanged at 38; this correction adds repository methods
+  only and no migration. Five pre-existing configuration tests still assert the
+  documented 38 marker from round 6.
+- The architecture document still says "runtime schema `34`" — already stale
+  before this Task (the committed Base declared 37) and left alone rather than
+  widening this correction into a docs reconciliation.
 - A lock row for a Task whose claim owner is lost and whose frame never returns
-  (a hard process kill) is still retired only by the next authoritative takeover,
-  cancel or pause — exactly as at the Base. The generation change does not alter
-  that recovery path; it only prevents a *live* stale owner from deleting a
-  *replacement* owner's exclusion.
+  (a hard process kill) is still retired only by the next authoritative
+  takeover, cancel or pause — exactly as at the Base. This correction changes
+  *how* the next takeover rotates that row, not that it is the recovery point.
 - A proven same-Storage Move whose source disappeared is adopted only when the
   provider publishes a fingerprint that still matches the admitted entry.
   `LocalStorage` fingerprints include `ctime`, which a native rename legitimately
   bumps, so such a Move is normally reported as `UNCERTAIN`/investigation rather
-  than silently adopted. That is the conservative direction the plan requires
-  (never fabricate a completed Move from size alone); it does mean a genuinely
-  completed interrupted same-Storage Move can require operator inspection.
+  than silently adopted — the conservative direction the plan requires.
 - The lease keeper is a bounded daemon thread per invocation that stops with the
-  invocation; it adds no persistent background worker. When its retries are
-  exhausted the lease lapses, and the durable boundary keeps the transfer
-  non-replayable.
+  invocation; it adds no persistent background worker.
 - Per-item durable progress still stores the confirmed entry scope bounded at
   `MAX_TRANSFER_PROGRESS_ENTRIES` (512): an item whose recorded progress is
   truncated cannot be continued after an interruption and stops with an
@@ -810,7 +790,7 @@ was not changed.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e0217d9975e1e5677b3582d3792fb99369ce41d5
+Head SHA: 042670872f3bd2e03706c721871f7daa11d16d9c
 ```
 
 ## B Re-review Findings — 2026-09-17
@@ -1289,99 +1269,28 @@ Implementation Scope, original Acceptance Criteria or Non-goals.
 ## B Review Result
 
 ```text
-Reviewed: 4954502c6493d57634a14461a7268120419319da..95cf8aeb15363ff9a153cbaed648884b93e83410
+Reviewed: 4954502c6493d57634a14461a7268120419319da..e0217d9975e1e5677b3582d3792fb99369ce41d5
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Claim fencing still does not fence release of the per-source file lock. B ran a focused stale-owner
-  probe against `PersistentTaskCoordinator.complete_direct_item`: the guarded TaskItem/Result CAS
-  correctly returned `False`, but its unconditional `finally` called
-  `locks.release(storage_id, source_path, task_id)` and removed the replacement Worker's lock because
-  both owners use the same Task ID/path (`guarded_publish=False`, one release call,
-  `replacement_lock_still_owned=False`; the assertion that the replacement retained the lock
-  failed). A late Worker A can therefore return after Worker B has reclaimed and reacquired the
-  source lock, delete B's lock, and admit a third Task against the same path while B is continuing a
-  distinct verified checkpoint. Bind lock ownership/release to the exact Worker acquisition or
-  claim generation so a stale owner can never release a replacement owner's lock, including the
-  expiry race after a successful guarded publish. Add a deterministic multi-Worker regression that
-  blocks Worker B during safe continuation, releases Worker A, and proves the replacement lock
-  remains owned and a competing Task performs zero mutation. Rerun the original Task 37.4 T4 gates
-  without weakening existing fencing or mutation tests.
-
-### Required Same-Task Correction Plan — generation-fenced source locks
-
-This plan clarifies the required repair for the blocker above. It does not change the Task ID,
-Task Base, Goal, original Implementation Scope, Acceptance Criteria or Non-goals.
-
-#### 1. Give every acquired file lock an exact owner generation
-
-- Extend the durable file-lock contract so each successful acquisition carries a new opaque,
-  unguessable `owner_token`/generation in addition to `storage_id`, normalized path and `task_id`.
-  Two Workers processing the same Task/path must never share this generation merely because they
-  share the Task ID.
-- Release must be an exact conditional delete using all lock identity fields, including the owner
-  generation. A stale release is a successful no-op against a replacement owner's row; it must not
-  delete, rewrite or weaken that row.
-- Carry the generation through the in-memory claimed-item/execution context used by
-  `begin_item`, progress/terminal publication, pause/cancel/failure cleanup and
-  `complete_direct_item`. Keep it out of ordinary Files/Operations API documents, Result evidence,
-  logs and user-visible recovery text.
-- A transfer may derive the lock generation from an exact Worker claim generation or use a separate
-  per-acquisition token, but the value must distinguish Worker A's acquisition from Worker B's
-  takeover acquisition. Do not persist one shared Task-level token that both owners can use.
-
-#### 2. Make takeover and release race-safe
-
-- When Worker B lawfully takes over an expired transfer, it may retire the stale lock generation
-  and acquire a new generation before continuing. Worker A's later success, exception or `finally`
-  path must be unable to release B's generation.
-- Do not implement the fix only as `if guarded_publish: release(...)`. That still races when A's
-  guarded publication succeeds, its lease expires before its following release, and B reacquires
-  the same Task/path in between. Exact generation matching must protect both failed-publication and
-  post-publication expiry races.
-- Keep TaskItem/Result/transfer claim CAS and file-lock ownership as separate required fences: the
-  former prevents stale durable publication; the latter prevents a stale execution frame from
-  removing the current source-operation exclusion.
-- Ensure every terminal, pause, cancel, pre-mutation failure and uncertain convergence path releases
-  only the generation it actually owns and does not leak a permanent lock. Repeated cleanup must be
-  idempotent.
-
-#### 3. Upgrade persistence without weakening existing locks
-
-- Add the required runtime schema migration for durable lock-owner generation and update the
-  repository protocol, SQLite implementation and all affected coordinator call sites coherently.
-  Existing databases must upgrade in place; existing lock rows must receive a conservative legacy
-  owner identity and must not become unlocked or broadly releasable during migration.
-- Preserve normalized-path uniqueness across Tasks. A different Task must still be unable to
-  acquire the same Storage/path while the current generation exists.
-- Preserve non-transfer direct commands and existing Task lock behavior. Do not introduce an
-  in-memory-only token that is lost on the exact Worker/process handoff this correction protects.
-
-#### 4. Required deterministic regressions
-
-- Reproduce the failed-CAS case from B's probe: Worker A's guarded terminal publication returns
-  `False` after Worker B has acquired the replacement generation. A's `finally` runs, B's exact lock
-  remains present, and a competing Task C cannot acquire the path or invoke any Storage mutation.
-- Cover the successful-publication expiry window: pause A immediately after its guarded publish but
-  before release, expire the claim, let B acquire a new generation, then release A. The conditional
-  stale release must again leave B's lock intact.
-- Exercise a production-shaped continuation: A blocks inside an admitted Storage mutation, B takes
-  over and blocks while performing only a distinct checkpoint-safe continuation, A later returns,
-  and Task C is denied with zero mutation. After B completes, its own release removes the lock and a
-  later lawful acquisition succeeds.
-- Cover normal success, provider exception, pre-mutation failure, pause, cancel, uncertain
-  convergence, repeated cleanup and repository reopen. Assert exact lock rows/generations and
-  Storage mutation counts, not only Task status.
-- Add migration coverage from the current runtime schema to the new schema, including an existing
-  lock row, and prove tokens/generations never appear in Files/Operations responses, persisted Result
-  evidence or logs.
-
-#### 5. Validation and scope guard
-
-- Rerun the complete original Task 37.4 T4 command list and report exact totals, skips, independently
-  reproduced baseline failures and unavailable external gates truthfully.
-- Preserve all existing heartbeat, claim fencing, in-flight resolution, pinned-revision,
-  mutation-authority, cleanup and Web regressions. Do not weaken an assertion, hide a skip, broaden
-  retry, move the Task Base or modify the Slice Contract.
+- The replacement Worker still opens an unprotected delete/reacquire window before a safe
+  continuation. `_execute_claimed_transfer` calls `reclaim_task_locks(task_id)` and only later calls
+  `begin_item`; B's deterministic repository probe placed Task C in that exact interleaving and
+  observed `a_rows_retired_by_b_takeover=1`, `task_c_acquired_in_gap=True`,
+  `worker_b_reacquired_after_c=False`. A competing Task can therefore take and mutate the source
+  after B has declared the prior effect safe to continue but before B owns its replacement
+  generation. The new
+  `test_production_shaped_continuation_denies_a_competing_task` does not exercise its stated
+  takeover: it does not expire A's lease, asserts `second.run_next() is None`, then releases A and
+  lets A complete both copies. Replace the blanket reclaim followed by a later insert with one
+  atomic same-Task lock-generation handoff/rotation (or an equally strong no-unlocked-state
+  mechanism) that fails closed if another Task owns the normalized path and returns B's exact new
+  generation to its execution frame. An unprovable live mutation must retain A's exclusion and must
+  not be handed off. Add a real multi-Worker regression where A lands a provable checkpoint and
+  remains blocked, its lease expires, B adopts that checkpoint, atomically takes the same top-level
+  source lock and blocks in the next distinct admitted mutation, Task C is denied both before and
+  after A returns, and only B's terminal release makes a later acquisition possible. Also retain a
+  direct interleaving assertion proving no Task C acquisition is possible at the handoff boundary,
+  then rerun the original Task 37.4 T4 gates without weakening existing fencing or mutation tests.
