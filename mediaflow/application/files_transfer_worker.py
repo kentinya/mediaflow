@@ -91,7 +91,14 @@ class FilesTransferWorker:
             lease_seconds=self._lease_seconds,
         )
         if claimed is None:
-            return None
+            # No ordinary work is claimable.  One transfer may still hold an
+            # expired in-flight mutation: the ordinary query deliberately never
+            # hands that over, so it is reached only through this explicit
+            # resolution claim, which converges the recorded boundary without
+            # ever invoking the interrupted operation again.
+            claimed = self._claim_expired_mutation(claim_token)
+            if claimed is None:
+                return None
         keeper = self._start_lease_keeper(claimed.transfer_id, claim_token)
         try:
             return self._service.run_claimed_transfer(
@@ -107,31 +114,69 @@ class FilesTransferWorker:
         finally:
             keeper.stop()
 
+    def _claim_expired_mutation(self, claim_token: str):
+        claim = getattr(self._repository, "claim_expired_files_transfer_mutation", None)
+        if not callable(claim):
+            return None
+        return claim(
+            self._clock(),
+            worker_id=self._worker_id,
+            claim_token=claim_token,
+            lease_seconds=self._lease_seconds,
+        )
+
     def _start_lease_keeper(self, transfer_id: str, claim_token: str):
         """Keep one claim's lease live for the whole invocation.
 
         The keeper heartbeats at a fraction of the lease interval in its own
         thread, so a blocked or slow provider mutation cannot let the lease
-        expire while this Worker still owns it.  It stops as soon as the claim
-        is lost or the invocation ends; it never extends a claim the Worker no
-        longer owns.
+        expire while this Worker still owns it.  A transient heartbeat fault —
+        a ``False`` CAS result, a SQLite error or any other exception — is
+        retried (bounded) instead of silently killing the keeper, and every
+        fault is reported through the Worker's bounded notice.  Liveness support
+        is nevertheless not the data-integrity fence: the durable
+        ``mutation_in_flight`` boundary keeps an entered operation
+        non-replayable even if the keeper can no longer renew the lease.
         """
 
         interval = max(0.05, self._lease_seconds / 3.0)
         heartbeat = self._heartbeat
+        notice = self._notice
 
         class _LeaseKeeper:
             def __init__(self) -> None:
                 self._stop = threading.Event()
+                self.faults = 0
                 self._thread = threading.Thread(target=self._run, daemon=True)
 
             def _run(self) -> None:
+                consecutive_faults = 0
                 while not self._stop.wait(interval):
                     try:
-                        if not heartbeat(transfer_id, claim_token):
-                            return
+                        renewed = heartbeat(transfer_id, claim_token)
                     except Exception:
+                        renewed = False
+                    if renewed:
+                        consecutive_faults = 0
+                        continue
+                    consecutive_faults += 1
+                    self.faults = consecutive_faults
+                    if consecutive_faults == 1:
+                        notice(
+                            f"files transfer {transfer_id} lease heartbeat faulted; "
+                            "retrying while the claim token still owns the row\n"
+                        )
+                    if consecutive_faults >= self._maximum_faults:
+                        # A persistent ownership-signal failure ends the liveness
+                        # support only; the in-flight boundary it may have left
+                        # behind is resolved without replay by the next Worker.
+                        notice(
+                            f"files transfer {transfer_id} lease heartbeat keeps failing; "
+                            "the in-flight boundary stays non-replayable\n"
+                        )
                         return
+
+            _maximum_faults = 8
 
             def start(self):
                 self._thread.start()

@@ -538,5 +538,143 @@ class Schema34To35UpgradeTests(unittest.TestCase):
         self.assertIn("_TASK_ITEM_INSERT", source)
 
 
+class Schema36To37UpgradeTests(unittest.TestCase):
+    """The real 36 -> 37 files_transfers upgrade preserves the claim fence.
+
+    Schema 37 adds the durable in-flight mutation columns to
+    ``files_transfers``.  A database upgraded in place must accept the same
+    named-column inserts and loads as a freshly created one, and the new
+    columns must default to no in-flight mutation.
+    """
+
+    _SCHEMA36_FILES_TRANSFERS_DDL = """
+        CREATE TABLE files_transfers (
+            transfer_id TEXT PRIMARY KEY, task_id TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL, authority_json TEXT NOT NULL,
+            configuration_snapshot_id TEXT NOT NULL,
+            configuration_snapshot_digest TEXT NOT NULL,
+            worker_id TEXT, claim_token TEXT, claimed_at TEXT, claim_expires_at TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            error TEXT, next_action TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+            FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+        )
+    """
+
+    @staticmethod
+    def _create_schema36_database(path: Path) -> None:
+        connection = sqlite3.connect(path)
+        try:
+            connection.execute(
+                "CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+            )
+            connection.execute("INSERT INTO schema_version VALUES ('runtime', 36)")
+            connection.execute(
+                """CREATE TABLE tasks (
+                    task_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
+                    execute_authorized INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+                    total_items INTEGER NOT NULL, completed_items INTEGER NOT NULL,
+                    failed_items INTEGER NOT NULL, error TEXT,
+                    pause_requested INTEGER NOT NULL DEFAULT 0,
+                    scope_path TEXT, item_limit INTEGER,
+                    configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT
+                )"""
+            )
+            connection.execute(Schema36To37UpgradeTests._SCHEMA36_FILES_TRANSFERS_DDL)
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_upgraded_files_transfers_gains_the_in_flight_fence_columns(self) -> None:
+        from mediaflow.domain.task_persistence import (
+            FilesTransferStatus,
+            PersistentFilesTransfer,
+            PersistentTask,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "upgraded.sqlite3")
+            self._create_schema36_database(database)
+            now = datetime.now(UTC)
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                with sqlite3.connect(database) as connection:
+                    columns = [
+                        row[1]
+                        for row in connection.execute(
+                            "PRAGMA table_info(files_transfers)"
+                        ).fetchall()
+                    ]
+                self.assertIn("mutation_state", columns)
+                self.assertIn("in_flight_item_id", columns)
+                self.assertIn("in_flight_entry_path", columns)
+                self.assertIn("in_flight_action", columns)
+
+                task = PersistentTask(
+                    "task-upgrade",
+                    "files_transfer",
+                    PersistentTaskStatus.PENDING,
+                    True,
+                    now,
+                    now,
+                )
+                transfer = PersistentFilesTransfer(
+                    transfer_id="task-upgrade",
+                    task_id="task-upgrade",
+                    status=FilesTransferStatus.ADMITTED,
+                    authority_json="{}",
+                    configuration_snapshot_id="rev",
+                    configuration_snapshot_digest="digest",
+                    created_at=now,
+                    updated_at=now,
+                )
+                repository.admit_files_transfer(task, (), transfer)
+                loaded = repository.require_files_transfer("task-upgrade")
+                self.assertIsNone(loaded.mutation_state)
+                self.assertIsNone(loaded.in_flight_entry_path)
+
+                claim_token = "token-upgrade"
+                self.assertIsNotNone(
+                    repository.claim_next_files_transfer(
+                        now,
+                        worker_id="worker",
+                        claim_token=claim_token,
+                        lease_seconds=3600.0,
+                    )
+                )
+                self.assertTrue(
+                    repository.begin_files_transfer_mutation(
+                        "task-upgrade",
+                        claim_token,
+                        now,
+                        item_id="item-1",
+                        entry_path="a.mkv",
+                        action="copy",
+                    )
+                )
+                opened = repository.require_files_transfer("task-upgrade")
+                self.assertEqual(opened.mutation_state, "mutation_in_flight")
+                self.assertEqual(opened.in_flight_entry_path, "a.mkv")
+                # An in-flight transfer is never handed out by the ordinary
+                # claim query, even after its lease elapses.
+                self.assertIsNone(
+                    repository.claim_next_files_transfer(
+                        now + timedelta(hours=2),
+                        worker_id="worker-2",
+                        claim_token="token-2",
+                        lease_seconds=3600.0,
+                    )
+                )
+                resolved = repository.claim_expired_files_transfer_mutation(
+                    now + timedelta(hours=2),
+                    worker_id="worker-2",
+                    claim_token="token-2",
+                    lease_seconds=3600.0,
+                )
+                self.assertIsNotNone(resolved)
+                self.assertEqual(resolved.transfer_id, "task-upgrade")
+
+
 if __name__ == "__main__":
     unittest.main()

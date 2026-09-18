@@ -892,7 +892,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 # Runtime schema 35 adds the bounded in-flight
                 # transfer-progress column on task_items for interrupted
                 # Files transfer recovery.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 36)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 37)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

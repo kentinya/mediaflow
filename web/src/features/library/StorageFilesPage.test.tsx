@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import admissionContract from "../../../tests/fixtures/files-transfer-admission.json";
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -11,6 +12,13 @@ import {
   resourceLibrarySaveFailure,
   StorageFilesPage,
 } from "./StorageFilesPage";
+
+/**
+ * The committed cross-boundary admission contract, shared with the Python API
+ * test and the Files fake server so the interaction journey consumes the same
+ * document as the real backend.
+ */
+const ADMISSION_CONTRACT: Record<string, unknown> = admissionContract;
 
 const storages: readonly SystemStorage[] = [
   {
@@ -2357,22 +2365,21 @@ describe("Files entry state and ResourceLibrary strip", () => {
         status: activeStatus([libraryItem("lib-a", "local-1")]),
         onTransfer: (body) => {
           transferBodies.push(body);
-          // Captured verbatim from the real Python
-          // DirectFileTransferService.submit_transfer -> _queued_document.
-          // The previous backend also serialized destination pairs into
-          // topLevelPaths, which the strict normalizer rejected as
-          // malformed_response *after* admission committed.
+          // The exact committed cross-boundary admission contract produced and
+          // asserted by the Python API test, and normalized by the TypeScript
+          // model test.  Only the per-request selection and identity are
+          // substituted, so this interaction test cannot drift from the real
+          // backend shape (the previous backend serialized destination pairs
+          // into topLevelPaths, which the strict normalizer rejected as
+          // malformed_response *after* admission committed).
           return admissionGate.then(() =>
             jsonResponse({
-              admitted: true,
-              checkpoints: [],
-              checkpointsTruncated: false,
+              ...ADMISSION_CONTRACT,
               conflictMode: body.conflictMode,
               destinationResourceLibraryId: body.destinationResourceLibraryId,
               destinations: [
                 { destination: "Movies/notes.txt", path: "notes.txt" },
               ],
-              failedItems: 0,
               itemOutcomes: [
                 {
                   destination: "Movies/notes.txt",
@@ -2380,21 +2387,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
                   status: "QUEUED",
                 },
               ],
-              knownEffects: [],
-              nextAction:
-                "the transfer is admitted and queued for execution; its progress appears below",
               operation: body.operation,
-              outcomes: [],
-              outcomesTruncated: false,
               resourceLibraryId: "lib-a",
-              retrySafe: true,
-              sameStorage: true,
-              sideEffects: "none",
-              skippedItems: 0,
-              status: "QUEUED",
-              succeededItems: 0,
               taskId: "task-real-admission",
-              taskStatus: "pending",
               topLevelPaths: body.paths,
               totalItems: 1,
             }),

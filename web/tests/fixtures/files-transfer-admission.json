@@ -1,0 +1,28 @@
+{
+  "admitted": true,
+  "checkpoints": [],
+  "checkpointsTruncated": false,
+  "conflictMode": "fail",
+  "destinationResourceLibraryId": "source",
+  "destinations": [{ "destination": "Movies/a.mkv", "path": "a.mkv" }],
+  "failedItems": 0,
+  "itemOutcomes": [
+    { "destination": "Movies/a.mkv", "path": "a.mkv", "status": "QUEUED" }
+  ],
+  "knownEffects": [],
+  "nextAction": "the transfer is admitted and queued for execution; its progress appears below",
+  "operation": "copy",
+  "outcomes": [],
+  "outcomesTruncated": false,
+  "resourceLibraryId": "source",
+  "retrySafe": true,
+  "sameStorage": true,
+  "sideEffects": "none",
+  "skippedItems": 0,
+  "status": "QUEUED",
+  "succeededItems": 0,
+  "taskId": "fixture-task-id",
+  "taskStatus": "pending",
+  "topLevelPaths": ["a.mkv"],
+  "totalItems": 1
+}
