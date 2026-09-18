@@ -3631,8 +3631,14 @@ class SourceLockGenerationTests(TransferTestCase):
             b_thread.join(30)
             self.assertFalse(b_thread.is_alive())
             self.assertEqual(source.copy_calls, 2)
-            self.assertIn(runtime.get_task(task_id).status.value, {"completed", "partial_success"})
+            # The terminal outcome is exactly `completed`, never a weaker
+            # set-membership escape: both admitted native Copies landed, both
+            # entries are verified and no entry was skipped, failed or left
+            # uncertain.
+            self.assertEqual(runtime.get_files_transfer(task_id).status.value, "completed")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
             self.assertEqual(self._lock_rows(runtime), [])
+            self._assert_completed_transfer_agreement(api, transfers, runtime, task_id)
             later = coordinator.create("files_transfer", execute_authorized=True)
             item = coordinator.begin_item(later.task_id, "source-storage", "source", "show", "show")
             self.assertTrue(
@@ -3640,6 +3646,454 @@ class SourceLockGenerationTests(TransferTestCase):
                     "source-storage", "show", later.task_id, owner_token=item.lock_owner_token
                 )
             )
+
+    def _assert_completed_transfer_agreement(self, api, transfers, runtime, task_id: str) -> None:
+        """Prove every surface agrees on the completed transfer after a reload.
+
+        The transfer row, the Task row, every TaskItem, every Result, the Files
+        projection and the Operations detail are read back from a freshly
+        reopened repository — not from the in-memory service that wrote them —
+        and must all report the same truthful completed outcome.  A weaker
+        assertion could pass while one projection silently disagreed.
+        """
+
+        projection = transfers.transfer_projection(task_id)
+        self.assertEqual(projection["status"], "SUCCESS")
+        self.assertEqual(projection["taskStatus"], "completed")
+        self.assertTrue(projection["terminal"])
+        self.assertEqual(projection["totalItems"], 1)
+        self.assertEqual(projection["succeededItems"], 1)
+        self.assertEqual(projection["failedItems"], 0)
+        self.assertEqual(projection["skippedItems"], 0)
+        self.assertEqual(projection["sideEffects"], "storage_mutations")
+
+        transfer = runtime.get_files_transfer(task_id)
+        self.assertEqual(transfer.status.value, "completed")
+        self.assertIsNone(transfer.mutation_state)
+        self.assertIsNone(transfer.in_flight_item_id)
+        self.assertIsNone(transfer.error)
+
+        task = runtime.get_task(task_id)
+        self.assertEqual(task.status.value, "completed")
+        self.assertIsNone(task.error)
+
+        items = runtime.list_items(task_id)
+        self.assertEqual([item.status.value for item in items], ["success"])
+        self.assertEqual([item.stage for item in items], ["completed"])
+        for item in items:
+            self.assertIsNone(item.error)
+            self.assertIsNone(item.progress, "a terminal item carries no in-flight marker")
+
+        results = runtime.list_results(task_id)
+        self.assertEqual(len(results), 1)
+        for record in results:
+            self.assertEqual(record.status, "success")
+            self.assertEqual(record.effect_certainty, "verified_complete")
+            self.assertEqual(record.uncertain_effects, ())
+
+        status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(document["status"], "completed")
+        self.assertEqual([item["status"] for item in document["items"]], ["success"])
+        for item in document["items"]:
+            self.assertNotIn("/", item.get("source_path") or "")
+        for record in document["results"]:
+            self.assertEqual(record["effect_certainty"], "verified_complete")
+            self.assertEqual(record["uncertain_effects"], [])
+
+        # The durable truth survives a genuine repository reload: reopening the
+        # same database file reproduces exactly the same rows and projection,
+        # so the agreement above is not an artifact of one in-memory connection.
+        reloaded = SQLiteTaskRepository(runtime._path)
+        self.addCleanup(reloaded.close)
+        self.assertEqual(reloaded.get_files_transfer(task_id).status.value, "completed")
+        self.assertEqual(reloaded.get_task(task_id).status.value, "completed")
+        self.assertEqual([item.status.value for item in reloaded.list_items(task_id)], ["success"])
+        self.assertEqual(len(reloaded.list_results(task_id)), 1)
+        self.assertEqual(self._lock_rows(reloaded), [])
+
+    def _admit_show_transfer(self, transfers, root: Path) -> str:
+        """Admit one bounded Copy of the `show` tree and return its Task id."""
+
+        (root / "source" / "show").mkdir(parents=True, exist_ok=True)
+        (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+        (root / "source" / "show" / "ep00.mkv").write_bytes(b"episode-0")
+        impact = transfers.transfer_impact(
+            resource_library_id="source",
+            paths=["show"],
+            destination_resource_library_id="source",
+            destination_directory="Movies",
+            operation="copy",
+            conflict_mode="fail",
+        )
+        queued = transfers.submit_transfer(
+            resource_library_id="source",
+            paths=["show"],
+            destination_resource_library_id="source",
+            destination_directory="Movies",
+            operation="copy",
+            conflict_mode="fail",
+            manifest_digest=impact.manifest.digest,
+        )
+        return queued["taskId"]
+
+    def test_lost_ownership_at_every_handoff_boundary_writes_nothing(self) -> None:
+        """B's requirement 6: every ownership boundary stops with zero writes.
+
+        The claim can lapse before the Task-wide rotation, between that rotation
+        and the per-item adoption, or after the guarded start publication.  Each
+        boundary must stop before the next mutation and leave the current owner's
+        durable evidence — TaskItem `status`/`stage`/`attempts`/`progress`/error,
+        Results, the transfer mutation boundary and the replacement lock
+        generation — exactly as it was.
+        """
+
+        from dataclasses import replace
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator, TaskClaimLost
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            transfers = self._transfers(api, active)
+            task_id = self._admit_show_transfer(transfers, root)
+            claimed = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-b",
+                claim_token="worker-b-token",
+                lease_seconds=3600.0,
+            )
+            self.assertIsNotNone(claimed)
+            runtime.begin_files_transfer(task_id, "worker-b-token", datetime.now(UTC))
+            live = (claimed.transfer_id, "worker-b-token", datetime.now(UTC))
+            coordinator.begin_queued(task_id, transfer_fence=live)
+            item = coordinator.begin_item(task_id, "source-storage", "source", "show", "show")
+            checkpoint = json.dumps(
+                {
+                    "version": 1,
+                    "status": "processing",
+                    "operation": "copy",
+                    "conflictMode": "fail",
+                    "destinationStorageId": "source-storage",
+                    "destinationResourceLibraryId": "source",
+                    "destinationPath": "Movies",
+                    "confirmedEntries": [["show", "Movies/show", "directory"]],
+                    "confirmedTruncated": False,
+                    "completedEntries": 1,
+                    "failedEntries": 0,
+                    "skippedEntries": 0,
+                    "truncated": False,
+                    "entries": [],
+                }
+            )
+            runtime.upsert_item(replace(item, progress=checkpoint, attempts=1))
+
+            def snapshot() -> tuple:
+                row = runtime.get_item(item.item_id)
+                record = runtime.get_files_transfer_for_task(task_id)
+                return (
+                    row.status.value,
+                    row.stage,
+                    row.attempts,
+                    row.progress,
+                    row.error,
+                    row.plan_id,
+                    row.destination_storage_id,
+                    row.destination_path,
+                    row.execution_status,
+                    record.mutation_state,
+                    record.in_flight_item_id,
+                    record.claim_token,
+                    tuple(self._lock_rows(runtime)),
+                    tuple(runtime.list_results(task_id)),
+                )
+
+            baseline = snapshot()
+            self.assertEqual(baseline[2], 1)
+            self.assertEqual(json.loads(baseline[3])["completedEntries"], 1)
+            dead = (claimed.transfer_id, "revoked-token", datetime.now(UTC))
+
+            # Boundary 1: lost before the Task-wide rotation.  The rotation
+            # itself is claim-guarded, so it writes zero rows.
+            self.assertEqual(
+                runtime.rotate_task_locks(task_id, f"{task_id}:takeover", transfer_fence=dead), 0
+            )
+            self.assertEqual(snapshot(), baseline)
+
+            # Boundary 2: lost between the rotation and the per-item adoption.
+            self.assertEqual(
+                runtime.rotate_task_locks(task_id, f"{task_id}:takeover2", transfer_fence=live), 1
+            )
+            with self.assertRaises(TaskClaimLost):
+                coordinator.begin_item(
+                    task_id,
+                    "source-storage",
+                    "source",
+                    "show",
+                    "show",
+                    transfer_fence=dead,
+                    adopt_existing=True,
+                )
+            now = runtime.get_item(item.item_id)
+            self.assertEqual(now.attempts, 1, "a stale adoption must not consume an attempt")
+            self.assertEqual(now.progress, checkpoint)
+            self.assertIsNone(now.error)
+            self.assertEqual(tuple(runtime.list_results(task_id)), ())
+            self.assertEqual(
+                runtime.get_files_transfer_for_task(task_id).claim_token, "worker-b-token"
+            )
+
+            # Boundary 3: lost after the guarded start publication.  The start
+            # itself is guarded, so a lapsed claim writes no start at all.
+            revoked = runtime.release_files_transfer_claim(
+                claimed.transfer_id,
+                claim_token="worker-b-token",
+                now=datetime.now(UTC),
+                error="test_release",
+                next_action="test",
+            )
+            self.assertTrue(revoked)
+            before = snapshot()
+            with self.assertRaises(TaskClaimLost):
+                coordinator.begin_item(
+                    task_id,
+                    "source-storage",
+                    "source",
+                    "show",
+                    "show",
+                    transfer_fence=live,
+                    adopt_existing=True,
+                )
+            after = snapshot()
+            self.assertEqual(after[2], before[2], "a lost claim must not consume an attempt")
+            self.assertEqual(after[3], before[3], "a lost claim must not erase progress")
+            self.assertEqual(after[4], before[4])
+            self.assertEqual(after[13], before[13], "no Result is written for a lost claim")
+
+    def test_stale_claimant_continuation_changes_no_durable_evidence(self) -> None:
+        """B's repro: a stale claimant must not touch any durable evidence.
+
+        Worker B owns the live claim, its exact lock generation and a distinctive
+        durable recovery checkpoint.  Stale Worker A then invokes the same Task's
+        continuation.  A's acquisition may legitimately rotate the same-Task lock
+        row, but its claim is gone, so it must stop at the ownership boundary
+        with **zero** durable change: no attempt consumed, no erased checkpoint,
+        no fabricated lock failure, no new Result, no Storage mutation, and B's
+        replacement lock generation still owned.
+        """
+
+        from dataclasses import replace
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator, TaskClaimLost
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            transfers = self._transfers(api, active)
+            task_id = self._admit_show_transfer(transfers, root)
+            task = runtime.get_task(task_id)
+            claimed = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-b",
+                claim_token="worker-b-live-token",
+                lease_seconds=3600.0,
+            )
+            self.assertIsNotNone(claimed)
+            runtime.begin_files_transfer(task_id, "worker-b-live-token", datetime.now(UTC))
+            coordinator.begin_queued(
+                task_id,
+                transfer_fence=(claimed.transfer_id, "worker-b-live-token", datetime.now(UTC)),
+            )
+            item_b = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "show", "show"
+            )
+            checkpoint = json.dumps(
+                {
+                    "version": 1,
+                    "status": "processing",
+                    "operation": "copy",
+                    "conflictMode": "fail",
+                    "destinationStorageId": "source-storage",
+                    "destinationResourceLibraryId": "source",
+                    "destinationPath": "Movies",
+                    "confirmedEntries": [["show", "Movies/show", "directory"]],
+                    "confirmedTruncated": False,
+                    "completedEntries": 1,
+                    "failedEntries": 0,
+                    "skippedEntries": 0,
+                    "truncated": False,
+                    "entries": [{"path": "show/ep00.mkv", "destination": "Movies/show/ep00.mkv"}],
+                }
+            )
+            runtime.upsert_item(replace(item_b, progress=checkpoint, attempts=1))
+
+            def evidence() -> dict[str, object]:
+                item = runtime.get_item(item_b.item_id)
+                return {
+                    "status": item.status.value,
+                    "stage": item.stage,
+                    "attempts": item.attempts,
+                    "progress": item.progress,
+                    "error": item.error,
+                    "plan_id": item.plan_id,
+                    "destination_storage_id": item.destination_storage_id,
+                    "destination_path": item.destination_path,
+                    "execution_status": item.execution_status,
+                    "created_at": item.created_at,
+                }
+
+            baseline = evidence()
+            self.assertEqual(baseline["attempts"], 1)
+            self.assertEqual(json.loads(baseline["progress"])["completedEntries"], 1)
+            source_rows_before = self._lock_rows(runtime)
+            before_transfer = runtime.get_files_transfer_for_task(task.task_id)
+            self.assertIsNotNone(before_transfer)
+
+            # Stale A: same Task, adopt_existing=True, but a claim that has lapsed.
+            stale = (before_transfer.transfer_id, "stale-token", datetime.now(UTC))
+            with self.assertRaises(TaskClaimLost):
+                coordinator.begin_item(
+                    task.task_id,
+                    "source-storage",
+                    "source",
+                    "show",
+                    "show",
+                    transfer_fence=stale,
+                    adopt_existing=True,
+                )
+
+            self.assertEqual(evidence(), baseline, "a stale claimant changed durable evidence")
+            self.assertEqual(tuple(runtime.list_results(task.task_id)), ())
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage",
+                    "show",
+                    task.task_id,
+                    owner_token=item_b.lock_owner_token,
+                ),
+                "the stale claimant must not steal or drop the replacement generation",
+            )
+            after_transfer = runtime.get_files_transfer_for_task(task.task_id)
+            self.assertEqual(
+                (after_transfer.mutation_state, after_transfer.in_flight_item_id),
+                (before_transfer.mutation_state, before_transfer.in_flight_item_id),
+            )
+            self.assertEqual(after_transfer.claim_token, before_transfer.claim_token)
+            self.assertEqual(source_rows_before, self._lock_rows(runtime))
+
+    def test_continuation_crash_window_keeps_the_prior_checkpoint(self) -> None:
+        """A crash right after the guarded start boundary keeps the resumable checkpoint.
+
+        Worker B adopts an existing resumable checkpoint and stops immediately
+        after the guarded start publication but before publishing any new
+        progress.  After a genuine repository reload, Worker C must reconstruct
+        the *original* safe checkpoint and continue from it, instead of degrading
+        the item to ``files_transfer_interrupted_unknown`` or replaying it.
+        """
+
+        from dataclasses import replace
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            transfers = self._transfers(api, active)
+            task_id = self._admit_show_transfer(transfers, root)
+            task = runtime.get_task(task_id)
+            claimed = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-b",
+                claim_token="worker-b-token",
+                lease_seconds=3600.0,
+            )
+            self.assertIsNotNone(claimed)
+            runtime.begin_files_transfer(task_id, "worker-b-token", datetime.now(UTC))
+            live_fence = (claimed.transfer_id, "worker-b-token", datetime.now(UTC))
+            coordinator.begin_queued(task_id, transfer_fence=live_fence)
+            item_b = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "show", "show"
+            )
+            checkpoint = json.dumps(
+                {
+                    "version": 1,
+                    "status": "processing",
+                    "operation": "copy",
+                    "conflictMode": "fail",
+                    "destinationStorageId": "source-storage",
+                    "destinationResourceLibraryId": "source",
+                    "destinationPath": "Movies/show",
+                    "confirmedEntries": [
+                        ["show", "Movies/show", "directory"],
+                        ["show/ep00.mkv", "Movies/show/ep00.mkv", "file"],
+                    ],
+                    "confirmedTruncated": False,
+                    "completedEntries": 1,
+                    "failedEntries": 0,
+                    "skippedEntries": 0,
+                    "truncated": False,
+                    "entries": [
+                        {
+                            "path": "show/ep00.mkv",
+                            "destination": "Movies/show/ep00.mkv",
+                            "status": "SUCCESS",
+                        }
+                    ],
+                }
+            )
+            runtime.upsert_item(replace(item_b, progress=checkpoint, attempts=1))
+            original = runtime.get_item(item_b.item_id).progress
+
+            # B crosses the guarded start boundary with a live claim, then dies
+            # before publishing any new progress.
+            resumed = coordinator.begin_item(
+                task.task_id,
+                "source-storage",
+                "source",
+                "show",
+                "show",
+                transfer_fence=live_fence,
+                adopt_existing=True,
+            )
+            self.assertEqual(resumed.attempts, 2)
+            self.assertEqual(runtime.get_item(item_b.item_id).progress, original)
+
+            # Reload from disk and prove the prior checkpoint is still the
+            # resumable authority.
+            reloaded = SQLiteTaskRepository(runtime._path)
+            self.addCleanup(reloaded.close)
+            persisted = reloaded.get_item(item_b.item_id)
+            self.assertEqual(persisted.status.value, "processing")
+            self.assertEqual(persisted.progress, original)
+            payload = json.loads(persisted.progress)
+            self.assertEqual(
+                payload["confirmedEntries"],
+                [
+                    ["show", "Movies/show", "directory"],
+                    ["show/ep00.mkv", "Movies/show/ep00.mkv", "file"],
+                ],
+            )
+            self.assertEqual(payload["completedEntries"], 1)
+            # The next lawful Worker reconstructs the *original admitted plan*
+            # from that checkpoint — not the investigation-only degradation a
+            # lost checkpoint would produce.
+            context = transfers._resume_item_plan(persisted)
+            self.assertIsNotNone(context, "the prior checkpoint must stay resumable")
+            self.assertEqual(
+                [
+                    (entry.path, context.plan.destination_for(entry.path))
+                    for entry in context.plan.entries
+                ],
+                [
+                    ("show", "Movies/show"),
+                    ("show/ep00.mkv", "Movies/show/ep00.mkv"),
+                ],
+            )
+            self.assertEqual(persisted.stage, "pipeline")
+            self.assertNotEqual(persisted.stage, "interrupted")
 
     def test_takeover_handoff_never_leaves_the_source_path_unowned(self) -> None:
         """The direct interleaving assertion at the explicit handoff boundary.
