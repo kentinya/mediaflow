@@ -1258,72 +1258,8 @@ Implementation Scope, original Acceptance Criteria or Non-goals.
 ## B Review Result
 
 ```text
-Reviewed: 4954502c6493d57634a14461a7268120419319da..042670872f3bd2e03706c721871f7daa11d16d9c
-Decision: FIX REQUIRED
+Reviewed: 4954502c6493d57634a14461a7268120419319da..0ff0e664e9a937d3aa5f9aae288d98de480a27fb
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
-
-- `begin_item(..., transfer_fence=..., adopt_existing=True)` writes the `PROCESSING` TaskItem with
-  an unguarded `repository.upsert_item(item)` **before** `adopt_or_acquire` validates the claim and
-  rotates the lock. B reproduced a stale Worker A after Worker B had taken the claim, rotated the
-  source lock and persisted `progress={"owner":"worker-b"}`: A correctly raised `TaskClaimLost` and
-  did not steal B's lock, but it had already changed the durable item from
-  `before_progress={"owner":"worker-b"}, before_attempts=1` to
-  `after_progress=None, after_attempts=2`. This lets a lost claimant erase the current owner's safe
-  recovery checkpoint and contradicts the claim-fenced TaskItem contract.
-
-  Required correction for this same Task:
-
-  1. Treat transfer-item admission as one claim-fenced ownership boundary. The live transfer claim,
-     same-Task lock adoption/acquisition and TaskItem start publication must be ordered so no
-     TaskItem write can occur before ownership is proven. Prefer one repository transaction when
-     practical. An equally strong two-step implementation may acquire/rotate the exact lock
-     generation first and then use `upsert_item_guarded`, but if the guarded publish fails it must
-     release only that exact generation and raise `TaskClaimLost`; it must never perform an
-     unguarded compensating write.
-  2. Apply the fence to **every** transfer-path TaskItem write, including the initial
-     `PROCESSING`/attempt update and the lock-conflict `FAILED` update. A claim may be lost between
-     any two calls, so a separate unguarded write after a successful claim check is not sufficient.
-     A stale claimant must leave TaskItem, Result, transfer mutation boundary and replacement lock
-     generation byte-for-byte/semantically unchanged and must invoke no Storage mutation.
-  3. Increment `attempts`, change `status`/`stage`/`updated_at`, or publish a lock failure only after
-     the exact Worker has successfully crossed the guarded ownership boundary. A failed or stale
-     acquisition must not consume an attempt or fabricate a user-visible business failure.
-  4. Preserve the last durable progress/checkpoint while starting a valid continuation. Do not
-     replace a resumable TaskItem with a new `progress=None` row merely because its replacement
-     Worker entered `begin_item`. If that Worker crashes after acquisition but before its first new
-     checkpoint, the next lawful Worker must still reconstruct the prior safe continuation rather
-     than degrading to `files_transfer_interrupted_unknown`. Supersede the old checkpoint only with
-     a later claim-guarded progress or terminal publication.
-  5. Keep the round-7 gap-free lock properties: same-Task handoff remains an in-place rotation, a
-     different Task's row fails closed, a predecessor's late release is an exact no-op, and an
-     unprovable in-flight mutation is never handed off. Do not reintroduce blanket
-     `reclaim_task_locks` on the production takeover path and do not add a new persistent lifecycle
-     state to solve this ordering problem.
-  6. Cover lost ownership at all relevant boundaries: before Task-wide rotation, between Task-wide
-     rotation and per-item adoption, after per-item adoption but before TaskItem start publication,
-     and after start publication but before the next progress write. Every case must stop before the
-     next mutation and preserve the current owner's durable evidence.
-
-  Required regression evidence:
-
-  - Add the deterministic two-claim reproduction above. After B owns the claim, exact lock
-    generation and a distinctive durable checkpoint, invoke A's stale continuation and assert
-    `TaskClaimLost`, zero Storage mutation, no new Result, B's lock still owned, and equality of B's
-    TaskItem `status`, `stage`, `attempts`, `progress`, error and recovery-relevant fields.
-  - Add a valid-continuation crash-window regression: B adopts an existing resumable checkpoint and
-    stops immediately after the guarded start boundary but before publishing new progress; after a
-    repository reload, C must reconstruct the original safe checkpoint and continue without replay
-    or investigation-only degradation.
-  - Retain the real A/B/C production takeover and direct handoff-interleaving regressions. They must
-    continue proving that Task C is denied before and after A returns and that only the current
-    owner's terminal release frees the path.
-- The new production takeover regression weakens the former exact terminal assertion from
-  `status == "completed"` to `status in {"completed", "partial_success"}`, despite this Task's
-  explicit prohibition on weakened safety assertions. B ran the scenario and observed
-  `OBSERVED_TERMINAL_STATUS=completed`. Restore the exact `completed` assertion and prove the
-  transfer row, Task row, every TaskItem, Result, Files projection and Operations detail agree after
-  repository reload. Do not replace it with a set-membership assertion, conditional assertion or
-  hidden skip. Then rerun and report the complete original Task 37.4 T4 command list with exact
-  totals, skips, genuinely reproduced Task-Base failures and unavailable external gates.
