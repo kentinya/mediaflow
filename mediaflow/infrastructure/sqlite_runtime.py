@@ -218,7 +218,19 @@ from mediaflow.infrastructure.file_index_schema import (
 # every OrganizerExecutor mutation, an expired in-flight mutation is never
 # selected by the ordinary claim query, and only that owner (or an explicit
 # investigation resolution) can return the entry to a continuation-safe state.
-SCHEMA_VERSION = 37
+# 38 adds the durable owner generation on ``file_locks``: every successful
+# acquisition carries a fresh opaque ``owner_token`` so a Worker that lost its
+# claim can never release the replacement Worker's lock for the same
+# Task/storage/path.  Existing rows receive a conservative legacy identity that
+# is still exactly releasable by its owning Task but never by a generation.
+SCHEMA_VERSION = 38
+
+#: The conservative owner generation written to ``file_locks`` rows that predate
+#: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
+#: the column stays ``NOT NULL`` and a legacy row keeps one stable identity; a
+#: generation-carrying release never matches it, so an upgraded row is neither
+#: unlocked nor broadly releasable during migration.
+LEGACY_LOCK_OWNER_TOKEN = "legacy-owner-generation"
 
 # The canonical named column order of one ``task_items`` row.  Every INSERT
 # names these columns explicitly, so a statement never depends on the physical
@@ -7456,9 +7468,22 @@ class SQLiteTaskRepository:
 
                 for storage_id, path in lock_values:
                     try:
+                        # Named columns keep this insert independent of the
+                        # physical layout of an upgraded file_locks table.
+                        # The manual execution path never takes over a live
+                        # claim, so its rows keep the conservative legacy owner
+                        # identity and remain exactly releasable at Task level.
                         self._connection.execute(
-                            "INSERT INTO file_locks VALUES (?, ?, ?, ?)",
-                            (storage_id, path, execution.task_id, now.isoformat()),
+                            "INSERT INTO file_locks "
+                            "(storage_id, path, task_id, acquired_at, owner_token) "
+                            "VALUES (?, ?, ?, ?, ?)",
+                            (
+                                storage_id,
+                                path,
+                                execution.task_id,
+                                now.isoformat(),
+                                LEGACY_LOCK_OWNER_TOKEN,
+                            ),
                         )
                     except sqlite3.IntegrityError as error:
                         raise ManualExecutionError(
@@ -9316,39 +9341,129 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["occurred_at"]),
         )
 
-    def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool:
+    def acquire(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        acquired_at: datetime,
+        *,
+        owner_token: str | None = None,
+    ) -> bool:
+        """Insert one exact source-operation exclusion under a fresh generation.
+
+        The generation distinguishes two Workers that legitimately share the
+        same Task ID and path (an expired claim taken over): the replacement
+        owner's release names its own generation and can never remove the
+        predecessor's row, and vice versa.  When the caller does not supply a
+        generation the repository mints one, so every persisted row still
+        carries a unique owner identity.
+
+        The insert names its columns explicitly: historical migrations append
+        columns with ``ALTER TABLE``, so a positional INSERT would not have a
+        stable order across an upgraded and a freshly created database.
+        """
+
         normalized = self._lock_path(path)
+        token = (
+            owner_token
+            if isinstance(owner_token, str) and owner_token.strip()
+            else secrets.token_urlsafe(24)
+        )
         try:
             with self._lock, self._connection:
                 self._connection.execute(
-                    "INSERT INTO file_locks VALUES (?, ?, ?, ?)",
-                    (storage_id, normalized, task_id, acquired_at.isoformat()),
+                    "INSERT INTO file_locks "
+                    "(storage_id, path, task_id, acquired_at, owner_token) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (storage_id, normalized, task_id, acquired_at.isoformat(), token),
                 )
             return True
         except sqlite3.IntegrityError:
             return False
 
-    def lock_owned(self, storage_id: str, path: str, task_id: str) -> bool:
+    def lock_owned(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        *,
+        owner_token: str | None = None,
+    ) -> bool:
+        """Whether this exact owner still holds the exclusion.
+
+        With a ``owner_token`` the comparison is the exact acquisition
+        generation; without one it is the historical Task-level query used by
+        callers whose claim model admits a single owner per Task.
+        """
+
         normalized = self._lock_path(path)
         with self._lock:
-            row = self._connection.execute(
-                "SELECT 1 FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
-                (storage_id, normalized, task_id),
-            ).fetchone()
+            if owner_token is None:
+                row = self._connection.execute(
+                    "SELECT 1 FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
+                    (storage_id, normalized, task_id),
+                ).fetchone()
+            else:
+                row = self._connection.execute(
+                    "SELECT 1 FROM file_locks WHERE storage_id=? AND path=? AND task_id=? "
+                    "AND owner_token=?",
+                    (storage_id, normalized, task_id, owner_token),
+                ).fetchone()
         return row is not None
 
-    def release(self, storage_id: str, path: str, task_id: str) -> None:
-        with self._lock, self._connection:
-            self._connection.execute(
-                "DELETE FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
-                (storage_id, self._lock_path(path), task_id),
-            )
+    def release(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        *,
+        owner_token: str | None = None,
+    ) -> bool:
+        """Conditionally delete the exclusion this exact generation owns.
 
-    def reclaim_task_locks(self, task_id: str) -> int:
+        With a ``owner_token`` a stale owner's late release is a successful
+        no-op against a replacement owner's row: the delete additionally matches
+        the acquisition generation, so it can neither remove nor rewrite the
+        current owner's lock.  Without a generation the historical Task-level
+        delete is preserved for the non-takeover manual execution path and for
+        legacy rows.
+        """
+
+        normalized = self._lock_path(path)
         with self._lock, self._connection:
-            cursor = self._connection.execute(
-                "DELETE FROM file_locks WHERE task_id = ?", (task_id,)
-            )
+            if owner_token is None:
+                cursor = self._connection.execute(
+                    "DELETE FROM file_locks WHERE storage_id=? AND path=? AND task_id=?",
+                    (storage_id, normalized, task_id),
+                )
+            else:
+                cursor = self._connection.execute(
+                    "DELETE FROM file_locks WHERE storage_id=? AND path=? AND task_id=? "
+                    "AND owner_token=?",
+                    (storage_id, normalized, task_id, owner_token),
+                )
+        return cursor.rowcount == 1
+
+    def reclaim_task_locks(self, task_id: str, *, owner_token: str | None = None) -> int:
+        """Retire the acquisitions of one Task.
+
+        With ``owner_token`` only that generation is retired; without one every
+        row of the Task is retired.  The task-level form is used where the Task
+        itself is stopping (takeover start, cancel, pause) and the claim owner is
+        the sole authority for the Task at that moment.
+        """
+
+        with self._lock, self._connection:
+            if owner_token is None:
+                cursor = self._connection.execute(
+                    "DELETE FROM file_locks WHERE task_id = ?", (task_id,)
+                )
+            else:
+                cursor = self._connection.execute(
+                    "DELETE FROM file_locks WHERE task_id = ? AND owner_token = ?",
+                    (task_id, owner_token),
+                )
         return cursor.rowcount
 
     def _initialize(self) -> None:
@@ -9777,7 +9892,9 @@ class SQLiteTaskRepository:
                     ON manual_recovery_links(authorization_id);
                 CREATE TABLE IF NOT EXISTS file_locks (
                     storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
-                    acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)
+                    acquired_at TEXT NOT NULL,
+                    owner_token TEXT NOT NULL DEFAULT 'legacy-owner-generation',
+                    PRIMARY KEY(storage_id, path)
                 );
                 CREATE INDEX IF NOT EXISTS task_items_task_status
                     ON task_items(task_id, status);
@@ -10280,6 +10397,19 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         f"ALTER TABLE metadata_reviews ADD COLUMN {name} {declaration}"
                     )
+            lock_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(file_locks)").fetchall()
+            }
+            if "owner_token" not in lock_columns:
+                # Schema 38: every acquisition carries its own opaque owner
+                # generation.  Existing rows keep a conservative legacy identity
+                # so they are neither unlocked nor broadly releasable during the
+                # upgrade; a generation-carrying release never matches them.
+                self._connection.execute(
+                    "ALTER TABLE file_locks ADD COLUMN owner_token TEXT NOT NULL "
+                    f"DEFAULT '{LEGACY_LOCK_OWNER_TOKEN}'"
+                )
 
     @staticmethod
     def _lock_path(path: str) -> str:

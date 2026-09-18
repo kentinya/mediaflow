@@ -208,6 +208,14 @@ class PersistentTaskItem:
     # in-flight marker: once the terminal item outcome is persisted, the field
     # is cleared and the Result carries the authoritative identity/checkpoints.
     progress: str | None = None
+    # In-memory only (never a ``task_items`` column and never an operator
+    # document): the exact owner generation of the source-operation lock this
+    # execution frame acquired in ``begin_item``.  Two Workers that process the
+    # same Task/path share the Task ID but never this value, so a stale owner's
+    # release is an exact conditional delete that cannot remove the replacement
+    # owner's lock.  A frame that acquired nothing (an item reloaded from the
+    # repository) carries None and therefore never releases another owner's row.
+    lock_owner_token: str | None = None
 
 
 @dataclass(frozen=True)
@@ -546,7 +554,42 @@ class PersistentTaskRepository(Protocol):
 
 
 class FileOperationLockRepository(Protocol):
-    def acquire(self, storage_id: str, path: str, task_id: str, acquired_at: datetime) -> bool: ...
-    def lock_owned(self, storage_id: str, path: str, task_id: str) -> bool: ...
-    def release(self, storage_id: str, path: str, task_id: str) -> None: ...
-    def reclaim_task_locks(self, task_id: str) -> int: ...
+    """Durable per-source operation exclusion with exact owner generations.
+
+    A lock row is ``(storage_id, normalized path, task_id, acquired_at,
+    owner_token)``.  ``owner_token`` is a fresh opaque generation assigned to
+    every successful acquisition, so two Workers that process the same Task and
+    path — which share the Task ID by construction — still own distinct
+    generations.  A release that names a generation is an exact conditional
+    delete: a stale owner's late ``finally`` is a successful no-op against a
+    replacement owner's row.  ``owner_token=None`` keeps the historical
+    task-level conditional delete used by the non-takeover-capable manual
+    execution path and by legacy rows.
+    """
+
+    def acquire(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        acquired_at: datetime,
+        *,
+        owner_token: str | None = None,
+    ) -> bool: ...
+    def lock_owned(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        *,
+        owner_token: str | None = None,
+    ) -> bool: ...
+    def release(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        *,
+        owner_token: str | None = None,
+    ) -> bool: ...
+    def reclaim_task_locks(self, task_id: str, *, owner_token: str | None = None) -> int: ...

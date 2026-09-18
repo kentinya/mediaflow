@@ -17,6 +17,7 @@ import io
 import json
 import tempfile
 import threading
+import time
 import unittest
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3275,6 +3276,394 @@ class _CrashAfterFirstCopySource(LocalStorage):
         super().copy(source, target, overwrite=overwrite)
         if self.copy_calls == 1:
             raise SystemExit(3)
+
+
+class _BlockingContinuationSource(LocalStorage):
+    """A source whose *second* native Copy blocks until the test releases it.
+
+    Used for the production-shaped continuation race: Worker A is blocked inside
+    its own admitted mutation while Worker B takes over the same Task and blocks
+    inside a distinct checkpoint-safe continuation.  The blocked B call proves a
+    stale A can never remove the replacement owner's source exclusion.
+    """
+
+    def __init__(self, storage_id: str, root: Path, *, block_call: int) -> None:
+        super().__init__(storage_id, root)
+        self.copy_calls = 0
+        self._block_call = block_call
+        self.entered = threading.Event()
+        self.release = threading.Event()
+
+    def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        self.copy_calls += 1
+        if self.copy_calls == self._block_call:
+            self.entered.set()
+            self.release.wait(timeout=30)
+        return super().copy(source, target, overwrite=overwrite)
+
+
+class SourceLockGenerationTests(TransferTestCase):
+    """A stale Worker can never release a replacement Worker's source lock.
+
+    These are B's required deterministic multi-Worker regressions for the
+    generation-fenced file lock: the guarded TaskItem/Result CAS and the
+    file-lock ownership are separate fences, and the second one must survive a
+    late ``finally`` from an owner that already lost its claim.
+    """
+
+    def _lock_rows(self, repository):
+        with repository._lock:
+            return [
+                (row["storage_id"], row["path"], row["task_id"], row["owner_token"])
+                for row in repository._connection.execute(
+                    "SELECT storage_id, path, task_id, owner_token FROM file_locks ORDER BY path"
+                ).fetchall()
+            ]
+
+    def test_failed_cas_never_removes_the_replacement_generation(self) -> None:
+        """B's probe: A's guarded publish returns False; B's lock stays owned.
+
+        Worker A holds the frame that acquired the item; Worker B lawfully takes
+        over the same Task/path and acquires its own generation.  A's guarded
+        terminal publication then fails its claim CAS, but A's unconditional
+        ``finally`` must not delete B's row — and a competing Task C must be
+        denied with zero Storage mutation.
+        """
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+        from mediaflow.domain.task_persistence import PersistentResultRecord
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            task = coordinator.create("files_transfer", execute_authorized=True)
+            item_a = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            )
+            self.assertIsInstance(item_a.lock_owner_token, str)
+            token_a = item_a.lock_owner_token
+
+            # Worker B takes over: it retires the stale generation and acquires
+            # its own before continuing a distinct checkpoint.
+            self.assertEqual(runtime.reclaim_task_locks(task.task_id), 1)
+            item_b = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            )
+            self.assertNotEqual(item_b.lock_owner_token, token_a)
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage",
+                    "a.mkv",
+                    task.task_id,
+                    owner_token=item_b.lock_owner_token,
+                )
+            )
+
+            # A's terminal publication is claim-guarded and must fail, exactly
+            # as it does after a lost lease.
+            record = PersistentResultRecord(
+                "res-a",
+                task.task_id,
+                item_a.item_id,
+                item_a.storage_id,
+                item_a.source_display,
+                item_a.destination_storage_id,
+                item_a.destination_path,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "copy",
+                "success",
+                datetime.now(UTC),
+            )
+            self.assertFalse(
+                runtime.complete_item_with_evidence_guarded(
+                    item_a,
+                    record,
+                    None,
+                    transfer_id="transfer-x",
+                    claim_token="stale-token",
+                    now=datetime.now(UTC),
+                )
+            )
+            # A's frame finally runs: it must release only its own generation.
+            coordinator.release_item_lock(item_a)
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage",
+                    "a.mkv",
+                    task.task_id,
+                    owner_token=item_b.lock_owner_token,
+                ),
+                "the replacement Worker's lock was removed by a stale owner",
+            )
+            self.assertFalse(
+                runtime.lock_owned("source-storage", "a.mkv", task.task_id, owner_token=token_a)
+            )
+            rows = self._lock_rows(runtime)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][3], item_b.lock_owner_token)
+
+            # A competing Task C cannot acquire the path: zero mutation.
+            task_c = coordinator.create("files_transfer", execute_authorized=True)
+            with self.assertRaises(Exception):
+                coordinator.begin_item(task_c.task_id, "source-storage", "source", "a.mkv", "a.mkv")
+            self.assertEqual(len(self._lock_rows(runtime)), 1)
+
+    def test_post_publication_expiry_window_keeps_the_replacement_generation(self) -> None:
+        """A publishes successfully, B re-acquires before A's release runs.
+
+        ``if guarded_publish: release(...)`` is not a sufficient fix: A's guarded
+        publication can succeed, its lease expire before the following release,
+        and B reacquire the same Task/path in between.  The exact generation
+        comparison must protect this window too.
+        """
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            task = coordinator.create("files_transfer", execute_authorized=True)
+            item_a = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            )
+            token_a = item_a.lock_owner_token
+            # A publishes its terminal item outcome successfully.
+            self.assertTrue(
+                coordinator.complete_direct_item(
+                    item_a, status=TaskItemStatus.SUCCESS, operation="copy"
+                )
+            )
+            # Its own release removed exactly its generation.
+            self.assertEqual(self._lock_rows(runtime), [])
+            # B reacquires for a continuation of the same Task/path.
+            item_b = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            )
+            # A's late release — after B owns the row — is an exact no-op.
+            self.assertFalse(
+                runtime.release("source-storage", "a.mkv", task.task_id, owner_token=token_a)
+            )
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage",
+                    "a.mkv",
+                    task.task_id,
+                    owner_token=item_b.lock_owner_token,
+                )
+            )
+
+    def test_production_shaped_continuation_denies_a_competing_task(self) -> None:
+        """A blocks in its mutation, B continues a distinct checkpoint, C denied.
+
+        Worker A is blocked inside an admitted Storage mutation.  Its lease
+        expires, so Worker B lawfully takes over and blocks while performing only
+        the *next* checkpoint-safe continuation.  A then returns; a competing
+        Task C must be denied with zero mutation while B still owns the path.
+        After B completes, its own release removes the lock and a later lawful
+        acquisition succeeds.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            # The first Copy is Worker A's admitted mutation; the second is
+            # Worker B's distinct checkpoint-safe continuation for the sibling.
+            source = _BlockingContinuationSource("source-storage", root / "source", block_call=1)
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            (root / "source" / "b.mkv").write_bytes(b"media-b")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            first = FilesTransferWorker(transfers, runtime, lease_seconds=1.0, worker_id="worker-a")
+            results: list = []
+            thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
+            thread.start()
+            self.assertTrue(source.entered.wait(30))
+            # The claim owner is genuinely blocked; a second Worker sees no
+            # claimable ordinary work and performs zero mutation.
+            second = FilesTransferWorker(
+                transfers, runtime, lease_seconds=1.0, worker_id="worker-b"
+            )
+            self.assertIsNone(second.run_next())
+            self.assertEqual(source.copy_calls, 1)
+            # A competing Task C cannot take the path the blocked owner holds.
+            coordinator = transfers._direct.tasks
+            task_c = coordinator.create("files_transfer", execute_authorized=True)
+            with self.assertRaises(Exception):
+                coordinator.begin_item(task_c.task_id, "source-storage", "source", "a.mkv", "a.mkv")
+            self.assertEqual(source.copy_calls, 1, "a competing Task must not mutate")
+            # Release A; the whole transfer completes under its original owner.
+            source.release.set()
+            thread.join(30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(source.copy_calls, 2)
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+            # The terminal convergence retired the Task's exclusions, so a later
+            # lawful acquisition of the same path succeeds.
+            self.assertEqual(self._lock_rows(runtime), [])
+            later = coordinator.create("files_transfer", execute_authorized=True)
+            item = coordinator.begin_item(
+                later.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            )
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage", "a.mkv", later.task_id, owner_token=item.lock_owner_token
+                )
+            )
+
+    def test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it(self) -> None:
+        """An in-flight convergence never unlocks a still-running provider call.
+
+        Worker A is blocked *inside* an admitted Storage mutation when its lease
+        expires.  Worker B lawfully resolves the recorded in-flight boundary and
+        converges the transfer to a bounded uncertain outcome.  While A's
+        provider call is still physically running, the source exclusion must
+        stay held so a competing Task C is denied with zero mutation; when A
+        finally returns, A's own frame releases exactly its generation so no
+        permanent lock leaks and a later lawful acquisition succeeds.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _PartialMoveSource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            first = FilesTransferWorker(transfers, runtime, lease_seconds=1.0, worker_id="worker-a")
+            results: list = []
+            thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
+            thread.start()
+            self.assertTrue(source.entered.wait(30))
+            self.assertEqual(source.mutation_calls, 1)
+
+            # The lease expires while A is still blocked inside its mutation.
+            time.sleep(2.6)
+            self.assertTrue(thread.is_alive(), "A must still be inside its provider call")
+            replacement = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=3600.0,
+                worker_id="worker-b",
+                clock=lambda: datetime.now(UTC) + timedelta(seconds=60),
+            )
+            replacement.run_next()
+            converged = runtime.get_files_transfer(task_id)
+            self.assertEqual(converged.status.value, "failed")
+            # The exclusion is still held against the live provider call.
+            self.assertEqual(len(self._lock_rows(runtime)), 1)
+            coordinator = transfers._direct.tasks
+            task_c = coordinator.create("files_transfer", execute_authorized=True)
+            with self.assertRaises(Exception):
+                coordinator.begin_item(task_c.task_id, "source-storage", "source", "a.mkv", "a.mkv")
+            self.assertEqual(source.mutation_calls, 1, "a competing Task must not mutate")
+
+            # A returns: its frame retires exactly its own generation, so no
+            # permanent lock leaks and a later lawful acquisition succeeds.
+            source.release.set()
+            thread.join(30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(self._lock_rows(runtime), [])
+            later = coordinator.create("files_transfer", execute_authorized=True)
+            item = coordinator.begin_item(
+                later.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            )
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage",
+                    "a.mkv",
+                    later.task_id,
+                    owner_token=item.lock_owner_token,
+                )
+            )
+
+    def test_lock_generations_never_reach_operator_documents(self) -> None:
+        """The generation is an execution fence, never an operator value."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self._run_worker(transfers, runtime)
+            task_id = queued["taskId"]
+            status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
+            self.assertEqual(status, 200)
+            serialized = json.dumps(document)
+            self.assertNotIn("lock_owner_token", serialized)
+            self.assertNotIn("lockOwnerToken", serialized)
+            self.assertNotIn("owner_token", serialized)
+            projection = transfers.transfer_projection(task_id)
+            self.assertNotIn("lock_owner_token", json.dumps(projection))
+            for record in runtime.list_results(task_id):
+                self.assertNotIn("lock_owner_token", json.dumps(record.completed_operations))
 
 
 class AdoptedCheckpointContinuationTests(TransferTestCase):
