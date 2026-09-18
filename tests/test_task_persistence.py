@@ -676,5 +676,183 @@ class Schema36To37UpgradeTests(unittest.TestCase):
                 self.assertEqual(resolved.transfer_id, "task-upgrade")
 
 
+class Schema37To38UpgradeTests(unittest.TestCase):
+    """The real 37 -> 38 file_locks upgrade preserves an existing lock row.
+
+    Schema 38 adds the durable owner generation to ``file_locks``.  An upgraded
+    database must accept the same named-column inserts and loads as a fresh one,
+    an existing lock row must survive with a conservative legacy identity that is
+    still Task-level releasable but never matches a generation release, and a
+    newly acquired generation must be exactly releasable without weakening the
+    normalized-path uniqueness across Tasks.
+    """
+
+    _SCHEMA37_FILE_LOCKS_DDL = """
+        CREATE TABLE file_locks (
+            storage_id TEXT NOT NULL, path TEXT NOT NULL, task_id TEXT NOT NULL,
+            acquired_at TEXT NOT NULL, PRIMARY KEY(storage_id, path)
+        )
+    """
+
+    @staticmethod
+    def _create_schema37_database(path: Path) -> None:
+        connection = sqlite3.connect(path)
+        try:
+            connection.execute(
+                "CREATE TABLE schema_version (component TEXT PRIMARY KEY, version INTEGER NOT NULL)"
+            )
+            connection.execute("INSERT INTO schema_version VALUES ('runtime', 37)")
+            connection.execute(
+                """CREATE TABLE tasks (
+                    task_id TEXT PRIMARY KEY, command TEXT NOT NULL, status TEXT NOT NULL,
+                    execute_authorized INTEGER NOT NULL, created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL, started_at TEXT, completed_at TEXT,
+                    total_items INTEGER NOT NULL, completed_items INTEGER NOT NULL,
+                    failed_items INTEGER NOT NULL, error TEXT,
+                    pause_requested INTEGER NOT NULL DEFAULT 0,
+                    scope_path TEXT, item_limit INTEGER,
+                    configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT
+                )"""
+            )
+            connection.execute(Schema37To38UpgradeTests._SCHEMA37_FILE_LOCKS_DDL)
+            # A pre-existing lock row exactly as schema 37 could have written it.
+            connection.execute(
+                "INSERT INTO file_locks VALUES (?, ?, ?, ?)",
+                ("source", "Media/movie.mkv", "task-existing", "2026-09-01T00:00:00+00:00"),
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def test_upgraded_file_locks_gains_a_conservative_owner_generation(self) -> None:
+        from mediaflow.infrastructure.sqlite_runtime import LEGACY_LOCK_OWNER_TOKEN
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "upgraded.sqlite3")
+            self._create_schema37_database(database)
+            now = datetime.now(UTC)
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                with sqlite3.connect(database) as connection:
+                    columns = [
+                        row[1]
+                        for row in connection.execute("PRAGMA table_info(file_locks)").fetchall()
+                    ]
+                self.assertIn("owner_token", columns)
+                # The existing row survived with the conservative legacy identity
+                # rather than becoming unlocked or broadly releasable.
+                with sqlite3.connect(database) as connection:
+                    row = connection.execute(
+                        "SELECT task_id, owner_token FROM file_locks WHERE storage_id=? AND path=?",
+                        ("source", "Media/movie.mkv"),
+                    ).fetchone()
+                self.assertEqual(row[0], "task-existing")
+                self.assertEqual(row[1], LEGACY_LOCK_OWNER_TOKEN)
+                # It is still exactly releasable at Task level, and a
+                # generation-carrying release never matches it.
+                self.assertTrue(repository.lock_owned("source", "Media/movie.mkv", "task-existing"))
+                self.assertFalse(
+                    repository.release(
+                        "source",
+                        "Media/movie.mkv",
+                        "task-existing",
+                        owner_token="not-the-generation",
+                    )
+                )
+                self.assertTrue(repository.lock_owned("source", "Media/movie.mkv", "task-existing"))
+                self.assertTrue(repository.release("source", "Media/movie.mkv", "task-existing"))
+                self.assertFalse(
+                    repository.lock_owned("source", "Media/movie.mkv", "task-existing")
+                )
+
+                # A new acquisition carries a fresh generation.  Normalized-path
+                # uniqueness across Tasks is preserved, and only the exact
+                # generation may release the row.
+                self.assertTrue(
+                    repository.acquire(
+                        "source",
+                        "Media/other.mkv",
+                        "task-a",
+                        now,
+                        owner_token="generation-a",
+                    )
+                )
+                self.assertFalse(
+                    repository.acquire(
+                        "source",
+                        "Media//other.mkv",
+                        "task-b",
+                        now,
+                        owner_token="generation-b",
+                    )
+                )
+                self.assertTrue(
+                    repository.lock_owned(
+                        "source", "Media/other.mkv", "task-a", owner_token="generation-a"
+                    )
+                )
+                self.assertFalse(
+                    repository.release(
+                        "source",
+                        "Media/other.mkv",
+                        "task-a",
+                        owner_token="generation-b",
+                    )
+                )
+                self.assertTrue(
+                    repository.lock_owned(
+                        "source", "Media/other.mkv", "task-a", owner_token="generation-a"
+                    )
+                )
+                self.assertTrue(
+                    repository.release(
+                        "source",
+                        "Media/other.mkv",
+                        "task-a",
+                        owner_token="generation-a",
+                    )
+                )
+                self.assertFalse(
+                    repository.lock_owned(
+                        "source", "Media/other.mkv", "task-a", owner_token="generation-a"
+                    )
+                )
+
+    def test_fresh_and_upgraded_file_locks_load_the_same_values(self) -> None:
+        """A fresh schema-38 table and an upgraded one behave identically."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "upgraded.sqlite3")
+            self._create_schema37_database(database)
+            now = datetime.now(UTC)
+            with SQLiteTaskRepository(database) as upgraded:
+                self.assertTrue(
+                    upgraded.acquire("source", "a.mkv", "task-a", now, owner_token="token-a")
+                )
+                self.assertTrue(
+                    upgraded.lock_owned("source", "a.mkv", "task-a", owner_token="token-a")
+                )
+                with sqlite3.connect(database) as connection:
+                    upgraded_row = connection.execute(
+                        "SELECT storage_id, path, task_id, owner_token FROM file_locks "
+                        "WHERE path=?",
+                        ("a.mkv",),
+                    ).fetchone()
+            with tempfile.TemporaryDirectory() as fresh_directory:
+                fresh_database = Path(fresh_directory, "fresh.sqlite3")
+                with SQLiteTaskRepository(fresh_database) as fresh:
+                    self.assertTrue(
+                        fresh.acquire("source", "a.mkv", "task-a", now, owner_token="token-a")
+                    )
+                    with sqlite3.connect(fresh_database) as connection:
+                        fresh_row = connection.execute(
+                            "SELECT storage_id, path, task_id, owner_token FROM file_locks "
+                            "WHERE path=?",
+                            ("a.mkv",),
+                        ).fetchone()
+            self.assertEqual(upgraded_row, fresh_row)
+            self.assertEqual(upgraded_row[3], "token-a")
+
+
 if __name__ == "__main__":
     unittest.main()

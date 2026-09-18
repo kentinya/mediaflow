@@ -1674,26 +1674,37 @@ class DirectFileTransferService:
 
         outcomes: list[dict[str, object]] = []
         checkpoints: list[dict[str, object]] = []
-        _, paused, cancelled = self._execute_item(
-            plan=plan,
-            top_level=item.source_display,
-            source=source,
-            destination=destination,
-            source_storage=source_storage,
-            destination_storage=destination_storage,
-            checkpoints=checkpoints,
-            task_id=task_id,
-            item=item,
-            batch_conflict=batch_conflict,
-            destination_root=plan.destinations.get(item.source_display, item.source_display),
-            confirmed_entries=confirmed_entries,
-            confirmed_truncated=confirmed_truncated,
-            skip_paths=skip_paths,
-            interruption=interruption,
-            collect=outcomes.extend,
-            fence=fence,
-        )
+        try:
+            _, paused, cancelled = self._execute_item(
+                plan=plan,
+                top_level=item.source_display,
+                source=source,
+                destination=destination,
+                source_storage=source_storage,
+                destination_storage=destination_storage,
+                checkpoints=checkpoints,
+                task_id=task_id,
+                item=item,
+                batch_conflict=batch_conflict,
+                destination_root=plan.destinations.get(item.source_display, item.source_display),
+                confirmed_entries=confirmed_entries,
+                confirmed_truncated=confirmed_truncated,
+                skip_paths=skip_paths,
+                interruption=interruption,
+                collect=outcomes.extend,
+                fence=fence,
+            )
+        except BaseException:
+            # A lost claim, pause/cancel observation or unexpected provider
+            # failure returns control here before the terminal publish.  This
+            # frame releases exactly the acquisition generation it owns, so a
+            # path it no longer owns is left untouched and its own exclusion is
+            # not leaked.  The release is idempotent with the terminal publish
+            # below.
+            self._direct.tasks.release_item_lock(item)
+            raise
         if paused or cancelled:
+            self._direct.tasks.release_item_lock(item)
             return "pause" if paused else "cancel"
         status = _item_status(outcomes)
         unknown = "UNCERTAIN" in {str(value["status"]) for value in outcomes}

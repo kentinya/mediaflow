@@ -677,10 +677,10 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                # Runtime schema 35 adds the bounded in-flight
-                # transfer-progress column on task_items for interrupted
-                # Files transfer recovery.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 37)
+                # Runtime schema 38 adds the durable owner generation on
+                # file_locks so a stale Worker can never release a
+                # replacement Worker's source exclusion.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 38)
 
 
 if __name__ == "__main__":

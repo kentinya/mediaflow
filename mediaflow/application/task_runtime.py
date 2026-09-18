@@ -187,7 +187,15 @@ class PersistentTaskCoordinator:
         persisted_item = self.repository.get_item(item_id)
         if persisted_item is not None:
             item = persisted_item
-        if not self.locks.acquire(storage_id, source_path, task_id, now):
+        # The acquisition generation is what makes release exact: this frame
+        # owns only the lock row it inserted, so a late `finally` after a
+        # replacement Worker re-acquired the same Task/path cannot remove the
+        # replacement's row.  The token is minted per acquisition and never
+        # persisted on the item, published in an operator document or logged.
+        lock_owner_token = f"{task_id}:{uuid4().hex}"
+        if not self.locks.acquire(
+            storage_id, source_path, task_id, now, owner_token=lock_owner_token
+        ):
             failed = replace(
                 item,
                 status=TaskItemStatus.FAILED,
@@ -197,7 +205,32 @@ class PersistentTaskCoordinator:
             )
             self.repository.upsert_item(failed)
             raise TaskLockError(failed.error)
+        # The generation travels with the execution frame for the whole item
+        # lifetime: every terminal/publication path releases exactly it.
+        item = replace(item, lock_owner_token=lock_owner_token)
         return item
+
+    def release_item_lock(self, item: PersistentTaskItem) -> None:
+        """Release exactly the acquisition generation this frame owns.
+
+        ``item.lock_owner_token`` is set only by ``begin_item`` on the frame
+        that actually acquired the row.  An item reloaded from the repository
+        (or written by an older/adapter implementation) carries no generation:
+        releasing it as a task-level delete would let a stale owner remove a
+        replacement owner's row, so such a frame releases nothing and the lock
+        is retired only by the authorized Task-level transition that owns the
+        Task at that moment (takeover, cancel, pause, reclaim).
+        """
+
+        token = getattr(item, "lock_owner_token", None)
+        if not isinstance(token, str) or not token:
+            return
+        self.locks.release(
+            item.storage_id,
+            item.source_path,
+            item.task_id,
+            owner_token=token,
+        )
 
     def cancel(self, task_id: str) -> PersistentTask:
         task = self.require(task_id)
@@ -390,7 +423,7 @@ class PersistentTaskCoordinator:
                 if result.evidence is not None:
                     self.record_evidence(result.evidence)
         finally:
-            self.locks.release(item.storage_id, item.source_path, item.task_id)
+            self.release_item_lock(item)
 
     def record_evidence(self, evidence: PipelineEvidence) -> None:
         """Persist one bounded evidence record at a TaskItem boundary."""
@@ -498,7 +531,12 @@ class PersistentTaskCoordinator:
                 self.repository.append_result(record)
                 self.repository.upsert_item(completed)
         finally:
-            self.locks.release(item.storage_id, item.source_path, item.task_id)
+            # This unconditional cleanup is exactly the stale-owner race B
+            # reproduced: the guarded CAS above may have returned False after a
+            # replacement Worker re-acquired the same Task/path.  The release is
+            # therefore bound to this frame's own acquisition generation, so it
+            # deletes nothing when the row now belongs to the replacement owner.
+            self.release_item_lock(item)
         return True
 
     def record_transfer_progress(
@@ -611,7 +649,7 @@ class PersistentTaskCoordinator:
             item=waiting,
             evidence=evidence,
         )
-        self.locks.release(item.storage_id, item.source_path, item.task_id)
+        self.release_item_lock(item)
 
     def wait_for_metadata(
         self,
@@ -626,7 +664,7 @@ class PersistentTaskCoordinator:
         MetadataReviewService(self.repository).create(
             item, identification, metadata_policy_id, evidence=evidence
         )
-        self.locks.release(item.storage_id, item.source_path, item.task_id)
+        self.release_item_lock(item)
 
     def wait_for_recognition(
         self,
@@ -641,7 +679,7 @@ class PersistentTaskCoordinator:
         RecognitionReviewService(self.repository, recognition_types).create(
             item, recognition, evidence=evidence
         )
-        self.locks.release(item.storage_id, item.source_path, item.task_id)
+        self.release_item_lock(item)
 
     def wait_for_metadata_correction(
         self,
@@ -657,7 +695,7 @@ class PersistentTaskCoordinator:
         MetadataCorrectionService(self.repository, (policy,)).create(
             item, identification, policy, parsed, evidence=evidence
         )
-        self.locks.release(item.storage_id, item.source_path, item.task_id)
+        self.release_item_lock(item)
 
     def wait_for_classification(
         self,
@@ -673,7 +711,7 @@ class PersistentTaskCoordinator:
         ClassificationReviewService(self.repository).create(
             item, result, policy, identity, evidence=evidence
         )
-        self.locks.release(item.storage_id, item.source_path, item.task_id)
+        self.release_item_lock(item)
 
     def finish(
         self,

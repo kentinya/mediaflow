@@ -533,111 +533,113 @@ not satisfy the browser assertion.
 
 ## Developer Completion Report
 
-> Correction round 5, 2026-09-18: this report covers the two blockers of the B
-> review of `4954502..28d07bf` (truthful in-flight resolution: a known/uncertain
-> mutation is never erased into a fabricated zero-effect FAILED, and the exact
-> admitted operation plus boundary decide the classification). It supersedes the
-> round-4 report below. The correction commit sits after the round-4 checkpoint
-> `49f7765` without amending it.
+> Correction round 6, 2026-09-18: this report covers the single blocker of the B
+> review of `4954502..95cf8ae` (claim fencing still did not fence release of the
+> per-source file lock: a stale Worker A could delete the replacement Worker B's
+> lock for the same Task/path). It supersedes the round-5 report. The correction
+> commit sits after the round-5 checkpoint `60bfc9d` without amending it.
 
 ### Changed Files
 
-- `mediaflow/application/direct_file_transfers.py` — the in-flight resolver is
-  restructured to decide from the durable mutation boundary before any
-  continuation authority is parsed, made operation-aware and
-  checkpoint-producing, and split into `_classify_in_flight_effect` (zero
-  mutation, exact classification), `_adopted_progress` (merge the proven
-  evidence into the bounded progress document), `_publish_adopted_progress`
-  (persist the adopted checkpoint and clear the boundary in one guarded write),
-  `_adopted_scope_is_complete` and `_complete_adopted_item` (finish an item whose
-  whole confirmed scope the adopted evidence already covers);
-  `_resolve_in_flight_mutation` now reads/retains the recorded bounded evidence
-  first, routes a post-boundary unreadable authority to
-  `UNCERTAIN`/`attempted_unverified`/investigation instead of the pre-mutation
-  `FAILED` path, and never declares a same-Storage Move complete from destination
-  type and size alone; `_exact_entry_binding` requires provider-verifiable entry
-  identity for a Move adopted after the source disappeared;
-  `_entry_is_directory` and a `_destination_root_of` helper support the same
-  classification; `_resume_entry_outcome` requires the identical exact entry
-  binding before recording an interrupted Move as complete; `_record_progress`
-  and `_progress_checkpoint_evidence` carry an adopted entry's checkpoints so
-  reload reproduces the exact verified effect; the uncertainty next-action
-  wording now states the bounded operator truth (the result cannot be confirmed,
-  source and destination may both exist, MediaFlow did not retry, refresh and
-  inspect, choose an explicit follow-up).
-- `tests/test_direct_file_transfers.py` — new `InFlightResolutionTests` (B's two
-  two-Worker regressions plus the paired pre-mutation corrupt-authority test),
-  `AdoptedCheckpointContinuationTests` (a proven Copy checkpoint is adopted and
-  only the next distinct admitted action runs; a proven cross-Storage destination
-  resumes only the destructive step) and `TerminalPublicationFaultTests` (a fault
-  at the terminal per-item publication after a persisted verified effect, and a
-  faulted publication that still converges to a terminal state without a
-  permanently running projection); new `_PartialMoveSource`,
-  `_CrashAfterFirstCopySource` and `_FaultyFenceRepository` doubles.
+- `mediaflow/domain/task_persistence.py` — `PersistentTaskItem` gains an
+  in-memory-only `lock_owner_token` (never a `task_items` column, never an
+  operator document); `FileOperationLockRepository` documents and exposes the
+  exact owner generation on `acquire`/`lock_owned`/`release`, each keeping
+  `owner_token: str | None = None` so the historical Task-level behaviour is
+  preserved for the manual-execution path and legacy rows.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `SCHEMA_VERSION` 38; `file_locks`
+  gains `owner_token TEXT NOT NULL DEFAULT 'legacy-owner-generation'` with an
+  additive in-place `ALTER TABLE` migration; `acquire` mints a fresh opaque
+  `secrets.token_urlsafe(24)` when none is supplied and inserts by named columns;
+  `lock_owned`/`release` compare the exact generation (or fall back to the
+  historical Task-level form when none is named); `reclaim_task_locks` accepts an
+  optional generation; the manual-execution admission insert names its columns and
+  keeps the conservative legacy identity.
+- `mediaflow/application/task_runtime.py` — `begin_item` mints a per-acquisition
+  `f"{task_id}:{uuid4().hex}"` generation, acquires with it and carries it on the
+  returned frame; the new public `release_item_lock` releases **only** the
+  generation the frame actually owns and is a no-op for a tokenless frame; every
+  former unconditional `locks.release(...)` call site (`complete_item`,
+  `complete_direct_item`, and the five waiting/confirmation boundaries) now routes
+  through it.
+- `mediaflow/application/direct_file_transfers.py` — `_execute_item_with_fences`
+  releases the frame's own generation on the pause/cancel path and in an
+  `except BaseException` guard, so a lost claim, an observed pause/cancel or an
+  unexpected provider failure can neither remove a replacement owner's lock nor
+  leak this frame's own exclusion.
+- `mediaflow/interfaces/service_api.py` — `lock_owner_token` is added to
+  `_HIDDEN_DOCUMENT_FIELDS` so the fence can never appear in a Files/Operations
+  document.
+- `mediaflow/application/automation.py` — `ProcessingWorkerService`'s
+  `runtime_schema_version` default follows `SCHEMA_VERSION` to 38, as its own
+  comment requires.
+- `tests/test_task_persistence.py` — new `Schema37To38UpgradeTests` (upgrade from a
+  real schema-37 database with a pre-existing lock row; the row survives with the
+  legacy identity, is still Task-level releasable, is never matched by a
+  generation release, normalized-path uniqueness across Tasks holds, and a fresh
+  schema-38 table and an upgraded one load identical values).
+- `tests/test_direct_file_transfers.py` — new `SourceLockGenerationTests` (B's
+  failed-CAS probe, the post-publication expiry window, a production-shaped
+  continuation, the live-mutation in-flight convergence and the
+  no-generation-in-operator-documents guard) plus the `_BlockingContinuationSource`
+  double.
+- `tests/test_configuration_classification.py`,
+  `tests/test_configuration_destination.py`,
+  `tests/test_configuration_destination_activation.py`,
+  `tests/test_configuration_destination_precheck.py`,
+  `tests/test_configuration_organize.py` — the runtime-schema marker assertions
+  follow the authorized additive migration to 38, with the reason updated.
 
 ### Implemented
 
-- **Blocker 1 — in-flight resolution can erase a known/uncertain mutation.**
-  `run_claimed_transfer` now resolves an expired boundary **before** any
-  authority reconstruction that can fail, and inside the resolver the recorded
-  `item_id`/entry path/action are read first. `mutation_state=mutation_in_flight`
-  is treated as durable proof that a Storage mutation may already have taken
-  effect:
-  - an authority that is missing, malformed, digest-mismatched or otherwise
-    unreadable **after** the boundary converges the exact recorded item to
-    `UNCERTAIN`, `effect_certainty=attempted_unverified`, `retrySafe=false` and an
-    inspection-only next action, with zero `OrganizerExecutor` mutation and never
-    through the generic pre-mutation corrupt-authority convergence;
-  - the identical failure **before** any boundary keeps today's pre-mutation
-    behaviour (`FAILED`, `effect_certainty=none`, zero mutation, a
-    correctable/investigation action);
-  - a same-Storage native `MOVE` with **both** source and destination present is
-    a partial or still-changing effect: zero new mutation, no routing through the
-    ordinary `target_exists` conflict path, and conservative
-    `UNCERTAIN`/investigation unless a provider-neutral exact terminal proof
-    already exists. A destination-only observation is adopted as a completed
-    native Move only when the provider-published entry identity still binds the
-    admitted source; size and type alone are never authority — the same rule now
-    also guards the ordinary continuation in `_resume_entry_outcome`;
-  - everything the provider cannot prove — including a missing destination, which
-    the previous owner's blocked call may still be producing — fails closed to
-    the same durable investigation outcome, and the interrupted operation is
-    never invoked again;
-  - the bounded logical operation evidence is preserved in the terminal Result
-    (`entry:<STATUS>:<path>`, `entry_error:<category>:<path>` plus any adopted
-    executor checkpoint) so a repository reload reproduces exactly why the item
-    is uncertain. No host path, credential, raw corrupt JSON or provider
-    exception is persisted or surfaced.
-- **Blocker 2 — operation-aware, checkpoint-producing resolution.** The
-  classification uses the pinned requested operation, the pinned
-  same/cross-Storage decision, the admitted entry kind and the exact mutation
-  action. A proven Copy is adopted as `COPY`; a proven cross-Storage destination
-  is a durable safe checkpoint recorded as
-  `copy_written` + `destination_verified` (deliberately **not** entry-complete,
-  because the separately admitted destructive step remains) and is continued
-  through the compound Move — never re-copied; a proven directory action is
-  adopted as its own idempotent post-state. The adopted checkpoint is persisted
-  **atomically with clearing** `mutation_in_flight` through the same claim-guarded
-  `record_transfer_progress` write the ordinary per-entry path uses, so merely
-  clearing the flag can never let the continuation re-derive an unrecorded
-  effect. When the adopted evidence already covers the item's whole confirmed
-  scope (including the Move's emptied source root, verified with zero mutation),
-  the item is finished from it under the same guards.
-- **One truthful user-visible recovery state.** Transfer row, Task, every
-  TaskItem, every Result, the Files projection and the Operations detail are all
-  derived from the same post-resolution evidence and agree on `UNCERTAIN`; the
-  Files next action states the bounded truth without exposing `authority_json`,
-  claim tokens or raw checkpoint identifiers. The previous owner may still return
-  after lease loss: every late publication stays rejected by claim-token CAS and
-  cannot rewrite the resolver's terminal/investigation result.
+- **The blocker — release is now bound to the exact acquisition generation.**
+  `begin_item` mints a fresh opaque generation per successful acquisition and
+  persists it on the `file_locks` row; the same generation rides the in-memory
+  execution frame. `release`/`lock_owned` are exact conditional matches on
+  `(storage_id, path, task_id, owner_token)`, so a stale Worker's late `finally`
+  is a successful no-op against a replacement owner's row instead of a delete.
+  Both Workers legitimately share the Task ID and path on takeover, so the Task ID
+  alone could never distinguish them; the generation does.
+- **Both races the plan named are closed, not just the failed-CAS one.** The fix
+  is not `if guarded_publish: release(...)`. Because ownership is carried on the
+  frame and compared exactly, it protects the failed-publication race *and* the
+  post-publication expiry window (A publishes successfully, its lease expires
+  before its release, B reacquires, and A's late release is still a no-op).
+- **The durable and in-memory fences stay separate.** The TaskItem/Result/transfer
+  claim CAS continues to prevent stale durable publication; the file-lock
+  generation independently prevents a stale execution frame from removing the
+  current source-operation exclusion. Neither substitutes for the other.
+- **Takeover retires only the stale generation.** `reclaim_task_locks` still
+  supports the authoritative Task-level transition used by takeover start,
+  `cancel`, `acknowledge_pause` and the `final_cli` retry path, and now also
+  accepts an exact generation for a caller that knows it.
+- **No permanent lock leaks and no unsafe early unlock.** Every terminal,
+  pause/cancel, pre-mutation failure and uncertain convergence path releases only
+  the generation it owns: the coordinator's per-item boundaries and the transfer
+  frame's own terminals do the release, and the transfer frame additionally
+  releases in its `except BaseException` and pause/cancel branches. I explicitly
+  did **not** retire locks from the `files_transfers` convergence write itself:
+  a transfer converged *from* a recorded in-flight boundary may still have its
+  predecessor's provider call physically running, and deleting the exclusion there
+  would let a competing Task acquire the same path during that live mutation
+  (I reproduced that as a P0 during development and removed it). The owning frame
+  releases it when it returns. Repeated cleanup is idempotent.
+- **Migration is conservative.** Existing rows receive the non-null sentinel
+  `legacy-owner-generation`, so they are neither silently unlocked nor broadly
+  releasable; a generation-carrying release simply does not match them, while the
+  Task-level form still releases them exactly. Normalized-path uniqueness across
+  Tasks is unchanged.
+- **The generation never becomes an operator value.** It is absent from the
+  `file_locks`-derived operator documents (`_HIDDEN_DOCUMENT_FIELDS`), from the
+  Result evidence and from any log; it is an execution fence, not a display field.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/ruff format --check .` — PASS (307 files already formatted);
   `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (73,
-  was 66; 7 new regressions).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (78,
+  was 73; 5 new regressions).
 - `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (55).
 - `.venv/bin/python -m unittest tests.test_source_directory_cleanup
   tests.test_manual_organize_execution tests.test_configuration_organize` —
@@ -649,23 +651,27 @@ not satisfy the browser assertion.
   tests.test_openlist_storage tests.test_s3_storage` — PASS (94).
 - `.venv/bin/python -m unittest tests.test_runtime_files_browser
   tests.test_api_security tests.test_task_persistence tests.test_task_pause_resume
-  tests.test_task_retry` — PASS (46).
-- `.venv/bin/python -m unittest discover -s tests` — 1675 tests: 3 failures,
-  7 skips. The 3 failures are exactly the Task Base baseline:
+  tests.test_task_retry` — PASS (48; `test_task_persistence` is 13, was 11).
+- `.venv/bin/python -m unittest discover -s tests` — 1682 tests: 3 failures,
+  7 skips. The 3 failures are exactly the Task Base baseline and were reproduced
+  identically at a clean `4954502` worktree:
   `test_configuration_status.ConfigurationSnapshotTests.
   test_hostile_configuration_content_is_never_exposed` and the two
   `test_manual_operations_contract.ManualOperationsContractTests.
   test_real_api_documents_*` golden-fixture failures asserting 201. Pre-existing
-  and unrelated; whether they block PASS is B's judgment, not mine.
+  and unrelated; whether they block PASS is B's judgment, not mine. (The hostile
+  test's rendered payload still contains the server host path "root" at the Base
+  as well; only the reported `runtime_schema_version` differs, which is the
+  intended additive bump.)
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS;
   `.venv/bin/python -m pip check` — PASS (no broken requirements).
 - `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE in this
-  workspace: `docker compose up -d --no-build` fails with
-  `invalid mount config for type "bind": bind source path does not exist:
-  /tmp/mediaflow-smoke-security-*/mediaflow.json`, i.e. the smoke context cannot
-  be bind-mounted here. Not a product failure; `rg` is also absent in this
-  workspace so the ffprobe/ffmpeg gate was rerun with `grep -rniE` — PASS (no
-  match in `mediaflow` or `pyproject.toml`).
+  workspace, and still so after this correction: `docker compose up -d --no-build`
+  fails with `invalid mount config for type "bind": bind source path does not
+  exist: /tmp/mediaflow-smoke-security-*/mediaflow.json`, i.e. the smoke context
+  cannot be bind-mounted here. Not a product failure. `rg` is also absent in this
+  workspace, so the ffprobe/ffmpeg gate was run with
+  `grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml` — PASS (no match).
 - `cd web && npm run format:check` — PASS; `npm run typecheck` — PASS;
   `npm run lint` — PASS (0 errors).
 - `cd web && NODE_ENV=test npx vitest run
@@ -676,104 +682,86 @@ not satisfy the browser assertion.
 - `cd web && npm run build` — PASS.
 - `cd web && NODE_ENV=test npx playwright test
   tests/e2e/library-files.spec.ts --project=chromium` — PASS (28).
-- `cd web && NODE_ENV=test npm run test:e2e` — 116 tests: 106 passed, 10 failed;
-  the same 10 failures (`library-file-detail` 7 + `manual-operations` 3)
-  reproduce identically at the clean Task Base worktree. Pre-existing and
-  unrelated; B judges.
+- `cd web && NODE_ENV=test npm run test:e2e` — 106 passed, 10 failed; the same 10
+  failures (`library-file-detail` 7 + `manual-operations` 3) reproduce identically
+  at a clean `4954502` worktree that was built and run the same way. Pre-existing
+  and unrelated; B judges.
 - `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS;
   `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
-  (schema 37, database verify OK).
+  (schema 38, database verify OK).
 - `git diff --check` — PASS (no whitespace errors).
 
-New regression evidence (all in `tests/test_direct_file_transfers.py`):
+New regression evidence for this correction:
 
-- `InFlightResolutionTests.test_same_storage_partial_move_converges_without_replay_or_erasure`
-  — B's first repro shape: `_PartialMoveSource.move` lands the complete target
-  through the real native copy path and then blocks; Worker A's lease expires.
-  Worker B issues exactly **one** cumulative Storage mutation (zero new), does
-  not route the item through `target_exists`, and every surface reports
-  `UNCERTAIN`: transfer/Task `error=mutation_outcome`, TaskItem `partial`, Result
-  `partial` + `attempted_unverified` + `files_transfer_mutation_unresolved`, Files
-  projection `UNCERTAIN` with `retrySafe=false` and the inspection-only next
-  action, and the Operations `…/operations/tasks/<id>` projection agrees for Task,
-  every TaskItem and every Result. Live source **and** complete target both exist
-  and stay that way. Releasing Worker A and reopening the repository
-  (`SQLiteTaskRepository`) leaves the identical investigation outcome.
-- `InFlightResolutionTests.test_corrupt_authority_after_an_entered_mutation_is_uncertain`
-  — B's second repro: `authority_json` is corrupted only after Worker A entered
-  the Copy. Worker B performs zero mutation and publishes
-  `UNCERTAIN` + `attempted_unverified` (+ `mutation_outcome`) with the same
-  cross-surface agreement; after Worker A's released call creates the target, the
-  reopened repository retains the identical investigation-only outcome.
-- `InFlightResolutionTests.test_corrupt_authority_before_any_mutation_stays_bounded_failed`
-  — the paired guard: with no boundary the identical corruption still produces
-  `files_transfer_invalid_authority`, `FAILED`, `effect_certainty=none`, no
-  uncertain effects, zero mutation and intact source.
-- `AdoptedCheckpointContinuationTests.test_proven_copy_checkpoint_is_adopted_and_only_the_next_item_runs`
-  — a proven interrupted Copy is adopted from the boundary (a `COPY` checkpoint is
-  recorded, `verified_complete`), exactly one further mutation runs — the second
-  item's own admitted Copy — and every surface reports `SUCCESS` across a reload.
-- `AdoptedCheckpointContinuationTests.test_cross_storage_verified_destination_resumes_only_the_destructive_step`
-  — the destination write count does not grow, the exact
-  `copy_written`/`destination_verified`/`source_deleted` checkpoint sequence is
-  asserted on the projection and the terminal Result, and only the destructive
-  step runs.
-- `TerminalPublicationFaultTests.test_terminal_publication_fault_after_a_persisted_effect_is_never_erased`
-  — a fault at the terminal per-item publication keeps the first verified effect
-  (`COPY:a.mkv`, `verified_complete`) inside one truthful `PARTIAL` aggregate that
-  transfer/Task/TaskItem/Result all agree on, with no permanently processing
-  item, and the repository reload reproduces it.
-- `TerminalPublicationFaultTests.test_faulted_publish_never_leaves_a_permanently_running_transfer`
-  — a faulted publication still converges to a terminal `FAILED`, zero-mutation,
-  `effect_certainty=none` state with no running projection, and a replacement
-  Worker finds no claimable work.
+- `SourceLockGenerationTests.test_failed_cas_never_removes_the_replacement_generation`
+  — B's probe reproduced directly on the coordinator: A acquires, B retires the
+  stale generation and acquires its own, A's guarded publication returns `False`,
+  A's `finally` runs, and B's exact row is still owned while A's generation is
+  gone; a competing Task C raises `TaskLockError` and the lock row count is
+  unchanged (zero mutation). Verified falsifiable: reverting
+  `release_item_lock` to an unconditional Task-level release makes this test fail
+  with "the replacement Worker's lock was removed by a stale owner".
+- `SourceLockGenerationTests.test_post_publication_expiry_window_keeps_the_replacement_generation`
+  — A publishes successfully, B reacquires the same Task/path, and A's late
+  generation release is `False` with B's lock intact.
+- `SourceLockGenerationTests.test_production_shaped_continuation_denies_a_competing_task`
+  — A is genuinely blocked inside an admitted mutation; a second Worker claims
+  nothing and performs zero mutation; C is denied; A then completes; the Task is
+  `completed`; its own release retires the lock; a later lawful acquisition
+  succeeds.
+- `SourceLockGenerationTests.test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it`
+  — A is blocked *inside* its provider call, its lease expires, B converges the
+  recorded in-flight boundary to a bounded `failed` outcome; while A is still
+  physically running the single lock row stays present and C is denied with zero
+  mutation; when A returns, its frame retires exactly its generation so no
+  permanent lock leaks and a later lawful acquisition succeeds. Verified
+  falsifiable: removing the frame-owned release in
+  `_execute_item_with_fences` makes this test fail with a leaked lock row.
+- `SourceLockGenerationTests.test_lock_generations_never_reach_operator_documents`
+  — the Operations task document, the Files transfer projection and the persisted
+  Result evidence contain no `lock_owner_token`/`owner_token` at any depth.
+- `Schema37To38UpgradeTests` — the migration case above, including the
+  pre-existing lock row.
 
 No existing assertion was weakened, hidden, relaxed or skipped, and the Task Base
 was not changed.
 
 ### Decisions
 
-- **The boundary decides, not the authority.** `mutation_state` is checked and its
-  bounded evidence retained before any authority reconstruction, because an
-  entered mutation makes a later authority failure an *uncertain effect*, not a
-  pre-mutation readiness problem. `_TransferSnapshotUnavailable` still propagates
-  unchanged — an unavailable pinned revision remains a claimable readiness issue
-  and is not relabelled as uncertain.
-- **Adoption is checkpointed, never implied.** Clearing `mutation_in_flight`
-  alone would let the ordinary continuation re-derive the entry from live Storage
-  with no record of what was already proven, so the exact executor checkpoint is
-  published atomically with the clear via the same guarded progress write. The
-  adopted checkpoints also flow into `_progress_checkpoint_evidence`, so the
-  terminal Result and every reloaded projection retain them.
-- **One entry proven is not the item finished.** Finishing an item from the
-  resolver requires the adopted evidence to cover the whole confirmed scope,
-  including a Move's emptied source root verified with zero mutation; otherwise
-  the ordinary verified continuation runs and skips the adopted mutation.
-- **A destination is not a proof of a Move.** A native rename is adopted only
-  under provider-verifiable entry identity that still binds the admitted source;
-  type and size alone are insufficient, and cross-Storage destinations keep using
-  the digest+size `verify_streamed_copy` evidence. This deliberately fails closed
-  to investigation instead of fabricating success, and it does not invent
-  provider-specific branching.
-- **One bounded operator vocabulary.** The uncertainty recovery text names exactly
-  the user truth the correction plan requires (result cannot be confirmed, source
-  and destination may both exist, MediaFlow did not retry, refresh and inspect,
-  choose an explicit follow-up) and leaks no internal identity.
+- **Fence the release, do not remove the lock.** Both Workers legitimately share
+  the Task ID and path on takeover, so the only durable discriminator is a
+  per-acquisition generation. Introducing `owner_token` is the minimal,
+  backward-compatible way to make release exact without weakening the exclusion.
+- **A tokenless frame releases nothing.** A frame reloaded from the repository (or
+  produced by an older adapter) has no generation, and treating it as a Task-level
+  release would reintroduce exactly the stale-owner delete. Such a frame therefore
+  leaves the lock to the authoritative Task-level transition (takeover, cancel,
+  pause, reclaim) that genuinely owns the Task at that moment.
+- **Convergence does not retire a possibly-live lock.** I first tried retiring
+  Task locks inside the terminal convergence writes, which fixed the leak but
+  introduced a P0 I caught by probe: a transfer converged from an in-flight
+  boundary can still have its predecessor's provider call running, and deleting
+  the exclusion let a competing Task acquire the same path mid-mutation. The final
+  design keeps convergence lock-neutral and makes the owning execution frame
+  release its own generation when it actually returns.
+- **Migration identity is a sentinel, not NULL.** `legacy-owner-generation` keeps
+  the column `NOT NULL`, gives every legacy row one stable identity, and is
+  unreachable by a minted generation, so no legacy row becomes broadly releasable
+  during upgrade.
 
 ### Remaining In-Slice Work
 
 - Upload and Download journeys (browser multipart/resumable upload, bounded
   streamed archive download) are untouched by this Task.
 - The remaining media-Organize/FileIndex reconciliation journey: multi-item
-  Organize completion from Files, terminal Organize-to-FileIndex
-  reconciliation.
+  Organize completion from Files, terminal Organize-to-FileIndex reconciliation.
 - Whether the V2 Operations/Task-detail surface should render the transfer
   projection document is B's call; the Files dialog journey is complete without
   it.
 
 ### Risks / Deviations
 
-- Full-suite FAIL is limited to the same 3 failures reproduced identically at the
+- Full-suite FAIL is limited to the same 3 failures reproduced identically at a
   clean Task Base worktree (`4954502`):
   `test_configuration_status.ConfigurationSnapshotTests.
   test_hostile_configuration_content_is_never_exposed` and the two
@@ -781,10 +769,21 @@ was not changed.
   test_real_api_documents_*` golden-fixture failures asserting 201. Pre-existing
   and unrelated to this Task; whether they block PASS is B's judgment, not mine.
 - Full e2e FAIL is limited to the 10 failures in `library-file-detail` (7) and
-  `manual-operations` (3) that fail identically at the Task Base. Pre-existing
-  and unrelated; B judges.
-- The Docker release-security gate remains UNAVAILABLE in this workspace; it
-  needs a host where Docker can bind-mount the smoke context.
+  `manual-operations` (3) that fail identically at the Base. Pre-existing and
+  unrelated; B judges.
+- The Docker release-security gate remains UNAVAILABLE in this workspace; it needs
+  a host where Docker can bind-mount the smoke context.
+- The runtime schema is now 38. Five pre-existing configuration tests asserted the
+  literal 37 marker and were updated to 38 with their explanatory comment; that is
+  the documented expectation of those assertions, not a weakened test. The
+  architecture document still says "runtime schema `34`" — that was already stale
+  before this Task (the committed Base declared 37) and I left it alone rather
+  than widen this correction into a docs reconciliation.
+- A lock row for a Task whose claim owner is lost and whose frame never returns
+  (a hard process kill) is still retired only by the next authoritative takeover,
+  cancel or pause — exactly as at the Base. The generation change does not alter
+  that recovery path; it only prevents a *live* stale owner from deleting a
+  *replacement* owner's exclusion.
 - A proven same-Storage Move whose source disappeared is adopted only when the
   provider publishes a fingerprint that still matches the admitted entry.
   `LocalStorage` fingerprints include `ctime`, which a native rename legitimately
@@ -792,10 +791,6 @@ was not changed.
   than silently adopted. That is the conservative direction the plan requires
   (never fabricate a completed Move from size alone); it does mean a genuinely
   completed interrupted same-Storage Move can require operator inspection.
-- The resolver still fails closed when the destination is absent: the previous
-  owner's provider call may be blocked inside a partial write, so absence is not
-  proof that nothing happened. An abandoned boundary therefore ends in an
-  actionable UNCERTAIN state rather than an automatic retry.
 - The lease keeper is a bounded daemon thread per invocation that stops with the
   invocation; it adds no persistent background worker. When its retries are
   exhausted the lease lapses, and the durable boundary keeps the transfer
@@ -815,10 +810,8 @@ was not changed.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 95cf8aeb15363ff9a153cbaed648884b93e83410
+Head SHA: PENDING
 ```
-
-
 
 ## B Re-review Findings — 2026-09-17
 
@@ -1296,110 +1289,99 @@ Implementation Scope, original Acceptance Criteria or Non-goals.
 ## B Review Result
 
 ```text
-Reviewed: 4954502c6493d57634a14461a7268120419319da..28d07bf4e392c4a3dc91aae54280c005739e5792
+Reviewed: 4954502c6493d57634a14461a7268120419319da..95cf8aeb15363ff9a153cbaed648884b93e83410
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- In-flight resolution can still erase a known or uncertain mutation effect and publish fabricated
-  zero-effect failure. B injected a same-Storage native `MOVE` that created the complete target copy
-  but remained blocked before removing the source, then expired the owner's heartbeat and let a
-  second Worker resolve the durable mutation boundary. Live Storage contained both source and
-  target, but the persisted outcome was `transfer/task/item/result=FAILED`,
-  `effect_certainty=none`, no completed operation and `errorCategory=target_exists`; Files likewise
-  reported `FAILED`. A second probe corrupted `authority_json` while a `COPY` was in flight: the
-  resolver committed `FAILED + none`, then the still-live old provider call created the target, with
-  the durable outcome remaining unchanged. The resolver must treat the exact admitted operation and
-  in-flight boundary together: a same-Storage native Move with both source and destination present
-  is not a completed/idempotent Move and must retain truthful partial/uncertain evidence without
-  replay; unreadable authority on an already-entered mutation must converge to
-  `UNCERTAIN`/`attempted_unverified`, not the pre-mutation corrupt-authority `FAILED` path. Add
-  deterministic two-Worker regressions for both cases and assert live source/target truth plus exact
-  transfer, Task, TaskItem, Result, Files and Operations agreement after the old call returns and
-  after repository reload. Rerun the original Task 37.4 T4 gates without weakening existing tests.
+- Claim fencing still does not fence release of the per-source file lock. B ran a focused stale-owner
+  probe against `PersistentTaskCoordinator.complete_direct_item`: the guarded TaskItem/Result CAS
+  correctly returned `False`, but its unconditional `finally` called
+  `locks.release(storage_id, source_path, task_id)` and removed the replacement Worker's lock because
+  both owners use the same Task ID/path (`guarded_publish=False`, one release call,
+  `replacement_lock_still_owned=False`; the assertion that the replacement retained the lock
+  failed). A late Worker A can therefore return after Worker B has reclaimed and reacquired the
+  source lock, delete B's lock, and admit a third Task against the same path while B is continuing a
+  distinct verified checkpoint. Bind lock ownership/release to the exact Worker acquisition or
+  claim generation so a stale owner can never release a replacement owner's lock, including the
+  expiry race after a successful guarded publish. Add a deterministic multi-Worker regression that
+  blocks Worker B during safe continuation, releases Worker A, and proves the replacement lock
+  remains owned and a competing Task performs zero mutation. Rerun the original Task 37.4 T4 gates
+  without weakening existing fencing or mutation tests.
 
-### Required Same-Task Correction Plan — truthful in-flight resolution
+### Required Same-Task Correction Plan — generation-fenced source locks
 
 This plan clarifies the required repair for the blocker above. It does not change the Task ID,
-Task Base, Goal, Implementation Scope, original Acceptance Criteria or Non-goals.
+Task Base, Goal, original Implementation Scope, Acceptance Criteria or Non-goals.
 
-#### 1. Decide from the durable mutation boundary before parsing continuation authority
+#### 1. Give every acquired file lock an exact owner generation
 
-- Treat `mutation_state=mutation_in_flight` as durable proof that a Storage mutation may already
-  have taken effect. Read and retain its bounded `item_id`, logical entry path and action before any
-  authority reconstruction that can fail.
-- If the persisted authority is missing, malformed, digest-mismatched or otherwise unreadable
-  **before** a mutation boundary exists, retain the current pre-mutation behavior:
-  `FAILED`, `effect_certainty=none`, zero mutation and a correctable/investigation action.
-- If the same failure occurs **after** a mutation boundary exists, converge the exact affected item
-  to `UNCERTAIN`, `effect_certainty=attempted_unverified`, `retrySafe=false` and an inspection-only
-  next action. Do not pass through the generic pre-mutation corrupt-authority convergence and do not
-  invoke any OrganizerExecutor mutation while resolving it.
-- Preserve bounded logical operation evidence in the terminal Result so repository reload can
-  reproduce why the item is uncertain. Do not persist host paths, credentials, raw corrupt JSON or
-  provider exceptions.
+- Extend the durable file-lock contract so each successful acquisition carries a new opaque,
+  unguessable `owner_token`/generation in addition to `storage_id`, normalized path and `task_id`.
+  Two Workers processing the same Task/path must never share this generation merely because they
+  share the Task ID.
+- Release must be an exact conditional delete using all lock identity fields, including the owner
+  generation. A stale release is a successful no-op against a replacement owner's row; it must not
+  delete, rewrite or weaken that row.
+- Carry the generation through the in-memory claimed-item/execution context used by
+  `begin_item`, progress/terminal publication, pause/cancel/failure cleanup and
+  `complete_direct_item`. Keep it out of ordinary Files/Operations API documents, Result evidence,
+  logs and user-visible recovery text.
+- A transfer may derive the lock generation from an exact Worker claim generation or use a separate
+  per-acquisition token, but the value must distinguish Worker A's acquisition from Worker B's
+  takeover acquisition. Do not persist one shared Task-level token that both owners can use.
 
-#### 2. Make resolution operation-aware and checkpoint-producing
+#### 2. Make takeover and release race-safe
 
-- Resolve an expired boundary using the pinned requested operation, same/cross-Storage decision,
-  entry kind and the exact mutation action; the existence of a plausible destination alone is not
-  a generic proof that every operation completed.
-- For a same-Storage native `MOVE`, `source exists + destination exists` is not a completed or
-  idempotently continuable Move. It means the requested single native operation may have produced a
-  partial or still-changing effect. Perform zero new mutation, do not clear it into the ordinary
-  conflict path and converge conservatively to `UNCERTAIN`/investigation unless a provider-neutral
-  exact terminal proof already exists.
-- Do not declare a same-Storage Move successful from destination type and size alone when the source
-  disappeared. Require exact provider-verifiable terminal evidence that binds the admitted source
-  to the current destination; otherwise record `UNCERTAIN`. Do not invent provider-specific
-  branching or weaken the existing entry-evidence contract.
-- A resolver may continue beyond the interrupted entry only after it atomically persists the exact
-  verified checkpoint that makes the next mutation distinct and safe. For example, a proven
-  cross-Storage Copy must durably publish `DESTINATION_VERIFIED` before the separately admitted
-  source-delete step. Merely clearing `mutation_in_flight` without recording the adopted checkpoint
-  is insufficient.
-- The previous owner may still return after lease loss. Every late publication remains rejected by
-  claim-token CAS, and its return must not rewrite the resolver's terminal/investigation result.
+- When Worker B lawfully takes over an expired transfer, it may retire the stale lock generation
+  and acquire a new generation before continuing. Worker A's later success, exception or `finally`
+  path must be unable to release B's generation.
+- Do not implement the fix only as `if guarded_publish: release(...)`. That still races when A's
+  guarded publication succeeds, its lease expires before its following release, and B reacquires
+  the same Task/path in between. Exact generation matching must protect both failed-publication and
+  post-publication expiry races.
+- Keep TaskItem/Result/transfer claim CAS and file-lock ownership as separate required fences: the
+  former prevents stale durable publication; the latter prevents a stale execution frame from
+  removing the current source-operation exclusion.
+- Ensure every terminal, pause, cancel, pre-mutation failure and uncertain convergence path releases
+  only the generation it actually owns and does not leak a permanent lock. Repeated cleanup must be
+  idempotent.
 
-#### 3. Publish one truthful user-visible recovery state
+#### 3. Upgrade persistence without weakening existing locks
 
-- Derive transfer, Task, TaskItem, Result, Files projection and Operations detail from the same
-  post-resolution evidence. They must agree on `UNCERTAIN` when an entered effect cannot be proved.
-- The Files journey must explain the bounded user truth: the operation result cannot be confirmed;
-  source and destination may both exist; MediaFlow did not retry; refresh both directories, inspect
-  the files and choose an explicit follow-up. Do not expose `authority_json`, claim tokens or raw
-  checkpoint identifiers.
-- If exact evidence proves a complete destination while the source is retained, report a truthful
-  partial/retained-source result only when that known effect is durably checkpointed. Never reduce
-  it to `FAILED + none` or offer whole-operation automatic retry.
+- Add the required runtime schema migration for durable lock-owner generation and update the
+  repository protocol, SQLite implementation and all affected coordinator call sites coherently.
+  Existing databases must upgrade in place; existing lock rows must receive a conservative legacy
+  owner identity and must not become unlocked or broadly releasable during migration.
+- Preserve normalized-path uniqueness across Tasks. A different Task must still be unable to
+  acquire the same Storage/path while the current generation exists.
+- Preserve non-transfer direct commands and existing Task lock behavior. Do not introduce an
+  in-memory-only token that is lost on the exact Worker/process handoff this correction protects.
 
 #### 4. Required deterministic regressions
 
-- Add a two-Worker same-Storage native-Move fake whose first call writes the complete target, keeps
-  the source and blocks before returning. After ownership expiry, Worker B must issue zero Storage
-  mutation, must not route the item through ordinary `target_exists`, and every durable/UI surface
-  must report the exact conservative partial/uncertain state. Release Worker A, reload the
-  repository and prove its late return cannot change that state.
-- Add an in-flight Copy test that makes `authority_json` unreadable only after Worker A has entered
-  the mutation. Worker B must perform zero mutation and publish
-  `UNCERTAIN + attempted_unverified`; after Worker A later creates the target, reload must retain
-  the same investigation-only outcome.
-- Keep a paired pre-mutation corrupt-authority test proving it still produces `FAILED + none`, so
-  the fix does not label every invalid admission as a possible file effect.
-- Cover the safely resolvable Copy/cross-Storage Move checkpoint cases and prove that continuation
-  skips the adopted mutation, performs only the next distinct admitted action and never replays an
-  uncertain operation.
-- Assert exact source/target existence, Storage mutation call count, retry safety, next action,
-  effect certainty, completed checkpoints and agreement across transfer, Task, every TaskItem,
-  Result, Files and Operations after repository reopen.
+- Reproduce the failed-CAS case from B's probe: Worker A's guarded terminal publication returns
+  `False` after Worker B has acquired the replacement generation. A's `finally` runs, B's exact lock
+  remains present, and a competing Task C cannot acquire the path or invoke any Storage mutation.
+- Cover the successful-publication expiry window: pause A immediately after its guarded publish but
+  before release, expire the claim, let B acquire a new generation, then release A. The conditional
+  stale release must again leave B's lock intact.
+- Exercise a production-shaped continuation: A blocks inside an admitted Storage mutation, B takes
+  over and blocks while performing only a distinct checkpoint-safe continuation, A later returns,
+  and Task C is denied with zero mutation. After B completes, its own release removes the lock and a
+  later lawful acquisition succeeds.
+- Cover normal success, provider exception, pre-mutation failure, pause, cancel, uncertain
+  convergence, repeated cleanup and repository reopen. Assert exact lock rows/generations and
+  Storage mutation counts, not only Task status.
+- Add migration coverage from the current runtime schema to the new schema, including an existing
+  lock row, and prove tokens/generations never appear in Files/Operations responses, persisted Result
+  evidence or logs.
 
 #### 5. Validation and scope guard
 
-- Rerun the complete original Task 37.4 T4 command list and report exact totals, skips, the three
-  independently reproduced Python baseline failures, the ten independently reported Web E2E
-  baseline failures and unavailable Docker evidence truthfully.
-- Preserve all existing heartbeat, claim fencing, schema 36-to-37 migration, shared admission
-  fixture, pinned-revision, mutation-authority, File-management and cleanup regressions. Do not
-  weaken an assertion, hide a skip, broaden retry or change the Task Base to make the correction
-  pass.
+- Rerun the complete original Task 37.4 T4 command list and report exact totals, skips, independently
+  reproduced baseline failures and unavailable external gates truthfully.
+- Preserve all existing heartbeat, claim fencing, in-flight resolution, pinned-revision,
+  mutation-authority, cleanup and Web regressions. Do not weaken an assertion, hide a skip, broaden
+  retry, move the Task Base or modify the Slice Contract.

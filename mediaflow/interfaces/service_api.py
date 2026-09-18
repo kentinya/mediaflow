@@ -186,6 +186,9 @@ _HIDDEN_DOCUMENT_FIELDS = frozenset(
         "definition_fingerprint",
         "source_fingerprint",
         "source_occurrence_id",
+        # The exact file-lock owner generation is an execution fence, not an
+        # operator value: it must never appear in a Files/Operations document.
+        "lock_owner_token",
     }
 )
 
