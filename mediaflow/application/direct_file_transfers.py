@@ -1303,9 +1303,6 @@ class DirectFileTransferService:
         if task is None:
             raise LookupError(f"transfer Task {task_id!r} was not found")
         authority = self._parse_pinned_authority(transfer)
-        paused = False
-        cancelled = False
-        errored = False
         # The Task running boundary is published only now: after the claim
         # fence and before the first mutation.  A queued Task starts here; a
         # Task left running by a crashed Worker continues (takeover); a Task
@@ -1315,12 +1312,63 @@ class DirectFileTransferService:
             raise _TransferCancelled()
         if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
             raise TaskPauseRequested(f"task {task_id!r} is {task.status.value}")
-        # A crashed Worker leaves its own item locks behind: the claim owner
-        # reclaims exactly this Task's locks before any further mutation, so
-        # the takeover continues instead of failing on its predecessor.
-        self._direct.tasks.locks.reclaim_task_locks(task_id)
+        # A crashed Worker leaves its own item locks behind.  They are *not*
+        # deleted here: retiring them would leave the normalized paths unowned,
+        # so a competing Task could acquire and mutate the same source between
+        # the reclaim and this owner's re-acquisition.  The Task's rows are
+        # instead atomically rotated in place to one takeover generation, and
+        # each continued item rotates its own row again inside the acquisition
+        # itself (``begin_item(adopt_existing=True)``).  Every exclusion is
+        # therefore continuous: a competing Task is denied before, during and
+        # after the handoff.
+        takeover_token = f"{task_id}:{uuid4().hex}"
+        locks = self._direct.tasks.locks
+        rotate = getattr(locks, "rotate_task_locks", None)
+        if callable(rotate):
+            rotate(task_id, takeover_token, transfer_fence=fence.value)
+        else:  # pragma: no cover - every runtime repository carries the rotation
+            locks.reclaim_task_locks(task_id)
+            takeover_token = ""
         self._direct.tasks.begin_queued(task_id, transfer_fence=fence.value)
         heartbeat()
+        try:
+            return self._run_claimed_items(
+                task_id=task_id,
+                transfer=transfer,
+                authority=authority,
+                heartbeat=heartbeat,
+                lease_seconds=lease_seconds,
+                fence=fence,
+            )
+        finally:
+            # Rows that still carry the takeover generation belong to items this
+            # Worker never continued: by now every item is terminal (continued,
+            # converged or interrupted), so those paths are legitimately free.
+            # The delete names the exact generation, so it can only ever remove
+            # rows this takeover actually owns — a replacement Worker that has
+            # taken over rotated every row to its own generation already, and a
+            # successor's `adopt_or_acquire` re-creates a needed row atomically.
+            # Nothing is deleted before the continuation finishes, so no path is
+            # freed while this Worker could still need it.
+            if takeover_token:
+                locks.reclaim_task_locks(task_id, owner_token=takeover_token)
+
+    def _run_claimed_items(
+        self,
+        *,
+        task_id: str,
+        transfer: PersistentFilesTransfer,
+        authority: dict[str, object],
+        heartbeat: Callable[[], bool],
+        lease_seconds: float,
+        fence: _ClaimFence,
+    ) -> None:
+        """Drive the claimed Task's items to their per-item terminal outcomes."""
+
+        repository = self._direct.tasks.repository
+        paused = False
+        cancelled = False
+        errored = False
         items = repository.list_items(task_id)
         # The deterministic in-batch collisions pinned at admission (two
         # selected roots resolving to one destination) stay pinned: a later
@@ -1537,9 +1585,13 @@ class DirectFileTransferService:
                 source.library_id,
                 _join_resource_library_path(source.root_path, item.source_display),
                 item.source_display,
+                transfer_fence=fence.value if fence is not None else None,
+                adopt_existing=True,
             )
         except TaskPauseRequested:
             return "pause"
+        except TaskClaimLost:
+            raise _TransferClaimLost() from None
         except Exception:
             self._direct.tasks.complete_direct_item(
                 item,
@@ -1615,9 +1667,13 @@ class DirectFileTransferService:
                 source.library_id,
                 _join_resource_library_path(source.root_path, item.source_display),
                 item.source_display,
+                transfer_fence=fence.value if fence is not None else None,
+                adopt_existing=True,
             )
         except TaskPauseRequested:
             return "pause"
+        except TaskClaimLost:
+            raise _TransferClaimLost() from None
         except Exception:
             return None
         return self._execute_item_with_fences(

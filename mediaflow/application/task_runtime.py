@@ -161,6 +161,9 @@ class PersistentTaskCoordinator:
         resource_library_id: str,
         source_path: str,
         source_display: str,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+        adopt_existing: bool = False,
     ) -> PersistentTaskItem:
         task = self.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
@@ -188,14 +191,44 @@ class PersistentTaskCoordinator:
         if persisted_item is not None:
             item = persisted_item
         # The acquisition generation is what makes release exact: this frame
-        # owns only the lock row it inserted, so a late `finally` after a
-        # replacement Worker re-acquired the same Task/path cannot remove the
-        # replacement's row.  The token is minted per acquisition and never
-        # persisted on the item, published in an operator document or logged.
+        # owns only the lock row it inserted or rotated, so a late `finally`
+        # after a replacement Worker re-acquired the same Task/path cannot
+        # remove the replacement's row.  The token is minted per acquisition and
+        # never persisted on the item, published in an operator document or
+        # logged.
         lock_owner_token = f"{task_id}:{uuid4().hex}"
-        if not self.locks.acquire(
-            storage_id, source_path, task_id, now, owner_token=lock_owner_token
-        ):
+        # A continuation of a takeover must hand the exclusion over *without*
+        # ever deleting it: the row is rotated in place, so a competing Task can
+        # never acquire the normalized path in the gap between a blanket
+        # reclaim and this acquisition.  A fresh item still inserts normally.
+        acquirer = getattr(self.locks, "adopt_or_acquire", None) if adopt_existing else None
+        if callable(acquirer):
+            acquired = bool(
+                acquirer(
+                    storage_id,
+                    source_path,
+                    task_id,
+                    now,
+                    owner_token=lock_owner_token,
+                    transfer_fence=transfer_fence,
+                )
+            )
+        else:
+            acquired = self.locks.acquire(
+                storage_id, source_path, task_id, now, owner_token=lock_owner_token
+            )
+        if not acquired:
+            # Distinguish a lost claim from a genuinely conflicting owner: the
+            # adopt path fails closed on both, but only the former must stop the
+            # Worker without recording a business failure for the item.
+            claim_check = getattr(self.repository, "transfer_claim_is_current", None)
+            if (
+                adopt_existing
+                and transfer_fence is not None
+                and callable(claim_check)
+                and not claim_check(transfer_fence[0], transfer_fence[1], transfer_fence[2])
+            ):
+                raise TaskClaimLost()
             failed = replace(
                 item,
                 status=TaskItemStatus.FAILED,
