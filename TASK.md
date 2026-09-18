@@ -533,115 +533,106 @@ not satisfy the browser assertion.
 
 ## Developer Completion Report
 
-> Correction round 7, 2026-09-18: this report covers the single blocker of the B
-> review of `4954502..e0217d9` (the replacement Worker still opened an
-> unprotected delete/reacquire window before a safe continuation). It supersedes
-> the round-6 report. The correction commit sits after the round-6 checkpoint
-> `e0217d9` without amending it.
+> Correction round 8, 2026-09-18: this report covers the two blockers of the B
+> review of `4954502..0426708` (transfer-item admission wrote the `PROCESSING`
+> TaskItem before ownership was proven, and the production takeover regression
+> weakened the exact terminal assertion to a set-membership check). It
+> supersedes the round-7 report. The correction commit sits after the round-7
+> checkpoint `0426708` without amending it.
 
 ### Changed Files
 
-- `mediaflow/domain/task_persistence.py` — `FileOperationLockRepository` gains
-  the gap-free same-Task handoff: `adopt_or_acquire` (rotate one existing
-  same-Task row to a new generation in place, or insert when no row exists) and
-  `rotate_task_locks` (the same handoff applied to every row one Task holds in
-  one statement). Both are optional-capability methods with documented
-  semantics; no existing method changed.
-- `mediaflow/infrastructure/sqlite_runtime.py` — implements `adopt_or_acquire`
-  and `rotate_task_locks` as single `BEGIN IMMEDIATE` transactions. Neither ever
-  deletes a row: an existing same-Task row is updated in place, a row owned by a
-  different Task fails closed and is left untouched, and an absent row is
-  inserted (ordinary first acquisition). `rotate_task_locks` and
-  `adopt_or_acquire` take an optional `transfer_fence` and compare-and-set the
-  rotation against the live Worker claim, so a lapsed owner cannot rotate a
-  replacement owner's rows.
-- `mediaflow/application/task_runtime.py` — `begin_item` gains
-  `transfer_fence` and `adopt_existing` keyword-only parameters. With
-  `adopt_existing=True` it acquires through `adopt_or_acquire`, so a
-  continuation rotates its own row instead of racing a delete/reinsert; a
-  failed acquisition whose claim is no longer current raises `TaskClaimLost`
-  rather than persisting a fabricated item failure. Default behaviour (no
-  `adopt_existing`) is byte-for-byte the previous `acquire` path, so Organize,
-  manual-execution and every other caller are unchanged.
-- `mediaflow/application/direct_file_transfers.py` — `_execute_claimed_transfer`
-  no longer calls `reclaim_task_locks(task_id)` before `begin_item`. The Task's
-  rows are rotated atomically to one takeover generation under the claim fence;
-  each continued item then rotates its own row again inside `begin_item` via the
-  new `adopt_existing=True`/`transfer_fence` arguments (both the
-  never-started `_run_admitted_item` and the resumed `_continue_item` paths).
-  `TaskClaimLost` from the acquisition propagates as `_TransferClaimLost`
-  instead of being swallowed. The item loop moved unchanged into
-  `_run_claimed_items` so the takeover setup and its cleanup wrap it in one
-  `try/finally`. That `finally` retires only rows still carrying this
-  takeover's own generation, after every continuation has finished, naming the
-  exact generation so it can never remove a replacement's rows.
-- `tests/test_direct_file_transfers.py` — the misleading
-  `test_production_shaped_continuation_denies_a_competing_task` is replaced by a
-  genuine lease-expiry multi-Worker takeover; new
-  `test_takeover_handoff_never_leaves_the_source_path_unowned` is the direct
-  handoff-boundary interleaving assertion; new `_HandoffProbeRepository` races a
-  competing Task into the exact handoff boundary; new `_GatedAfterCopySource`
-  double lands a complete Copy then blocks; the now-unused
-  `_BlockingContinuationSource` double is deleted.
+- `mediaflow/application/task_runtime.py` — `begin_item` is now one
+  claim-fenced ownership boundary. The started row is published only through
+  `upsert_item_guarded` (compare-and-set against the live claim) instead of an
+  unguarded `upsert_item`; a failed acquisition against a lapsed claim raises
+  `TaskClaimLost` with zero writes; a failed acquisition against a *live* claim
+  still publishes the bounded lock failure, now under the same fence; a valid
+  continuation reuses the predecessor's row via `replace(previous, ...)` so the
+  durable recovery checkpoint survives the start boundary; a failed guarded
+  start publish releases only this frame's exact generation and performs no
+  compensating TaskItem write. Two small private helpers were added:
+  `_claim_is_current` (fails closed when the repository cannot answer) and
+  `_publish_item_start` (guarded when fenced, historical unguarded write
+  otherwise). The unfenced Organize/manual-execution path is byte-for-byte
+  unchanged.
+- `tests/test_direct_file_transfers.py` — the production takeover regression
+  restores the exact `status == "completed"` assertion and adds
+  `_assert_completed_transfer_agreement`, which proves the transfer row, Task
+  row, every TaskItem, every Result, the Files projection and the Operations
+  detail agree and then re-reads them from a freshly reopened repository on the
+  same database file. Three new regressions were added:
+  `test_stale_claimant_continuation_changes_no_durable_evidence`,
+  `test_continuation_crash_window_keeps_the_prior_checkpoint` and
+  `test_lost_ownership_at_every_handoff_boundary_writes_nothing`, plus an
+  `_admit_show_transfer` fixture helper.
 
 ### Implemented
 
-- **The blocker — the handoff is now a rotation, not a delete-then-insert.**
-  B's interleaving probe was reproduced first against the round-6 code
-  (`a_rows_retired_by_b_takeover=1`, `task_c_acquired_in_gap=True`,
-  `worker_b_reacquired_after_c=False`), then closed. `_execute_claimed_transfer`
-  rotates the Task's existing rows to a takeover generation in one transaction
-  under the claim fence; `begin_item(adopt_existing=True, transfer_fence=...)`
-  then rotates each item's own row to that frame's generation inside its
-  acquisition. The normalized path is therefore owned continuously: a competing
-  Task is denied before, during and after the handoff.
-- **An unprovable live mutation is never handed off.** Rotation is reached only
-  after `_resolve_in_flight_mutation` has already resolved any recorded
-  `mutation_in_flight` boundary, and the rotation itself is claim-guarded; the
-  `_commit_convergence` investigation path never reaches it. B's existing
-  in-flight-fence regressions
-  (`test_owner_loss_during_mutation_converges_without_replay`,
-  `test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it`, the
-  failed/raising-heartbeat pair) still pass unchanged.
-- **No stolen exclusion and no lock leak.** A row belonging to another Task
-  fails closed and is left untouched, so a takeover can never widen to an
-  unrelated Task's path. A takeover retains only the rows it actually owns;
-  rows for items it never continued are retired in the `finally` after all
-  continuations finish, matching the exact generation. The lifecycle/cancel
-  paths (`reopen`, `cancel`, `acknowledge_pause`) and the terminal convergence
-  still retire locks exactly as at the base.
-- **The exact-generation release contract is preserved.** The predecessor's
-  generation disappears with the rotation, so its late `release_item_lock` is a
-  successful no-op against the replacement's row — the round-6 fix keeps
-  working, now without a window in which the row is absent.
-- **The direct interleaving assertion is falsifiable, and I verified it.**
-  `_HandoffProbeRepository` attempts the same acquisition a competing Task would
-  attempt immediately after the handoff; with the rotation it records `False`.
-  I temporarily restored the old `reclaim_task_locks` shape and re-ran the test:
-  it failed with `probes == [True]`, i.e. the probe genuinely detects the
-  window rather than passing vacuously. The old shape was then reverted.
+- **The blocker — no TaskItem write before ownership is proven.** I first
+  reproduced B's repro exactly against the round-7 code: a stale Worker A raised
+  `TaskClaimLost` and left B's lock owned, but had already rewritten B's row from
+  `progress={"owner":"worker-b"}, attempts=1` to `progress=None, attempts=2`.
+  The unguarded `self.repository.upsert_item(item)` that ran before
+  `adopt_or_acquire` is gone. The start row now goes through
+  `upsert_item_guarded`, so the claim CAS and the write are one atomic
+  transaction: a lost claimant writes nothing.
+- **Every transfer-path TaskItem write is fenced.** The `PROCESSING`/attempt
+  start update and the lock-conflict `FAILED` update both publish under the
+  fence. There is no longer any unguarded write after a successful claim check,
+  so a claim lost between any two calls cannot surface as a stale publication.
+- **No attempt consumed and no fabricated failure for a stale acquisition.** A
+  failed acquisition against a lapsed claim raises `TaskClaimLost` before any
+  write, so `attempts`, `status`, `stage`, `updated_at`, `progress` and `error`
+  are all untouched and no Result is written. A failed acquisition against a
+  genuinely live foreign claim still publishes the bounded lock failure — that
+  is a real refusal, not a stale one.
+- **The durable checkpoint survives a valid continuation.** For a fenced
+  continuation the row is built with `replace(previous, ...)` rather than a
+  fresh `progress=None` item, so the predecessor's recovery checkpoint is the
+  authority a crash between the start boundary and the first new progress write
+  leaves behind. The checkpoint is superseded only by a later claim-guarded
+  progress or terminal publication. A crash there no longer degrades to
+  `files_transfer_interrupted_unknown`.
+- **Round-7 lock properties preserved.** Same-Task handoff is still an in-place
+  rotation (`adopt_or_acquire` / `rotate_task_locks` untouched); a different
+  Task's row still fails closed; a predecessor's late release is still an exact
+  no-op; the production takeover path still does not call blanket
+  `reclaim_task_locks`; and no new persistent lifecycle state was introduced.
+  When the guarded start publish fails, only this frame's exact generation is
+  released, so a replacement owner's row is never touched.
+- **The weakened assertion is restored, not replaced.** The production takeover
+  regression asserts `runtime.get_task(task_id).status.value == "completed"`
+  exactly — no set membership, no conditional, no skip — and additionally
+  asserts the transfer row is `completed`, the Files projection is `SUCCESS`
+  with `succeededItems == 1` and zero failed/skipped, every TaskItem is
+  `success`/`completed` with no error and no in-flight marker, the single Result
+  is `success`/`verified_complete` with no uncertain effects, and the Operations
+  detail agrees. The same rows are then re-read from a repository reopened on
+  the same database file.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/ruff format --check .` — PASS (307 files already formatted);
   `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (79,
-  was 78 in round 6: one retired misleading regression replaced by two focused
-  regressions, plus the deleted unused double).
-- `.venv/bin/python -m unittest tests.test_direct_file_operations` — PASS (55).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` — PASS (82,
+  was 79 in round 7: three new regressions).
+- `.venv/bin/python -m unittest tests.test_direct_file_operations
+  tests.test_task_persistence` — PASS (68; 55 + 13).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers
+  tests.test_direct_file_operations tests.test_task_persistence` — PASS (150).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers
+  tests.test_direct_file_operations tests.test_task_persistence
+  tests.test_task_pause_resume tests.test_task_retry` — PASS (166).
 - `.venv/bin/python -m unittest tests.test_source_directory_cleanup
-  tests.test_manual_organize_execution tests.test_configuration_organize` —
-  PASS (57).
-- `.venv/bin/python -m unittest tests.test_organizer
-  tests.test_organizer_mutation_authority tests.test_organizer_rollback` —
-  PASS (45).
-- `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage
-  tests.test_openlist_storage tests.test_s3_storage` — PASS (94).
-- `.venv/bin/python -m unittest tests.test_runtime_files_browser
-  tests.test_api_security tests.test_task_persistence tests.test_task_pause_resume
-  tests.test_task_retry` — PASS (48).
-- `.venv/bin/python -m unittest discover -s tests` — 1683 tests: 3 failures,
+  tests.test_manual_organize_execution tests.test_configuration_organize
+  tests.test_organizer tests.test_organizer_mutation_authority
+  tests.test_organizer_rollback tests.test_local_storage tests.test_smb_storage
+  tests.test_openlist_storage tests.test_s3_storage tests.test_runtime_files_browser
+  tests.test_api_security tests.test_task_pause_resume tests.test_task_retry` —
+  PASS (231).
+- `.venv/bin/python -m unittest discover -s tests` — 1686 tests: 3 failures,
   7 skips. The 3 failures are exactly the Task Base baseline and were reproduced
   identically at a clean `4954502` worktree during this round:
   `test_configuration_status.ConfigurationSnapshotTests.
@@ -652,26 +643,20 @@ not satisfy the browser assertion.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS;
   `.venv/bin/python -m pip check` — PASS (no broken requirements).
 - `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE in this
-  workspace, unchanged from round 6: `docker compose up -d --no-build` fails with
-  `invalid mount config for type "bind": bind source path does not exist:
-  /tmp/mediaflow-smoke-security-*/mediaflow.json`, i.e. the smoke context cannot
-  be bind-mounted here. Not a product failure. `rg` is also absent in this
-  workspace, so the ffprobe/ffmpeg gate was run with
+  workspace, unchanged from the previous rounds: `docker compose up -d
+  --no-build` fails with `invalid mount config for type "bind": bind source path
+  does not exist: /tmp/mediaflow-smoke-security-*/mediaflow.json`, i.e. the smoke
+  context cannot be bind-mounted here. Not a product failure. `rg` is also absent
+  in this workspace, so the ffprobe/ffmpeg gate was run with
   `grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml` — PASS (no match).
 - `cd web && npm run format:check` — PASS; `npm run typecheck` — PASS;
-  `npm run lint` — PASS (0 errors).
-- `cd web && NODE_ENV=test npx vitest run
-  src/features/library/StorageFilesPage.test.tsx` — PASS (33). Without
-  `NODE_ENV=test` the same file fails with `React.act is not a function`; the
-  prefix is required in this shell.
+  `npm run lint` — PASS (0 errors); `npm run build` — PASS.
 - `cd web && NODE_ENV=test npm run test -- --run` — PASS (33 files / 455 tests).
-- `cd web && npm run build` — PASS.
 - `cd web && NODE_ENV=test npx playwright test
   tests/e2e/library-files.spec.ts --project=chromium` — PASS (28).
 - `cd web && NODE_ENV=test npm run test:e2e` — 106 passed, 10 failed; the same
-  10 failures (`library-file-detail` 7 + `manual-operations` 3) reproduce
-  identically at a clean `4954502` worktree that was built and run the same way
-  (verified in round 6 and unchanged here; this correction touches no web file).
+  10 failures (`library-file-detail` 7 + `manual-operations` 3) that reproduce
+  identically at a clean `4954502` worktree. This correction changes no web file.
   Pre-existing and unrelated; B judges.
 - `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS;
   `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS
@@ -680,23 +665,31 @@ not satisfy the browser assertion.
 
 New regression evidence for this correction, run explicitly:
 
-- `SourceLockGenerationTests.test_production_shaped_continuation_denies_a_competing_task`
-  — A blocks inside a native Copy whose destination already holds the confirmed
-  bytes; its ownership signal then raises, its lease genuinely expires, and B
-  claims the expired in-flight boundary. B adopts the proven checkpoint and
-  blocks in the next distinct admitted mutation. `_HandoffProbeRepository`
-  records `probes == [False]` at B's handoff (the competing Task is refused), a
-  competing Task C is denied before and after A returns with
-  `source.copy_calls == 2`, A's late release leaves B's row owned, and only B's
-  terminal release empties the lock table and permits a later acquisition.
-  Verified falsifiable: restoring the old `reclaim_task_locks` shape makes the
-  probe record `[True]` and the test fail.
-- `SourceLockGenerationTests.test_takeover_handoff_never_leaves_the_source_path_unowned`
-  — the direct boundary assertion: `_HandoffProbeRepository` armed around
-  `rotate_task_locks` records `[False]`, the predecessor's generation release is
-  `False`, the takeover generation still owns the row, and the falsifiability
-  block run against `reclaim_task_locks` records `[True]`.
-- Round-6 regressions all still pass: `test_failed_cas_never_removes_the_replacement_generation`,
+- `test_stale_claimant_continuation_changes_no_durable_evidence` — after Worker B
+  owns the claim, the exact lock generation and a distinctive durable checkpoint,
+  stale Worker A's continuation raises `TaskClaimLost` with `attempts` still 1,
+  `progress` unchanged, `error` unchanged, no Result, zero Storage mutation, B's
+  replacement lock generation still owned, the transfer mutation boundary and
+  claim token unchanged, and the lock-row snapshot identical. Verified
+  falsifiable: reintroducing the round-7 unguarded pre-acquisition write makes it
+  fail with `attempts: 2, progress: None`, i.e. B's exact observation.
+- `test_continuation_crash_window_keeps_the_prior_checkpoint` — B crosses the
+  guarded start boundary (attempts 1→2) and stops before any new progress; after
+  a repository reload the item is still `processing` with the original
+  checkpoint, and `_resume_item_plan` reconstructs the original admitted plan
+  (`show → Movies/show`, `show/ep00.mkv → Movies/show/ep00.mkv`) instead of
+  degrading to investigation-only. Verified falsifiable: the round-7 fresh-row
+  shape makes `progress` become `None`.
+- `test_lost_ownership_at_every_handoff_boundary_writes_nothing` — covers lost
+  ownership before the Task-wide rotation (rotation returns 0 rows), between the
+  rotation and the per-item adoption, and after the start boundary: each case
+  raises `TaskClaimLost` and leaves `status`/`stage`/`attempts`/`progress`/`error`,
+  Results, the mutation boundary and the lock generation exactly as they were.
+- Round-7 regressions retained and passing:
+  `test_production_shaped_continuation_denies_a_competing_task` (now with the
+  exact `completed` assertion and cross-surface reload agreement),
+  `test_takeover_handoff_never_leaves_the_source_path_unowned`,
+  `test_failed_cas_never_removes_the_replacement_generation`,
   `test_post_publication_expiry_window_keeps_the_replacement_generation`,
   `test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it`,
   `test_lock_generations_never_reach_operator_documents`.
@@ -706,33 +699,31 @@ Base was not changed.
 
 ### Decisions
 
-- **Rotate in place rather than "reclaim then insert".** The only way to make a
-  takeover gap-free with a single-row-per-path exclusion is to update the
-  existing row, so no interleaving can observe the path unowned. Deleting and
-  re-inserting cannot be made atomic against a competing `acquire` without
-  serializing every lock operation.
-- **Two levels of rotation, both claim-guarded.** The Task-wide
-  `rotate_task_locks` gives the takeover one generation it can reason about and
-  retire in its `finally`; the per-item `adopt_or_acquire` inside `begin_item`
-  gives each execution frame its own exact generation for the existing
-  `release_item_lock` contract. A competing Task therefore cannot acquire at any
-  point, and a stale frame cannot release a replacement's row.
-- **`adopt_existing` defaults to `False`.** Every non-transfer caller keeps the
-  previous `acquire` behaviour exactly, so this correction cannot change
-  Organize or manual-execution locking.
-- **A lost claim is not a business failure.** When acquisition fails because the
-  row belongs to another Task *and* the claim is no longer current, the frame
-  raises `TaskClaimLost` instead of writing a fabricated `FAILED` item. This
-  reuses the existing `transfer_claim_is_current` repository method rather than
-  adding a parallel claim API.
-- **Residual takeover rows are retired only at the end.** An item already
-  terminal before the takeover never reaches `begin_item`, so its rotated row
-  would otherwise outlive the transfer. Retiring exactly the takeover generation
-  in a `finally` — after all continuations, and never a blanket Task-level
-  delete — frees only rows this Worker legitimately owns.
-- **Rotation is the only mechanism reached on the safe path.** An unprovable
-  in-flight mutation converges to investigation before any continuation, so it
-  never rotates and never hands its exclusion over.
+- **Reuse `upsert_item_guarded` for the start publication rather than adding a
+  parallel guarded API.** It already implements exactly the required
+  compare-and-set and the caller is inside one transaction. Its atomic
+  `_clear_mutation_locked` side effect is a no-op here because the transfer path
+  resolves any recorded `mutation_in_flight` boundary *before* executing items
+  (see `run_claimed_transfer`), so no boundary can still be set at the start
+  boundary. This avoids a new repository method for the same guarantee.
+- **Distinguish a lapsed claim from a live foreign owner by re-reading the
+  claim.** A failed acquisition is ambiguous, so `begin_item` checks
+  `transfer_claim_is_current`: not current → `TaskClaimLost` with zero writes;
+  current → the bounded lock failure, published under the fence. This preserves
+  the existing `TaskLockError`/`stage="lock"` behaviour that
+  `test_lock_conflict_is_persisted_without_storage_access` depends on while
+  making a stale claimant silent.
+- **Keep the predecessor's row for a fenced continuation.** Reusing the row is
+  what makes the checkpoint survive the start boundary; minting a fresh row is
+  what erased it. The unfenced path keeps the original fresh-row construction so
+  Organize semantics are untouched.
+- **Release only the exact generation when the guarded start publish fails, as
+  B prescribed.** The delete names this frame's token, so a replacement owner's
+  rotated row matches nothing and is untouched; the exclusion invariant still
+  arbitrates because whichever Task holds the row denies every other Task.
+- **Prove cross-surface agreement by reloading the database file.** Asserting
+  against the same in-memory connection could pass while a projection disagreed,
+  so the agreement check reopens `runtime._path` and re-reads every row.
 
 ### Remaining In-Slice Work
 
@@ -758,16 +749,14 @@ Base was not changed.
   changes no web file. Pre-existing and unrelated; B judges.
 - The Docker release-security gate remains UNAVAILABLE in this workspace; it needs
   a host where Docker can bind-mount the smoke context.
-- The runtime schema is unchanged at 38; this correction adds repository methods
-  only and no migration. Five pre-existing configuration tests still assert the
-  documented 38 marker from round 6.
+- The runtime schema is unchanged at 38; this correction changes one application
+  method and its tests only and adds no migration.
 - The architecture document still says "runtime schema `34`" — already stale
   before this Task (the committed Base declared 37) and left alone rather than
   widening this correction into a docs reconciliation.
 - A lock row for a Task whose claim owner is lost and whose frame never returns
   (a hard process kill) is still retired only by the next authoritative
-  takeover, cancel or pause — exactly as at the Base. This correction changes
-  *how* the next takeover rotates that row, not that it is the recovery point.
+  takeover, cancel or pause — exactly as at the Base.
 - A proven same-Storage Move whose source disappeared is adopted only when the
   provider publishes a fingerprint that still matches the admitted entry.
   `LocalStorage` fingerprints include `ctime`, which a native rename legitimately
@@ -790,7 +779,7 @@ Base was not changed.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 042670872f3bd2e03706c721871f7daa11d16d9c
+Head SHA: 0ff0e664e9a937d3aa5f9aae288d98de480a27fb
 ```
 
 ## B Re-review Findings — 2026-09-17
@@ -1269,28 +1258,72 @@ Implementation Scope, original Acceptance Criteria or Non-goals.
 ## B Review Result
 
 ```text
-Reviewed: 4954502c6493d57634a14461a7268120419319da..e0217d9975e1e5677b3582d3792fb99369ce41d5
+Reviewed: 4954502c6493d57634a14461a7268120419319da..042670872f3bd2e03706c721871f7daa11d16d9c
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The replacement Worker still opens an unprotected delete/reacquire window before a safe
-  continuation. `_execute_claimed_transfer` calls `reclaim_task_locks(task_id)` and only later calls
-  `begin_item`; B's deterministic repository probe placed Task C in that exact interleaving and
-  observed `a_rows_retired_by_b_takeover=1`, `task_c_acquired_in_gap=True`,
-  `worker_b_reacquired_after_c=False`. A competing Task can therefore take and mutate the source
-  after B has declared the prior effect safe to continue but before B owns its replacement
-  generation. The new
-  `test_production_shaped_continuation_denies_a_competing_task` does not exercise its stated
-  takeover: it does not expire A's lease, asserts `second.run_next() is None`, then releases A and
-  lets A complete both copies. Replace the blanket reclaim followed by a later insert with one
-  atomic same-Task lock-generation handoff/rotation (or an equally strong no-unlocked-state
-  mechanism) that fails closed if another Task owns the normalized path and returns B's exact new
-  generation to its execution frame. An unprovable live mutation must retain A's exclusion and must
-  not be handed off. Add a real multi-Worker regression where A lands a provable checkpoint and
-  remains blocked, its lease expires, B adopts that checkpoint, atomically takes the same top-level
-  source lock and blocks in the next distinct admitted mutation, Task C is denied both before and
-  after A returns, and only B's terminal release makes a later acquisition possible. Also retain a
-  direct interleaving assertion proving no Task C acquisition is possible at the handoff boundary,
-  then rerun the original Task 37.4 T4 gates without weakening existing fencing or mutation tests.
+- `begin_item(..., transfer_fence=..., adopt_existing=True)` writes the `PROCESSING` TaskItem with
+  an unguarded `repository.upsert_item(item)` **before** `adopt_or_acquire` validates the claim and
+  rotates the lock. B reproduced a stale Worker A after Worker B had taken the claim, rotated the
+  source lock and persisted `progress={"owner":"worker-b"}`: A correctly raised `TaskClaimLost` and
+  did not steal B's lock, but it had already changed the durable item from
+  `before_progress={"owner":"worker-b"}, before_attempts=1` to
+  `after_progress=None, after_attempts=2`. This lets a lost claimant erase the current owner's safe
+  recovery checkpoint and contradicts the claim-fenced TaskItem contract.
+
+  Required correction for this same Task:
+
+  1. Treat transfer-item admission as one claim-fenced ownership boundary. The live transfer claim,
+     same-Task lock adoption/acquisition and TaskItem start publication must be ordered so no
+     TaskItem write can occur before ownership is proven. Prefer one repository transaction when
+     practical. An equally strong two-step implementation may acquire/rotate the exact lock
+     generation first and then use `upsert_item_guarded`, but if the guarded publish fails it must
+     release only that exact generation and raise `TaskClaimLost`; it must never perform an
+     unguarded compensating write.
+  2. Apply the fence to **every** transfer-path TaskItem write, including the initial
+     `PROCESSING`/attempt update and the lock-conflict `FAILED` update. A claim may be lost between
+     any two calls, so a separate unguarded write after a successful claim check is not sufficient.
+     A stale claimant must leave TaskItem, Result, transfer mutation boundary and replacement lock
+     generation byte-for-byte/semantically unchanged and must invoke no Storage mutation.
+  3. Increment `attempts`, change `status`/`stage`/`updated_at`, or publish a lock failure only after
+     the exact Worker has successfully crossed the guarded ownership boundary. A failed or stale
+     acquisition must not consume an attempt or fabricate a user-visible business failure.
+  4. Preserve the last durable progress/checkpoint while starting a valid continuation. Do not
+     replace a resumable TaskItem with a new `progress=None` row merely because its replacement
+     Worker entered `begin_item`. If that Worker crashes after acquisition but before its first new
+     checkpoint, the next lawful Worker must still reconstruct the prior safe continuation rather
+     than degrading to `files_transfer_interrupted_unknown`. Supersede the old checkpoint only with
+     a later claim-guarded progress or terminal publication.
+  5. Keep the round-7 gap-free lock properties: same-Task handoff remains an in-place rotation, a
+     different Task's row fails closed, a predecessor's late release is an exact no-op, and an
+     unprovable in-flight mutation is never handed off. Do not reintroduce blanket
+     `reclaim_task_locks` on the production takeover path and do not add a new persistent lifecycle
+     state to solve this ordering problem.
+  6. Cover lost ownership at all relevant boundaries: before Task-wide rotation, between Task-wide
+     rotation and per-item adoption, after per-item adoption but before TaskItem start publication,
+     and after start publication but before the next progress write. Every case must stop before the
+     next mutation and preserve the current owner's durable evidence.
+
+  Required regression evidence:
+
+  - Add the deterministic two-claim reproduction above. After B owns the claim, exact lock
+    generation and a distinctive durable checkpoint, invoke A's stale continuation and assert
+    `TaskClaimLost`, zero Storage mutation, no new Result, B's lock still owned, and equality of B's
+    TaskItem `status`, `stage`, `attempts`, `progress`, error and recovery-relevant fields.
+  - Add a valid-continuation crash-window regression: B adopts an existing resumable checkpoint and
+    stops immediately after the guarded start boundary but before publishing new progress; after a
+    repository reload, C must reconstruct the original safe checkpoint and continue without replay
+    or investigation-only degradation.
+  - Retain the real A/B/C production takeover and direct handoff-interleaving regressions. They must
+    continue proving that Task C is denied before and after A returns and that only the current
+    owner's terminal release frees the path.
+- The new production takeover regression weakens the former exact terminal assertion from
+  `status == "completed"` to `status in {"completed", "partial_success"}`, despite this Task's
+  explicit prohibition on weakened safety assertions. B ran the scenario and observed
+  `OBSERVED_TERMINAL_STATUS=completed`. Restore the exact `completed` assertion and prove the
+  transfer row, Task row, every TaskItem, Result, Files projection and Operations detail agree after
+  repository reload. Do not replace it with a set-membership assertion, conditional assertion or
+  hidden skip. Then rerun and report the complete original Task 37.4 T4 command list with exact
+  totals, skips, genuinely reproduced Task-Base failures and unavailable external gates.
