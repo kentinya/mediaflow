@@ -173,29 +173,14 @@ class PersistentTaskCoordinator:
         item_id = str(uuid5(NAMESPACE_URL, f"{task_id}:{storage_id}:{source_path}"))
         previous = self.repository.get_item(item_id)
         now = datetime.now(UTC)
-        item = PersistentTaskItem(
-            item_id,
-            task_id,
-            storage_id,
-            resource_library_id,
-            source_path,
-            source_display,
-            TaskItemStatus.PROCESSING,
-            "pipeline",
-            (previous.attempts if previous else 0) + 1,
-            previous.created_at if previous else now,
-            now,
-        )
-        self.repository.upsert_item(item)
-        persisted_item = self.repository.get_item(item_id)
-        if persisted_item is not None:
-            item = persisted_item
-        # The acquisition generation is what makes release exact: this frame
-        # owns only the lock row it inserted or rotated, so a late `finally`
-        # after a replacement Worker re-acquired the same Task/path cannot
-        # remove the replacement's row.  The token is minted per acquisition and
-        # never persisted on the item, published in an operator document or
-        # logged.
+        # A transfer continuation is one claim-fenced ownership boundary: this
+        # frame must own the live claim *and* its exact lock generation before
+        # any TaskItem write.  Publishing the started row first would let a
+        # frame that already lost its claim erase the live owner's durable
+        # recovery checkpoint and consume an attempt.
+        fenced = transfer_fence if (adopt_existing and transfer_fence is not None) else None
+        # The generation is minted per acquisition and never persisted on the
+        # item, published in an operator document or logged.
         lock_owner_token = f"{task_id}:{uuid4().hex}"
         # A continuation of a takeover must hand the exclusion over *without*
         # ever deleting it: the row is rotated in place, so a competing Task can
@@ -218,30 +203,124 @@ class PersistentTaskCoordinator:
                 storage_id, source_path, task_id, now, owner_token=lock_owner_token
             )
         if not acquired:
-            # Distinguish a lost claim from a genuinely conflicting owner: the
-            # adopt path fails closed on both, but only the former must stop the
-            # Worker without recording a business failure for the item.
-            claim_check = getattr(self.repository, "transfer_claim_is_current", None)
-            if (
-                adopt_existing
-                and transfer_fence is not None
-                and callable(claim_check)
-                and not claim_check(transfer_fence[0], transfer_fence[1], transfer_fence[2])
-            ):
+            if fenced is not None and not self._claim_is_current(fenced):
+                # The lease lapsed before the boundary was crossed.  Stop with
+                # *zero* writes, so the current owner's TaskItem, Result,
+                # transfer mutation boundary and replacement lock generation
+                # stay exactly as they were: no attempt is consumed and no
+                # user-visible business failure is fabricated.
                 raise TaskClaimLost()
-            failed = replace(
-                item,
-                status=TaskItemStatus.FAILED,
-                stage="lock",
+            # A conflict against a live claim is a real refusal, and it is
+            # published under that same fence so a claim lost between the
+            # acquisition attempt and this write can never surface as a stale
+            # failure.  The bounded lock failure is terminal, so the row carries
+            # no resume checkpoint; a frame whose claim already lapsed raises
+            # TaskClaimLost above and writes nothing at all.
+            conflict = PersistentTaskItem(
+                item_id,
+                task_id,
+                storage_id,
+                resource_library_id,
+                source_path,
+                source_display,
+                TaskItemStatus.FAILED,
+                "lock",
+                (previous.attempts if previous else 0) + 1,
+                previous.created_at if previous else now,
+                datetime.now(UTC),
                 error="source is locked by another active task",
-                updated_at=datetime.now(UTC),
             )
-            self.repository.upsert_item(failed)
-            raise TaskLockError(failed.error)
+            if not self._publish_item_start(conflict, fenced):
+                raise TaskClaimLost()
+            raise TaskLockError(conflict.error)
+        if fenced is not None and previous is not None:
+            # A valid continuation keeps the predecessor's durable recovery
+            # checkpoint.  That row is the only authority a crash between this
+            # boundary and the first new progress write leaves behind, so it
+            # survives `begin_item` intact and is superseded only by a later
+            # claim-guarded progress or terminal publication.
+            started = replace(
+                previous,
+                resource_library_id=resource_library_id,
+                source_display=source_display,
+                status=TaskItemStatus.PROCESSING,
+                stage="pipeline",
+                attempts=previous.attempts + 1,
+                updated_at=now,
+                error=None,
+            )
+        else:
+            started = PersistentTaskItem(
+                item_id,
+                task_id,
+                storage_id,
+                resource_library_id,
+                source_path,
+                source_display,
+                TaskItemStatus.PROCESSING,
+                "pipeline",
+                (previous.attempts if previous else 0) + 1,
+                previous.created_at if previous else now,
+                now,
+            )
+        if not self._publish_item_start(started, fenced):
+            # The claim lapsed between the acquisition and this publication.
+            # Release **only** this frame's exact generation and stop: if a
+            # replacement owner has already rotated this Task's rows, this
+            # delete matches nothing and its row is untouched, and the
+            # exclusion invariant still arbitrates because whichever Task holds
+            # the row makes every other acquisition fail closed.  No
+            # compensating TaskItem write is ever performed.
+            self.locks.release(storage_id, source_path, task_id, owner_token=lock_owner_token)
+            raise TaskClaimLost()
+        persisted_item = self.repository.get_item(item_id)
+        if persisted_item is not None:
+            started = persisted_item
         # The generation travels with the execution frame for the whole item
         # lifetime: every terminal/publication path releases exactly it.
-        item = replace(item, lock_owner_token=lock_owner_token)
-        return item
+        return replace(started, lock_owner_token=lock_owner_token)
+
+    def _claim_is_current(self, fence: tuple[str, str, datetime]) -> bool:
+        """Whether the exact live Worker claim named by ``fence`` still holds.
+
+        A repository that cannot answer the question fails closed, so an
+        unprovable ownership boundary is always treated as lost.
+        """
+
+        check = getattr(self.repository, "transfer_claim_is_current", None)
+        if not callable(check):
+            return False
+        return bool(check(fence[0], fence[1], fence[2]))
+
+    def _publish_item_start(
+        self,
+        item: PersistentTaskItem,
+        fence: tuple[str, str, datetime] | None,
+    ) -> bool:
+        """Publish one transfer start under the claim fence when one applies.
+
+        The guarded write is compare-and-set against the live claim, so a frame
+        that lost ownership writes nothing at all.  It can be reused here
+        because the transfer path resolves any recorded ``mutation_in_flight``
+        boundary *before* executing items, so the boundary is already clear and
+        the guard's atomic clear is a no-op.  An unfenced caller (Organize, the
+        manual execution path) keeps the historical unguarded write.
+        """
+
+        if fence is not None:
+            guarded = getattr(self.repository, "upsert_item_guarded", None)
+            if callable(guarded):
+                transfer_id, claim_token, claim_now = fence
+                return bool(
+                    guarded(
+                        item,
+                        transfer_id=transfer_id,
+                        claim_token=claim_token,
+                        now=claim_now,
+                    )
+                )
+        self.repository.upsert_item(item)
+        return True
 
     def release_item_lock(self, item: PersistentTaskItem) -> None:
         """Release exactly the acquisition generation this frame owns.
