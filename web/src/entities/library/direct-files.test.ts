@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import admissionContract from "../../../tests/fixtures/files-transfer-admission.json";
 import {
   DirectFilesNormalizationError,
   normalizeDirectFileCommandResult,
@@ -274,38 +275,16 @@ describe("Rename version evidence", () => {
  * destination pairs (a nested array per path), so the real response was
  * rejected as `malformed_response` *after* the transfer had already been
  * durably admitted — losing the handle to a committed mutation and permitting
- * a dangerous resubmission.  This payload is captured verbatim from
- * `DirectFileTransferService.submit_transfer` -> `_queued_document`.
+ * a dangerous resubmission.
+ *
+ * This payload is not a hand-written object: it is the committed shared
+ * fixture produced and asserted by the Python API test
+ * `test_real_admission_matches_the_shared_contract_fixture`, and served
+ * verbatim by the Files fake server.  Python, the TypeScript normalizer and
+ * the e2e fake therefore consume one cross-boundary contract, so the two
+ * languages can no longer drift apart.
  */
-const REAL_TRANSFER_ADMISSION = {
-  admitted: true,
-  checkpoints: [],
-  checkpointsTruncated: false,
-  conflictMode: "fail",
-  destinationResourceLibraryId: "source",
-  destinations: [{ destination: "Movies/a.mkv", path: "a.mkv" }],
-  failedItems: 0,
-  itemOutcomes: [
-    { destination: "Movies/a.mkv", path: "a.mkv", status: "QUEUED" },
-  ],
-  knownEffects: [],
-  nextAction:
-    "the transfer is admitted and queued for execution; its progress appears below",
-  operation: "copy",
-  outcomes: [],
-  outcomesTruncated: false,
-  resourceLibraryId: "source",
-  retrySafe: true,
-  sameStorage: true,
-  sideEffects: "none",
-  skippedItems: 0,
-  status: "QUEUED",
-  succeededItems: 0,
-  taskId: "b997c48a-d1b5-4826-9933-2be0fb296c67",
-  taskStatus: "pending",
-  topLevelPaths: ["a.mkv"],
-  totalItems: 1,
-};
+const REAL_TRANSFER_ADMISSION: unknown = admissionContract;
 
 /**
  * The exact durable projection the real API returns once the Worker finished,
@@ -365,8 +344,13 @@ const REAL_TRANSFER_PROJECTION = {
 describe("real transfer admission contract", () => {
   it("normalizes the exact backend admission document", () => {
     const model = normalizeTransferResult(REAL_TRANSFER_ADMISSION);
+    // The shared fixture keeps the server-issued identity opaque; the exact
+    // top-level path strings and destination pairs are the contract.
     expect(model.topLevelPaths).toEqual(["a.mkv"]);
-    expect(model.taskId).toBe("b997c48a-d1b5-4826-9933-2be0fb296c67");
+    expect(model.topLevelPaths.every((path) => typeof path === "string")).toBe(
+      true,
+    );
+    expect(model.taskId).toEqual(expect.any(String));
     expect(model.status).toBe("QUEUED");
     expect(model.taskStatus).toBe("pending");
     expect(model.destinations).toEqual([
@@ -381,7 +365,7 @@ describe("real transfer admission contract", () => {
     // treat a committed admission as committed.
     expect(() =>
       normalizeTransferResult({
-        ...REAL_TRANSFER_ADMISSION,
+        ...(REAL_TRANSFER_ADMISSION as Record<string, unknown>),
         topLevelPaths: [["a.mkv", "Movies/a.mkv"]],
       }),
     ).toThrow(DirectFilesNormalizationError);

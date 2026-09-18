@@ -18,6 +18,23 @@ const HOST = "127.0.0.1";
 const PORT = Number(process.env.FAKE_PORT ?? 4173);
 const DIST = fileURLToPath(new URL("../dist", import.meta.url));
 
+/**
+ * The committed cross-boundary admission contract produced and asserted by the
+ * Python API test (`test_real_admission_matches_the_shared_contract_fixture`)
+ * and normalized by the TypeScript model test.  The fake server builds its 202
+ * response from this exact document with only the per-request task identity and
+ * the submitted selection substituted, so the e2e browser journey cannot
+ * silently drift away from the real backend shape.
+ */
+const ADMISSION_CONTRACT = JSON.parse(
+  await readFile(
+    fileURLToPath(
+      new URL("./fixtures/files-transfer-admission.json", import.meta.url),
+    ),
+    "utf8",
+  ),
+);
+
 const VIEWER_TOKENS = new Set(["e2e-viewer-token"]);
 const LIMITED_TOKENS = new Set(["e2e-limited-token"]);
 const EXPIRED_TOKENS = new Set(["e2e-expired-token"]);
@@ -5168,42 +5185,38 @@ const server = createServer(async (req, res) => {
           current.version = new Date().toISOString();
         }
       }, 900);
+      const destinations = paths.map((path) => ({
+        path,
+        destination:
+          (fields.destinationDirectory === ""
+            ? ""
+            : `${fields.destinationDirectory}/`) + path,
+      }));
       sendJson(res, 202, {
+        ...ADMISSION_CONTRACT,
         operation: fields.operation,
         conflictMode: fields.conflictMode,
         sameStorage: fields.destinationResourceLibraryId === resourceLibraryId,
-        status: "QUEUED",
-        admitted: true,
         taskId,
-        taskStatus: "pending",
         resourceLibraryId,
         destinationResourceLibraryId: fields.destinationResourceLibraryId,
         topLevelPaths: paths,
-        destinations: paths.map((path) => ({
-          path,
-          destination:
-            (fields.destinationDirectory === ""
-              ? ""
-              : `${fields.destinationDirectory}/`) + path,
-        })),
-        knownEffects: [],
+        destinations,
         itemOutcomes: paths.map((path) => ({
           path,
-          destination: path,
+          destination:
+            destinations.find((entry) => entry.path === path)?.destination ??
+            path,
           status: "QUEUED",
         })),
-        checkpoints: [],
-        checkpointsTruncated: false,
-        outcomes: [],
-        outcomesTruncated: false,
         totalItems: paths.length,
-        succeededItems: 0,
-        skippedItems: 0,
-        failedItems: 0,
-        sideEffects: "none",
-        retrySafe: true,
-        nextAction:
-          "the transfer is admitted and queued; progress appears below",
+        // The committed fixture's queued state is reproduced exactly; only the
+        // per-request selection and identity are substituted.
+        status: ADMISSION_CONTRACT.status,
+        taskStatus: ADMISSION_CONTRACT.taskStatus,
+        sideEffects: ADMISSION_CONTRACT.sideEffects,
+        retrySafe: ADMISSION_CONTRACT.retrySafe,
+        nextAction: ADMISSION_CONTRACT.nextAction,
       });
       return;
     }

@@ -90,6 +90,20 @@ class PersistentFilesTransfer:
     created_at: datetime = datetime.min.replace(tzinfo=UTC)
     updated_at: datetime = datetime.min.replace(tzinfo=UTC)
     completed_at: datetime | None = None
+    #: The durable in-flight mutation fence.  ``mutation_state`` is
+    #: ``"mutation_in_flight"`` exactly while the claim owner has published the
+    #: boundary immediately before an ``OrganizerExecutor`` mutation and has not
+    #: yet returned the entry to a continuation-safe state.  A transfer in this
+    #: state is never handed to another Worker by the ordinary claim query, no
+    #: matter how long ago its lease elapsed, so a blocked or stalled provider
+    #: call can never become replayable work.  ``in_flight_item_id``,
+    #: ``in_flight_entry_path`` and ``in_flight_action`` name the exact bounded
+    #: logical entry the owner entered; they never carry host roots or
+    #: credentials.
+    mutation_state: str | None = None
+    in_flight_item_id: str | None = None
+    in_flight_entry_path: str | None = None
+    in_flight_action: str | None = None
 
 
 #: Task-item stage recorded for a transfer item the running process never
@@ -98,6 +112,14 @@ class PersistentFilesTransfer:
 #: marker stays the only known-safe evidence; the item is an explicit
 #: interrupted/investigation state and is never silently retried.
 TRANSFER_INTERRUPTED_STAGE = "transfer_interrupted"
+
+#: The one durable value of ``PersistentFilesTransfer.mutation_state`` while a
+#: claim owner has entered a Storage mutation whose effect is not yet verified
+#: and recorded.  It is the explicit, durable distinction between a claim that
+#: has not entered a Storage mutation (reclaimable when its lease elapses) and
+#: an operation that may currently be in flight (never reclaimable by the
+#: ordinary claim query merely because its lease elapsed).
+TRANSFER_MUTATION_IN_FLIGHT = "mutation_in_flight"
 
 
 class PersistentTaskStatus(StrEnum):

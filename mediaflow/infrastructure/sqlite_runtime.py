@@ -175,6 +175,7 @@ from mediaflow.domain.recovery_continuation import (
 from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
+    TRANSFER_MUTATION_IN_FLIGHT,
     ConfirmationStatus,
     ConflictConfirmation,
     ConflictDecisionAudit,
@@ -212,7 +213,12 @@ from mediaflow.infrastructure.file_index_schema import (
 # Copy/Move is durably admitted (Task + per-item transfer authority) before the
 # first Storage mutation and executed by the resident Worker under a persisted
 # claim/lease fence instead of inside the admitting API request.
-SCHEMA_VERSION = 36
+# 37 adds the durable in-flight mutation fence columns on ``files_transfers``:
+# the claim owner publishes the exact item/entry boundary immediately before
+# every OrganizerExecutor mutation, an expired in-flight mutation is never
+# selected by the ordinary claim query, and only that owner (or an explicit
+# investigation resolution) can return the entry to a continuation-safe state.
+SCHEMA_VERSION = 37
 
 # The canonical named column order of one ``task_items`` row.  Every INSERT
 # names these columns explicitly, so a statement never depends on the physical
@@ -7797,8 +7803,9 @@ class SQLiteTaskRepository:
                 transfer_id, task_id, status, authority_json,
                 configuration_snapshot_id, configuration_snapshot_digest,
                 worker_id, claim_token, claimed_at, claim_expires_at, attempts,
-                error, next_action, created_at, updated_at, completed_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                error, next_action, created_at, updated_at, completed_at,
+                mutation_state, in_flight_item_id, in_flight_entry_path, in_flight_action
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             self._files_transfer_values(transfer),
         )
 
@@ -7821,6 +7828,10 @@ class SQLiteTaskRepository:
             transfer.created_at.isoformat(),
             transfer.updated_at.isoformat(),
             transfer.completed_at.isoformat() if transfer.completed_at else None,
+            transfer.mutation_state,
+            transfer.in_flight_item_id,
+            transfer.in_flight_entry_path,
+            transfer.in_flight_action,
         )
 
     @staticmethod
@@ -7842,6 +7853,10 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["created_at"]),
             datetime.fromisoformat(row["updated_at"]),
             datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            row["mutation_state"],
+            row["in_flight_item_id"],
+            row["in_flight_entry_path"],
+            row["in_flight_action"],
         )
 
     def get_files_transfer(self, transfer_id: str) -> PersistentFilesTransfer | None:
@@ -7881,6 +7896,13 @@ class SQLiteTaskRepository:
         newer Worker may lawfully continue work admitted under a superseded
         snapshot.  Revision compatibility is enforced by reconstruction, never
         by process age.
+
+        A transfer whose claim owner entered a Storage mutation is excluded no
+        matter how long ago its lease elapsed: an in-flight operation is never
+        replayable by the ordinary claim query.  Such a transfer is resolved by
+        ``claim_expired_files_transfer_mutation`` instead, which takes ownership
+        only to classify the boundary without invoking the interrupted
+        operation again.
         """
 
         self._require_claim_values(worker_id, claim_token, lease_seconds)
@@ -7891,6 +7913,7 @@ class SQLiteTaskRepository:
             row = self._connection.execute(
                 """SELECT transfer_id FROM files_transfers
                 WHERE status IN (?, ?) AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+                AND mutation_state IS NULL
                 ORDER BY created_at, transfer_id LIMIT 1""",
                 (
                     FilesTransferStatus.ADMITTED.value,
@@ -7904,6 +7927,65 @@ class SQLiteTaskRepository:
                 """UPDATE files_transfers SET worker_id=?, claim_token=?, claimed_at=?,
                 claim_expires_at=?, attempts=attempts+1, updated_at=?
                 WHERE transfer_id=? AND status IN (?, ?)
+                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+                AND mutation_state IS NULL""",
+                (
+                    worker_id,
+                    claim_token,
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                    now.isoformat(),
+                    row["transfer_id"],
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+            if cursor.rowcount != 1:
+                return None
+        return self.get_files_transfer(row["transfer_id"])
+
+    def claim_expired_files_transfer_mutation(
+        self,
+        now: datetime,
+        *,
+        worker_id: str,
+        claim_token: str,
+        lease_seconds: float,
+    ) -> PersistentFilesTransfer | None:
+        """Take ownership of one expired transfer that has a mutation in flight.
+
+        The ordinary claim query deliberately skips these rows, so this is the
+        only way an abandoned in-flight operation is reached.  The claim is
+        granted only for *resolution*: the new owner must classify the recorded
+        boundary against live Storage and converge it truthfully, and it must
+        never invoke the interrupted operation again.  Ownership moves only
+        once the previous lease genuinely elapsed, so a live owner that still
+        renews its lease always keeps its own mutation.
+        """
+
+        self._require_claim_values(worker_id, claim_token, lease_seconds)
+        if now.tzinfo is None:
+            raise ValueError("files transfer claim timestamp needs timezone")
+        expires_at = now + timedelta(seconds=float(lease_seconds))
+        with self._lock, self._connection:
+            row = self._connection.execute(
+                """SELECT transfer_id FROM files_transfers
+                WHERE status IN (?, ?) AND mutation_state IS NOT NULL
+                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+                ORDER BY created_at, transfer_id LIMIT 1""",
+                (
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+            cursor = self._connection.execute(
+                """UPDATE files_transfers SET worker_id=?, claim_token=?, claimed_at=?,
+                claim_expires_at=?, attempts=attempts+1, updated_at=?
+                WHERE transfer_id=? AND status IN (?, ?) AND mutation_state IS NOT NULL
                 AND (claim_expires_at IS NULL OR claim_expires_at <= ?)""",
                 (
                     worker_id,
@@ -7950,6 +8032,96 @@ class SQLiteTaskRepository:
                 ),
             )
         return cursor.rowcount == 1
+
+    def begin_files_transfer_mutation(
+        self,
+        transfer_id: str,
+        claim_token: str,
+        now: datetime,
+        *,
+        item_id: str,
+        entry_path: str,
+        action: str,
+    ) -> bool:
+        """Atomically publish the exact in-flight mutation boundary.
+
+        Called immediately before ``OrganizerExecutor`` performs one
+        Copy/Move/Delete/CreateDirectory/Write.  The update is compare-and-set
+        against the current claim token *and* an unexpired lease, so a Worker
+        that already lost ownership never starts a mutation, and one transfer
+        can never have two boundaries in flight.  From this moment the
+        ordinary claim query refuses to hand the transfer to another Worker,
+        no matter how long the provider call blocks.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        for value in (item_id, entry_path, action):
+            if not isinstance(value, str) or not value:
+                raise ValueError("files transfer mutation boundary is invalid")
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                """UPDATE files_transfers
+                SET mutation_state=?, in_flight_item_id=?, in_flight_entry_path=?,
+                in_flight_action=?, updated_at=?
+                WHERE transfer_id=? AND claim_token=? AND status IN (?, ?)
+                AND (claim_expires_at IS NULL OR claim_expires_at > ?)
+                AND mutation_state IS NULL""",
+                (
+                    TRANSFER_MUTATION_IN_FLIGHT,
+                    item_id,
+                    entry_path,
+                    action,
+                    now.isoformat(),
+                    transfer_id,
+                    claim_token,
+                    FilesTransferStatus.ADMITTED.value,
+                    FilesTransferStatus.RUNNING.value,
+                    now.isoformat(),
+                ),
+            )
+        return cursor.rowcount == 1
+
+    def clear_files_transfer_mutation(
+        self, transfer_id: str, claim_token: str, now: datetime
+    ) -> bool:
+        """Return one verified entry to a continuation-safe state.
+
+        Only the exact live claim owner may clear its own boundary, and only
+        after it has proved (with zero mutation) that continuing from the
+        recorded known-safe checkpoint cannot replay an unknown effect.  The
+        compare-and-set is therefore on the claim token, so a takeover can never
+        clear the previous owner's record and a stale owner can never erase the
+        new owner's boundary.
+        """
+
+        if not isinstance(claim_token, str) or not claim_token.strip():
+            raise ValueError("files transfer claim token is invalid")
+        if now.tzinfo is None:
+            raise ValueError("files transfer timestamp needs timezone")
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if not self._transfer_claim_locked(transfer_id, claim_token, now):
+                    self._connection.rollback()
+                    return False
+                cursor = self._connection.execute(
+                    """UPDATE files_transfers
+                    SET mutation_state=NULL, in_flight_item_id=NULL,
+                    in_flight_entry_path=NULL, in_flight_action=NULL, updated_at=?
+                    WHERE transfer_id=? AND claim_token=? AND mutation_state=?""",
+                    (now.isoformat(), transfer_id, claim_token, TRANSFER_MUTATION_IN_FLIGHT),
+                )
+                if cursor.rowcount != 1:
+                    self._connection.rollback()
+                    return False
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
 
     def heartbeat_files_transfer_claim(
         self,
@@ -8006,6 +8178,8 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 """UPDATE files_transfers SET status=?, error=?, next_action=?,
+                mutation_state=NULL, in_flight_item_id=NULL,
+                in_flight_entry_path=NULL, in_flight_action=NULL,
                 updated_at=?, completed_at=? WHERE transfer_id=? AND claim_token=?
                 AND status IN (?, ?)""",
                 (
@@ -8033,7 +8207,8 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
                 claimed_at=NULL, claim_expires_at=NULL, updated_at=?
-                WHERE transfer_id=? AND claim_token=? AND status=?""",
+                WHERE transfer_id=? AND claim_token=? AND status=?
+                AND mutation_state IS NULL""",
                 (
                     FilesTransferStatus.PAUSED.value,
                     now.isoformat(),
@@ -8050,6 +8225,11 @@ class SQLiteTaskRepository:
         The persisted per-item authority is untouched: the Worker continues
         from each item's recorded known-safe checkpoint.  A transfer with a
         live claim is refused instead of being re-queued beneath its owner.
+
+        A transfer whose claim owner entered a Storage mutation is never
+        re-queued: an in-flight operation may already have taken effect, so it
+        stays on the investigation path instead of becoming a fresh replay of
+        the same unchanged authority.
         """
 
         if now.tzinfo is None:
@@ -8059,7 +8239,8 @@ class SQLiteTaskRepository:
                 """UPDATE files_transfers SET status=?, worker_id=NULL, claim_token=NULL,
                 claimed_at=NULL, claim_expires_at=NULL, error=NULL, next_action=NULL,
                 updated_at=? WHERE transfer_id=? AND status IN (?, ?)
-                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)""",
+                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+                AND mutation_state IS NULL""",
                 (
                     FilesTransferStatus.ADMITTED.value,
                     now.isoformat(),
@@ -8076,6 +8257,11 @@ class SQLiteTaskRepository:
                 if row is None:
                     raise LookupError(f"files transfer {transfer_id!r} was not found")
                 current = self._files_transfer(row)
+                if current.mutation_state is not None:
+                    raise ValueError(
+                        "the transfer has an unresolved in-flight mutation; it cannot be "
+                        "re-queued or replayed"
+                    )
                 if current.claim_expires_at is not None and current.claim_expires_at > now:
                     raise ValueError("the transfer is still owned by a live Worker claim")
                 raise ValueError(f"a {current.status.value} transfer cannot be re-queued")
@@ -8096,6 +8282,10 @@ class SQLiteTaskRepository:
         immutable runtime.  The exact claim token is compared, so a Worker that
         already lost ownership writes nothing; the pinned authority and the
         per-item checkpoints are preserved for a compatible Worker.
+
+        An unresolved in-flight boundary is deliberately *kept*: releasing the
+        claim must never turn a mutation that may already have taken effect into
+        replayable work.  Only an explicit investigation resolution clears it.
         """
 
         if not isinstance(claim_token, str) or not claim_token.strip():
@@ -8174,6 +8364,25 @@ class SQLiteTaskRepository:
         ).fetchone()
         return row is not None
 
+    def _clear_mutation_locked(self, transfer_id: str, claim_token: str, now: datetime) -> None:
+        """Return an entry to a continuation-safe state in the same transaction.
+
+        A guarded publication by the exact claim owner is the durable proof
+        that the mutation it entered has ended and its verified checkpoint is
+        being recorded, so the in-flight boundary is cleared atomically with the
+        checkpoint.  A crash between the provider call and this publication
+        therefore leaves the boundary set and the transfer on the investigation
+        path rather than replayable.
+        """
+
+        self._connection.execute(
+            """UPDATE files_transfers
+            SET mutation_state=NULL, in_flight_item_id=NULL,
+            in_flight_entry_path=NULL, in_flight_action=NULL, updated_at=?
+            WHERE transfer_id=? AND claim_token=? AND mutation_state IS NOT NULL""",
+            (now.isoformat(), transfer_id, claim_token),
+        )
+
     def upsert_item_guarded(
         self,
         item: PersistentTaskItem,
@@ -8196,6 +8405,7 @@ class SQLiteTaskRepository:
                     return False
                 bound = self._bind_item_to_current_occurrence(item)
                 self._connection.execute(_TASK_ITEM_UPSERT, self._item_values(bound))
+                self._clear_mutation_locked(transfer_id, claim_token, now)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
@@ -8234,6 +8444,7 @@ class SQLiteTaskRepository:
                         """,
                         self._evidence_values(evidence),
                     )
+                self._clear_mutation_locked(transfer_id, claim_token, now)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()
@@ -8303,6 +8514,8 @@ class SQLiteTaskRepository:
                     return False
                 cursor = self._connection.execute(
                     """UPDATE files_transfers SET status=?, error=?, next_action=?,
+                    mutation_state=NULL, in_flight_item_id=NULL,
+                    in_flight_entry_path=NULL, in_flight_action=NULL,
                     updated_at=?, completed_at=? WHERE transfer_id=? AND claim_token=?
                     AND status IN (?, ?)""",
                     (
@@ -9180,6 +9393,8 @@ class SQLiteTaskRepository:
                     attempts INTEGER NOT NULL DEFAULT 0,
                     error TEXT, next_action TEXT,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT,
+                    mutation_state TEXT, in_flight_item_id TEXT,
+                    in_flight_entry_path TEXT, in_flight_action TEXT,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
                 CREATE INDEX IF NOT EXISTS files_transfers_status_created
@@ -9998,6 +10213,20 @@ class SQLiteTaskRepository:
                 if column not in execution_columns:
                     self._connection.execute(
                         f"ALTER TABLE manual_executions ADD COLUMN {column} {definition}"
+                    )
+            transfer_columns = {
+                row["name"]
+                for row in self._connection.execute("PRAGMA table_info(files_transfers)").fetchall()
+            }
+            for column, definition in (
+                ("mutation_state", "TEXT"),
+                ("in_flight_item_id", "TEXT"),
+                ("in_flight_entry_path", "TEXT"),
+                ("in_flight_action", "TEXT"),
+            ):
+                if column not in transfer_columns:
+                    self._connection.execute(
+                        f"ALTER TABLE files_transfers ADD COLUMN {column} {definition}"
                     )
             if "cancellation_requested" not in job_columns:
                 self._connection.execute(
