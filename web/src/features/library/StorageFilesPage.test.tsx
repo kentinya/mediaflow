@@ -431,6 +431,16 @@ describe("Files entry state and ResourceLibrary strip", () => {
       | ((body: Record<string, unknown>) => Promise<Response>);
     /** The durable projection read for one admitted transfer Task. */
     onTransferProjection?: (taskId: string) => Response;
+    /** One bounded upload submission: the framed body and its destination. */
+    onUpload?: (input: {
+      readonly body: string;
+      readonly url: string;
+    }) => Response;
+    /** One bounded download selection streamed from the mock. */
+    onDownload?: (input: {
+      readonly paths: string[];
+      readonly url: string;
+    }) => Response;
   }) {
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -631,6 +641,46 @@ describe("Files entry state and ResourceLibrary strip", () => {
             "the transfer is admitted and queued; progress appears below",
           sideEffects: "none",
           retrySafe: true,
+        });
+      }
+      if (url.includes("/files/uploads")) {
+        if (options.onUpload)
+          return options.onUpload({ body: String(init?.body ?? ""), url });
+        return jsonResponse({
+          manifestDigest: "upload-manifest-1",
+          conflict: "no_overwrite",
+          destinationDirectory: "",
+          status: "SUCCESS",
+          taskId: "task-upload-1",
+          taskStatus: "completed",
+          totalItems: 1,
+          succeededItems: 1,
+          skippedItems: 0,
+          failedItems: 0,
+          items: [
+            {
+              path: "notes.txt",
+              status: "SUCCESS",
+              errorCategory: null,
+              destination: "notes.txt",
+            },
+          ],
+          outcomesTruncated: false,
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction: "refresh the directory to see the current state",
+        });
+      }
+      if (url.includes("/files/download")) {
+        const query = new URL(url, "http://x").searchParams;
+        const paths = query.getAll("path");
+        if (options.onDownload) return options.onDownload({ paths, url });
+        return new Response("mocked-download-bytes", {
+          status: 200,
+          headers: {
+            "Content-Type": "application/octet-stream",
+            "Content-Disposition": 'attachment; filename="notes.txt"',
+          },
         });
       }
       if (url.includes("/files/delete-impact")) {
@@ -2478,5 +2528,130 @@ describe("Files entry state and ResourceLibrary strip", () => {
       expect(within(progressDialog).getByText(/正在执行/)).toBeVisible(),
     );
     expect(transferBodies).toHaveLength(1);
+  });
+
+  it("streams a picked file through the bounded upload into the current directory", async () => {
+    const user = userEvent.setup();
+    const uploadBodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onUpload: ({ body }) => {
+          uploadBodies.push(body);
+          return jsonResponse({
+            manifestDigest: "upload-manifest-1",
+            conflict: "no_overwrite",
+            destinationDirectory: "",
+            status: "SUCCESS",
+            taskId: "task-upload-1",
+            taskStatus: "completed",
+            totalItems: 1,
+            succeededItems: 1,
+            skippedItems: 0,
+            failedItems: 0,
+            items: [
+              {
+                path: "upload.txt",
+                status: "SUCCESS",
+                errorCategory: null,
+                destination: "upload.txt",
+              },
+            ],
+            outcomesTruncated: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "refresh the directory to see the current state",
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "上传" }));
+    const dialog = await screen.findByRole("dialog");
+    // The default conflict choice is no-overwrite and is selected.
+    const defaultChoice = within(dialog).getByRole("radio", { name: /不覆盖/ });
+    expect(defaultChoice).toBeChecked();
+    // Simulate a picked browser file (the dialog collects payload bytes).
+    const picked = new File(["upload-bytes"], "upload.txt", {
+      type: "text/plain",
+    });
+    const input = within(dialog).getByLabelText("选择要上传的文件");
+    await user.upload(input, picked);
+    expect(within(dialog).getByText(/已选择 1 项/)).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "上传" }));
+    await waitFor(() =>
+      expect(within(dialog).getByText(/上传已完成/)).toBeVisible(),
+    );
+    expect(uploadBodies).toHaveLength(1);
+    // The manifest names the uploaded item; the result dialog confirms it.
+    expect(within(dialog).getByText("upload.txt")).toBeVisible();
+    expect(within(dialog).getByText(/\u5df2\u4e0a\u4f20/)).toBeVisible();
+  });
+
+  it("offers a bounded Download on the row menu and the selection footer", async () => {
+    const user = userEvent.setup();
+    const downloadRequests: string[][] = [];
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onDownload: ({ paths }) => {
+          downloadRequests.push(paths);
+          return new Response("mocked-download-bytes", {
+            status: 200,
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "Content-Disposition": 'attachment; filename="notes.txt"',
+            },
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    // Row menu download.
+    const row = screen.getByText("notes.txt").closest("tr");
+    expect(row).not.toBeNull();
+    await user.click(row!.querySelector(".mf-row-more") as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "下载" }));
+    expect(downloadRequests[0]).toEqual(["notes.txt"]);
+  });
+
+  it("explains a bounded download refusal without mutating anything", async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onDownload: () =>
+          jsonResponse(
+            {
+              error: {
+                code: "files_download_not_found",
+                category: "not_found",
+                details: { path: "notes.txt", sideEffects: "none" },
+              },
+            },
+            404,
+          ),
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    const row = screen.getByText("notes.txt").closest("tr");
+    expect(row).not.toBeNull();
+    await user.click(row!.querySelector(".mf-row-more") as HTMLElement);
+    await user.click(screen.getByRole("menuitem", { name: "下载" }));
+    await waitFor(() =>
+      expect(screen.getByText(/所选内容不存在/)).toBeVisible(),
+    );
   });
 });

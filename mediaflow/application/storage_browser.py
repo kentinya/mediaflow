@@ -5,6 +5,7 @@ import hashlib
 import hmac
 import json
 import os
+import posixpath
 import re
 import secrets
 import time
@@ -1046,6 +1047,45 @@ def _join_resource_library_path(root: str, relative_path: str) -> str:
     if not root:
         return relative_path
     return f"{root}/{relative_path}" if relative_path else root
+
+
+def _confined_directory_child(child, parent_storage_path: str, root: str) -> str:
+    """Convert one provider-listed child into its confined relative path.
+
+    This is the single shared conversion boundary between provider
+    storage-relative listing coordinates and the confined ResourceLibrary-
+    relative path space used by manifests, execution and results.  Every
+    adapter (Local, SMB, OpenList, S3/R2) lists children of
+    ``parent_storage_path`` with storage-relative ``path`` values, so the
+    direct-child validation happens in storage-relative coordinates first;
+    only then is exactly one configured ResourceLibrary root stripped, and
+    only the resulting confined path may ever enter a manifest, a result or
+    a recursion.  An escaped, reparented or root-inconsistent entry raises
+    instead of being silently re-interpreted, so no adapter-specific
+    bypass exists.
+    """
+
+    name = child.name
+    if (
+        not isinstance(name, str)
+        or not name
+        or name in {".", ".."}
+        or "/" in name
+        or "\\" in name
+        or "\x00" in name
+    ):
+        raise ValueError("provider listed an entry with an unsafe child name")
+    if child.path != posixpath.join(parent_storage_path, name):
+        raise ValueError("provider listed an entry that is not a direct child of its directory")
+    root = _normalize_storage_relative_path(root) if root else ""
+    if not root:
+        return child.path
+    if child.path == root:
+        return ""
+    prefix = root + "/"
+    if child.path.startswith(prefix):
+        return child.path[len(prefix) :]
+    raise ValueError("provider listed an entry outside the ResourceLibrary root")
 
 
 def _strip_resource_library_path(path: str, root: str) -> str:

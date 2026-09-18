@@ -4,6 +4,7 @@ import posixpath
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from typing import BinaryIO
 
 from mediaflow.domain.classification import ClassificationResult
 from mediaflow.domain.direct_files import (
@@ -776,6 +777,163 @@ class OrganizerExecutor:
             mutate=lambda: storage.write(path, data, overwrite=overwrite),
             verify=lambda: self._direct_write_verified(storage, path, data),
         )
+
+    def execute_direct_write_stream(
+        self,
+        storage: Storage,
+        path: str,
+        source: BinaryIO,
+        expected_size: int,
+        *,
+        execute: bool = True,
+        mutation_authority: MutationAuthority | None = None,
+    ) -> ExecutionResult:
+        """Stream one bounded source into one exact new destination.
+
+        Upload-only boundary.  The destination must not exist — the caller
+        resolves the explicit conflict choice upstream, so there is
+        deliberately no ``overwrite`` grant here.  The stream is written in
+        bounded chunks through the provider's ``write`` so no media file is
+        ever buffered whole, and the produced destination is re-observed by
+        size before the command may be reported complete.  An interrupted
+        write is never replayed: it is reported truthful (uncertain when a
+        partial artifact may exist) and the operator recovers by re-uploading
+        that one item only.
+        """
+
+        started = time.monotonic()
+        if unsafe_relative_destination_path(path):
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=("invalid destination",),
+            )
+        if not execute:
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.DRY_RUN,
+                warnings=("dry-run: no Storage mutation was executed",),
+            )
+        capability_error = _direct_capability_error(PlanOperation.WRITE, storage)
+        if capability_error:
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(capability_error,),
+            )
+        preflight_error = self._direct_conflict_preflight(storage, path)
+        if preflight_error:
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                errors=(preflight_error,),
+            )
+        if mutation_authority is not None:
+            try:
+                self._check_mutation_authority(
+                    _DirectCommandPlan(PlanOperation.WRITE, path, path),
+                    "DIRECT:WRITE",
+                    mutation_authority,
+                )
+            except MutationAuthorityRefused as error:
+                return self._direct_result(
+                    PlanOperation.WRITE,
+                    path,
+                    path,
+                    started,
+                    ExecutionStatus.FAILED,
+                    errors=(_authority_error(error),),
+                )
+        try:
+            storage.write(path, source, overwrite=False)
+        except (StorageError, RuntimeError, OSError) as error:
+            # A truncated or refused write may already have published a
+            # partial destination.  When one can be observed it is reported
+            # truthful and never replayed; when none exists the failure is
+            # clean and retry-safe.
+            partial = self._streamed_artifact_present(storage, path)
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                completed=("write_started",) if partial else (),
+                effect_certainty=(
+                    ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED if partial else None
+                ),
+                uncertain_effects=("partial_write",) if partial else (),
+                errors=(_bounded_error(error),),
+            )
+        try:
+            verified = self._streamed_write_verified(storage, path, expected_size)
+        except (StorageError, RuntimeError, OSError) as error:
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("mutation_outcome",),
+                errors=(f"upload destination verification failed: {_bounded_error(error)}",),
+            )
+        if not verified:
+            return self._direct_result(
+                PlanOperation.WRITE,
+                path,
+                path,
+                started,
+                ExecutionStatus.FAILED,
+                effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED,
+                uncertain_effects=("mutation_outcome",),
+                errors=("upload destination verification failed: size mismatch",),
+            )
+        return self._direct_result(
+            PlanOperation.WRITE,
+            path,
+            path,
+            started,
+            ExecutionStatus.SUCCESS,
+            completed=("write",),
+            effect_certainty=ExecutionEffectCertainty.VERIFIED_COMPLETE,
+        )
+
+    @staticmethod
+    def _streamed_write_verified(storage: Storage, path: str, expected_size: int) -> bool:
+        """Re-observe a streamed destination without reading its content."""
+        try:
+            if not storage.exists(path):
+                return False
+            observed = storage.stat(path)
+        except (StorageError, RuntimeError, OSError):
+            return False
+        return observed.entry_type is StorageEntryType.FILE and observed.size == expected_size
+
+    @staticmethod
+    def _streamed_artifact_present(storage: Storage, path: str) -> bool:
+        """Whether an interrupted write left an observable artifact at the path."""
+        try:
+            if not storage.exists(path):
+                return False
+            observed = storage.stat(path)
+        except (StorageError, RuntimeError, OSError):
+            # The destination cannot even be re-observed: treat the effect as
+            # unprovable rather than claiming a clean state.
+            return True
+        return observed.entry_type in {StorageEntryType.FILE, StorageEntryType.OTHER}
 
     def execute_direct_rename(
         self,
@@ -1603,7 +1761,7 @@ class OrganizerExecutor:
         warnings: tuple[str, ...] = (),
         errors: tuple[str, ...] = (),
         completed: tuple[str, ...] = (),
-        effect_certainty: ExecutionEffectCertainty = ExecutionEffectCertainty.NONE,
+        effect_certainty: ExecutionEffectCertainty | None = None,
         uncertain_effects: tuple[str, ...] = (),
     ) -> ExecutionResult:
         result = ExecutionResult(
@@ -1615,7 +1773,9 @@ class OrganizerExecutor:
             warnings=warnings,
             errors=errors,
             duration=max(0, time.monotonic() - started),
-            effect_certainty=effect_certainty,
+            effect_certainty=(
+                effect_certainty if effect_certainty is not None else ExecutionEffectCertainty.NONE
+            ),
             uncertain_effects=uncertain_effects,
         )
         if self._logger:

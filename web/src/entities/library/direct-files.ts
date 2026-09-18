@@ -852,3 +852,119 @@ export function normalizeResourceLibraryRemoval(
   };
   return model;
 }
+
+// ---------------------------------------------------------------------------
+// Bounded Files Upload / Download
+// ---------------------------------------------------------------------------
+
+/**
+ * The explicit upload conflict choice.  The default is no-overwrite; Replace is
+ * deliberately absent so a silent overwrite of operator media is never a
+ * one-click path.
+ */
+export type UploadConflictChoice = "no_overwrite" | "skip" | "keep_both";
+
+/** One upload item as it is streamed to the backend manifest. */
+export interface FilesUploadItemRequest {
+  readonly relativePath: string;
+  readonly size: number;
+}
+
+/** The bounded per-item upload outcome. */
+export interface FilesUploadItemOutcome {
+  readonly path: string;
+  readonly status: string;
+  readonly errorCategory: string | null;
+  readonly destination?: string;
+  readonly checksum?: string;
+}
+
+/**
+ * The bounded upload result document.  Each item keeps its own outcome so one
+ * failed, skipped or uncertain item never hides or blocks its siblings; the
+ * whole upload is a durable Task, so the operator can reconcile later without
+ * re-submitting.
+ */
+export interface FilesUploadResult {
+  readonly manifestDigest: string;
+  readonly conflict: UploadConflictChoice;
+  readonly destinationDirectory: string;
+  readonly status: string;
+  readonly taskId: string;
+  readonly taskStatus: string;
+  readonly totalItems: number;
+  readonly succeededItems: number;
+  readonly skippedItems: number;
+  readonly failedItems: number;
+  readonly items: readonly FilesUploadItemOutcome[];
+  readonly outcomesTruncated: boolean;
+  readonly sideEffects: string;
+  readonly retrySafe: boolean;
+  readonly nextAction: string;
+  readonly durableState?: string;
+}
+
+export function normalizeFilesUploadResult(
+  payload: unknown,
+): FilesUploadResult {
+  const record = expectObject(payload);
+  const conflictValue = record.conflict;
+  const conflict: UploadConflictChoice =
+    conflictValue === "skip" || conflictValue === "keep_both"
+      ? conflictValue
+      : "no_overwrite";
+  const itemsRaw = Array.isArray(record.items) ? record.items : [];
+  const items: FilesUploadItemOutcome[] = itemsRaw.slice(0, 512).map((item) => {
+    const outcome = expectObject(item);
+    const base: FilesUploadItemOutcome = {
+      path: expectString(outcome, "path"),
+      status: expectString(outcome, "status"),
+      errorCategory:
+        typeof outcome.errorCategory === "string"
+          ? outcome.errorCategory
+          : null,
+    };
+    if (typeof outcome.destination === "string") {
+      return { ...base, destination: outcome.destination };
+    }
+    if (typeof outcome.checksum === "string") {
+      return { ...base, checksum: outcome.checksum };
+    }
+    return base;
+  });
+  const result: FilesUploadResult = {
+    manifestDigest: expectString(record, "manifestDigest"),
+    conflict,
+    destinationDirectory:
+      typeof record.destinationDirectory === "string"
+        ? record.destinationDirectory
+        : "",
+    status: expectString(record, "status"),
+    taskId: expectString(record, "taskId"),
+    taskStatus: expectString(record, "taskStatus"),
+    totalItems: expectNumber(record, "totalItems"),
+    succeededItems: expectNumber(record, "succeededItems"),
+    skippedItems: expectNumber(record, "skippedItems"),
+    failedItems: expectNumber(record, "failedItems"),
+    items,
+    outcomesTruncated: record.outcomesTruncated === true,
+    sideEffects: expectString(record, "sideEffects"),
+    retrySafe: record.retrySafe === true,
+    nextAction: expectString(record, "nextAction"),
+    ...(typeof record.durableState === "string"
+      ? { durableState: record.durableState }
+      : {}),
+  };
+  return result;
+}
+
+/**
+ * One admitted bounded download selection: either a single regular file
+ * (streamed directly) or an on-the-fly archive (directory / multi-selection).
+ * The backend streams the body; the Web reads it as a Blob and triggers a
+ * browser save using the advertised filename.
+ */
+export interface FilesDownloadSelection {
+  readonly filename: string;
+  readonly content: Blob;
+}

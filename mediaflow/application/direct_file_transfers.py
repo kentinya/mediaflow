@@ -26,6 +26,7 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
+    _confined_directory_child,
     _join_resource_library_path,
     _normalize_storage_relative_path,
 )
@@ -2446,7 +2447,17 @@ class DirectFileTransferService:
                     source, current, StorageError(StorageErrorCode.IO_ERROR, "list", full)
                 ) from error
             for child in children:
-                if child.path != posixpath.join(current, child.name):
+                try:
+                    # The shared conversion boundary: provider entries are
+                    # validated as direct children in storage-relative
+                    # coordinates, then confined to the exact
+                    # ResourceLibrary-relative path space the manifest,
+                    # execution and every later re-observation use.  A
+                    # non-empty library root therefore never leaks into the
+                    # manifest, and an escaped or reparented provider entry
+                    # fails closed before any mutation is authorized.
+                    child_relative = _confined_directory_child(child, full, source.root_path)
+                except ValueError as error:
                     raise DirectFileTransferError(
                         "files_transfer_invalid_path",
                         "invalid_path",
@@ -2454,24 +2465,26 @@ class DirectFileTransferService:
                         resource_library_id=source.library_id,
                         path=current,
                         next_action="refresh the directory and retry",
-                    )
+                    ) from error
                 if child.entry_type is StorageEntryType.SYMLINK:
                     raise self._unsupported_entry(
-                        source, child.path, "symbolic links are not transferable"
+                        source, child_relative, "symbolic links are not transferable"
                     )
                 if child.entry_type not in {StorageEntryType.FILE, StorageEntryType.DIRECTORY}:
-                    raise self._unsupported_entry(source, child.path, "unsupported entry type")
+                    raise self._unsupported_entry(source, child_relative, "unsupported entry type")
                 child_destination = posixpath.join(current_destination, child.name)
-                destinations.append((child.path, child_destination))
+                destinations.append((child_relative, child_destination))
                 if child.entry_type is StorageEntryType.DIRECTORY:
                     if depth + 1 > MAX_TRANSFER_DEPTH:
                         raise self._limit_error(source, "transfer_depth_limit_exceeded")
                     entries.append(
-                        self._manifest_entry(child.path, child, TransferEntryKind.DIRECTORY)
+                        self._manifest_entry(child_relative, child, TransferEntryKind.DIRECTORY)
                     )
-                    stack.append((child.path, child_destination, depth + 1))
+                    stack.append((child_relative, child_destination, depth + 1))
                 else:
-                    entries.append(self._manifest_entry(child.path, child, TransferEntryKind.FILE))
+                    entries.append(
+                        self._manifest_entry(child_relative, child, TransferEntryKind.FILE)
+                    )
                 self._enforce_transfer_limits(source, entries)
 
     @staticmethod
