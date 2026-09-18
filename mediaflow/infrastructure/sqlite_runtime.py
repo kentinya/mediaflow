@@ -9382,6 +9382,130 @@ class SQLiteTaskRepository:
         except sqlite3.IntegrityError:
             return False
 
+    def adopt_or_acquire(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        acquired_at: datetime,
+        *,
+        owner_token: str,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> bool:
+        """Atomically give this owner the exclusion for one Task/path.
+
+        This is the gap-free replacement for "retire this Task's locks, then
+        insert later".  When a row already exists for this same Task the
+        generation is *rotated in place* inside one transaction — the row is
+        never deleted — so:
+
+        * a competing Task can never acquire the normalized path before, during
+          or after the handoff, because the exclusion row is never absent;
+        * a row another Task owns fails closed (``False``) and is left
+          completely untouched, so a takeover can never steal an unrelated
+          Task's exclusion; and
+        * the predecessor's generation disappears with the update, so its late
+          release is an exact no-op against a row it no longer owns.
+
+        When no row exists one is inserted, which is the ordinary first
+        acquisition.  With ``transfer_fence`` the whole read/rotate is
+        compare-and-set against the live Worker claim, so a claimant whose lease
+        already lapsed can never rotate a replacement owner's row.
+        """
+
+        if not isinstance(owner_token, str) or not owner_token.strip():
+            raise ValueError("file lock owner generation is invalid")
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("file lock task identity is invalid")
+        if acquired_at.tzinfo is None:
+            raise ValueError("file lock timestamp needs timezone")
+        normalized = self._lock_path(path)
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if transfer_fence is not None:
+                    transfer_id, claim_token, claim_now = transfer_fence
+                    if not self._transfer_claim_locked(transfer_id, claim_token, claim_now):
+                        self._connection.rollback()
+                        return False
+                row = self._connection.execute(
+                    "SELECT task_id FROM file_locks WHERE storage_id=? AND path=?",
+                    (storage_id, normalized),
+                ).fetchone()
+                if row is not None:
+                    if row["task_id"] != task_id:
+                        # Another Task owns this path: fail closed without
+                        # touching its row, so a takeover can never widen.
+                        self._connection.rollback()
+                        return False
+                    self._connection.execute(
+                        "UPDATE file_locks SET owner_token=?, acquired_at=? "
+                        "WHERE storage_id=? AND path=? AND task_id=?",
+                        (
+                            owner_token,
+                            acquired_at.isoformat(),
+                            storage_id,
+                            normalized,
+                            task_id,
+                        ),
+                    )
+                else:
+                    self._connection.execute(
+                        "INSERT INTO file_locks "
+                        "(storage_id, path, task_id, acquired_at, owner_token) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (storage_id, normalized, task_id, acquired_at.isoformat(), owner_token),
+                    )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return True
+
+    def rotate_task_locks(
+        self,
+        task_id: str,
+        owner_token: str,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> int:
+        """Atomically re-generate every source lock one Task currently holds.
+
+        The same-Task handoff applied to the whole Task in one statement.  The
+        rows are rewritten in place — never deleted — so a competing Task can
+        never acquire a path between a predecessor's release and the replacement
+        owner's acquisition.  Every predecessor generation disappears with the
+        update, so a predecessor's late release is an exact no-op against a row
+        it no longer owns.  With ``transfer_fence`` the rotation is
+        compare-and-set against the live Worker claim, so an owner whose lease
+        already lapsed can never rotate a replacement's rows.
+
+        Returns the number of rotated rows, so the caller knows exactly which
+        exclusions its new generation owns.
+        """
+
+        if not isinstance(owner_token, str) or not owner_token.strip():
+            raise ValueError("file lock owner generation is invalid")
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("file lock task identity is invalid")
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                if transfer_fence is not None:
+                    transfer_id, claim_token, claim_now = transfer_fence
+                    if not self._transfer_claim_locked(transfer_id, claim_token, claim_now):
+                        self._connection.rollback()
+                        return 0
+                cursor = self._connection.execute(
+                    "UPDATE file_locks SET owner_token=? WHERE task_id=?",
+                    (owner_token, task_id),
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return cursor.rowcount
+
     def lock_owned(
         self,
         storage_id: str,

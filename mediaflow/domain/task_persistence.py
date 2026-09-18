@@ -576,6 +576,53 @@ class FileOperationLockRepository(Protocol):
         *,
         owner_token: str | None = None,
     ) -> bool: ...
+    def adopt_or_acquire(
+        self,
+        storage_id: str,
+        path: str,
+        task_id: str,
+        acquired_at: datetime,
+        *,
+        owner_token: str,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> bool:
+        """Atomically give this owner the exclusion for one Task/path.
+
+        The gap-free replacement for "retire this Task's locks, then insert
+        later": when a row already exists for this same Task the generation is
+        *rotated in place* rather than deleted and re-inserted, so no
+        interleaving can observe the normalized path unowned and a competing
+        Task is denied before, during and after the handoff.  A row that belongs
+        to a different Task fails closed (``False``) and is left completely
+        untouched, so a takeover can never steal an unrelated Task's exclusion.
+        When no row exists one is inserted, which is the ordinary acquisition.
+
+        With ``transfer_fence`` the rotation is compare-and-set against the live
+        Worker claim, so an owner whose lease already lapsed can never rotate a
+        replacement owner's row.
+        """
+        ...
+
+    def rotate_task_locks(
+        self,
+        task_id: str,
+        owner_token: str,
+        *,
+        transfer_fence: tuple[str, str, datetime] | None = None,
+    ) -> int:
+        """Atomically re-generate every source lock one Task currently holds.
+
+        This is the same-Task handoff applied to the whole Task in one
+        statement.  The rows are rewritten in place — never deleted — so a
+        competing Task can never acquire a path between a predecessor's release
+        and the replacement owner's acquisition.  Every predecessor generation
+        disappears with the update, so a predecessor's late release is an exact
+        no-op against a row it no longer owns.  With ``transfer_fence`` the
+        rotation is compare-and-set against the live Worker claim, so an owner
+        whose lease already lapsed can never rotate a replacement's rows.
+        """
+        ...
+
     def lock_owned(
         self,
         storage_id: str,

@@ -3278,28 +3278,78 @@ class _CrashAfterFirstCopySource(LocalStorage):
             raise SystemExit(3)
 
 
-class _BlockingContinuationSource(LocalStorage):
-    """A source whose *second* native Copy blocks until the test releases it.
+class _HandoffProbeRepository:
+    """A repository proxy that probes the exact lock-handoff boundary.
 
-    Used for the production-shaped continuation race: Worker A is blocked inside
-    its own admitted mutation while Worker B takes over the same Task and blocks
-    inside a distinct checkpoint-safe continuation.  The blocked B call proves a
-    stale A can never remove the replacement owner's source exclusion.
+    Immediately after the takeover performs its own lock handoff, the proxy
+    attempts the same acquisition a competing Task would attempt for the same
+    normalized path, and records whether it succeeded.  That is the direct
+    interleaving assertion B asked for: a gap-free rotation refuses the
+    competing acquisition because the exclusion row is continuously present,
+    while the retired-then-inserted shape admits it.  Every other repository
+    call is delegated unchanged.
     """
 
-    def __init__(self, storage_id: str, root: Path, *, block_call: int) -> None:
+    def __init__(self, repository, *, storage_id: str, path: str, rival_task_id: str) -> None:
+        object.__setattr__(self, "_repository", repository)
+        object.__setattr__(self, "_storage_id", storage_id)
+        object.__setattr__(self, "_path", path)
+        object.__setattr__(self, "_rival_task_id", rival_task_id)
+        object.__setattr__(self, "armed", False)
+        object.__setattr__(self, "probes", [])
+
+    def __getattr__(self, name):
+        return getattr(self._repository, name)
+
+    def _probe(self) -> None:
+        if not self.armed:
+            return
+        self.armed = False
+        acquired = self._repository.acquire(
+            self._storage_id, self._path, self._rival_task_id, datetime.now(UTC)
+        )
+        self.probes.append(acquired)
+        if acquired:
+            # Hand the exclusion straight back so the fixture stays coherent.
+            self._repository.release(self._storage_id, self._path, self._rival_task_id)
+
+    def rotate_task_locks(self, *args, **kwargs):
+        result = self._repository.rotate_task_locks(*args, **kwargs)
+        self._probe()
+        return result
+
+    def reclaim_task_locks(self, *args, **kwargs):
+        result = self._repository.reclaim_task_locks(*args, **kwargs)
+        self._probe()
+        return result
+
+
+class _GatedAfterCopySource(LocalStorage):
+    """A source whose Nth native Copy lands completely and then blocks.
+
+    Used for B's production-shaped takeover race: Worker A is blocked *inside*
+    a native Copy whose destination already holds the confirmed bytes — a
+    provable checkpoint — while Worker B takes the same Task over and blocks in
+    the next distinct admitted mutation.  Because each blocked call has already
+    landed its destination, the blocked owner is always immediately before its
+    own verified progress publication, which is exactly the interleaving the
+    lock handoff must survive.
+    """
+
+    def __init__(self, storage_id: str, root: Path, *, block_calls: set[int]) -> None:
         super().__init__(storage_id, root)
         self.copy_calls = 0
-        self._block_call = block_call
-        self.entered = threading.Event()
-        self.release = threading.Event()
+        self._block_calls = set(block_calls)
+        self.reached = {call: threading.Event() for call in self._block_calls}
+        self.release = {call: threading.Event() for call in self._block_calls}
 
     def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
         self.copy_calls += 1
-        if self.copy_calls == self._block_call:
-            self.entered.set()
-            self.release.wait(timeout=30)
-        return super().copy(source, target, overwrite=overwrite)
+        call = self.copy_calls
+        super().copy(source, target, overwrite=overwrite)
+        if call in self._block_calls:
+            self.reached[call].set()
+            self.release[call].wait(timeout=30)
 
 
 class SourceLockGenerationTests(TransferTestCase):
@@ -3461,31 +3511,35 @@ class SourceLockGenerationTests(TransferTestCase):
             )
 
     def test_production_shaped_continuation_denies_a_competing_task(self) -> None:
-        """A blocks in its mutation, B continues a distinct checkpoint, C denied.
+        """A lands a checkpoint and blocks; B adopts it; Task C is denied throughout.
 
-        Worker A is blocked inside an admitted Storage mutation.  Its lease
-        expires, so Worker B lawfully takes over and blocks while performing only
-        the *next* checkpoint-safe continuation.  A then returns; a competing
-        Task C must be denied with zero mutation while B still owns the path.
-        After B completes, its own release removes the lock and a later lawful
-        acquisition succeeds.
+        Worker A is blocked inside its admitted native Copy for the first file
+        of one selected directory, and the Copy has already landed completely.
+        A's ownership signal then fails, its lease genuinely expires, and Worker
+        B lawfully takes the transfer over: B adopts A's proven Copy checkpoint,
+        atomically takes the same top-level source lock, and blocks in the next
+        distinct admitted mutation.  A competing Task C is denied *before* A
+        returns and *after* A returns, and only B's own terminal release makes a
+        later acquisition possible.  A's late release never frees B's row.
         """
 
         from mediaflow.application.files_transfer_worker import FilesTransferWorker
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            (root / "source" / "show").mkdir(parents=True, exist_ok=True)
             (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
-            # The first Copy is Worker A's admitted mutation; the second is
-            # Worker B's distinct checkpoint-safe continuation for the sibling.
-            source = _BlockingContinuationSource("source-storage", root / "source", block_call=1)
+            (root / "source" / "show" / "ep00.mkv").write_bytes(b"episode-0")
+            (root / "source" / "show" / "ep01.mkv").write_bytes(b"episode-1")
+            # Both native Copies land completely and then block, so A's first
+            # call is a *provable* checkpoint that B may adopt, and B's own
+            # continuation is a genuinely distinct admitted mutation.
+            source = _GatedAfterCopySource("source-storage", root / "source", block_calls={1, 2})
             api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
             transfers = self._transfers(api, active)
-            (root / "source" / "a.mkv").write_bytes(b"media-a")
-            (root / "source" / "b.mkv").write_bytes(b"media-b")
             impact = transfers.transfer_impact(
                 resource_library_id="source",
-                paths=["a.mkv", "b.mkv"],
+                paths=["show"],
                 destination_resource_library_id="source",
                 destination_directory="Movies",
                 operation="copy",
@@ -3493,7 +3547,7 @@ class SourceLockGenerationTests(TransferTestCase):
             )
             queued = transfers.submit_transfer(
                 resource_library_id="source",
-                paths=["a.mkv", "b.mkv"],
+                paths=["show"],
                 destination_resource_library_id="source",
                 destination_directory="Movies",
                 operation="copy",
@@ -3502,41 +3556,163 @@ class SourceLockGenerationTests(TransferTestCase):
             )
             task_id = queued["taskId"]
 
-            first = FilesTransferWorker(transfers, runtime, lease_seconds=1.0, worker_id="worker-a")
+            # A enters its mutation under a live fence, then loses the ability
+            # to renew: the durable in-flight boundary is its only protection.
+            faulty = _FaultyHeartbeatRepository(runtime, mode="raise")
+            first = FilesTransferWorker(transfers, faulty, lease_seconds=1.0, worker_id="worker-a")
             results: list = []
             thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
             thread.start()
-            self.assertTrue(source.entered.wait(30))
-            # The claim owner is genuinely blocked; a second Worker sees no
-            # claimable ordinary work and performs zero mutation.
-            second = FilesTransferWorker(
-                transfers, runtime, lease_seconds=1.0, worker_id="worker-b"
-            )
-            self.assertIsNone(second.run_next())
+            self.assertTrue(source.reached[1].wait(30))
+            faulty.armed = True
             self.assertEqual(source.copy_calls, 1)
-            # A competing Task C cannot take the path the blocked owner holds.
+            self.assertEqual(
+                runtime.get_files_transfer(task_id).mutation_state, "mutation_in_flight"
+            )
+            # The lease genuinely elapses while A is still blocked.
+            deadline = time.time() + 30
+            while time.time() < deadline:
+                current = runtime.get_files_transfer(task_id)
+                if current.claim_expires_at is not None and current.claim_expires_at <= (
+                    datetime.now(UTC) + timedelta(seconds=60)
+                ):
+                    break
+                time.sleep(0.25)
+
+            # B lawfully claims the expired in-flight boundary and continues.
+            # The probe repository races the competing Task into the exact lock
+            # handoff boundary, which is the interleaving B reproduced.
+            coordinator_probe = transfers._direct.tasks
+            probe = _HandoffProbeRepository(
+                runtime,
+                storage_id="source-storage",
+                path="show",
+                rival_task_id="rival-task-c",
+            )
+            coordinator_probe.repository = probe
+            coordinator_probe.locks = probe
+            second = FilesTransferWorker(
+                transfers,
+                probe,
+                lease_seconds=3600.0,
+                worker_id="worker-b",
+                clock=lambda: datetime.now(UTC) + timedelta(seconds=60),
+            )
+            probe.armed = True
+            b_results: list = []
+            b_thread = threading.Thread(
+                target=lambda: b_results.append(second.run_next()), daemon=True
+            )
+            b_thread.start()
+            self.assertTrue(source.reached[2].wait(30), "B must run the next distinct mutation")
+            # The competing Task never acquired the top-level path at the
+            # handoff boundary.
+            self.assertEqual(probe.probes, [False])
+
             coordinator = transfers._direct.tasks
+            # Task C is denied while B owns the top-level source exclusion.
             task_c = coordinator.create("files_transfer", execute_authorized=True)
             with self.assertRaises(Exception):
-                coordinator.begin_item(task_c.task_id, "source-storage", "source", "a.mkv", "a.mkv")
-            self.assertEqual(source.copy_calls, 1, "a competing Task must not mutate")
-            # Release A; the whole transfer completes under its original owner.
-            source.release.set()
+                coordinator.begin_item(task_c.task_id, "source-storage", "source", "show", "show")
+            self.assertEqual(source.copy_calls, 2, "a competing Task must not mutate")
+
+            # A returns while B is still blocked inside its own mutation: A's
+            # late release must not free B's exclusion.
+            source.release[1].set()
             thread.join(30)
             self.assertFalse(thread.is_alive())
             self.assertEqual(source.copy_calls, 2)
-            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
-            # The terminal convergence retired the Task's exclusions, so a later
-            # lawful acquisition of the same path succeeds.
+            with self.assertRaises(Exception):
+                coordinator.begin_item(task_c.task_id, "source-storage", "source", "show", "show")
+            self.assertEqual(source.copy_calls, 2, "a competing Task must not mutate")
+
+            # Only B's terminal release frees the path for a later acquisition.
+            source.release[2].set()
+            b_thread.join(30)
+            self.assertFalse(b_thread.is_alive())
+            self.assertEqual(source.copy_calls, 2)
+            self.assertIn(runtime.get_task(task_id).status.value, {"completed", "partial_success"})
             self.assertEqual(self._lock_rows(runtime), [])
             later = coordinator.create("files_transfer", execute_authorized=True)
-            item = coordinator.begin_item(
-                later.task_id, "source-storage", "source", "a.mkv", "a.mkv"
+            item = coordinator.begin_item(later.task_id, "source-storage", "source", "show", "show")
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage", "show", later.task_id, owner_token=item.lock_owner_token
+                )
+            )
+
+    def test_takeover_handoff_never_leaves_the_source_path_unowned(self) -> None:
+        """The direct interleaving assertion at the explicit handoff boundary.
+
+        The defect was "retire the Task's locks, then insert later", so a
+        competing Task placed in that window acquired the normalized path and
+        mutated the source.  The rotation keeps the row continuously present, so
+        a competing acquisition is refused at the exact handoff boundary, while
+        the old blanket-retire shape demonstrably admits it.
+        """
+
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _api, _active, runtime = self._activate(root)
+            coordinator = PersistentTaskCoordinator(runtime, runtime)
+            task = coordinator.create("files_transfer", execute_authorized=True)
+            item_a = coordinator.begin_item(
+                task.task_id, "source-storage", "source", "show/ep00.mkv", "show"
+            )
+
+            # The gap-free handoff rotates the row in place.  The probe races a
+            # competing Task into that exact boundary.
+            gap_free = _HandoffProbeRepository(
+                runtime,
+                storage_id="source-storage",
+                path="show/ep00.mkv",
+                rival_task_id="rival-task-c",
+            )
+            gap_free.armed = True
+            self.assertEqual(gap_free.rotate_task_locks(task.task_id, "takeover-generation"), 1)
+            self.assertEqual(
+                gap_free.probes, [False], "the rotated row must never be observable as unowned"
             )
             self.assertTrue(
                 runtime.lock_owned(
-                    "source-storage", "a.mkv", later.task_id, owner_token=item.lock_owner_token
+                    "source-storage",
+                    "show/ep00.mkv",
+                    task.task_id,
+                    owner_token="takeover-generation",
                 )
+            )
+            # The predecessor's late release is an exact no-op.
+            self.assertFalse(
+                runtime.release(
+                    "source-storage",
+                    "show/ep00.mkv",
+                    task.task_id,
+                    owner_token=item_a.lock_owner_token,
+                )
+            )
+            self.assertTrue(
+                runtime.lock_owned(
+                    "source-storage",
+                    "show/ep00.mkv",
+                    task.task_id,
+                    owner_token="takeover-generation",
+                )
+            )
+
+            # Falsifiability: the old blanket-retire shape does open exactly the
+            # window the rotation closes, so the probe above is not vacuous.
+            retired = _HandoffProbeRepository(
+                runtime,
+                storage_id="source-storage",
+                path="show/ep00.mkv",
+                rival_task_id="rival-task-d",
+            )
+            retired.armed = True
+            self.assertEqual(retired.reclaim_task_locks(task.task_id), 1)
+            self.assertEqual(
+                retired.probes, [True], "the retired-then-inserted shape exhibits the window"
             )
 
     def test_live_mutation_keeps_its_exclusion_and_the_owner_retires_it(self) -> None:
