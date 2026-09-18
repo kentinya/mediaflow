@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 from uuid import uuid4
 
 from mediaflow.application.automation import AutomationJobService, ProcessingWorkerService
@@ -28,10 +28,15 @@ from mediaflow.application.direct_file_commands import (
     DirectFileCommandService,
     DirectFileError,
 )
+from mediaflow.application.direct_file_downloads import (
+    DirectFileDownloadError,
+    DirectFileDownloadService,
+)
 from mediaflow.application.direct_file_transfers import (
     DirectFileTransferError,
     DirectFileTransferService,
 )
+from mediaflow.application.direct_file_uploads import DirectFileUploadService
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
@@ -111,7 +116,9 @@ from mediaflow.domain.configuration_management import (
 )
 from mediaflow.domain.direct_files import (
     MAX_DELETE_PATHS,
+    MAX_DOWNLOAD_PATHS,
     MAX_TRANSFER_PATHS,
+    MAX_UPLOAD_MANIFEST_BYTES,
     DirectFileOperation,
 )
 from mediaflow.domain.failure import failure_document
@@ -203,6 +210,84 @@ class ApiPermissionDenied(RuntimeError):
     pass
 
 
+class _FilesUploadFraming:
+    """Reads one bounded Upload body: manifest framing plus item payloads.
+
+    The body layout is ``[4-byte BE manifest length][manifest JSON]``
+    followed by one byte payload per manifest item, in manifest order.  Only
+    the manifest is buffered, and it is bounded by ``MAX_UPLOAD_MANIFEST_BYTES``;
+    the payloads are served on demand so a media file is never buffered whole.
+    The declared ``Content-Length`` must equal the framing total, so a
+    mis-declared or truncated request is refused before any mutation.
+    """
+
+    def __init__(self, input_stream, declared_length: int) -> None:
+        self._input = input_stream
+        self._declared_length = int(declared_length)
+        self._payload_stream = None
+        self._payload_remaining = 0
+
+    def read_manifest(self) -> dict:
+        head = b""
+        while len(head) < 4:
+            chunk = self._input.read(4 - len(head))
+            if not chunk:
+                raise ValueError("the Files upload body is shorter than its framing header")
+            head += chunk
+        manifest_length = int.from_bytes(head, "big")
+        if manifest_length > MAX_UPLOAD_MANIFEST_BYTES:
+            raise ValueError("the Files upload manifest exceeds the bounded size")
+        if 4 + manifest_length > self._declared_length:
+            raise ValueError("the Files upload framing exceeds the declared Content-Length")
+        manifest_raw = b""
+        while len(manifest_raw) < manifest_length:
+            chunk = self._input.read(manifest_length - len(manifest_raw))
+            if not chunk:
+                raise ValueError("the Files upload body is shorter than its manifest")
+            manifest_raw += chunk
+        try:
+            manifest = json.loads(manifest_raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("the Files upload manifest is not valid JSON") from error
+        if not isinstance(manifest, dict):
+            raise ValueError("the Files upload manifest must be an object")
+        items = manifest.get("items")
+        if not isinstance(items, list):
+            raise ValueError("the Files upload manifest requires an item list")
+        total_payload = 0
+        for item in items:
+            size = item.get("size") if isinstance(item, dict) else None
+            if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                raise ValueError("every Files upload item requires a non-negative size")
+            total_payload += size
+        if self._declared_length != 4 + manifest_length + total_payload:
+            raise ValueError("the Files upload Content-Length does not match the item framing")
+        self._payload_stream = self._input
+        self._payload_remaining = total_payload
+        return manifest
+
+    def read(self, size: int = -1) -> bytes:
+        if self._payload_stream is None or self._payload_remaining <= 0:
+            return b""
+        if size is None or size < 0:
+            wanted = self._payload_remaining
+        else:
+            wanted = min(size, self._payload_remaining)
+        chunk = self._payload_stream.read(wanted)
+        if not chunk:
+            self._payload_remaining = 0
+            return b""
+        self._payload_remaining -= len(chunk)
+        return chunk
+
+    def verify_drained(self) -> None:
+        # All declared payload bytes must have been consumed; leftover bytes
+        # mean the manifest under-declared the body.
+        leftover = self._payload_stream.read(1) if self._payload_stream is not None else b""
+        if self._payload_remaining > 0 or leftover:
+            raise ValueError("the Files upload body contains bytes beyond its manifest")
+
+
 class _CurrentConfiguredPermissionAuthority:
     """Resolve principal permissions from the current managed configuration."""
 
@@ -262,6 +347,8 @@ class _ApiRuntimeBinding:
     files_browser: RuntimeFilesBrowserService | None = None
     direct_files: DirectFileCommandService | None = None
     direct_transfers: DirectFileTransferService | None = None
+    direct_uploads: DirectFileUploadService | None = None
+    direct_downloads: DirectFileDownloadService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
 
@@ -4777,6 +4864,45 @@ class MediaFlowApi:
             else:
                 raise ValueError("the Files direct command operation is not supported")
             return self._response(start_response, 200, result)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "uploads"
+            and method == "POST"
+        ):
+            # Bounded Upload: one declared-length body carries the manifest
+            # ahead of the byte payloads.  The manifest is read and the whole
+            # confined scope is validated before the first byte is streamed,
+            # so an over-limit or unsafe request is refused with zero
+            # mutation; every write then crosses OrganizerExecutor under the
+            # durable Task boundary.
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_uploads is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files upload")
+            document = self._files_upload_manifest(binding, parts[3], environ)
+            return self._response(start_response, 200, document)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "download"
+            and method == "GET"
+        ):
+            # Confined zero-mutation Download: one bounded selection streams
+            # directly (single file) or as one on-the-fly archive (directory
+            # / multi-selection).  No Task is created and no Storage mutation
+            # is ever attempted; admission failures are bounded JSON errors
+            # produced before any byte of the body is committed.
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_downloads is None:
+                return self._files_browser_unavailable(start_response)
+            paths = self._files_download_query(environ)
+            service = binding.direct_downloads
+            manifest = service.download_admission(resource_library_id=parts[3], paths=paths)
+            headers, body = service.stream_response(resource_library_id=parts[3], manifest=manifest)
+            return self._stream_response(start_response, 200, headers, body)
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -6845,7 +6971,30 @@ class MediaFlowApi:
         return matched
 
     @staticmethod
-    def _static_response(start_response: Callable, content_type: str, body: bytes):
+    def _stream_response(
+        start_response: Callable,
+        status: int,
+        headers: list[tuple[str, str]],
+        body: Iterable[bytes],
+    ) -> Iterable[bytes]:
+        """Commit one bounded streaming response body.
+
+        The headers are fixed before the first byte is produced (admission
+        already ran with zero mutation), so the body generator is the only
+        thing that runs after ``start_response``.  WSGI servers with chunked
+        transfer encoding carry the archive case without a Content-Length.
+        """
+
+        start_response(f"{status} OK", headers)
+        return body
+
+    @staticmethod
+    def _rfc5987(value: str) -> str:
+        return quote(value, safe="")
+
+    def _static_response(
+        self, start_response: Callable, content_type: str, body: bytes
+    ) -> list[bytes]:
         start_response(
             "200 OK",
             [
@@ -7276,6 +7425,8 @@ class MediaFlowApi:
         files_browser = None
         direct_files = None
         direct_transfers = None
+        direct_uploads = None
+        direct_downloads = None
         if runtime_revision is not None and runtime_configuration is not None:
             files_browser = RuntimeFilesBrowserService(
                 self._configuration_service,
@@ -7292,6 +7443,8 @@ class MediaFlowApi:
                 storage_adapters=self._storage_adapters,
             )
             direct_transfers = DirectFileTransferService(direct_files=direct_files)
+            direct_uploads = DirectFileUploadService(direct_files=direct_files)
+            direct_downloads = DirectFileDownloadService(direct_files=direct_files)
         manual_scans = self._manual_scans_override
         if (
             manual_scans is None
@@ -7382,6 +7535,8 @@ class MediaFlowApi:
             files_browser,
             direct_files,
             direct_transfers,
+            direct_uploads,
+            direct_downloads,
             manual_scans,
             runtime_settings,
         )
@@ -8782,6 +8937,79 @@ class MediaFlowApi:
             "operation": query.get("operation", [""])[0],
             "conflict_mode": query.get("conflict", [None])[0],
         }
+
+    @classmethod
+    def _files_download_query(cls, environ: dict) -> list[str]:
+        """The bounded selection of one confined zero-mutation Download.
+
+        ``path`` is the one deliberately repeatable field; a bounded number of
+        non-empty ResourceLibrary-relative paths is all the download accepts.
+        Unknown keys, blank values or an excessive selection fail closed with
+        an actionable stable error before any byte is committed.
+        """
+
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path"}
+        if set(query).difference(allowed):
+            raise DirectFileDownloadError(
+                "files_download_invalid_request",
+                "invalid_request",
+                "the download query contains an unsupported field",
+                status=400,
+                next_action="request the download with only path fields",
+            )
+        paths = query.get("path", [])
+        if not paths or any(not isinstance(path, str) or path == "" for path in paths):
+            raise DirectFileDownloadError(
+                "files_download_invalid_request",
+                "invalid_request",
+                "the download query requires bounded non-empty paths",
+                status=400,
+                next_action="select one or more files or directories to download",
+            )
+        if len(paths) > MAX_DOWNLOAD_PATHS:
+            raise DirectFileDownloadError(
+                "files_download_invalid_request",
+                "invalid_request",
+                "the download selection exceeds the bounded multi-selection limit",
+                status=400,
+                next_action=f"download at most {MAX_DOWNLOAD_PATHS} items per request",
+            )
+        return list(paths)
+
+    @classmethod
+    def _files_upload_manifest(cls, binding, resource_library_id: str, environ: dict) -> dict:
+        """Admit one bounded Upload request and stream its items into the library.
+
+        The body is one declared-length stream: a 4-byte big-endian manifest
+        length, the bounded manifest JSON (item relative paths, declared
+        sizes and the exact conflict choice), then one byte payload per
+        manifest item in order.  The manifest is confined and validated
+        before the first payload byte is streamed, so an over-limit or
+        unsafe scope is refused with zero mutation; the Content-Length must
+        exactly match the declared payload framing.  Every payload byte then
+        crosses OrganizerExecutor under the durable Task boundary, with
+        independent per-item outcomes and no automatic replay of an
+        uncertain write.
+        """
+
+        raw_length = str(environ.get("CONTENT_LENGTH", "0") or "0").strip()
+        try:
+            declared_length = int(raw_length)
+        except ValueError as error:
+            raise ValueError("a Files upload requires a valid Content-Length") from error
+        input_stream = environ.get("wsgi.input")
+        if input_stream is None:
+            raise ValueError("a Files upload requires a request body")
+        framing = _FilesUploadFraming(input_stream, declared_length)
+        manifest = framing.read_manifest()
+        document = binding.direct_uploads.upload(
+            resource_library_id=resource_library_id,
+            manifest=manifest,
+            stream=framing,
+        )
+        framing.verify_drained()
+        return document
 
     @classmethod
     def _files_direct_rename_evidence_query(cls, environ: dict) -> str:

@@ -34,8 +34,11 @@ import {
   normalizeTransferImpact,
   normalizeTransferProjection,
   normalizeTransferResult,
+  normalizeFilesUploadResult,
   type DeleteImpactModel,
   type DirectFileCommandResult,
+  type FilesDownloadSelection,
+  type FilesUploadResult,
   type RemovalPreviewModel,
   type RenameEvidenceModel,
   type ResourceLibraryRemovalModel,
@@ -3827,4 +3830,254 @@ export async function createNotificationSuccessorDraft(
     },
     fetchImpl,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Bounded Files Upload / Download
+// ---------------------------------------------------------------------------
+
+export interface FilesUploadItemPayload {
+  readonly relativePath: string;
+  readonly bytes: ReadableStream<Uint8Array> | Uint8Array;
+  readonly size: number;
+}
+
+export interface FilesUploadOptions {
+  readonly destinationDirectory: string;
+  readonly conflict: "no_overwrite" | "skip" | "keep_both";
+  readonly items: readonly FilesUploadItemPayload[];
+}
+
+export const MAX_FILES_UPLOAD_ITEMS = 512;
+export const MAX_FILES_DOWNLOAD_PATHS = 50;
+
+function uploadHeaders(
+  token: string | null,
+  contentLength: number,
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Length": String(contentLength),
+  };
+  if (token !== null) headers.Authorization = `Bearer ${token}`;
+  return headers;
+}
+
+function uploadItemBody(
+  items: readonly { readonly relativePath: string; readonly size: number }[],
+): { readonly relativePath: string; readonly size: number }[] {
+  return items.map((item) => ({
+    relativePath: item.relativePath,
+    size: item.size,
+  }));
+}
+
+/**
+ * Builds one bounded upload body: [4-byte BE manifest length][manifest JSON]
+ * then each item payload in manifest order.  The per-item payload is a
+ * streaming ReadableStream, so a large media file is never fully buffered in
+ * browser memory; only its declared size is carried in the manifest.
+ */
+function buildUploadBody(options: FilesUploadOptions): {
+  readonly body: ReadableStream<Uint8Array>;
+  readonly total: number;
+} {
+  const manifest = JSON.stringify({
+    destinationDirectory: options.destinationDirectory,
+    conflict: options.conflict,
+    items: uploadItemBody(
+      options.items.map((item) => ({
+        relativePath: item.relativePath,
+        size: item.size,
+      })),
+    ),
+  });
+  const encoder = new TextEncoder();
+  const manifestBytes = encoder.encode(manifest);
+  const header = new DataView(new ArrayBuffer(4));
+  header.setUint32(0, manifestBytes.byteLength, false);
+  let totalPayload = 0;
+  for (const item of options.items) totalPayload += item.size;
+  const total = 4 + manifestBytes.byteLength + totalPayload;
+  const streams: ReadableStream<Uint8Array>[] = [
+    new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(header.buffer));
+        controller.enqueue(manifestBytes);
+        controller.close();
+      },
+    }),
+  ];
+  for (const item of options.items) {
+    const payload = item.bytes;
+    streams.push(
+      payload instanceof Uint8Array
+        ? new ReadableStream({
+            start(controller) {
+              controller.enqueue(payload);
+              controller.close();
+            },
+          })
+        : payload,
+    );
+  }
+  let active = 0;
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (active >= streams.length) {
+        controller.close();
+        return;
+      }
+      const source = streams[active];
+      active += 1;
+      const reader = source.getReader();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value !== undefined && value.byteLength > 0) {
+          controller.enqueue(value);
+        }
+      }
+    },
+  });
+  return { body, total };
+}
+
+export async function uploadFiles(
+  token: string | null,
+  resourceLibraryId: string,
+  options: FilesUploadOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: FilesUploadResult }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    resourceLibraryId.trim().length === 0 ||
+    options.items.length === 0 ||
+    options.items.length > MAX_FILES_UPLOAD_ITEMS
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const built = buildUploadBody(options);
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/uploads`,
+      {
+        method: "POST",
+        body: built.body,
+        headers: uploadHeaders(token, built.total),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeFilesUploadResult(await response.json()),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * One bounded download selection.  The backend streams either a single file
+ * or an on-the-fly archive with zero mutation; the Web reads the authenticated
+ * response as a Blob and derives the advertised filename from
+ * Content-Disposition (falling back to a bounded default), never exposing
+ * host paths or credentials.
+ */
+export async function downloadFiles(
+  token: string | null,
+  resourceLibraryId: string,
+  paths: readonly string[],
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: FilesDownloadSelection }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    resourceLibraryId.trim().length === 0 ||
+    paths.length === 0 ||
+    paths.length > MAX_FILES_DOWNLOAD_PATHS ||
+    paths.some((path) => typeof path !== "string")
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const query = new URLSearchParams();
+  for (const path of paths) query.append("path", path);
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/download?${query.toString()}`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  let filename = "download";
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const rfc = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+  const plain = disposition.match(/filename="?([^";]+)"?/i);
+  const raw = rfc?.[1] ?? plain?.[1] ?? "";
+  if (raw !== "") {
+    try {
+      filename = decodeURIComponent(raw);
+    } catch {
+      filename = "download";
+    }
+  }
+  try {
+    const content = await response.blob();
+    return { ok: true, model: { filename, content } };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export function saveDownloadedFile(model: FilesDownloadSelection): void {
+  const url = URL.createObjectURL(model.content);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = model.filename;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

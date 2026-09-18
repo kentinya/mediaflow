@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import io
 import json
+import posixpath
 import tempfile
 import threading
 import time
@@ -158,6 +159,10 @@ class _CountingExecutor(OrganizerExecutor):
     def execute_direct_remove_empty_directory(self, *args, **kwargs):
         self.boundaries.append("DELETE_EMPTY_DIRECTORY")
         return super().execute_direct_remove_empty_directory(*args, **kwargs)
+
+    def execute_direct_write_stream(self, *args, **kwargs):
+        self.boundaries.append("WRITE_STREAM")
+        return super().execute_direct_write_stream(*args, **kwargs)
 
 
 class TransferTestCase(unittest.TestCase):
@@ -1509,6 +1514,336 @@ class ResolvedRootOverlapTests(TransferTestCase):
                 )
             self.assertIn("overlap", str(caught.exception.code))
             self.assertTrue((root / "source" / "shows" / "a.mkv").exists())
+
+
+class _NonEmptySourceRootFixture(TransferTestCase):
+    """A fixture whose source ResourceLibrary root is non-empty on one Storage.
+
+    The production configuration keeps a ResourceLibrary ``storagePath``; the
+    bounded-directory tests at the Task Base set every root to an empty
+    string, so this fixture is the regression matrix that proves Copy/Move
+    directory traversal works for a non-empty configured root.
+    """
+
+    def _document(self, root: Path) -> dict[str, object]:
+        document = super()._document(root)
+        document["resourceLibraries"][0]["storagePath"] = "media"
+        document["resourceLibraries"][1]["storagePath"] = "lib"
+        return document
+
+    def _tree(self, root: Path) -> None:
+        tree = root / "source" / "media" / "show" / "season1"
+        tree.mkdir(parents=True)
+        (tree / "one.mkv").write_bytes(b"one")
+        (tree / "two.mkv").write_bytes(b"two")
+        (root / "source" / "media" / "Movies").mkdir(parents=True)
+        (root / "source" / "media" / "Archive").mkdir(parents=True)
+
+    def _manifest_is_relative(self, impact) -> None:
+        for entry in impact.manifest.entries:
+            self.assertFalse(
+                entry.path.startswith("media/"),
+                "a manifest entry leaked the ResourceLibrary root",
+            )
+
+    def test_same_library_directory_copy_and_move_accept_a_non_empty_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            self._tree(root)
+            transfers = self._transfers(api, active)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+            )
+            self._manifest_is_relative(impact)
+            self.assertEqual(
+                sorted(entry.path for entry in impact.manifest.entries),
+                ["show", "show/season1", "show/season1/one.mkv", "show/season1/two.mkv"],
+            )
+            copied = self._submit(
+                transfers,
+                runtime,
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(copied["status"], "SUCCESS")
+            self.assertTrue(
+                (root / "source" / "media" / "Movies" / "show" / "season1" / "one.mkv").exists()
+            )
+            self.assertTrue((root / "source" / "media" / "show" / "season1" / "one.mkv").exists())
+
+            move_impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Archive",
+                operation="move",
+            )
+            moved = self._submit(
+                transfers,
+                runtime,
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="source",
+                destination_directory="Archive",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=move_impact.manifest.digest,
+            )
+            self.assertEqual(moved["status"], "SUCCESS")
+            self.assertFalse((root / "source" / "media" / "show").exists())
+            self.assertTrue(
+                (root / "source" / "media" / "Archive" / "show" / "season1" / "two.mkv").exists()
+            )
+
+    def test_same_storage_different_library_accepts_a_non_empty_source_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            document["resourceLibraries"].append(
+                {
+                    "id": "same-storage",
+                    "name": "SameStorage",
+                    "storageId": "source-storage",
+                    "storagePath": "otherlib",
+                    "enabled": True,
+                    "extensions": ["mkv"],
+                }
+            )
+            api2, active2, runtime2 = self._activate_with(document, root)
+            self._tree(root)
+            (root / "source" / "otherlib").mkdir(parents=True)
+            transfers = self._transfers(api2, active2)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="same-storage",
+                destination_directory="",
+                operation="copy",
+            )
+            self._manifest_is_relative(impact)
+            copied = self._submit(
+                transfers,
+                runtime2,
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="same-storage",
+                destination_directory="",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(copied["status"], "SUCCESS")
+            self.assertTrue(
+                (root / "source" / "otherlib" / "show" / "season1" / "one.mkv").exists()
+            )
+
+    def test_cross_storage_move_accepts_a_non_empty_source_root(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            self._tree(root)
+            (root / "destination" / "lib" / "Movies").mkdir(parents=True)
+            transfers = self._transfers(api, active)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="destination",
+                destination_directory="Movies",
+                operation="move",
+            )
+            self._manifest_is_relative(impact)
+            moved = self._submit(
+                transfers,
+                runtime,
+                resource_library_id="source",
+                paths=["show"],
+                destination_resource_library_id="destination",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(moved["status"], "SUCCESS")
+            self.assertTrue(
+                (root / "destination" / "lib" / "Movies" / "show" / "season1" / "one.mkv").exists()
+            )
+            self.assertTrue(
+                (root / "destination" / "lib" / "Movies" / "show" / "season1" / "two.mkv").exists()
+            )
+            # LocalStorage publishes a verifiable entry identity, so the
+            # composed cross-Storage Move deletes its source after the
+            # verified copy; the non-empty source root never leaks into the
+            # destination path.
+            self.assertFalse((root / "source" / "media" / "show").exists())
+
+    def _activate_with(self, document, root, *, storage_adapters=None):
+        (root / "source").mkdir(parents=True, exist_ok=True)
+        (root / "destination" / "Movies").mkdir(parents=True, exist_ok=True)
+        configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+        self.addCleanup(configuration_repository.close)
+        service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=str(root / "configuration.sqlite3"),
+        )
+        objects = ConfigurationObjectService(
+            service,
+            storage_adapters=storage_adapters,
+            storage_browser_cursor_secret="transfer-test-secret",
+        )
+        draft = service.import_draft(document, actor="operator")
+        validated = service.validate(draft.revision_id, actor="operator")
+        for storage_id in ("source-storage", "media-target"):
+            evidence = objects.storage_check(
+                validated.revision_id,
+                storage_id=storage_id,
+                expected_version=validated.version,
+                expected_digest=validated.digest,
+                actor="operator",
+            )
+            self.assertEqual(evidence.status, ConfigurationStorageCheckStatus.PASSED)
+        strategy = objects.recognition_strategy_test(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            resource_library_id="source",
+            synthetic_path="Example.Movie.2024.1080p.mkv",
+        )
+        self.assertEqual(strategy.status, ConfigurationStrategyTestStatus.COMPLETED)
+        destination = objects.destination_precheck(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            recognition_type="C",
+            sample={
+                "title": "The Matrix",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            },
+        )
+        self.assertEqual(destination.status, ConfigurationDestinationPrecheckStatus.COMPLETED)
+        active = objects.activate_checked(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="operator",
+        )
+        runtime_repository = SQLiteTaskRepository(root / "runtime.sqlite3")
+        self.addCleanup(runtime_repository.close)
+        api = MediaFlowApi(
+            runtime_repository,
+            None,
+            principals=(
+                ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+            ),
+            configuration_service=service,
+            bootstrap_document=document,
+            storage_adapters=storage_adapters,
+            storage_browser_cursor_secret="transfer-test-secret",
+        )
+        return api, active, runtime_repository
+
+
+class _MisparentedListingStorage(LocalStorage):
+    """A provider double that returns a child whose path is not its direct parent.
+
+    The listing parent is ``current`` but the returned entry ``path`` is
+    re-parented one level up (``../child``), which is exactly the shape of
+    an escaped or mis-parented provider entry.  Any transfer that accepted
+    it would have leaked a Storage-root-relative path into the manifest.
+    """
+
+    def __init__(self, storage_id: str, root: Path, *, escape_name: str) -> None:
+        super().__init__(storage_id, root)
+        self._escape_name = escape_name
+
+    def list(self, path: str):
+        entries = list(super().list(path))
+        if any(item.name == self._escape_name for item in entries):
+
+            def escape(item: StorageEntry) -> StorageEntry:
+                return StorageEntry(
+                    name=item.name,
+                    path=posixpath.join(posixpath.dirname(path), item.name),
+                    entry_type=item.entry_type,
+                    size=item.size,
+                    modified_at=item.modified_at,
+                    fingerprint=item.fingerprint,
+                )
+
+            return tuple(escape(item) for item in entries)
+        return tuple(entries)
+
+
+class NonEmptyRootDirectoryRegressionTests(_NonEmptySourceRootFixture):
+    """The confirmed Task-Base regression and its fail-closed doubles.
+
+    Copy and Move reject every non-empty directory beneath a non-empty
+    ResourceLibrary root.  These tests prove the corrected traversal accepts
+    the bounded directory across same-library, same-Storage and cross-Storage
+    destinations, keeps every manifest/result ResourceLibrary-relative, and
+    still fails closed when a provider double re-parents a listed child.
+    """
+
+    def test_misparented_provider_child_fails_closed_before_any_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree = root / "source" / "media" / "show"
+            tree.mkdir(parents=True)
+            (tree / "one.mkv").write_bytes(b"one")
+            (root / "source" / "media" / "Movies").mkdir(parents=True)
+            escaping = _MisparentedListingStorage(
+                "source-storage", root / "source", escape_name="one.mkv"
+            )
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": escaping}
+            )
+            transfers = self._transfers(api, active)
+            with self.assertRaises(Exception) as caught:
+                transfers.transfer_impact(
+                    resource_library_id="source",
+                    paths=["show"],
+                    destination_resource_library_id="source",
+                    destination_directory="Movies",
+                    operation="copy",
+                )
+            self.assertIn("invalid_path", str(caught.exception.code))
+            # Zero mutation during admission: nothing was copied.
+            self.assertFalse((root / "source" / "media" / "Movies" / "show").exists())
+
+    def test_symlink_child_beneath_a_non_empty_root_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tree = root / "source" / "media" / "show"
+            tree.mkdir(parents=True)
+            (tree / "one.mkv").write_bytes(b"one")
+            link = tree / "one.link.mkv"
+            link.symlink_to(tree / "one.mkv")
+            (root / "source" / "media" / "Movies").mkdir(parents=True)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            with self.assertRaises(Exception) as caught:
+                transfers.transfer_impact(
+                    resource_library_id="source",
+                    paths=["show"],
+                    destination_resource_library_id="source",
+                    destination_directory="Movies",
+                    operation="copy",
+                )
+            self.assertIn("unsupported_entry", str(caught.exception.code))
 
 
 class RepeatedPathDeleteImpactTests(TransferTestCase):
