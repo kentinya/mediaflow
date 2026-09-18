@@ -37,6 +37,7 @@ from mediaflow.domain.direct_files import (
     MAX_TRANSFER_PATHS,
     MAX_TRANSFER_PROGRESS_ENTRIES,
     DirectEntryEvidence,
+    TransferCheckpoint,
     TransferConflict,
     TransferConflictMode,
     TransferEntryKind,
@@ -115,6 +116,23 @@ class _ClaimFence:
     @property
     def value(self) -> tuple[str, str, datetime]:
         return (self.transfer_id, self.claim_token, datetime.now(UTC))
+
+
+@dataclass(frozen=True)
+class _InFlightResolution:
+    """The zero-mutation classification of one expired in-flight boundary.
+
+    ``proven`` means the interrupted operation's effect is exactly known, so the
+    entry may be adopted.  ``checkpoints`` is the exact adopted executor
+    checkpoint evidence — for example a verified Copy whose compound Move still
+    owes its separate destructive step — and ``status`` is the per-entry status
+    the continuation must reproduce.  Whether the item may then be finished
+    outright still depends on the whole confirmed scope, never on the one entry.
+    """
+
+    proven: bool
+    checkpoints: tuple[str, ...] = ()
+    status: str = "PARTIAL"
 
 
 def _conflict_outcome(
@@ -571,8 +589,7 @@ class DirectFileTransferService:
                 # operation is never invoked again, and the classification runs
                 # under this transfer's own pinned revision, never under
                 # whatever process-local snapshot this Worker started with.
-                authority = self._parse_pinned_authority(transfer)
-                if not self._resolve_in_flight_mutation(transfer, authority, fence):
+                if not self._resolve_in_flight_mutation(transfer, fence):
                     return repository.require_files_transfer(transfer.transfer_id)
             self._execute_claimed_transfer(
                 transfer,
@@ -642,9 +659,10 @@ class DirectFileTransferService:
                     else None
                 ),
                 next_action=(
-                    "an interrupted item could not be safely continued; refresh both "
-                    "directories and inspect the recorded per-item outcomes before any "
-                    "retry — uncertain effects are never replayed"
+                    "the operation result cannot be confirmed and the source and "
+                    "destination may both exist; MediaFlow did not retry it — refresh "
+                    "both directories, inspect the files and choose an explicit "
+                    "follow-up"
                     if uncertain
                     else None
                 ),
@@ -670,7 +688,6 @@ class DirectFileTransferService:
     def _resolve_in_flight_mutation(
         self,
         transfer: PersistentFilesTransfer,
-        authority: dict[str, object],
         fence: _ClaimFence,
     ) -> bool:
         """Resolve one expired in-flight mutation without replaying it.
@@ -688,6 +705,15 @@ class DirectFileTransferService:
           Task and the bounded Result evidence to a durable UNCERTAIN /
           investigation-only outcome.
 
+        The durable boundary is decided **before** any continuation authority is
+        parsed: ``mutation_state=mutation_in_flight`` is itself proof that a
+        Storage mutation may already have taken effect, so a missing, malformed,
+        digest-mismatched or otherwise unreadable authority at this point is an
+        uncertain entered effect — never the pre-mutation ``FAILED`` path.  Only
+        a boundary with no readable authority at all (no item, no operation)
+        still converges conservatively as uncertain, because the recorded
+        boundary alone already proves an entered mutation.
+
         Returns ``True`` when the boundary was returned to a continuation-safe
         state and the transfer may continue, ``False`` when it converged.
         """
@@ -697,13 +723,46 @@ class DirectFileTransferService:
         items = tuple(repository.list_items(transfer.task_id))
         records = {record.item_id: record for record in repository.list_results(transfer.task_id)}
         item = next((value for value in items if value.item_id == transfer.in_flight_item_id), None)
-        if item is not None and self._in_flight_effect_is_proven(transfer, authority, item):
-            cleared = repository.clear_files_transfer_mutation(
-                transfer.transfer_id, fence.claim_token, now
+        try:
+            authority = self._parse_pinned_authority(transfer)
+        except _TransferAuthorityUnreadable:
+            # The boundary is durable proof of an entered mutation, so an
+            # authority that cannot be read here can never be reduced to a
+            # zero-effect failure: the exact recorded item converges to
+            # UNCERTAIN/investigation with zero mutation.  A runtime that simply
+            # cannot reconstruct the pinned revision is instead a readiness
+            # problem and propagates to the ordinary snapshot-unavailable
+            # release, so a compatible Worker may still resolve it.  When the
+            # boundary names no item this Worker can identify, every unfinished
+            # item stays conservatively uncertain rather than fabricated clean.
+            self._commit_convergence(
+                fence,
+                transfer,
+                items=items,
+                records=records,
+                code="files_transfer_mutation_unresolved",
+                now=now,
+                forced_uncertain_item_id=transfer.in_flight_item_id,
+                force_uncertain=item is None,
             )
-            if not cleared:
-                raise _TransferClaimLost()
-            return True
+            return False
+        if item is not None:
+            resolution = self._classify_in_flight_effect(transfer, authority, item)
+            if resolution.proven:
+                # The interrupted effect is exactly known.  The adopted
+                # checkpoint is persisted **atomically with clearing the
+                # boundary**, so the continuation can only ever continue from
+                # recorded verified evidence — never from a bare cleared flag.
+                # When that evidence already covers the item's whole confirmed
+                # scope, the item is finished from it instead of being routed
+                # through a continuation that a completed native Move would
+                # (correctly) refuse because its source is gone.
+                recorded = self._adopted_progress(transfer, authority, item, resolution)
+                if self._adopted_scope_is_complete(authority, item, recorded):
+                    self._complete_adopted_item(transfer, authority, item, recorded, fence)
+                else:
+                    self._publish_adopted_progress(transfer, authority, item, recorded, fence)
+                return True
         # The provider cannot prove the interrupted effect: converge the exact
         # in-flight item, the Task and the bounded Result evidence together to
         # a durable uncertain/investigation-only state, and never replay it.
@@ -715,85 +774,385 @@ class DirectFileTransferService:
             code="files_transfer_mutation_unresolved",
             now=now,
             forced_uncertain_item_id=transfer.in_flight_item_id,
+            force_uncertain=item is None,
         )
         return False
 
-    def _in_flight_effect_is_proven(
+    def _adopted_progress(
         self,
         transfer: PersistentFilesTransfer,
         authority: dict[str, object],
         item: PersistentTaskItem,
-    ) -> bool:
-        """Whether continuing from the recorded boundary cannot replay an unknown effect.
+        resolution: _InFlightResolution,
+    ) -> list[dict[str, object]]:
+        """The item's recorded per-entry evidence with the adopted entry merged in.
 
-        Only zero-mutation observations decide this: the exact pinned entry is
-        re-read and compared against the confirmed bytes, the destination is
-        checked against the confirmed entry, and a directory action is checked
-        for its own idempotent post-state.  A missing destination is *not* proof
-        that nothing happened (the provider call may still be blocked inside a
-        partial write), so it fails closed to investigation.
+        The prior bounded progress document stays authoritative for every entry
+        the previous owner had already recorded; the boundary's own entry is
+        replaced by the exact verified checkpoint this resolver proved, so the
+        adopted effect can never be re-derived from live Storage or replayed.
         """
 
+        entry_path = transfer.in_flight_entry_path or item.source_display
+        destinations = {str(pair[0]): str(pair[1]) for pair in authority.get("destinations") or ()}
+        destination_path = destinations.get(entry_path, entry_path)
+        payload = _progress_payload(item) or {}
+        by_path: dict[str, dict[str, object]] = {}
+        order: list[str] = []
+        for value in payload.get("entries") or ():
+            if not isinstance(value, dict):
+                continue
+            path = str(value.get("path", ""))
+            if path and path not in by_path:
+                by_path[path] = dict(value)
+                order.append(path)
+        resolved: dict[str, object] = {
+            "path": entry_path,
+            "destination": destination_path,
+            "status": resolution.status,
+            "checkpoints": list(resolution.checkpoints),
+            "durableState": "adopted_verified_checkpoint",
+        }
+        if entry_path in by_path:
+            by_path[entry_path].update(resolved)
+        else:
+            by_path[entry_path] = resolved
+            order.append(entry_path)
+        return [by_path[path] for path in order[:MAX_TRANSFER_PROGRESS_ENTRIES]]
+
+    def _adopted_scope_is_complete(
+        self,
+        authority: dict[str, object],
+        item: PersistentTaskItem,
+        recorded: list[dict[str, object]],
+    ) -> bool:
+        """Whether the adopted evidence already covers the item's whole confirmed scope.
+
+        Only then may the item be finished from the resolver: an entry that
+        still owes an admitted mutation must stay on the ordinary continuation
+        path, and a Move whose source tree still exists must still be able to
+        remove it, so an incomplete scope is never declared terminal.
+        """
+
+        statuses = {str(value.get("path", "")): str(value.get("status", "")) for value in recorded}
+        for entry in authority.get("entries") or ():
+            if not isinstance(entry, list) or len(entry) < 2:
+                continue
+            path = str(entry[0])
+            if not (path == item.source_display or path.startswith(f"{item.source_display}/")):
+                continue
+            if TransferEntryKind(str(entry[1])) is TransferEntryKind.DIRECTORY:
+                # A directory is a container, never an executor mutation; it is
+                # not itself owed work.
+                continue
+            if statuses.get(path) not in {"SUCCESS", "SKIPPED"}:
+                return False
+        if TransferOperation(str(authority.get("operation", ""))) is not TransferOperation.MOVE:
+            return True
+        # A Move additionally owes the removal of its emptied source tree.  The
+        # only zero-mutation proof that nothing remains is that the admitted
+        # source root itself is already gone; otherwise the ordinary verified
+        # continuation performs the remaining distinct step.
+        source_library_id = str(authority.get("sourceResourceLibraryId", ""))
+        try:
+            source = self._direct.library(source_library_id)
+        except DirectFileError:
+            return False
+        source_storage = self._direct.open_storage(source)
+        try:
+            return not source_storage.exists(
+                _join_resource_library_path(source.root_path, item.source_display)
+            )
+        except (StorageError, OSError):
+            return False
+
+    def _publish_adopted_progress(
+        self,
+        transfer: PersistentFilesTransfer,
+        authority: dict[str, object],
+        item: PersistentTaskItem,
+        recorded: list[dict[str, object]],
+        fence: _ClaimFence,
+    ) -> None:
+        """Persist the adopted checkpoint and clear the boundary in one commitment.
+
+        Merely clearing ``mutation_in_flight`` would let the ordinary
+        continuation re-derive the entry from live Storage with no record of
+        what was already proven.  The exact verified executor checkpoint is
+        instead recorded as this item's durable per-entry evidence — the same
+        bounded progress document the ordinary per-entry path publishes — and
+        the boundary is cleared by that same guarded write.
+        """
+
+        payload = _progress_payload(item) or {}
+        published = self._direct.tasks.record_transfer_progress(
+            item,
+            destination_storage_id=str(authority.get("destinationStorageId", "")),
+            destination_resource_library_id=str(authority.get("destinationResourceLibraryId", "")),
+            destination_path=str(
+                payload.get("destinationPath")
+                or _destination_root_of(authority, item.source_display)
+            ),
+            operation=str(authority.get("operation", "copy")),
+            conflict_mode=str(authority.get("conflictMode", "fail")),
+            status=TaskItemStatus.PROCESSING,
+            confirmed_entries=tuple(
+                (str(value[0]), str(value[1]), str(value[2]))
+                for value in payload.get("confirmedEntries") or ()
+            ),
+            confirmed_truncated=bool(payload.get("confirmedTruncated")),
+            entries=tuple(recorded),
+            completed_entries=sum(1 for value in recorded if value.get("status") == "SUCCESS"),
+            failed_entries=sum(
+                1 for value in recorded if value.get("status") in {"FAILED", "PARTIAL", "UNCERTAIN"}
+            ),
+            skipped_entries=sum(1 for value in recorded if value.get("status") == "SKIPPED"),
+            truncated=bool(payload.get("truncated")),
+            transfer_fence=fence.value,
+        )
+        if published is False:
+            raise _TransferClaimLost()
+
+    def _complete_adopted_item(
+        self,
+        transfer: PersistentFilesTransfer,
+        authority: dict[str, object],
+        item: PersistentTaskItem,
+        recorded: list[dict[str, object]],
+        fence: _ClaimFence,
+    ) -> None:
+        """Finish one item whose whole scope is already covered by verified evidence.
+
+        The adopted per-entry evidence is published as the terminal TaskItem
+        and Result in the same claim-guarded commitment that clears the
+        boundary, so the transfer aggregate, the Files projection and the
+        Operations detail all read the same truthful known effect.
+        """
+
+        status = _item_status(recorded)
+        unknown = "UNCERTAIN" in {str(value["status"]) for value in recorded}
+        mutated = _outcomes_have_known_effect(recorded)
+        destination_library_id = str(authority.get("destinationResourceLibraryId", ""))
+        try:
+            destination = self._direct.library(destination_library_id)
+        except DirectFileError:
+            destination = None
+        published = self._direct.tasks.complete_direct_item(
+            item,
+            status=_ITEM_TASK_STATUS[status],
+            operation=str(authority.get("operation", "copy")),
+            target_path=_destination_root_of(authority, item.source_display),
+            error=(
+                None
+                if status == "SUCCESS"
+                else str(
+                    next(
+                        (
+                            outcome.get("errorCategory")
+                            for outcome in recorded
+                            if outcome.get("status") != "SUCCESS"
+                        ),
+                        "transfer_partial",
+                    )
+                )
+            ),
+            effect_certainty=_result_certainty(mutated=mutated, uncertain=unknown),
+            uncertain_effects=("mutation_outcome",) if unknown else (),
+            destination_storage_id=(
+                destination.storage_id if destination is not None else item.storage_id
+            ),
+            completed_operations=_item_checkpoint_evidence(recorded),
+            transfer_fence=fence.value,
+        )
+        if published is False:
+            raise _TransferClaimLost()
+
+    def _classify_in_flight_effect(
+        self,
+        transfer: PersistentFilesTransfer,
+        authority: dict[str, object],
+        item: PersistentTaskItem,
+    ) -> _InFlightResolution:
+        """The exact zero-mutation classification of one recorded boundary."""
+
+        not_proven = _InFlightResolution(proven=False)
+        entry_path = transfer.in_flight_entry_path
         action = transfer.in_flight_action or ""
-        entry_path = transfer.in_flight_entry_path or ""
-        if not entry_path or not (
+        if not entry_path or action not in {
+            "copy",
+            "move",
+            "create_directory",
+            "remove_directory",
+        }:
+            return not_proven
+        if not (
             entry_path == item.source_display or entry_path.startswith(f"{item.source_display}/")
         ):
             # The recorded boundary is not inside the item that claims it: the
             # durable evidence is inconsistent and fails closed.
-            return False
+            return not_proven
         destinations = {str(pair[0]): str(pair[1]) for pair in authority.get("destinations") or ()}
-        entries = {str(entry[0]): entry for entry in authority.get("entries") or () if entry}
+        entries = {
+            str(value[0]): value
+            for value in authority.get("entries") or ()
+            if isinstance(value, list)
+        }
         entry = entries.get(entry_path)
         if entry is None:
-            return False
+            return not_proven
+        try:
+            operation = TransferOperation(str(authority.get("operation")))
+        except (TypeError, ValueError):
+            return not_proven
+        kind = str(entry[1]) if len(entry) > 1 else ""
+        destination_path = destinations.get(entry_path, entry_path)
         source = self._direct.library(str(authority.get("sourceResourceLibraryId", "")))
         destination = self._direct.library(str(authority.get("destinationResourceLibraryId", "")))
         source_storage = self._direct.open_storage(source)
         destination_storage = self._direct.open_storage(destination)
-        destination_path = destinations.get(entry_path, entry_path)
         full_source = _join_resource_library_path(source.root_path, entry_path)
         full_target = _join_resource_library_path(destination.root_path, destination_path)
-        if action in {"copy", "move"}:
-            try:
-                source_present = source_storage.exists(full_source)
-                destination_present = destination_storage.exists(full_target)
-            except (StorageError, OSError):
-                return False
-            if not destination_present:
-                return False
-            if entry_path.endswith("/") or str(entry[1]) == TransferEntryKind.DIRECTORY.value:
-                return False
-            if source_present:
-                return bool(
-                    self._executor.verify_streamed_copy(
-                        source_storage,
-                        destination_storage,
-                        full_source,
-                        full_target,
-                        expected_size=int(entry[2]),
-                    )
-                )
-            try:
-                observed = destination_storage.stat(full_target)
-            except (StorageError, OSError):
-                return False
-            return observed.entry_type is StorageEntryType.FILE and observed.size == int(entry[2])
+        try:
+            source_present = source_storage.exists(full_source)
+            destination_present = destination_storage.exists(full_target)
+        except (StorageError, OSError):
+            return not_proven
         if action == "create_directory":
-            try:
-                if not destination_storage.exists(full_target):
-                    return False
-                return (
-                    destination_storage.stat(full_target).entry_type is StorageEntryType.DIRECTORY
+            if kind != TransferEntryKind.DIRECTORY.value:
+                # A CreateDirectory boundary is only classifiable against the
+                # admitted directory entry it names.
+                return not_proven
+            return (
+                _InFlightResolution(
+                    proven=True,
+                    checkpoints=("CREATE_DIRECTORY",),
+                    status="SUCCESS",
                 )
-            except (StorageError, OSError):
-                return False
+                if self._entry_is_directory(destination_storage, full_target)
+                else not_proven
+            )
         if action == "remove_directory":
-            try:
-                return not source_storage.exists(full_source)
-            except (StorageError, OSError):
+            if kind != TransferEntryKind.DIRECTORY.value:
+                return not_proven
+            if source_present:
+                return not_proven
+            return _InFlightResolution(
+                proven=True,
+                checkpoints=("DELETE_EMPTY_DIRECTORY",),
+                status="SUCCESS",
+            )
+        if kind != TransferEntryKind.FILE.value:
+            # A directory entry never carries a Copy/Move boundary: the bounded
+            # tree is composed from per-file mutations plus explicit directory
+            # boundaries.  Unclassifiable evidence fails closed.
+            return not_proven
+        try:
+            expected_size = int(entry[2])
+        except (TypeError, ValueError):
+            return not_proven
+        fingerprint = str(entry[4]) if len(entry) > 4 else ""
+        if action == "copy" and operation is TransferOperation.COPY:
+            if not destination_present:
+                return not_proven
+            if not self._executor.verify_streamed_copy(
+                source_storage,
+                destination_storage,
+                full_source,
+                full_target,
+                expected_size=expected_size,
+            ):
+                return not_proven
+            return _InFlightResolution(
+                proven=True,
+                checkpoints=("COPY",),
+                status="SUCCESS",
+            )
+        if action == "move" and operation is TransferOperation.MOVE:
+            if not destination_present:
+                return not_proven
+            if bool(authority.get("sameStorage")):
+                # One native rename: both sides present means a partial or
+                # still-changing effect — never a completed or idempotently
+                # continuable Move.  Only a destination whose provider-verifiable
+                # identity still binds the admitted source proves it landed.
+                if source_present:
+                    return not_proven
+                if not self._exact_entry_binding(
+                    destination_storage, full_target, fingerprint, expected_size
+                ):
+                    return not_proven
+                return _InFlightResolution(
+                    proven=True,
+                    checkpoints=("MOVE",),
+                    status="SUCCESS",
+                )
+            # Cross-Storage Move: a digest-verified destination is a durable
+            # safe checkpoint — only the separately admitted destructive step
+            # remains, so it is proven but deliberately not entry-complete.
+            if source_present:
+                if not self._executor.verify_streamed_copy(
+                    source_storage,
+                    destination_storage,
+                    full_source,
+                    full_target,
+                    expected_size=expected_size,
+                ):
+                    return not_proven
+                return _InFlightResolution(
+                    proven=True,
+                    checkpoints=(
+                        TransferCheckpoint.COPY_WRITTEN.value,
+                        TransferCheckpoint.DESTINATION_VERIFIED.value,
+                    ),
+                    status="PARTIAL",
+                )
+            if not self._exact_entry_binding(
+                destination_storage, full_target, fingerprint, expected_size
+            ):
+                return not_proven
+            return _InFlightResolution(
+                proven=True,
+                checkpoints=(
+                    TransferCheckpoint.COPY_WRITTEN.value,
+                    TransferCheckpoint.DESTINATION_VERIFIED.value,
+                    TransferCheckpoint.SOURCE_DELETED.value,
+                ),
+                status="SUCCESS",
+            )
+        return not_proven
+
+    @staticmethod
+    def _entry_is_directory(storage: Storage, full_path: str) -> bool:
+        try:
+            if not storage.exists(full_path):
                 return False
-        return False
+            return storage.stat(full_path).entry_type is StorageEntryType.DIRECTORY
+        except (StorageError, OSError):
+            return False
+
+    @staticmethod
+    def _exact_entry_binding(
+        storage: Storage, full_path: str, fingerprint: str, expected_size: int
+    ) -> bool:
+        """Whether the observed destination still carries the admitted identity.
+
+        A native rename (or a completed cross-Storage destructive step) may only
+        be adopted when the provider publishes verifiable entry identity and the
+        observed destination still matches it.  Size alone is never authority to
+        treat a Move as complete, matching the Task 37.3 entry-evidence contract.
+        """
+
+        if not fingerprint:
+            return False
+        try:
+            observed = storage.stat(full_path)
+        except (StorageError, OSError):
+            return False
+        if observed.entry_type is not StorageEntryType.FILE:
+            return False
+        if observed.size != expected_size:
+            return False
+        return str(getattr(observed, "fingerprint", None) or "") == fingerprint
 
     def _converge_execution_failure(
         self, fence: _ClaimFence, error: BaseException, *, code: str | None = None
@@ -833,6 +1192,7 @@ class DirectFileTransferService:
         code: str,
         now: datetime,
         forced_uncertain_item_id: str | None = None,
+        force_uncertain: bool = False,
     ) -> bool:
         """One atomic truthful terminal commitment for a failed/interrupted transfer."""
 
@@ -844,7 +1204,7 @@ class DirectFileTransferService:
             if item.status not in {TaskItemStatus.PENDING, TaskItemStatus.PROCESSING}:
                 continue
             mutated, uncertain = _item_known_mutation(item, records.get(item.item_id))
-            if item.item_id == forced_uncertain_item_id:
+            if force_uncertain or item.item_id == forced_uncertain_item_id:
                 # The one item whose Storage mutation was interrupted: its
                 # effect is unprovable by definition, so it is always
                 # investigation-only regardless of what earlier entries
@@ -900,9 +1260,9 @@ class DirectFileTransferService:
             status=status,
             error=("mutation_outcome" if uncertain else _bounded_transfer_error(None, code)),
             next_action=(
-                "an interrupted item could not be safely continued; refresh both directories "
-                "and inspect the recorded per-item outcomes before any retry — uncertain "
-                "effects are never replayed"
+                "the operation result cannot be confirmed and the source and destination "
+                "may both exist; MediaFlow did not retry it — refresh both directories, "
+                "inspect the files and choose an explicit follow-up"
                 if uncertain
                 else "inspect the recorded per-item outcomes and submit a fresh transfer "
                 "for the remaining entries"
@@ -2794,6 +3154,11 @@ class DirectFileTransferService:
                         if value.get("errorCategory")
                         else {}
                     ),
+                    **(
+                        {"checkpoints": [str(item) for item in value.get("checkpoints") or ()]}
+                        if value.get("checkpoints")
+                        else {}
+                    ),
                 }
                 for value in recorded[:MAX_TRANSFER_PROGRESS_ENTRIES]
             ),
@@ -2889,10 +3254,17 @@ class DirectFileTransferService:
                 observed = destination_storage.stat(full_target)
             except (StorageError, OSError):
                 return None
-            if observed.entry_type is StorageEntryType.FILE and observed.size == entry.size:
-                # The source is gone and the destination holds the entry's
-                # exact size: the native rename completed before the
-                # interruption and is recorded truthfully instead of replayed.
+            if (
+                observed.entry_type is StorageEntryType.FILE
+                and observed.size == entry.size
+                and entry.fingerprint
+                and str(getattr(observed, "fingerprint", None) or "") == entry.fingerprint
+            ):
+                # The source is gone and the destination still carries the
+                # entry's provider-verifiable exact identity: the native
+                # rename completed before the interruption and is recorded
+                # truthfully instead of replayed.  Size alone is never
+                # authority to treat an interrupted Move as complete.
                 return {
                     "path": entry.path,
                     "destination": destination_path,
@@ -3202,6 +3574,13 @@ def _progress_payload(item: PersistentTaskItem) -> dict[str, object] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _destination_root_of(authority: dict[str, object], top_level: str) -> str:
+    """The admitted top-level destination path of one selected root."""
+
+    destinations = {str(pair[0]): str(pair[1]) for pair in authority.get("destinations") or ()}
+    return destinations.get(top_level, top_level)
+
+
 def _result_error_category(result) -> str | None:
     if not result.errors:
         return None
@@ -3394,6 +3773,10 @@ def _progress_checkpoint_evidence(item: PersistentTaskItem) -> tuple[str, ...]:
         if not isinstance(value, dict):
             continue
         path = str(value.get("path", ""))
+        for checkpoint in value.get("checkpoints") or ():
+            # An adopted verified checkpoint of an interrupted entry stays exact
+            # mutation evidence in the terminal Result.
+            values.append(f"{checkpoint}:{path}")
         values.append(f"entry:{value.get('status', '')}:{path}")
         if value.get("errorCategory"):
             values.append(f"entry_error:{value.get('errorCategory')}:{path}")
@@ -3826,8 +4209,9 @@ def _transfer_actions(task: PersistentTask, claim_live: bool) -> list[dict[str, 
 def _projection_next_action(task: PersistentTask, transfer_status: str, terminal: bool) -> str:
     if transfer_status == "UNCERTAIN":
         return (
-            "an interrupted item could not be safely continued; refresh both directories and "
-            "inspect the Task before any retry — uncertain effects are never replayed"
+            "the operation result cannot be confirmed and the source and destination may "
+            "both exist; MediaFlow did not retry it — refresh both directories, inspect "
+            "the files and choose an explicit follow-up"
         )
     if task.status is PersistentTaskStatus.PENDING:
         return "the transfer is queued for the resident Worker; its progress appears here"

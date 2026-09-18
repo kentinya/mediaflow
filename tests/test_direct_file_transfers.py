@@ -2932,6 +2932,690 @@ class InFlightMutationFenceTests(TransferTestCase):
             self.assertTrue((root / "source" / "Movies" / "a.mkv").exists())
 
 
+class _PartialMoveSource(LocalStorage):
+    """A same-Storage provider whose native Move creates the target then blocks.
+
+    This is B's exact reproduction shape: the requested single native ``move``
+    has already produced a complete target copy and has *not* removed the
+    source, and the provider call is still blocked inside the operation when
+    the owner's lease expires.  Live Storage therefore holds both the source
+    and a complete destination, which is not a completed or idempotently
+    continuable Move.
+    """
+
+    def __init__(self, storage_id: str, root: Path) -> None:
+        super().__init__(storage_id, root)
+        self.mutation_calls = 0
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.reached_target = threading.Event()
+
+    def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        self.mutation_calls += 1
+        # Land the complete target through the real native copy path first, so
+        # the destination genuinely holds the confirmed bytes while the source
+        # stays exactly where it was.
+        super().copy(source, target, overwrite=overwrite)
+        self.reached_target.set()
+        self.entered.set()
+        self.release.wait(timeout=30)
+        return super().move(source, target, overwrite=overwrite)
+
+
+class InFlightResolutionTests(TransferTestCase):
+    """B's two-Worker regressions for truthful in-flight resolution."""
+
+    def _corrupt_authority(self, runtime, task_id: str) -> None:
+        with runtime._lock, runtime._connection:
+            runtime._connection.execute(
+                "UPDATE files_transfers SET authority_json=? WHERE task_id=?",
+                ("{not json", task_id),
+            )
+
+    def _operations_agreement(self, api, task_id: str) -> None:
+        """The Operations projection must agree with the durable rows.
+
+        Reads the same bounded operator endpoint the Operations workspace uses
+        and proves the Task, every TaskItem and every Result carry the identical
+        uncertain investigation truth — never a raw error, host path or digest.
+        """
+
+        status, document = request(api, f"/api/v1/operations/tasks/{task_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(document["status"], "failed")
+        self.assertEqual(document["failure"]["category"], "workflow_failure")
+        for item in document["items"]:
+            self.assertEqual(item["status"], "partial")
+            self.assertEqual(item["failure"]["category"], "workflow_failure")
+            self.assertNotIn("/", item.get("source_path") or "")
+        for result in document["results"]:
+            self.assertEqual(result["effect_certainty"], "attempted_unverified")
+            self.assertEqual(result["uncertain_effects"], ["mutation_outcome"])
+            self.assertNotIn("/", result.get("source_path") or "")
+
+    def _pending_after_first_worker(self, transfers, runtime, task_id: str):
+        """The durable transfer snapshot while Worker A is still blocked."""
+
+        transfer = runtime.get_files_transfer(task_id)
+        self.assertEqual(transfer.status.value, "running")
+        self.assertEqual(transfer.mutation_state, "mutation_in_flight")
+        return transfer
+
+    def test_same_storage_partial_move_converges_without_replay_or_erasure(self) -> None:
+        """B's first repro: a partial native Move is never a fabricated FAILED/none.
+
+        The complete target exists beside the retained source while the owner's
+        provider call is still blocked past its lease.  Worker B must issue zero
+        Storage mutation, must not route the item through the ordinary
+        ``target_exists`` conflict path, and must leave one conservative
+        partial/uncertain truth that the released owner can no longer overwrite.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _PartialMoveSource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 100)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            faulty = _FaultyHeartbeatRepository(runtime, mode="raise")
+            first = FilesTransferWorker(transfers, faulty, lease_seconds=1.0, worker_id="worker-a")
+            results: list = []
+            thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
+            thread.start()
+            self.assertTrue(source.reached_target.wait(30))
+            faulty.armed = True
+            threading.Event().wait(4.5)
+            self.assertEqual(source.mutation_calls, 1)
+            # Live Storage truth: the complete destination exists and the
+            # source was never removed.
+            self.assertTrue((root / "source" / "a.mkv").exists())
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"media-a" * 100)
+            self._pending_after_first_worker(transfers, runtime, task_id)
+
+            second = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=1.0,
+                worker_id="worker-b",
+                clock=lambda: datetime.now(UTC) + timedelta(seconds=10),
+            )
+            resolved = second.run_next()
+            # Worker B performed exactly zero Storage mutation.
+            self.assertEqual(source.mutation_calls, 1)
+            self.assertIsNotNone(resolved)
+            projection = transfers.transfer_projection(task_id)
+            # The truthful conservative state: never FAILED + none, never the
+            # fabricated clean failure B reproduced.
+            self.assertEqual(projection["status"], "UNCERTAIN")
+            self.assertNotEqual(projection["status"], "FAILED")
+            self.assertEqual(projection["retrySafe"], False)
+            self.assertIn("did not retry", projection["nextAction"])
+            self.assertIn("inspect", projection["nextAction"].casefold())
+            outcomes = projection["outcomes"]
+            self.assertTrue(outcomes)
+            self.assertNotEqual(outcomes[0].get("errorCategory"), "target_exists")
+            transfer = runtime.get_files_transfer(task_id)
+            self.assertIsNone(transfer.mutation_state)
+            self.assertEqual(transfer.error, "mutation_outcome")
+            task = runtime.get_task(task_id)
+            self.assertEqual(task.error, "mutation_outcome")
+            item = runtime.list_items(task_id)[0]
+            record = runtime.list_results(task_id)[0]
+            self.assertEqual(item.status.value, "partial")
+            self.assertEqual(record.effect_certainty, "attempted_unverified")
+            self.assertEqual(record.status, "partial")
+            self.assertEqual(record.error, "files_transfer_mutation_unresolved")
+            self.assertEqual(task.status.value, "failed")
+            self._operations_agreement(api, task_id)
+
+            # The released owner may still create the target and return; every
+            # late publication stays rejected by claim-token CAS and the
+            # investigation result is unchanged after a repository reload.
+            source.release.set()
+            thread.join(30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(source.mutation_calls, 1)
+            reopened = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(reopened.close)
+            self.assertEqual(transfers.transfer_projection(task_id)["status"], "UNCERTAIN")
+            reloaded = reopened.get_files_transfer(task_id)
+            self.assertEqual(reloaded.status.value, transfer.status.value)
+            self.assertEqual(reloaded.error, "mutation_outcome")
+            self.assertEqual(reopened.get_task(task_id).status.value, "failed")
+            self.assertEqual(reopened.list_items(task_id)[0].status.value, "partial")
+            self.assertEqual(
+                reopened.list_results(task_id)[0].effect_certainty, "attempted_unverified"
+            )
+
+    def test_corrupt_authority_after_an_entered_mutation_is_uncertain(self) -> None:
+        """B's second repro: a corrupt authority after entry is never FAILED/none.
+
+        Worker A is blocked inside the Copy, so the durable boundary already
+        proves a Storage mutation may have taken effect.  Corrupting the
+        authority at that point must converge to ``UNCERTAIN`` with
+        ``attempted_unverified`` — never the pre-mutation ``FAILED`` path — and
+        a late target created by the released owner cannot change it.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _BlockingCopySource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 100)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            faulty = _FaultyHeartbeatRepository(runtime, mode="raise")
+            first = FilesTransferWorker(transfers, faulty, lease_seconds=1.0, worker_id="worker-a")
+            results: list = []
+            thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
+            thread.start()
+            self.assertTrue(source.entered.wait(30))
+            # The authority becomes unreadable only *after* Worker A entered
+            # the mutation, so the boundary is already durable proof of an
+            # entered effect.
+            self._corrupt_authority(runtime, task_id)
+            faulty.armed = True
+            threading.Event().wait(4.5)
+            self.assertEqual(source.mutation_calls, 1)
+            self._pending_after_first_worker(transfers, runtime, task_id)
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+
+            second = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=1.0,
+                worker_id="worker-b",
+                clock=lambda: datetime.now(UTC) + timedelta(seconds=10),
+            )
+            resolved = second.run_next()
+            self.assertEqual(source.mutation_calls, 1, "Worker B must not mutate Storage")
+            self.assertIsNotNone(resolved)
+            projection = transfers.transfer_projection(task_id)
+            self.assertEqual(projection["status"], "UNCERTAIN")
+            self.assertNotEqual(projection["status"], "FAILED")
+            self.assertIsNone(runtime.get_files_transfer(task_id).mutation_state)
+            self.assertEqual(runtime.get_files_transfer(task_id).error, "mutation_outcome")
+            self.assertEqual(runtime.get_task(task_id).error, "mutation_outcome")
+            record = runtime.list_results(task_id)[0]
+            self.assertEqual(record.effect_certainty, "attempted_unverified")
+            self.assertEqual(record.uncertain_effects, ("mutation_outcome",))
+            self.assertEqual(record.error, "files_transfer_mutation_unresolved")
+            item = runtime.list_items(task_id)[0]
+            self.assertEqual(item.status.value, "partial")
+            self.assertEqual(runtime.get_task(task_id).status.value, "failed")
+            self._operations_agreement(api, task_id)
+            # Release Worker A: its provider call now creates the target, yet
+            # the durable investigation-only outcome must stay exactly as the
+            # resolver published it, across a repository reopen.
+            source.release.set()
+            thread.join(30)
+            self.assertFalse(thread.is_alive())
+            self.assertEqual(source.mutation_calls, 1)
+            self.assertTrue((root / "source" / "Movies" / "a.mkv").exists())
+            self.assertEqual(transfers.transfer_projection(task_id)["status"], "UNCERTAIN")
+            reopened = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(reopened.close)
+            reloaded = reopened.get_files_transfer(task_id)
+            self.assertEqual(reloaded.error, "mutation_outcome")
+            self.assertEqual(
+                reopened.list_results(task_id)[0].effect_certainty, "attempted_unverified"
+            )
+            self.assertEqual(reopened.get_task(task_id).status.value, "failed")
+
+    def test_corrupt_authority_before_any_mutation_stays_bounded_failed(self) -> None:
+        """The paired pre-mutation case keeps the zero-mutation FAILED path.
+
+        Without a durable mutation boundary there is no possible file effect, so
+        a corrupt authority must stay the bounded ``FAILED``/``none``
+        investigation outcome instead of being relabelled as a possible effect.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+            self.assertIsNone(runtime.get_files_transfer(task_id).mutation_state)
+            self._corrupt_authority(runtime, task_id)
+
+            worker = FilesTransferWorker(
+                transfers, runtime, lease_seconds=3600.0, worker_id="worker-corrupt"
+            )
+            finished = worker.run_next()
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status.value, "failed")
+            self.assertEqual(finished.error, "files_transfer_invalid_authority")
+            self.assertEqual(runtime.get_task(task_id).status.value, "failed")
+            self.assertEqual(transfers.transfer_projection(task_id)["status"], "FAILED")
+            record = runtime.list_results(task_id)[0]
+            self.assertEqual(record.effect_certainty, "none")
+            self.assertEqual(record.uncertain_effects, ())
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            self.assertTrue((root / "source" / "a.mkv").exists())
+
+
+class _CrashAfterFirstCopySource(LocalStorage):
+    """A source whose first native Copy lands completely, then loses the process.
+
+    The destination holds the confirmed bytes and the durable in-flight
+    boundary is still published, so a replacement Worker must adopt the
+    verified Copy from the boundary instead of copying the entry again.
+    """
+
+    def __init__(self, storage_id: str, root: Path) -> None:
+        super().__init__(storage_id, root)
+        self.copy_calls = 0
+
+    def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        self.copy_calls += 1
+        super().copy(source, target, overwrite=overwrite)
+        if self.copy_calls == 1:
+            raise SystemExit(3)
+
+
+class AdoptedCheckpointContinuationTests(TransferTestCase):
+    """A proven interrupted effect is adopted, never replayed."""
+
+    def test_proven_copy_checkpoint_is_adopted_and_only_the_next_item_runs(self) -> None:
+        """A verified interrupted Copy is adopted; the next item is the only work left."""
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            source = _CrashAfterFirstCopySource("source-storage", root / "source")
+            api, active, runtime = self._activate(root, storage_adapters={"source-storage": source})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 50)
+            (root / "source" / "b.mkv").write_bytes(b"media-b" * 50)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            crashed = FilesTransferWorker(
+                transfers, runtime, lease_seconds=3600.0, worker_id="worker-crashed"
+            )
+            with self.assertRaises(SystemExit):
+                crashed.run_next()
+            self.assertEqual(source.copy_calls, 1)
+            # Live truth: the first destination landed completely and the
+            # durable boundary still proves the entered Copy.
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"media-a" * 50)
+            self.assertEqual(
+                runtime.get_files_transfer(task_id).mutation_state, "mutation_in_flight"
+            )
+
+            replacement = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=3600.0,
+                worker_id="worker-replacement",
+                clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+            )
+            finished = replacement.run_next()
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status.value, "completed")
+            # The adopted Copy was never replayed: exactly one more mutation,
+            # the second item's own admitted Copy.
+            self.assertEqual(source.copy_calls, 2)
+            projection = transfers.transfer_projection(task_id)
+            self.assertEqual(projection["status"], "SUCCESS")
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["succeededItems"], 2)
+            outcomes = {outcome["path"]: outcome for outcome in projection["outcomes"]}
+            self.assertEqual(outcomes["a.mkv"]["status"], "SUCCESS")
+            self.assertIn("COPY", outcomes["a.mkv"]["checkpoints"])
+            self.assertIn("COPY", outcomes["b.mkv"]["checkpoints"])
+            record = next(
+                value
+                for value in runtime.list_results(task_id)
+                if value.source_path.endswith("a.mkv")
+            )
+            self.assertIn("COPY:a.mkv", record.completed_operations)
+            self.assertEqual(record.effect_certainty, "verified_complete")
+            self.assertIsNone(runtime.get_files_transfer(task_id).mutation_state)
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+            self.assertEqual((root / "source" / "Movies" / "b.mkv").read_bytes(), b"media-b" * 50)
+
+    def test_cross_storage_verified_destination_resumes_only_the_destructive_step(self) -> None:
+        """A proven cross-Storage Copy checkpoint publishes before the source delete."""
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "destination").mkdir(parents=True, exist_ok=True)
+            target = _CrashAtCheckpointTarget(
+                "media-target", root / "destination", crash_at="after_verify"
+            )
+            api, active, runtime = self._activate(root, storage_adapters={"media-target": target})
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 100)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="destination",
+                destination_directory="",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+            crashed = FilesTransferWorker(
+                transfers, runtime, lease_seconds=3600.0, worker_id="worker-crashed"
+            )
+            with self.assertRaises(SystemExit):
+                crashed.run_next()
+            writes_after_crash = target.write_calls
+            self.assertEqual(writes_after_crash, 1)
+            self.assertTrue((root / "source" / "a.mkv").exists())
+
+            replacement = FilesTransferWorker(
+                transfers,
+                runtime,
+                lease_seconds=3600.0,
+                worker_id="worker-replacement",
+                clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+            )
+            finished = replacement.run_next()
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status.value, "completed")
+            # The proven destination is adopted — never streamed again — and
+            # only the separately admitted destructive step remains.
+            self.assertEqual(target.write_calls, writes_after_crash)
+            self.assertFalse((root / "source" / "a.mkv").exists())
+            self.assertEqual((root / "destination" / "a.mkv").read_bytes(), b"media-a" * 100)
+            projection = transfers.transfer_projection(task_id)
+            self.assertEqual(projection["status"], "SUCCESS")
+            self.assertEqual(
+                projection["outcomes"][0]["checkpoints"],
+                ["copy_written", "destination_verified", "source_deleted"],
+            )
+            record = runtime.list_results(task_id)[0]
+            self.assertEqual(
+                record.completed_operations,
+                (
+                    "copy_written:a.mkv",
+                    "destination_verified:a.mkv",
+                    "source_deleted:a.mkv",
+                    "entry:SUCCESS:a.mkv",
+                ),
+            )
+            self.assertEqual(record.effect_certainty, "verified_complete")
+
+
+class _FaultyFenceRepository:
+    """A repository proxy whose guarded terminal item publish faults on demand.
+
+    Every other call is delegated unchanged, so the Worker and its service still
+    perform real claims, real Storage work and a real truthful convergence.  The
+    fault happens exactly at the per-item terminal publication boundary, which
+    proves a fault there never erases an already-persisted verified effect and
+    never leaves a permanently running transfer.
+
+    The proxy is installed on the service's own task coordinator, because that
+    is the repository every transfer publication actually reads.
+    """
+
+    def __init__(self, repository) -> None:
+        object.__setattr__(self, "_repository", repository)
+        object.__setattr__(self, "armed", False)
+
+    def __getattr__(self, name):
+        return getattr(self._repository, name)
+
+    def complete_item_with_evidence_guarded(self, *args, **kwargs):
+        if self.armed:
+            raise RuntimeError("terminal publication unavailable")
+        return self._repository.complete_item_with_evidence_guarded(*args, **kwargs)
+
+
+class TerminalPublicationFaultTests(TransferTestCase):
+    """A fault around the terminal publication keeps one truthful state."""
+
+    def test_terminal_publication_fault_after_a_persisted_effect_is_never_erased(self) -> None:
+        """A fault after one verified effect never turns it into a clean failure.
+
+        The first item's Copy is fully persisted (its guarded publication
+        succeeded) and the second item's terminal publication faults.  The
+        Worker converges on one truthful PARTIAL aggregate that keeps the first
+        verified effect, and a reload reproduces it exactly.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a" * 10)
+            (root / "source" / "b.mkv").write_bytes(b"media-b" * 10)
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv", "b.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            faulty = _FaultyFenceRepository(runtime)
+            transfers._direct.tasks.repository = faulty
+            faulty.armed = True
+            worker = FilesTransferWorker(
+                transfers, runtime, lease_seconds=3600.0, worker_id="worker-fault"
+            )
+            worker.run_next()
+
+            transfer = runtime.get_files_transfer(task_id)
+            task = runtime.get_task(task_id)
+            projection = transfers.transfer_projection(task_id)
+            # One deterministic terminal truth on every surface: the first
+            # verified effect beside the interrupted second item.
+            self.assertTrue(transfer.status.terminal, transfer.status)
+            self.assertEqual(transfer.status.value, "partial_success")
+            self.assertEqual(task.status.value, "partial_success")
+            self.assertTrue(projection["terminal"], projection)
+            self.assertEqual(projection["status"], "PARTIAL")
+            for item in runtime.list_items(task_id):
+                self.assertNotIn(item.status.value, {"processing", "pending", "paused"})
+            # The first verified effect is durably preserved: it was never
+            # erased into a fabricated clean failure, and the Item and Result
+            # agree with the aggregate.
+            records = {record.source_path: record for record in runtime.list_results(task_id)}
+            kept = records["a.mkv"]
+            self.assertEqual(kept.status, "partial")
+            self.assertIn("COPY:a.mkv", kept.completed_operations)
+            self.assertEqual(kept.effect_certainty, "verified_complete")
+            items = {item.source_display: item for item in runtime.list_items(task_id)}
+            self.assertEqual(items["a.mkv"].status.value, "partial")
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"media-a" * 10)
+            self.assertIsNone(runtime.get_files_transfer(task_id).mutation_state)
+            reloaded = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(reloaded.close)
+            self.assertEqual(reloaded.get_files_transfer(task_id).status, transfer.status)
+            self.assertEqual(
+                {
+                    record.source_path: record.effect_certainty
+                    for record in reloaded.list_results(task_id)
+                },
+                {
+                    record.source_path: record.effect_certainty
+                    for record in runtime.list_results(task_id)
+                },
+            )
+
+    def test_faulted_publish_never_leaves_a_permanently_running_transfer(self) -> None:
+        """A fault at the terminal publish still converges to a terminal state.
+
+        The provider fails before any write, so the only truthful outcome is a
+        zero-effect FAILED with ``none``; the faulted publication must not leave
+        a permanently RUNNING projection, and a replacement Worker finishes the
+        remaining work from the durable state.
+        """
+
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(
+                root,
+                storage_adapters={
+                    "source-storage": _ExplodingExistsSource("source-storage", root / "source")
+                },
+            )
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"media-a")
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+            )
+            queued = transfers.submit_transfer(
+                resource_library_id="source",
+                paths=["a.mkv"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = queued["taskId"]
+
+            faulty = _FaultyFenceRepository(runtime)
+            transfers._direct.tasks.repository = faulty
+            faulty.armed = True
+            worker = FilesTransferWorker(
+                transfers, faulty, lease_seconds=3600.0, worker_id="worker-fault"
+            )
+            worker.run_next()
+            # No mutation happened (the provider raised before writing) and the
+            # convergence still published one terminal FAILED/none state.
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            transfer = runtime.get_files_transfer(task_id)
+            self.assertTrue(transfer.status.terminal, transfer.status)
+            self.assertIsNone(transfer.mutation_state)
+            projection = transfers.transfer_projection(task_id)
+            self.assertTrue(projection["terminal"], projection)
+            self.assertNotEqual(projection["status"], "RUNNING")
+            for item in runtime.list_items(task_id):
+                self.assertNotIn(item.status.value, {"processing", "pending", "paused"})
+            record = runtime.list_results(task_id)[0]
+            self.assertEqual(record.effect_certainty, "none")
+            self.assertEqual(record.uncertain_effects, ())
+            self.assertTrue((root / "source" / "a.mkv").exists())
+            # A replacement Worker finds no claimable work and the durable state
+            # stays the same terminal zero-effect failure.
+            replacement = FilesTransferWorker(
+                transfers, runtime, lease_seconds=3600.0, worker_id="worker-replacement"
+            )
+            self.assertIsNone(replacement.run_next())
+            self.assertEqual(transfers.transfer_projection(task_id)["status"], "FAILED")
+
+
 class _ExplodingCopySource(LocalStorage):
     """A same-Storage provider whose native Copy raises an unexpected error."""
 
