@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from datetime import datetime
 from enum import StrEnum
 
 #: Longest single name (basename) accepted for Create/Rename.  This matches
@@ -363,6 +364,13 @@ class DownloadArchiveEntry:
     is_directory: bool
     status: DownloadItemStatus = DownloadItemStatus.INCLUDED
     note: str | None = None
+    #: The provider-neutral entry evidence pinned at admission: the exact
+    #: observed modification instant and — when the provider advertises one —
+    #: the content fingerprint.  The read boundary re-validates both so a
+    #: same-size replacement after admission is never served as if it were
+    #: the admitted entry.
+    modified_at: datetime | None = None
+    fingerprint: str | None = None
 
 
 @dataclass(frozen=True)

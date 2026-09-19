@@ -959,6 +959,95 @@ export function normalizeFilesUploadResult(
 }
 
 /**
+ * The durable operator projection of one admitted Upload Task.  Rebuilt by
+ * the backend from persisted Task, item and Result state so the Web can poll
+ * per-item progress and render the backend-advertised lifecycle actions
+ * without any raw execution token or Task-ID ceremony.
+ */
+export interface FilesUploadProjection {
+  readonly taskId: string;
+  readonly taskStatus: string;
+  readonly status: string;
+  readonly totalItems: number;
+  readonly processedItems: number;
+  readonly succeededItems: number;
+  readonly skippedItems: number;
+  readonly failedItems: number;
+  readonly items: readonly FilesUploadItemOutcome[];
+  readonly outcomesTruncated: boolean;
+  readonly terminal: boolean;
+  readonly actions: readonly TransferLifecycleAction[];
+  readonly version: string;
+  readonly sideEffects: string;
+  readonly retrySafe: boolean;
+  readonly nextAction: string;
+  readonly durableState?: string;
+}
+
+export function normalizeFilesUploadProjection(
+  payload: unknown,
+): FilesUploadProjection {
+  const record = expectObject(payload);
+  const itemsRaw = Array.isArray(record.items) ? record.items : [];
+  const items: FilesUploadItemOutcome[] = itemsRaw.slice(0, 512).map((item) => {
+    const outcome = expectObject(item);
+    const base: FilesUploadItemOutcome = {
+      path: expectString(outcome, "path"),
+      status: expectString(outcome, "status"),
+      errorCategory:
+        typeof outcome.errorCategory === "string"
+          ? outcome.errorCategory
+          : null,
+    };
+    if (typeof outcome.destination === "string") {
+      return { ...base, destination: outcome.destination };
+    }
+    if (typeof outcome.checksum === "string") {
+      return { ...base, checksum: outcome.checksum };
+    }
+    return base;
+  });
+  const actionsRaw = Array.isArray(record.actions) ? record.actions : [];
+  const actions: TransferLifecycleAction[] = actionsRaw
+    .slice(0, 8)
+    .map((action) => {
+      const entry = expectObject(action);
+      const model: TransferLifecycleAction = {
+        action: expectString(entry, "action"),
+        available: entry.available === true,
+      };
+      if (typeof entry.path === "string") {
+        return { ...model, path: entry.path };
+      }
+      if (typeof entry.reason === "string") {
+        return { ...model, reason: entry.reason };
+      }
+      return model;
+    });
+  return {
+    taskId: expectString(record, "taskId"),
+    taskStatus: expectString(record, "taskStatus"),
+    status: expectString(record, "status"),
+    totalItems: expectNumber(record, "totalItems"),
+    processedItems: expectNumber(record, "processedItems"),
+    succeededItems: expectNumber(record, "succeededItems"),
+    skippedItems: expectNumber(record, "skippedItems"),
+    failedItems: expectNumber(record, "failedItems"),
+    items,
+    outcomesTruncated: record.outcomesTruncated === true,
+    terminal: record.terminal === true,
+    actions,
+    version: expectString(record, "version"),
+    sideEffects: expectString(record, "sideEffects"),
+    retrySafe: record.retrySafe === true,
+    nextAction: expectString(record, "nextAction"),
+    ...(typeof record.durableState === "string"
+      ? { durableState: record.durableState }
+      : {}),
+  };
+}
+
+/**
  * One admitted bounded download selection: either a single regular file
  * (streamed directly) or an on-the-fly archive (directory / multi-selection).
  * The backend streams the body; the Web reads it as a Blob and triggers a

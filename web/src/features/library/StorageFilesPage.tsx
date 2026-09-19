@@ -47,6 +47,8 @@ import {
   fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
+  fetchUploadProjection,
+  mutateTransferLifecycle,
   removeResourceLibrary,
   saveDownloadedFile,
   saveResourceLibrary,
@@ -56,6 +58,7 @@ import {
   uploadFiles,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
+  type FilesUploadProjection,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
 import type {
@@ -2363,20 +2366,32 @@ export function StorageFilesPage() {
     [queryClient, pruneAffectedBrowseState],
   );
 
-  // One bounded upload: the exact selected bytes stream into the current
-  // directory through the durable Task boundary; the response is the bounded
-  // per-item result projection, which the dialog shows instead of re-reading
-  // live Storage.  A failed or uncertain item is never auto-replayed.
+  // One bounded upload: the durable Task is admitted first (its identity
+  // makes the projection pollable), then every item's exact payload streams
+  // as its own raw-bytes request in manifest order.  Each truthful per-item
+  // outcome lands through the projection poll; pause/cancel act at the
+  // backend's safe item boundaries.  A failed or uncertain item is never
+  // auto-replayed.
   const uploadMutation = useMutation({
     mutationFn: (input: {
       readonly conflict: "no_overwrite" | "skip" | "keep_both";
       readonly items: readonly FilesUploadPayload[];
     }) =>
-      uploadFiles(token, activeLibraryId, {
-        destinationDirectory: effectivePath,
-        conflict: input.conflict,
-        items: input.items,
-      }),
+      uploadFiles(
+        token,
+        activeLibraryId,
+        {
+          destinationDirectory: effectivePath,
+          conflict: input.conflict,
+          items: input.items,
+        },
+        fetch,
+        (taskId) => {
+          // The durable Task is admitted: its projection becomes pollable so
+          // the operator sees per-item progress and can pause or cancel.
+          setUploadTaskId(taskId);
+        },
+      ),
     retry: false,
     onSuccess: (result) => {
       if (!result.ok) {
@@ -2390,17 +2405,70 @@ export function StorageFilesPage() {
         return;
       }
       setUploadError(null);
-      setUploadResult(result.model.items);
+      // The admitted Task's durable projection stays pollable (it has
+      // reached its terminal state, so the poll stops itself): its items
+      // are the authoritative result view.
+      setUploadResult(uploadProjection?.items ?? result.model.items);
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
     onError: () => {
       setUploadResult(null);
       setUploadError(
-        "上传结果未知，未自动重试；请刷新目录核实实际状态后再决定下一步。",
+        "上传结果未知,未自动重试;请刷新目录核实实际状态后再决定下一步。",
       );
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
   });
+
+  // The admitted Upload Task's durable projection, polled while it streams:
+  // per-item progress and the backend-advertised pause/cancel controls come
+  // from this read, never from a raw Task ID or execution token.  The
+  // projection is derived render state from the poll; the dialog renders the
+  // terminal projection's items directly as the authoritative result view.
+  const [uploadTaskId, setUploadTaskId] = useState<string | null>(null);
+  const uploadProjectionQuery = useQuery({
+    queryKey: ["upload-projection", uploadTaskId],
+    queryFn: () => {
+      if (uploadTaskId === null) throw new Error("unreachable");
+      return fetchUploadProjection(token, activeLibraryId, uploadTaskId);
+    },
+    enabled: uploadTaskId !== null && token !== null,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (data && data.ok && data.model.terminal) {
+        return false;
+      }
+      return 700;
+    },
+    retry: false,
+  });
+  const uploadProjectionData = uploadProjectionQuery.data;
+  const uploadProjection: FilesUploadProjection | null =
+    uploadProjectionData !== undefined && uploadProjectionData.ok
+      ? uploadProjectionData.model
+      : null;
+  const runUploadLifecycleAction = async (
+    action: "pause" | "cancel",
+    projection: FilesUploadProjection,
+  ) => {
+    const result = await mutateTransferLifecycle(
+      token,
+      projection.taskId,
+      action,
+      projection.version,
+    );
+    if (!result.ok) {
+      setUploadError(
+        action === "pause"
+          ? "暂停请求未生效;该上传可能刚刚到达终点。"
+          : "取消请求未生效;该上传可能刚刚到达终点。",
+      );
+      return;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["upload-projection", projection.taskId],
+    });
+  };
 
   const startDownload = async (paths: readonly string[]) => {
     if (downloadBusy || paths.length === 0) return;
@@ -3086,15 +3154,20 @@ export function StorageFilesPage() {
           destinationDirectory={effectivePath}
           submitting={uploadMutation.isPending}
           result={uploadResult}
+          projection={uploadProjection}
           error={uploadError}
           onSubmit={({ conflict, items }) => {
             setUploadError(null);
             setUploadResult(null);
             uploadMutation.mutate({ conflict, items });
           }}
+          onLifecycleAction={(action, projection) => {
+            void runUploadLifecycleAction(action, projection);
+          }}
           onClose={() => {
             setUploadError(null);
             setUploadResult(null);
+            setUploadTaskId(null);
             setDialog(null);
             void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
           }}

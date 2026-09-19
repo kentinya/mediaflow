@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState } from "react";
 import type {
   FilesUploadItemOutcome,
+  FilesUploadProjection,
   UploadConflictChoice,
 } from "../../entities/library/direct-files";
 import { ModalDialog } from "./FileCommandDialogs";
@@ -11,16 +12,17 @@ import { ModalDialog } from "./FileCommandDialogs";
  * The operator picks browser files or one bounded directory tree and an
  * explicit conflict choice; the Web streams the selected bytes into the
  * current ResourceLibrary-relative directory through the bounded upload
- * endpoint.  Opening the picker and re-selecting perform zero mutation; only
- * the single explicit submit streams and admits the durable Task.  After
- * admission the dialog shows the bounded per-item results (independent
- * outcomes, never auto-replayed) and the operator's confirmed context.
+ * journey (one JSON admission, then one raw-bytes request per item).  The
+ * durable Task identity comes back with the admission, so per-item progress
+ * and the backend-advertised pause/cancel controls are observable through
+ * the production Web path.  Opening the picker and re-selecting perform zero
+ * mutation; only the explicit submit starts the journey.
  */
 
 export interface FilesUploadPayload {
   readonly relativePath: string;
   readonly size: number;
-  readonly bytes: ReadableStream<Uint8Array> | Uint8Array;
+  readonly bytes: Blob | Uint8Array;
 }
 
 const CONFLICT_CHOICES: readonly {
@@ -30,18 +32,18 @@ const CONFLICT_CHOICES: readonly {
 }[] = [
   {
     value: "no_overwrite",
-    label: "不覆盖（默认）",
-    hint: "同名目标会作为该项的失败原因报告，绝不替换任何内容。",
+    label: "不覆盖(默认)",
+    hint: "同名目标会作为该项的失败原因报告,绝不替换任何内容。",
   },
   {
     value: "skip",
     label: "跳过同名项",
-    hint: "保留目标原样，仅上传不冲突的项目。",
+    hint: "保留目标原样,仅上传不冲突的项目。",
   },
   {
     value: "keep_both",
-    label: "保留两者（自动重命名）",
-    hint: "由后端为上传内容生成“名称 (1)”这样的唯一名称，两个版本都保留。",
+    label: "保留两者(自动重命名)",
+    hint: "由后端为上传内容生成“名称 (1)”这样的唯一名称,两个版本都保留。",
   },
 ];
 
@@ -50,11 +52,19 @@ const ITEM_STATUS_LABELS: Record<string, string> = {
   SKIPPED: "已跳过",
   FAILED: "未完成",
   UNCERTAIN: "结果不确定",
+  PENDING: "待上传",
+  RUNNING: "上传中",
+  PARTIAL: "结果不确定",
+};
+
+const ACTION_LABELS: Record<string, string> = {
+  pause: "暂停",
+  cancel: "取消",
 };
 
 function outcomeStateLabel(outcome: FilesUploadItemOutcome): string {
   if (outcome.status === "UNCERTAIN") {
-    return "结果不确定；请刷新目录核实，未自动重试。";
+    return "结果不确定;请刷新目录核实,未自动重试。";
   }
   switch (outcome.status) {
     case "SUCCESS":
@@ -62,7 +72,7 @@ function outcomeStateLabel(outcome: FilesUploadItemOutcome): string {
     case "SKIPPED":
       return "目标保留原样";
     case "FAILED":
-      return "未改动；可修正原因后重试该项";
+      return "未改动;可修正原因后重试该项";
     default:
       return ITEM_STATUS_LABELS[outcome.status] ?? outcome.status;
   }
@@ -95,8 +105,9 @@ function collectSelectedFiles(
     items.push({
       relativePath: relativePathOf(file),
       size: file.size,
-      bytes:
-        typeof file.stream === "function" ? file.stream() : new Uint8Array(),
+      // The picked File (a Blob) streams straight from the browser's file
+      // handle as its own request body; nothing is buffered whole.
+      bytes: file,
     });
   }
   return items;
@@ -107,19 +118,28 @@ export function FilesUploadDialog({
   destinationDirectory,
   submitting,
   result,
+  projection,
   error,
   onSubmit,
+  onLifecycleAction,
   onClose,
 }: {
   readonly open: boolean;
   readonly destinationDirectory: string;
   readonly submitting: boolean;
   readonly result: readonly FilesUploadItemOutcome[] | null;
+  /** The live durable projection while the upload streams. */
+  readonly projection: FilesUploadProjection | null;
   readonly error: string | null;
   readonly onSubmit: (options: {
     readonly conflict: UploadConflictChoice;
     readonly items: readonly FilesUploadPayload[];
   }) => void;
+  /** One backend-advertised lifecycle control (pause/cancel). */
+  readonly onLifecycleAction: (
+    action: "pause" | "cancel",
+    projection: FilesUploadProjection,
+  ) => void;
   readonly onClose: () => void;
 }) {
   const [conflict, setConflict] =
@@ -141,7 +161,9 @@ export function FilesUploadDialog({
     () => chosen.reduce((sum, item) => sum + item.size, 0),
     [chosen],
   );
-  const busy = submitting || result !== null;
+  const streaming = projection !== null && !projection.terminal;
+  const busy = submitting || streaming;
+  const shownItems = projection?.items ?? result ?? [];
 
   if (!open) return null;
 
@@ -177,6 +199,13 @@ export function FilesUploadDialog({
     onSubmit({ conflict, items: chosen });
   };
 
+  const availableActions = (projection?.actions ?? []).filter(
+    (action) =>
+      action.available &&
+      (action.action === "pause" || action.action === "cancel"),
+  );
+  const finished = result !== null || projection?.terminal === true;
+
   return (
     <ModalDialog
       title={
@@ -187,13 +216,21 @@ export function FilesUploadDialog({
       busy={submitting}
       footer={
         <>
-          {result !== null ? (
+          {finished ? (
             <button
               type="button"
               className="mf-button mf-button-primary"
               onClick={onClose}
             >
               关闭
+            </button>
+          ) : streaming ? (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={onClose}
+            >
+              后台跟踪
             </button>
           ) : (
             <>
@@ -212,17 +249,82 @@ export function FilesUploadDialog({
                 disabled={busy || chosen.length === 0}
                 aria-busy={submitting}
               >
-                {submitting ? "上传中…" : "上传"}
+                {submitting ? "上传中..." : "上传"}
               </button>
             </>
           )}
         </>
       }
     >
-      {result !== null ? (
+      {projection !== null ? (
         <>
           <p className="mf-dialog-hint" role="status">
-            上传已完成；每项结果独立记录，未自动重试。请刷新目录查看实际状态。
+            {projection.terminal
+              ? "上传已完成;每项结果独立记录,未自动重试。请刷新目录查看实际状态。"
+              : `上传进度:${projection.processedItems}/${projection.totalItems} 项已完成;可在下方暂停或取消。`}
+          </p>
+          {projection.durableState === "mutation_effect_uncertain" && (
+            <p className="mf-dialog-error" role="alert">
+              存在不确定的结果;请刷新目录核实,未自动重试。
+            </p>
+          )}
+          {error !== null && (
+            <p className="mf-dialog-error" role="alert">
+              {error}
+            </p>
+          )}
+          <ul className="mf-impact-list">
+            {shownItems.slice(0, 50).map((item, index) => (
+              <li key={item.path + ":" + index}>
+                <span>{item.path}</span>
+                <span>
+                  {ITEM_STATUS_LABELS[item.status] ?? item.status}
+                  {item.destination !== undefined && item.status === "SUCCESS"
+                    ? " · " + item.destination
+                    : ""}
+                  {item.errorCategory !== null && item.status !== "SUCCESS"
+                    ? " · " + item.errorCategory
+                    : ""}
+                  {" · "}
+                  {outcomeStateLabel(item)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {shownItems.length > 50 && (
+            <p className="mf-dialog-hint">
+              仅显示前 50 项的逐项结果;完整结果已记录在任务中。
+            </p>
+          )}
+          {availableActions.length > 0 && (
+            <div
+              className="mf-transfer-actions"
+              role="group"
+              aria-label="上传控制"
+            >
+              {availableActions.map((action) => (
+                <button
+                  key={action.action}
+                  type="button"
+                  className="mf-button mf-button-secondary"
+                  onClick={() =>
+                    projection !== null &&
+                    onLifecycleAction(
+                      action.action as "pause" | "cancel",
+                      projection,
+                    )
+                  }
+                >
+                  {ACTION_LABELS[action.action] ?? action.action}
+                </button>
+              ))}
+            </div>
+          )}
+        </>
+      ) : result !== null ? (
+        <>
+          <p className="mf-dialog-hint" role="status">
+            上传已完成;每项结果独立记录,未自动重试。请刷新目录查看实际状态。
           </p>
           <ul className="mf-impact-list">
             {result.slice(0, 50).map((item, index) => (
@@ -244,7 +346,7 @@ export function FilesUploadDialog({
           </ul>
           {result.length > 50 && (
             <p className="mf-dialog-hint">
-              仅显示前 50 项的逐项结果；完整结果已记录在任务中。
+              仅显示前 50 项的逐项结果;完整结果已记录在任务中。
             </p>
           )}
         </>
@@ -252,8 +354,8 @@ export function FilesUploadDialog({
         <>
           <p className="mf-dialog-hint">
             选择要上传到当前目录 “
-            {destinationDirectory === "" ? "/（根目录）" : destinationDirectory}
-            ” 的浏览器文件或文件夹。同名冲突按所选策略处理；覆盖绝不会静默发生。
+            {destinationDirectory === "" ? "/(根目录)" : destinationDirectory}”
+            的浏览器文件或文件夹。同名冲突按所选策略处理;覆盖绝不会静默发生。
           </p>
           {(error !== null || listError !== null) && (
             <p className="mf-dialog-error" role="alert">
@@ -321,7 +423,7 @@ export function FilesUploadDialog({
                 disabled={busy}
                 onClick={() => filesInputRef.current?.click()}
               >
-                浏览文件…
+                浏览文件...
               </button>
             ) : (
               <button
@@ -330,13 +432,13 @@ export function FilesUploadDialog({
                 disabled={busy}
                 onClick={() => directoryInputRef.current?.click()}
               >
-                浏览文件夹…
+                浏览文件夹...
               </button>
             )}
             {chosen.length > 0 && (
               <span className="mf-dialog-hint">
-                已选择 {chosen.length} 项（{totalSize.toLocaleString("en-US")}{" "}
-                字节）
+                已选择 {chosen.length} 项({totalSize.toLocaleString("en-US")}{" "}
+                字节)
               </span>
             )}
           </div>

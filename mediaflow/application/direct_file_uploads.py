@@ -26,8 +26,10 @@ import io
 import json
 import posixpath
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from typing import BinaryIO
+from uuid import NAMESPACE_URL, uuid5
 
 from mediaflow.application.direct_file_commands import DirectFileError
 from mediaflow.application.organizer import OrganizerExecutor
@@ -57,6 +59,8 @@ from mediaflow.domain.storage import (
 )
 from mediaflow.domain.task_persistence import (
     FILES_UPLOAD_TASK_COMMAND,
+    PersistentTaskItem,
+    PersistentTaskStatus,
     TaskItemStatus,
 )
 
@@ -135,6 +139,11 @@ class _UploadState:
     #: Directory nodes whose planned destination is occupied by an existing
     #: file; in ``skip`` mode their whole subtree is pre-skipped.
     colliding_nodes: set[str] = field(default_factory=set)
+    #: The item indexes whose payload stream has already been accepted.  A
+    #: second payload request for one index is refused (an executed item is
+    #: never replayed), and items are delivered in manifest order so a
+    #: sibling can never read another item's bytes as its own content.
+    delivered: set[int] = field(default_factory=set)
     digest: str = ""
 
 
@@ -149,6 +158,12 @@ class DirectFileUploadService:
     ) -> None:
         self._direct = direct_files
         self._executor = executor or OrganizerExecutor()
+        # The admitted-plan registry of the streaming request: admission pins
+        # the exact validated plan under the durable Task identity and the
+        # same request's payload stream drains it.  A disconnect (the stream
+        # never arrives) leaves the entry for GC; it is never a durable
+        # authority and holds no Storage or credential state.
+        self._admitted: dict[str, _UploadState] = {}
 
     # ------------------------------------------------------------------
     # Public command boundary
@@ -159,19 +174,17 @@ class DirectFileUploadService:
         *,
         resource_library_id: str,
         manifest: Mapping[str, object],
-        stream: BinaryIO,
+        stream: BinaryIO | None = None,
     ) -> dict[str, object]:
-        """Admit one bounded Upload and stream its items into the library.
+        """Admit one bounded Upload as one durable Task and return 202.
 
-        ``manifest`` is the interface-parsed request manifest: the
-        confined ``destinationDirectory``, the explicit ``conflict``
-        choice and the ordered ``items`` (relative path + declared size).
-        ``stream`` serves each item's payload in manifest order; every
-        payload is read in bounded chunks and handed to the executor
-        without ever buffering a whole media file.  Admission performs
-        zero mutation: only after the confined scope is validated and the
-        durable Task exists do writes cross OrganizerExecutor.  The
-        returned document is the bounded per-item result projection.
+        Admission performs zero mutation: the confined destination scope is
+        validated, the exact Active revision is pinned and one durable
+        ``files_upload`` Task is created with every item persisted PENDING.
+        No payload byte is read here — the browser streams each item's
+        payload afterwards through :meth:`execute_item`, in manifest order,
+        while the durable projection (see :meth:`upload_projection`) and the
+        cooperative lifecycle controls stay pollable between items.
         """
 
         if not isinstance(manifest, Mapping):
@@ -197,11 +210,430 @@ class DirectFileUploadService:
             configuration_snapshot_id=self._direct.revision.revision_id,
             configuration_snapshot_digest=self._direct.revision.digest,
         )
-        result = self._execute(state, task.task_id, stream)
+        # Every admitted item is persisted PENDING immediately, so the durable
+        # projection shows truthful per-item progress from the first poll —
+        # before, during and after the payload stream.
+        now = datetime.now(UTC)
+        for plan in state.planned.values():
+            item_id = str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"{task.task_id}:{storage.storage_id}:{plan.item.relative_path}",
+                )
+            )
+            self._direct.tasks.repository.upsert_item(
+                PersistentTaskItem(
+                    item_id,
+                    task.task_id,
+                    storage.storage_id,
+                    library.library_id,
+                    plan.item.relative_path,
+                    plan.item.relative_path,
+                    TaskItemStatus.PENDING,
+                    "files_upload",
+                    0,
+                    now,
+                    now,
+                )
+            )
+        # The same request streams its payloads into this exact plan; the
+        # registry is request-scoped (one entry per admitted Task) and the
+        # streaming execute consumes it.
+        self._admitted[task.task_id] = state
+        return {
+            "taskId": task.task_id,
+            "taskStatus": task.status.value,
+            "admitted": True,
+            "manifestDigest": state.digest,
+            "conflict": state.conflict.value,
+            "destinationDirectory": destination_directory,
+            "totalItems": len(state.items),
+            "status": "RUNNING",
+            "sideEffects": "storage_mutations",
+            "retrySafe": False,
+            "nextAction": "the upload progress appears in the durable Task projection",
+        }
+
+    def execute_item(
+        self,
+        task_id: str,
+        index: int,
+        stream: BinaryIO,
+    ) -> dict[str, object]:
+        """Stream one admitted item's exact payload and record its outcome.
+
+        The durable Task stays RUNNING while the browser streams each item in
+        manifest order, so the projection (``upload_projection``) and the
+        cooperative lifecycle controls stay pollable between items.  The
+        item's declared size bounds the read exactly: a body that ends early
+        records a truthful truncation, and leftover declared bytes after a
+        refused or failed write are drained so no sibling can read this
+        item's bytes as its own content.  A pause/cancel request is observed
+        at this safe item boundary; the refused item is never replayed.
+        """
+
+        state = self._admitted.get(task_id)
+        if state is None:
+            raise DirectFileUploadError(
+                "files_upload_unknown",
+                "not_found",
+                "no admitted Upload is streaming under this Task identity",
+                status=404,
+                next_action="resubmit the Upload from the Files workspace",
+            )
+        if (
+            isinstance(index, bool)
+            or not isinstance(index, int)
+            or index < 0
+            or index >= len(state.items)
+        ):
+            raise DirectFileUploadError(
+                "files_upload_invalid_request",
+                "invalid_request",
+                "the Upload item index is outside the admitted scope",
+                status=400,
+                next_action="resubmit the Upload with its exact selection",
+            )
+        if self._direct.tasks.cancellation_observed(task_id):
+            return {
+                "index": index,
+                "path": state.items[index].relative_path,
+                "status": "FAILED",
+                "errorCategory": "upload_cancelled",
+                "taskStatus": "cancelled",
+                "terminal": True,
+                "sideEffects": "storage_mutations",
+                "retrySafe": False,
+                "nextAction": "the upload was cancelled; refresh the directory",
+            }
+        if self._direct.tasks.pause_requested(task_id):
+            self._direct.tasks.acknowledge_pause(task_id)
+            return {
+                "index": index,
+                "path": state.items[index].relative_path,
+                "status": "FAILED",
+                "errorCategory": "upload_paused",
+                "taskStatus": "paused",
+                "terminal": False,
+                "sideEffects": "storage_mutations",
+                "retrySafe": False,
+                "nextAction": "the upload is paused; the remaining items keep their own outcome",
+            }
+        task = self._direct.tasks.require(task_id)
+        if task.status is not PersistentTaskStatus.RUNNING:
+            raise DirectFileUploadError(
+                "files_upload_task_not_running",
+                "task_not_running",
+                "the Upload Task is not streaming in this request sequence",
+                status=409,
+                next_action="resubmit the Upload from the Files workspace",
+            )
+        # Framing order is the manifest order: an out-of-order or repeated
+        # payload request is refused before any read, so one item's bytes can
+        # never be consumed as (or by) a sibling's payload.
+        if index in state.delivered:
+            raise DirectFileUploadError(
+                "files_upload_item_already_delivered",
+                "item_already_delivered",
+                "this Upload item's payload was already delivered",
+                status=409,
+                next_action="continue with the next item or finish the upload",
+            )
+        if index != len(state.delivered):
+            raise DirectFileUploadError(
+                "files_upload_item_out_of_order",
+                "item_out_of_order",
+                "Upload payloads must be streamed in the manifest order",
+                status=409,
+                next_action="stream the remaining items in the manifest order",
+            )
+        item = state.items[index]
+        plan = state.planned[index]
+        try:
+            task_item = self._direct.tasks.begin_item(
+                task_id,
+                state.storage.storage_id,
+                state.library.library_id,
+                item.relative_path,
+                item.relative_path,
+            )
+        except TaskPauseRequested:
+            self._direct.tasks.acknowledge_pause(task_id)
+            return {
+                "index": index,
+                "path": item.relative_path,
+                "status": "FAILED",
+                "errorCategory": "upload_paused",
+                "taskStatus": "paused",
+                "terminal": False,
+                "sideEffects": "storage_mutations",
+                "retrySafe": False,
+                "nextAction": "the upload is paused; the remaining items keep their own outcome",
+            }
+        state.delivered.add(index)
+        try:
+            outcome, item_truncated, checksum, written_destination, category = self._execute_item(
+                state, plan, stream
+            )
+        except DirectFileUploadError as error:
+            self._drain_payload(plan, stream)
+            self._record_item(
+                task_item,
+                plan,
+                UploadItemStatus.FAILED,
+                error.category,
+                destination=plan.destination,
+            )
+            return {
+                "index": index,
+                "path": item.relative_path,
+                "status": "FAILED",
+                "errorCategory": error.category,
+                "taskStatus": self._direct.tasks.require(task_id).status.value,
+                "terminal": False,
+                "sideEffects": "storage_mutations",
+                "retrySafe": False,
+                "nextAction": "review the reason and retry this item or the selection",
+            }
+        self._record_item(
+            task_item,
+            plan,
+            outcome,
+            category,
+            checksum=checksum,
+            destination=written_destination,
+        )
+        document: dict[str, object] = {
+            "index": index,
+            "path": item.relative_path,
+            "status": outcome.value,
+            "taskStatus": self._direct.tasks.require(task_id).status.value,
+            "terminal": False,
+            "sideEffects": "storage_mutations",
+            "retrySafe": False,
+            "nextAction": "continue with the next item or finish the upload",
+        }
+        if written_destination is not None:
+            document["destination"] = written_destination
+        if checksum is not None:
+            document["checksum"] = checksum
+        if category is not None and outcome is not UploadItemStatus.SUCCESS:
+            document["errorCategory"] = category
+        if outcome is UploadItemStatus.UNCERTAIN:
+            document["durableState"] = "mutation_effect_uncertain"
+        return document
+
+    def finish_upload(self, task_id: str) -> dict[str, object]:
+        """Finalize one streamed Upload and return its bounded result.
+
+        Every item the browser did not deliver keeps its own truthful
+        refused outcome (never replayed, never fabricated); the durable
+        Task reaches its honest terminal aggregate.
+        """
+
+        state = self._admitted.pop(task_id, None)
+        if state is None:
+            raise DirectFileUploadError(
+                "files_upload_unknown",
+                "not_found",
+                "no admitted Upload is streaming under this Task identity",
+                status=404,
+                next_action="resubmit the Upload from the Files workspace",
+            )
+        outcomes: list[UploadItemOutcome] = []
+        for index, item in enumerate(state.items):
+            item_id = str(
+                uuid5(
+                    NAMESPACE_URL,
+                    f"{task_id}:{state.storage.storage_id}:{item.relative_path}",
+                )
+            )
+            previous = self._direct.tasks.repository.get_item(item_id)
+            delivered = previous is not None and previous.status in {
+                TaskItemStatus.SUCCESS,
+                TaskItemStatus.PARTIAL,
+                TaskItemStatus.FAILED,
+                TaskItemStatus.SKIPPED,
+            }
+            if delivered:
+                # A delivered item keeps its own recorded outcome.
+                record = next(
+                    (
+                        result
+                        for result in self._direct.tasks.repository.list_results(task_id)
+                        if result.item_id == item_id
+                    ),
+                    None,
+                )
+                status = _projection_item_status(previous.status)
+                uncertain = (
+                    status == "PARTIAL"
+                    and record is not None
+                    and (record.effect_certainty == "attempted_unverified")
+                )
+                if uncertain:
+                    status = "UNCERTAIN"
+                checksum = next(
+                    (
+                        operation
+                        for operation in (record.completed_operations if record else ())
+                        if operation.startswith("sha256:")
+                    ),
+                    None,
+                )
+                outcomes.append(
+                    UploadItemOutcome(
+                        item.relative_path,
+                        UploadItemStatus.UNCERTAIN
+                        if uncertain
+                        else (_terminal_item_status(previous.status)),
+                        error_category=previous.error,
+                        destination=previous.destination_path,
+                        checksum=checksum,
+                    )
+                )
+                continue
+            plan = state.planned[index]
+            outcomes.append(
+                self._record_refused(
+                    task_id,
+                    state.library,
+                    state.storage,
+                    index,
+                    plan,
+                    "upload_stream_truncated",
+                )
+            )
+        terminal = None
+        task = self._direct.tasks.require(task_id)
+        if task.status is PersistentTaskStatus.CANCELLED:
+            terminal = "cancelled"
+        result = self._finalize(state, task_id, outcomes, terminal)
         document = result.document()
-        document["destinationDirectory"] = destination_directory
+        document["destinationDirectory"] = state.destination_directory
         document["nextAction"] = self._next_action(result)
         if result.status == "UNCERTAIN":
+            document["durableState"] = "mutation_effect_uncertain"
+        return document
+
+    def upload_projection(self, task_id: str) -> dict[str, object]:
+        """The durable, bounded operator projection of one Upload Task.
+
+        Rebuilt from the persisted Task, item rows and Results — never from
+        a request-scoped execution result — so polling while the upload
+        streams, after admission or after a process restart reproduces the
+        truthful per-item progress with the backend-advertised lifecycle
+        actions (pause/cancel while running; resume is refused because the
+        browser payload bytes are not durable and a paused upload is
+        resubmitted as a fresh selection).
+        """
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        if task is None or task.command != FILES_UPLOAD_TASK_COMMAND:
+            raise DirectFileUploadError(
+                "files_upload_unknown",
+                "not_found",
+                "no bounded Files Upload Task exists under this identity",
+                status=404,
+                next_action="return to the Files workspace and refresh",
+            )
+        items = repository.list_items(task_id)
+        results = {record.item_id: record for record in repository.list_results(task_id)}
+        outcomes: list[dict[str, object]] = []
+        succeeded = failed = skipped = uncertain = 0
+        processed = 0
+        for item in items:
+            record = results.get(item.item_id)
+            status = _projection_item_status(item.status)
+            if (
+                status == "PARTIAL"
+                and record is not None
+                and (record.effect_certainty == "attempted_unverified")
+            ):
+                status = "UNCERTAIN"
+            if status == "SUCCESS":
+                succeeded += 1
+            elif status == "SKIPPED":
+                skipped += 1
+            elif status == "UNCERTAIN":
+                uncertain += 1
+                failed += 1
+            elif status == "FAILED":
+                failed += 1
+            if item.status not in {TaskItemStatus.PENDING}:
+                processed += 1
+            entry: dict[str, object] = {
+                "path": item.source_display,
+                "destination": item.destination_path or item.source_display,
+                "status": status,
+            }
+            if item.error and status not in {"SUCCESS", "SKIPPED"}:
+                entry["errorCategory"] = item.error
+            outcomes.append(entry)
+        terminal = task.status in {
+            PersistentTaskStatus.COMPLETED,
+            PersistentTaskStatus.PARTIAL_SUCCESS,
+            PersistentTaskStatus.FAILED,
+            PersistentTaskStatus.CANCELLED,
+        }
+        if terminal:
+            if uncertain:
+                aggregate = "UNCERTAIN"
+            elif failed:
+                aggregate = "PARTIAL" if (succeeded or skipped) else "FAILED"
+            elif task.status is PersistentTaskStatus.CANCELLED:
+                aggregate = "CANCELLED"
+            elif skipped and not succeeded:
+                aggregate = "SKIPPED"
+            else:
+                aggregate = "SUCCESS"
+        elif task.status is PersistentTaskStatus.PAUSED:
+            aggregate = "PAUSED"
+        else:
+            aggregate = "RUNNING"
+        total = task.total_items or len(items)
+        actions = [
+            {
+                "action": "pause",
+                "available": task.status is PersistentTaskStatus.RUNNING
+                and not task.pause_requested,
+            },
+            {
+                "action": "cancel",
+                "available": task.status
+                in {PersistentTaskStatus.RUNNING, PersistentTaskStatus.PAUSED},
+            },
+            {
+                "action": "resume",
+                "available": False,
+                "reason": "uploaded bytes are not durable; resubmit the selection",
+            },
+        ]
+        document: dict[str, object] = {
+            "operation": "upload",
+            "taskId": task.task_id,
+            "taskStatus": task.status.value,
+            "status": aggregate,
+            "totalItems": total,
+            "processedItems": processed,
+            "succeededItems": succeeded,
+            "skippedItems": skipped,
+            "failedItems": failed,
+            "items": outcomes,
+            "outcomesTruncated": False,
+            "terminal": terminal,
+            "actions": actions,
+            "version": task.updated_at.isoformat(),
+            "sideEffects": "storage_mutations" if processed else "none",
+            "retrySafe": False,
+            "nextAction": (
+                "refresh the directory to see the current state"
+                if terminal
+                else "the upload progress appears here; pause or cancel only when offered"
+            ),
+        }
+        if uncertain:
             document["durableState"] = "mutation_effect_uncertain"
         return document
 
@@ -647,105 +1079,47 @@ class DirectFileUploadService:
     # Execution (every mutation crosses OrganizerExecutor)
     # ------------------------------------------------------------------
 
-    def _execute(
-        self,
-        state: _UploadState,
-        task_id: str,
-        stream: BinaryIO,
-    ) -> UploadResult:
-        library = state.library
-        storage = state.storage
-        outcomes: list[UploadItemOutcome] = []
-        terminal: str | None = None  # "paused" | "cancelled" | "truncated"
-        for index, item in enumerate(state.items):
-            plan = state.planned[index]
-            if terminal is not None:
-                # A previous item set the terminal condition; every remaining
-                # item keeps its own truthful outcome without touching Storage.
-                category = {
-                    "truncated": "upload_stream_truncated",
-                    "paused": "upload_paused",
-                    "cancelled": "upload_cancelled",
-                }[terminal]
-                outcomes.append(
-                    self._record_refused(task_id, library, storage, index, plan, category)
-                )
-                continue
-            if self._direct.tasks.cancellation_observed(task_id):
-                terminal = "cancelled"
-                outcomes.append(
-                    self._record_refused(task_id, library, storage, index, plan, "upload_cancelled")
-                )
-                continue
-            if self._direct.tasks.pause_requested(task_id):
-                terminal = "paused"
-                outcomes.append(
-                    self._record_refused(task_id, library, storage, index, plan, "upload_paused")
-                )
-                continue
-            try:
-                task_item = self._direct.tasks.begin_item(
-                    task_id,
-                    storage.storage_id,
-                    library.library_id,
-                    item.relative_path,
-                    item.relative_path,
-                )
-            except TaskPauseRequested:
-                # A pause requested while the request is streaming stops at
-                # this safe item boundary, with zero further mutation.
-                self._direct.tasks.acknowledge_pause(task_id)
-                terminal = "paused"
-                outcomes.append(
-                    UploadItemOutcome(
-                        item.relative_path,
-                        UploadItemStatus.FAILED,
-                        error_category="upload_paused",
-                    )
-                )
-                continue
-            try:
-                outcome, item_truncated, checksum, written_destination, category = (
-                    self._execute_item(state, plan, stream)
-                )
-            except DirectFileUploadError as error:
-                # A parent conflict or storage refusal mid-stream: this item
-                # ends in its own stable failure; siblings keep going.
-                self._record_item(
-                    task_item,
-                    plan,
-                    UploadItemStatus.FAILED,
-                    error.category,
-                    destination=plan.destination,
-                )
-                outcomes.append(
-                    UploadItemOutcome(
-                        item.relative_path,
-                        UploadItemStatus.FAILED,
-                        error_category=error.category,
-                    )
-                )
-                continue
-            if item_truncated:
-                terminal = "truncated"
-            self._record_item(
-                task_item,
-                plan,
-                outcome,
-                category,
-                checksum=checksum,
-                destination=written_destination,
-            )
-            outcomes.append(
-                UploadItemOutcome(
-                    item.relative_path,
-                    outcome,
-                    error_category=None if outcome is UploadItemStatus.SUCCESS else category,
-                    destination=written_destination,
-                    checksum=checksum,
-                )
-            )
-        return self._finalize(state, task_id, outcomes, terminal)
+    @staticmethod
+    def _open_payload(plan: _PlannedItem, stream: BinaryIO) -> None:
+        """Advance the request framing to one item's payload part.
+
+        The multipart interface layer exposes ``open_next_payload``; a plain
+        byte stream (the service-level tests) needs no framing step.
+        """
+
+        opener = getattr(stream, "open_next_payload", None)
+        if callable(opener):
+            opener(plan.item.size)
+
+    @staticmethod
+    def _drain_payload(plan: _PlannedItem, stream: BinaryIO) -> None:
+        """Discard one item's declared payload bytes from the request stream.
+
+        Outcome-independent framing: a refused, skipped or pre-conflicted
+        item never leaves its bytes in the stream for the next sibling to
+        read as its own content.  The drain is bounded by the declared size
+        and never exceeds it; a body that ends early simply ends the drain
+        (the declared-vs-actual mismatch is reported by the streaming item
+        and the bounded post-response framing check, never fabricated).
+        """
+
+        DirectFileUploadService._open_payload(plan, stream)
+        drainer = getattr(stream, "drain_payload", None)
+        if callable(drainer):
+            drainer(plan.item.size)
+            return
+        DirectFileUploadService._drain_bytes(stream, plan.item.size)
+
+    @staticmethod
+    def _drain_bytes(stream: BinaryIO, size: int) -> None:
+        """Discard at most ``size`` declared bytes in bounded chunks."""
+
+        remaining = size
+        while remaining > 0:
+            chunk = stream.read(min(remaining, _CHUNK_SIZE))
+            if not chunk:
+                return
+            remaining -= len(chunk)
 
     def _record_refused(
         self,
@@ -760,33 +1134,45 @@ class DirectFileUploadService:
 
         Mirrors the Delete loop: a pause or cancel stops at this safe item
         boundary with zero further mutation, and the remaining items keep
-        their own truthful outcome in the response document.  A refused item
-        is persisted when the Task boundary still admits it; a pause
-        boundary that refuses the item itself is reported without a durable
-        row, exactly like the Delete command.
+        their own truthful outcome.  The item rows were persisted at
+        admission, so a refused item updates its own durable row directly —
+        the Task boundary is already past admission and may be paused,
+        cancelled or terminal, which ``begin_item`` (an execution boundary)
+        refuses; no new row is created and no mutation is attempted.
         """
 
-        try:
-            task_item = self._direct.tasks.begin_item(
+        item_id = str(
+            uuid5(NAMESPACE_URL, f"{task_id}:{storage.storage_id}:{plan.item.relative_path}")
+        )
+        previous = self._direct.tasks.repository.get_item(item_id)
+        now = datetime.now(UTC)
+        row = (
+            previous
+            if previous is not None
+            else PersistentTaskItem(
+                item_id,
                 task_id,
                 storage.storage_id,
                 library.library_id,
                 plan.item.relative_path,
                 plan.item.relative_path,
+                TaskItemStatus.PENDING,
+                "files_upload",
+                0,
+                now,
+                now,
             )
-        except TaskPauseRequested:
-            self._direct.tasks.acknowledge_pause(task_id)
-            return UploadItemOutcome(
-                plan.item.relative_path,
-                UploadItemStatus.FAILED,
-                error_category=category,
+        )
+        self._direct.tasks.repository.upsert_item(
+            replace(
+                row,
+                status=TaskItemStatus.FAILED,
+                stage=category,
+                attempts=row.attempts + 1,
+                updated_at=now,
+                destination_path=plan.destination,
+                error=category,
             )
-        self._record_item(
-            task_item,
-            plan,
-            UploadItemStatus.FAILED,
-            category,
-            destination=plan.destination,
         )
         return UploadItemOutcome(
             plan.item.relative_path,
@@ -812,6 +1198,10 @@ class DirectFileUploadService:
         item = plan.item
         if plan.pre_outcome is not None:
             # Admission already observed the exact conflict; nothing is written.
+            # The item's declared payload is drained so the next sibling starts
+            # at its own framing boundary and can never read these bytes as
+            # its own content.
+            self._drain_payload(plan, stream)
             return (
                 UploadItemStatus(plan.pre_outcome),
                 False,
@@ -833,12 +1223,14 @@ class DirectFileUploadService:
         if destination is None:
             # Nothing is written: the item ends in its stable outcome and the
             # category names the observed conflict instead of a fabricated
-            # write.
+            # write.  Framing stays aligned for the siblings.
+            self._drain_payload(plan, stream)
             if skipped:
                 return UploadItemStatus.SKIPPED, False, None, None, skip_category
             return UploadItemStatus.FAILED, False, None, None, skip_category or "target_exists"
         full = self._full_destination(library, destination)
         if item.size == 0:
+            self._open_payload(plan, stream)
             result = self._executor.execute_direct_write_stream(
                 state.storage, full, io.BytesIO(b""), 0, execute=True
             )
@@ -859,6 +1251,7 @@ class DirectFileUploadService:
                     "upload_partial_artifact",
                 )
             return UploadItemStatus.FAILED, False, None, destination, "upload_write_failed"
+        self._open_payload(plan, stream)
         chunk_stream = _BoundedChunkStream(stream, item.size, _CHUNK_SIZE)
         result = self._executor.execute_direct_write_stream(
             state.storage, full, chunk_stream, item.size, execute=True
@@ -885,6 +1278,13 @@ class DirectFileUploadService:
                 destination,
                 "upload_stream_truncated",
             )
+        # A provider that refused or failed the write may not have consumed
+        # the declared payload (or may have consumed less than declared):
+        # draining the remainder keeps the framing aligned so the outcome of
+        # this item cannot corrupt or conceal a sibling's.
+        leftover = item.size - chunk_stream.consumed
+        if leftover > 0:
+            self._drain_bytes(stream, leftover)
         if result.status.value == "SUCCESS":
             checksum = (
                 f"sha256:{chunk_stream.digest_hex()}"
@@ -1014,7 +1414,10 @@ class DirectFileUploadService:
             uncertain = ()
         elif outcome is UploadItemStatus.UNCERTAIN:
             status = TaskItemStatus.PARTIAL
-            error = "upload destination effect unverified"
+            # The stable per-item category (e.g. ``upload_stream_truncated``
+            # or ``upload_partial_artifact``) is the durable, secret-free
+            # reason the effect could not be proven complete.
+            error = category or "upload destination effect unverified"
             completed = ("write_started",)
             certainty = "attempted_unverified"
             uncertain = ("partial_write",)
@@ -1046,7 +1449,13 @@ class DirectFileUploadService:
     ) -> UploadResult:
         from mediaflow.application.media_organizer import MediaOrganizerBatchResult
 
-        task = self._direct.tasks.finish(task_id, MediaOrganizerBatchResult(items=()))
+        if terminal == "paused":
+            # A pause keeps the Task paused (non-terminal) with its remaining
+            # items paused: the acknowledged pause boundary is the durable
+            # outcome, and no aggregate is published over it.
+            task = self._direct.tasks.require(task_id)
+        else:
+            task = self._direct.tasks.finish(task_id, MediaOrganizerBatchResult(items=()))
         status_counts = {
             UploadItemStatus.SUCCESS: 0,
             UploadItemStatus.SKIPPED: 0,
@@ -1083,6 +1492,60 @@ class DirectFileUploadService:
         )
 
 
+def _projection_item_status(status: TaskItemStatus) -> str:
+    """Map one durable TaskItem status onto the upload projection status."""
+
+    return {
+        TaskItemStatus.PENDING: "PENDING",
+        TaskItemStatus.PROCESSING: "RUNNING",
+        TaskItemStatus.SUCCESS: "SUCCESS",
+        TaskItemStatus.PARTIAL: "PARTIAL",
+        TaskItemStatus.FAILED: "FAILED",
+        TaskItemStatus.SKIPPED: "SKIPPED",
+        TaskItemStatus.CANCELLED: "FAILED",
+        TaskItemStatus.PAUSED: "PENDING",
+    }.get(status, "FAILED")
+
+
+def _terminal_item_status(status: TaskItemStatus) -> UploadItemStatus:
+    """Map one durable TaskItem status onto its final per-item outcome."""
+
+    mapped = _projection_item_status(status)
+    if mapped in {"SUCCESS", "SKIPPED", "UNCERTAIN"}:
+        return UploadItemStatus(mapped)
+    # PENDING, RUNNING, PARTIAL, FAILED and every unknown state that never
+    # proved a complete write is a refused, retry-safe item outcome.
+    return UploadItemStatus.FAILED
+
+
+class _ItemPayloadStream:
+    """One admitted Upload item's exact payload read off its request body.
+
+    The browser posts the item's declared bytes as the request body and sets
+    the Content-Length itself, so the production journey needs no script-set
+    forbidden header and no streaming ``duplex`` option.  Reads are served
+    straight from the request body in bounded chunks (never a whole media
+    file); the item's declared size remains the binding contract that the
+    executor's bounded stream enforces.
+    """
+
+    def __init__(self, input_stream, declared_length: int | None) -> None:
+        self._input = input_stream
+        self._declared_length = declared_length
+        self._remaining: int | None = declared_length
+
+    def read(self, size: int = -1) -> bytes:
+        if self._remaining is not None and self._remaining <= 0:
+            return b""
+        wanted = size if size and size > 0 else 64 * 1024
+        if self._remaining is not None:
+            wanted = min(wanted, self._remaining)
+        chunk = self._input.read(wanted)
+        if self._remaining is not None:
+            self._remaining -= len(chunk)
+        return chunk
+
+
 class _BoundedChunkStream:
     """Serve exactly one upload item's slice of the request stream.
 
@@ -1098,6 +1561,7 @@ class _BoundedChunkStream:
         self._remaining = size
         self._chunk_limit = max(1, chunk_limit)
         self._digest = hashlib.sha256()
+        self.consumed = 0
         self.truncated = False
 
     def read(self, size: int = -1) -> bytes:
@@ -1112,6 +1576,7 @@ class _BoundedChunkStream:
             return b""
         self._digest.update(chunk)
         self._remaining -= len(chunk)
+        self.consumed += len(chunk)
         return chunk
 
     def digest_hex(self) -> str:

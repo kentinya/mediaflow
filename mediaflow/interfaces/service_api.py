@@ -36,7 +36,10 @@ from mediaflow.application.direct_file_transfers import (
     DirectFileTransferError,
     DirectFileTransferService,
 )
-from mediaflow.application.direct_file_uploads import DirectFileUploadService
+from mediaflow.application.direct_file_uploads import (
+    DirectFileUploadError,
+    DirectFileUploadService,
+)
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
 from mediaflow.application.file_index_lifecycle import FileIndexLifecycleService
@@ -206,86 +209,42 @@ def _collection_scope(status: str | None, command: str | None) -> str:
     return f"status={status or 'all'};command={command or 'all'}"
 
 
-class ApiPermissionDenied(RuntimeError):
-    pass
+class _ItemPayloadStream:
+    """One admitted Upload item's exact payload read off the request body.
 
-
-class _FilesUploadFraming:
-    """Reads one bounded Upload body: manifest framing plus item payloads.
-
-    The body layout is ``[4-byte BE manifest length][manifest JSON]``
-    followed by one byte payload per manifest item, in manifest order.  Only
-    the manifest is buffered, and it is bounded by ``MAX_UPLOAD_MANIFEST_BYTES``;
-    the payloads are served on demand so a media file is never buffered whole.
-    The declared ``Content-Length`` must equal the framing total, so a
-    mis-declared or truncated request is refused before any mutation.
+    The browser posts the item's declared bytes as the request body and sets
+    the Content-Length itself.  Reads are served straight from ``wsgi.input``
+    in bounded chunks (never a whole media file); when the server supplies a
+    Content-Length that disagrees with the item's declared size, the mismatch
+    is surfaced so the executor records a truthful truncation or refusal
+    instead of fabricating a complete write.
     """
 
-    def __init__(self, input_stream, declared_length: int) -> None:
+    def __init__(self, input_stream, declared_length: int | None) -> None:
         self._input = input_stream
-        self._declared_length = int(declared_length)
-        self._payload_stream = None
-        self._payload_remaining = 0
-
-    def read_manifest(self) -> dict:
-        head = b""
-        while len(head) < 4:
-            chunk = self._input.read(4 - len(head))
-            if not chunk:
-                raise ValueError("the Files upload body is shorter than its framing header")
-            head += chunk
-        manifest_length = int.from_bytes(head, "big")
-        if manifest_length > MAX_UPLOAD_MANIFEST_BYTES:
-            raise ValueError("the Files upload manifest exceeds the bounded size")
-        if 4 + manifest_length > self._declared_length:
-            raise ValueError("the Files upload framing exceeds the declared Content-Length")
-        manifest_raw = b""
-        while len(manifest_raw) < manifest_length:
-            chunk = self._input.read(manifest_length - len(manifest_raw))
-            if not chunk:
-                raise ValueError("the Files upload body is shorter than its manifest")
-            manifest_raw += chunk
-        try:
-            manifest = json.loads(manifest_raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("the Files upload manifest is not valid JSON") from error
-        if not isinstance(manifest, dict):
-            raise ValueError("the Files upload manifest must be an object")
-        items = manifest.get("items")
-        if not isinstance(items, list):
-            raise ValueError("the Files upload manifest requires an item list")
-        total_payload = 0
-        for item in items:
-            size = item.get("size") if isinstance(item, dict) else None
-            if isinstance(size, bool) or not isinstance(size, int) or size < 0:
-                raise ValueError("every Files upload item requires a non-negative size")
-            total_payload += size
-        if self._declared_length != 4 + manifest_length + total_payload:
-            raise ValueError("the Files upload Content-Length does not match the item framing")
-        self._payload_stream = self._input
-        self._payload_remaining = total_payload
-        return manifest
+        self._declared_length = declared_length
+        self._remaining: int | None = declared_length
 
     def read(self, size: int = -1) -> bytes:
-        if self._payload_stream is None or self._payload_remaining <= 0:
+        if self._remaining is not None and self._remaining <= 0:
             return b""
-        if size is None or size < 0:
-            wanted = self._payload_remaining
-        else:
-            wanted = min(size, self._payload_remaining)
-        chunk = self._payload_stream.read(wanted)
-        if not chunk:
-            self._payload_remaining = 0
-            return b""
-        self._payload_remaining -= len(chunk)
+        wanted = size if size and size > 0 else 64 * 1024
+        if self._remaining is not None:
+            wanted = min(wanted, self._remaining)
+        chunk = self._input.read(wanted)
+        if self._remaining is not None:
+            self._remaining -= len(chunk)
         return chunk
 
-    def verify_drained(self) -> None:
-        # All declared payload bytes must have been consumed; leftover bytes
-        # mean the manifest under-declared the body.
-        leftover = self._payload_stream.read(1) if self._payload_stream is not None else b""
-        if self._payload_remaining > 0 or leftover:
-            raise ValueError("the Files upload body contains bytes beyond its manifest")
+    @property
+    def content_length_mismatch(self) -> bool:
+        """Whether the body ended before the server-declared length."""
+
+        return self._remaining is not None and self._remaining > 0
+
+
+class ApiPermissionDenied(RuntimeError):
+    pass
 
 
 class _CurrentConfiguredPermissionAuthority:
@@ -4871,18 +4830,80 @@ class MediaFlowApi:
             and parts[5] == "uploads"
             and method == "POST"
         ):
-            # Bounded Upload: one declared-length body carries the manifest
-            # ahead of the byte payloads.  The manifest is read and the whole
-            # confined scope is validated before the first byte is streamed,
-            # so an over-limit or unsafe request is refused with zero
-            # mutation; every write then crosses OrganizerExecutor under the
-            # durable Task boundary.
+            # Bounded Upload admission: the browser posts one bounded JSON
+            # manifest (destination directory, explicit conflict choice,
+            # item relative paths and declared sizes) with no payload bytes.
+            # The whole confined scope is validated with zero mutation, one
+            # durable Task is created (items PENDING) and its identity is
+            # returned immediately so the Web can poll the projection and
+            # use the cooperative lifecycle controls before, between and
+            # after the per-item payload requests.
             self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
             if binding.direct_uploads is None:
                 return self._files_browser_unavailable(start_response)
             self._require_empty_query(environ, "Files upload")
-            document = self._files_upload_manifest(binding, parts[3], environ)
+            document = self._files_upload_admission(binding, parts[3], environ)
+            return self._response(start_response, 202, document)
+        if (
+            len(parts) == 9
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "uploads"
+            and parts[7] == "items"
+            and method == "POST"
+        ):
+            # One admitted Upload item's exact payload: the browser streams
+            # the declared bytes as the request body and every byte crosses
+            # OrganizerExecutor under the durable Task boundary.  Items are
+            # delivered in manifest order, each with its own independent
+            # truthful outcome, so one refused item can never poison (or
+            # conceal) a sibling's.
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_uploads is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files upload item")
+            document = self._files_upload_item(binding, parts[3], parts[6], parts[8], environ)
             return self._response(start_response, 200, document)
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "uploads"
+            and parts[7] == "finish"
+            and method == "POST"
+        ):
+            # Finalize one streamed Upload: undelivered items keep their own
+            # truthful refused outcome, the durable Task reaches its honest
+            # terminal aggregate and the bounded result document is returned.
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_uploads is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files upload finish")
+            self._require_empty_body(environ, "Files upload finish")
+            document = binding.direct_uploads.finish_upload(parts[6])
+            return self._response(start_response, 200, document)
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "uploads"
+            and method == "GET"
+        ):
+            # The bounded durable projection of one admitted Upload Task.  The
+            # Web polls this read to follow streaming/running progress with the
+            # backend-advertised lifecycle actions; it never needs a raw
+            # execution token and never learns pump/claim internals.
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_uploads is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files upload status")
+            try:
+                projection = binding.direct_uploads.upload_projection(parts[6])
+            except DirectFileUploadError as error:
+                if error.category == "not_found":
+                    raise LookupError(f"task {parts[6]!r} was not found") from None
+                raise
+            return self._response(start_response, 200, projection)
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -8978,38 +8999,84 @@ class MediaFlowApi:
         return list(paths)
 
     @classmethod
-    def _files_upload_manifest(cls, binding, resource_library_id: str, environ: dict) -> dict:
-        """Admit one bounded Upload request and stream its items into the library.
+    def _files_upload_admission(cls, binding, resource_library_id: str, environ: dict) -> dict:
+        """Admit one bounded Upload as one durable Task.  Zero payload bytes.
 
-        The body is one declared-length stream: a 4-byte big-endian manifest
-        length, the bounded manifest JSON (item relative paths, declared
-        sizes and the exact conflict choice), then one byte payload per
-        manifest item in order.  The manifest is confined and validated
-        before the first payload byte is streamed, so an over-limit or
-        unsafe scope is refused with zero mutation; the Content-Length must
-        exactly match the declared payload framing.  Every payload byte then
-        crosses OrganizerExecutor under the durable Task boundary, with
-        independent per-item outcomes and no automatic replay of an
-        uncertain write.
+        The body is one bounded JSON manifest (the confined destination
+        directory, the explicit conflict choice, every item's relative path
+        and declared size), bounded by ``MAX_UPLOAD_MANIFEST_BYTES`` like the
+        other direct-command documents.  Admission validates the whole
+        confined scope with zero mutation, creates the durable Task (items
+        PENDING) and returns its identity so the Web can poll the projection
+        and stream the per-item payloads.
         """
 
         raw_length = str(environ.get("CONTENT_LENGTH", "0") or "0").strip()
         try:
-            declared_length = int(raw_length)
+            length = int(raw_length)
         except ValueError as error:
             raise ValueError("a Files upload requires a valid Content-Length") from error
+        if length < 0 or length > MAX_UPLOAD_MANIFEST_BYTES:
+            raise ValueError("the Files upload manifest exceeds the bounded size")
         input_stream = environ.get("wsgi.input")
         if input_stream is None:
             raise ValueError("a Files upload requires a request body")
-        framing = _FilesUploadFraming(input_stream, declared_length)
-        manifest = framing.read_manifest()
-        document = binding.direct_uploads.upload(
+        raw = input_stream.read(length)
+        try:
+            manifest = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise ValueError("the Files upload manifest is not valid JSON") from error
+        if not isinstance(manifest, dict):
+            raise ValueError("the Files upload manifest must be an object")
+        return binding.direct_uploads.upload(
             resource_library_id=resource_library_id,
             manifest=manifest,
-            stream=framing,
+            stream=None,
         )
-        framing.verify_drained()
-        return document
+
+    @classmethod
+    def _files_upload_item(
+        cls,
+        binding,
+        resource_library_id: str,
+        task_id: str,
+        raw_index: str,
+        environ: dict,
+    ) -> dict:
+        """Stream one admitted Upload item's exact payload through the executor.
+
+        The request body is exactly the item's declared payload bytes: the
+        browser sets the Content-Length itself, and the executor's streamed
+        write consumes the body in bounded chunks so a media file is never
+        buffered whole.  The item's declared size bounds the read; a short
+        body records a truthful truncation and a body longer than declared is
+        refused without fabricating a complete write.
+        """
+
+        from mediaflow.application.direct_file_uploads import _ItemPayloadStream
+
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("a Files upload item requires the durable Task identity")
+        try:
+            index = int(raw_index)
+        except ValueError as error:
+            raise ValueError("a Files upload item requires an integer index") from error
+        input_stream = environ.get("wsgi.input")
+        if input_stream is None:
+            raise ValueError("a Files upload item requires a payload body")
+        raw_length = str(environ.get("CONTENT_LENGTH", "") or "").strip()
+        declared_length: int | None = None
+        if raw_length:
+            try:
+                declared_length = int(raw_length)
+            except ValueError as error:
+                raise ValueError("a Files upload item requires a valid Content-Length") from error
+        stream = _ItemPayloadStream(input_stream, declared_length)
+        return binding.direct_uploads.execute_item(
+            task_id,
+            index,
+            stream,
+        )
 
     @classmethod
     def _files_direct_rename_evidence_query(cls, environ: dict) -> str:

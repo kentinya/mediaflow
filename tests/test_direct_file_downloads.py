@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 import zipfile
 from pathlib import Path
@@ -26,6 +27,7 @@ from mediaflow.domain.direct_files import (
     MAX_DOWNLOAD_PATHS,
     DownloadItemStatus,
 )
+from mediaflow.infrastructure.local_storage import LocalStorage
 from tests.test_direct_file_transfers import TransferTestCase
 
 
@@ -69,7 +71,7 @@ class DownloadSingleFileTests(DownloadTestCase):
             self.assertEqual(header_map["Content-Length"], "5")
             self.assertEqual(self._body(headers, body), b"media")
 
-    def test_single_file_shorter_source_ends_early_without_fabrication(self) -> None:
+    def test_single_file_shrunk_after_admission_is_refused_truthfully(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, active, _runtime = self._activate(root)
@@ -79,13 +81,37 @@ class DownloadSingleFileTests(DownloadTestCase):
             manifest = downloads.download_admission(
                 resource_library_id="source", paths=["Movies/one.mkv"]
             )
-            # Shrink the source after admission: the stream ends early at the
-            # admitted size boundary instead of inventing content.
+            # Shrink the source after admission: the read boundary re-validates
+            # the pinned evidence and refuses instead of serving an
+            # unconfirmed shorter body as the admitted entry.
             (root / "source" / "Movies" / "one.mkv").write_bytes(b"ab")
-            headers, body = downloads.stream_response(
-                resource_library_id="source", manifest=manifest
+            with self.assertRaises(Exception) as caught:
+                list(downloads.stream_response(resource_library_id="source", manifest=manifest)[1])
+            self.assertIn("entry_changed", str(caught.exception.code))
+
+    def test_single_file_same_size_replacement_is_refused_truthfully(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True)
+            target = root / "source" / "Movies" / "one.mkv"
+            target.write_bytes(b"AAAA")
+            downloads = self._downloads(api, active)
+            manifest = downloads.download_admission(
+                resource_library_id="source", paths=["Movies/one.mkv"]
             )
-            self.assertEqual(self._body(headers, body), b"ab")
+            # Same size, different content (and a fresh inode/ctime): the pinned
+            # provider evidence must catch this instead of streaming BBBB as if
+            # it were the admitted AAAA.
+            target2 = root / "source" / "Movies" / "replacement.mkv"
+            target2.write_bytes(b"BBBB")
+            import os
+
+            os.replace(target2, target)
+            target.write_bytes(b"BBBB")
+            with self.assertRaises(Exception) as caught:
+                list(downloads.stream_response(resource_library_id="source", manifest=manifest)[1])
+            self.assertIn("entry_changed", str(caught.exception.code))
 
 
 class DownloadArchiveTests(DownloadTestCase):
@@ -153,6 +179,139 @@ class DownloadArchiveTests(DownloadTestCase):
             self.assertTrue(any(entry.archive_path.endswith("link.mkv") for entry in failed))
             # The symlink is recorded honestly; it is never followed.
             self.assertIsNotNone(manifest.manifest_note)
+
+
+class DownloadArchiveBoundedStreamTests(DownloadTestCase):
+    """B3: archive output is drained while each source file is being read."""
+
+    class _BlockingReadStorage:
+        """A provider double whose read blocks until the test allows it."""
+
+        def __init__(self, root: Path) -> None:
+            self._inner = LocalStorage("source-storage", root)
+            self.started = threading.Event()
+            self.release = threading.Event()
+            self.consumed_before_release = 0
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def read(self, path):
+            inner = self._inner.read(path)
+            outer = self
+
+            class _Blocking:
+                def __init__(self) -> None:
+                    self._source = inner
+
+                def read(self, size=-1):
+                    outer.started.set()
+                    outer.release.wait(timeout=5)
+                    chunk = self._source.read(size)
+                    outer.consumed_before_release += len(chunk)
+                    return chunk
+
+                def __enter__(self):
+                    self._source.__enter__()
+                    return self
+
+                def __exit__(self, *exc):
+                    return self._source.__exit__(*exc)
+
+                def __getattr__(self, name):
+                    return getattr(self._source, name)
+
+            return _Blocking()
+
+    def test_archive_streams_source_consumption_before_the_next_chunk(self) -> None:
+        """The first response chunk arrives while the file read is blocked.
+
+        This proves the archive is produced incrementally: a whole-file
+        buffering implementation cannot yield the archive header before the
+        source read completes.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            blocking = self._BlockingReadStorage(root / "source")
+            api, active, _runtime = self._activate(
+                root, storage_adapters={"source-storage": blocking}
+            )
+            (root / "source" / "data").mkdir(parents=True, exist_ok=True)
+            (root / "source" / "data" / "big.bin").write_bytes(b"z" * (4 * 1024 * 1024))
+            downloads = self._downloads(api, active)
+            manifest = downloads.download_admission(resource_library_id="source", paths=["data"])
+            headers, body = downloads.stream_response(
+                resource_library_id="source", manifest=manifest
+            )
+            iterator = iter(body)
+            # The producer reaches the file read and blocks there; the
+            # response must already be able to produce the archive bytes
+            # written before the read (the local file header).
+            first = next(iterator)
+            self.assertTrue(blocking.started.wait(timeout=5))
+            self.assertGreater(len(first), 0)
+            self.assertEqual(
+                blocking.consumed_before_release,
+                0,
+                "the response must stream before the whole file is read",
+            )
+            blocking.release.set()
+            rest = b"".join(iterator)
+            entries = self._read_archive(first + rest)
+            self.assertEqual(entries["data/big.bin"], b"z" * (4 * 1024 * 1024))
+
+
+class DownloadArchiveSourceChangeTests(DownloadTestCase):
+    """B4: same-size replacement and vanish are detected at the read boundary."""
+
+    def test_same_size_replacement_is_reported_never_streamed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source" / "tree").mkdir(parents=True)
+            target = root / "source" / "tree" / "one.bin"
+            target.write_bytes(b"AAAA")
+            downloads = self._downloads(api, active)
+            manifest = downloads.download_admission(resource_library_id="source", paths=["tree"])
+            # Same-size replacement after admission.
+            replacement = root / "source" / "tree" / "replacement.bin"
+            replacement.write_bytes(b"BBBB")
+            import os
+
+            os.replace(replacement, target)
+            target.write_bytes(b"BBBB")
+            headers, body = downloads.stream_response(
+                resource_library_id="source", manifest=manifest
+            )
+            entries = self._read_archive(self._body(headers, body))
+            # The archive never contains the unadmitted BBBB payload.
+            self.assertNotIn(b"BBBB", entries.get("tree/one.bin", b""))
+            self.assertNotIn("tree/one.bin", entries)
+            archive_manifest = json.loads(entries[ARCHIVE_MANIFEST_NAME])
+            statuses = {item["path"]: item["status"] for item in archive_manifest["items"]}
+            self.assertEqual(statuses.get("tree/one.bin"), "failed")
+
+    def test_vanished_entry_is_reported_truthfully(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source" / "tree").mkdir(parents=True)
+            (root / "source" / "tree" / "gone.bin").write_bytes(b"gone")
+            (root / "source" / "tree" / "stays.bin").write_bytes(b"stays")
+            downloads = self._downloads(api, active)
+            manifest = downloads.download_admission(resource_library_id="source", paths=["tree"])
+            (root / "source" / "tree" / "gone.bin").unlink()
+            headers, body = downloads.stream_response(
+                resource_library_id="source", manifest=manifest
+            )
+            entries = self._read_archive(self._body(headers, body))
+            self.assertEqual(entries["tree/stays.bin"], b"stays")
+            self.assertNotIn("tree/gone.bin", entries)
+            archive_manifest = json.loads(entries[ARCHIVE_MANIFEST_NAME])
+            statuses = {item["path"]: item["status"] for item in archive_manifest["items"]}
+            self.assertEqual(statuses.get("tree/gone.bin"), "failed")
 
 
 class DownloadLimitTests(DownloadTestCase):

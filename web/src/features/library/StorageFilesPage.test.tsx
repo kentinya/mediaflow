@@ -431,9 +431,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
       | ((body: Record<string, unknown>) => Promise<Response>);
     /** The durable projection read for one admitted transfer Task. */
     onTransferProjection?: (taskId: string) => Response;
-    /** One bounded upload submission: the framed body and its destination. */
+    /** One bounded upload admission: the JSON manifest and its URL. */
     onUpload?: (input: {
-      readonly body: string;
+      readonly body: string | null;
       readonly url: string;
     }) => Response;
     /** One bounded download selection streamed from the mock. */
@@ -644,28 +644,98 @@ describe("Files entry state and ResourceLibrary strip", () => {
         });
       }
       if (url.includes("/files/uploads")) {
+        // The production journey: admission POST, per-item payload POSTs and
+        // the finish POST all share the /files/uploads prefix.
+        if (url.endsWith("/finish")) {
+          return jsonResponse({
+            manifestDigest: "upload-manifest-1",
+            conflict: "no_overwrite",
+            destinationDirectory: "",
+            status: "SUCCESS",
+            taskId: "task-upload-1",
+            taskStatus: "completed",
+            totalItems: 1,
+            succeededItems: 1,
+            skippedItems: 0,
+            failedItems: 0,
+            items: [
+              {
+                path: "notes.txt",
+                status: "SUCCESS",
+                errorCategory: null,
+                destination: "notes.txt",
+              },
+            ],
+            outcomesTruncated: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "refresh the directory to see the current state",
+          });
+        }
+        if (/\/items\/\d+$/.test(url)) {
+          return jsonResponse({
+            index: 0,
+            path: "notes.txt",
+            status: "SUCCESS",
+            destination: "notes.txt",
+            taskStatus: "running",
+            terminal: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "continue with the next item or finish the upload",
+          });
+        }
         if (options.onUpload)
-          return options.onUpload({ body: String(init?.body ?? ""), url });
+          return options.onUpload({
+            body: typeof init?.body === "string" ? init.body : null,
+            url,
+          });
         return jsonResponse({
-          manifestDigest: "upload-manifest-1",
+          admitted: true,
           conflict: "no_overwrite",
           destinationDirectory: "",
-          status: "SUCCESS",
+          manifestDigest: "upload-manifest-1",
+          status: "RUNNING",
           taskId: "task-upload-1",
-          taskStatus: "completed",
+          taskStatus: "running",
           totalItems: 1,
+          succeededItems: 0,
+          skippedItems: 0,
+          failedItems: 0,
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction:
+            "the upload progress appears in the durable Task projection",
+        });
+      }
+      if (/\/files\/uploads\/[^/]+$/.test(url)) {
+        // The durable projection poll.
+        return jsonResponse({
+          operation: "upload",
+          taskId: url.split("/files/uploads/")[1] ?? "",
+          taskStatus: "completed",
+          status: "SUCCESS",
+          totalItems: 1,
+          processedItems: 1,
           succeededItems: 1,
           skippedItems: 0,
           failedItems: 0,
           items: [
             {
               path: "notes.txt",
+              destination: "notes.txt",
               status: "SUCCESS",
               errorCategory: null,
-              destination: "notes.txt",
             },
           ],
           outcomesTruncated: false,
+          terminal: true,
+          actions: [
+            { action: "pause", available: false },
+            { action: "cancel", available: false },
+            { action: "resume", available: false },
+          ],
+          version: "2026-09-17T00:00:00Z",
           sideEffects: "storage_mutations",
           retrySafe: false,
           nextAction: "refresh the directory to see the current state",
@@ -2532,13 +2602,67 @@ describe("Files entry state and ResourceLibrary strip", () => {
 
   it("streams a picked file through the bounded upload into the current directory", async () => {
     const user = userEvent.setup();
-    const uploadBodies: string[] = [];
+    const admissionBodies: string[] = [];
+    const picked = new File(["upload-bytes"], "upload.txt", {
+      type: "text/plain",
+    });
+    const requestUrls: string[] = [];
+    const innerFetch = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onUpload: ({ body }) => {
+        const manifest = JSON.parse(body ?? "{}") as {
+          destinationDirectory: string;
+          conflict: string;
+          items: { relativePath: string; size: number }[];
+        };
+        expect(manifest.conflict).toBe("no_overwrite");
+        expect(manifest.items).toEqual([
+          { relativePath: "upload.txt", size: picked.size },
+        ]);
+        admissionBodies.push(body ?? "");
+        return jsonResponse({
+          admitted: true,
+          conflict: "no_overwrite",
+          destinationDirectory: "",
+          manifestDigest: "upload-manifest-1",
+          status: "RUNNING",
+          taskId: "task-upload-1",
+          taskStatus: "running",
+          totalItems: 1,
+          succeededItems: 0,
+          skippedItems: 0,
+          failedItems: 0,
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction:
+            "the upload progress appears in the durable Task projection",
+        });
+      },
+    });
     vi.stubGlobal(
       "fetch",
-      stripFetchMock({
-        status: activeStatus([libraryItem("lib-a", "local-1")]),
-        onUpload: ({ body }) => {
-          uploadBodies.push(body);
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        requestUrls.push(url);
+        if (/\/files\/uploads\/task-upload-1\/items\/0$/.test(url)) {
+          // The item payload is streamed as the raw request body.
+          const payload = init?.body;
+          expect(payload instanceof Blob || typeof payload === "string").toBe(
+            true,
+          );
+          return jsonResponse({
+            index: 0,
+            path: "upload.txt",
+            status: "SUCCESS",
+            destination: "upload.txt",
+            taskStatus: "running",
+            terminal: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "continue with the next item or finish the upload",
+          });
+        }
+        if (/\/files\/uploads\/task-upload-1\/finish$/.test(url)) {
           return jsonResponse({
             manifestDigest: "upload-manifest-1",
             conflict: "no_overwrite",
@@ -2563,7 +2687,40 @@ describe("Files entry state and ResourceLibrary strip", () => {
             retrySafe: false,
             nextAction: "refresh the directory to see the current state",
           });
-        },
+        }
+        if (/\/files\/uploads\/task-upload-1$/.test(url)) {
+          return jsonResponse({
+            operation: "upload",
+            taskId: "task-upload-1",
+            taskStatus: "completed",
+            status: "SUCCESS",
+            totalItems: 1,
+            processedItems: 1,
+            succeededItems: 1,
+            skippedItems: 0,
+            failedItems: 0,
+            items: [
+              {
+                path: "upload.txt",
+                destination: "upload.txt",
+                status: "SUCCESS",
+                errorCategory: null,
+              },
+            ],
+            outcomesTruncated: false,
+            terminal: true,
+            actions: [
+              { action: "pause", available: false },
+              { action: "cancel", available: false },
+              { action: "resume", available: false },
+            ],
+            version: "2026-09-17T00:00:00Z",
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "refresh the directory to see the current state",
+          });
+        }
+        return innerFetch(input, init);
       }),
     );
     authStore.setToken("test-token");
@@ -2575,18 +2732,26 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // The default conflict choice is no-overwrite and is selected.
     const defaultChoice = within(dialog).getByRole("radio", { name: /不覆盖/ });
     expect(defaultChoice).toBeChecked();
-    // Simulate a picked browser file (the dialog collects payload bytes).
-    const picked = new File(["upload-bytes"], "upload.txt", {
-      type: "text/plain",
-    });
+    // Simulate a picked browser file (the dialog collects the Blob payload).
     const input = within(dialog).getByLabelText("选择要上传的文件");
     await user.upload(input, picked);
     expect(within(dialog).getByText(/已选择 1 项/)).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "上传" }));
+    // The bounded journey runs end to end: one JSON admission, one raw-bytes
+    // item payload request and one finish, with the durable projection polled.
     await waitFor(() =>
       expect(within(dialog).getByText(/上传已完成/)).toBeVisible(),
     );
-    expect(uploadBodies).toHaveLength(1);
+    expect(admissionBodies).toHaveLength(1);
+    expect(requestUrls.some((url) => /items\/0$/.test(url))).toBe(true);
+    expect(requestUrls.some((url) => url.endsWith("/finish"))).toBe(true);
+    // The admitted Task's durable projection was polled (the production
+    // progress surface), never fabricated from a request-scoped result.
+    await waitFor(() =>
+      expect(
+        requestUrls.some((url) => /files\/uploads\/task-upload-1$/.test(url)),
+      ).toBe(true),
+    );
     // The manifest names the uploaded item; the result dialog confirms it.
     expect(within(dialog).getByText("upload.txt")).toBeVisible();
     expect(within(dialog).getByText(/\u5df2\u4e0a\u4f20/)).toBeVisible();
