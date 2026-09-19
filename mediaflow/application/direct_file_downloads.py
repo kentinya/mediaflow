@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import posixpath
+import queue
+import threading
 import zipfile
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
@@ -104,11 +106,12 @@ class DirectFileDownloadError(DirectFileError):
 class _ArchivePlan:
     """The pinned archive scope of one Download admission.
 
-    ``directories`` are the exact confined directory entries the archive
-    must publish as folder entries; ``files`` are the exact file entries
-    streamed into the archive.  Every entry keeps the source entry
-    observed at enumeration time, so a mid-stream disappearance is
-    detectable instead of fabricated.
+    ``entries`` are the exact confined archive entries the plan admits;
+    ``failed`` are the honest admission-time failures.  Every file entry
+    pins the provider-neutral evidence observed at enumeration time
+    (size, mtime and — when the provider advertises one — content
+    identity) so a mid-stream change is detected at the read boundary
+    instead of being served as if it were the admitted entry.
     """
 
     entries: list[DownloadArchiveEntry] = field(default_factory=list)
@@ -250,6 +253,8 @@ class DirectFileDownloadService:
             source_path=relative,
             size=observed.size,
             is_directory=False,
+            modified_at=observed.modified_at,
+            fingerprint=observed.fingerprint,
         )
         manifest = DownloadManifest(
             resource_library_id=library.library_id,
@@ -276,6 +281,8 @@ class DirectFileDownloadService:
                     source_path=relative,
                     size=observed.size,
                     is_directory=False,
+                    modified_at=observed.modified_at,
+                    fingerprint=observed.fingerprint,
                 )
             )
             return
@@ -392,6 +399,8 @@ class DirectFileDownloadService:
                             source_path=child_relative,
                             size=child.size,
                             is_directory=False,
+                            modified_at=child.modified_at,
+                            fingerprint=child.fingerprint,
                         )
                     )
                 if len(plan.entries) > MAX_DOWNLOAD_ENTRIES:
@@ -471,10 +480,15 @@ class DirectFileDownloadService:
     ) -> Iterator[bytes]:
         """Stream one admitted single file directly from Storage.
 
-        The stream is bounded by the admitted size: a source that shrank
-        or changed mid-stream simply ends early (an interrupted read is
-        safe to repeat), and a source that grew is cut at the admitted
-        size so no content beyond the confirmed scope is published.
+        The source is re-validated at the read boundary against the evidence
+        pinned at admission (entry type, size, modification instant and — when
+        the provider advertises one — content fingerprint), so a same-size
+        replacement after admission is refused before any byte is published
+        instead of being streamed as if it were the admitted entry.  The
+        stream is bounded by the admitted size: a source that shrinks mid-read
+        simply ends early (an interrupted read is safe to repeat), and a
+        source that grew is cut at the admitted size so no content beyond the
+        confirmed scope is published.
         """
 
         entry = manifest.single_file
@@ -486,6 +500,12 @@ class DirectFileDownloadService:
                 next_action="request the download again",
             )
         full = _join_resource_library_path(library.root_path, entry.source_path)
+        try:
+            observed = storage.stat(full)
+        except (StorageError, OSError) as error:
+            raise self._entry_changed(library, entry, error) from None
+        if not self._entry_matches(entry, observed):
+            raise self._entry_changed(library, entry, None)
         expected = entry.size
         served = 0
         with storage.read(full) as stream:
@@ -495,6 +515,40 @@ class DirectFileDownloadService:
                     return
                 served += len(chunk)
                 yield chunk
+
+    def _entry_matches(self, entry: DownloadArchiveEntry, observed) -> bool:
+        """Whether a live provider entry still matches the pinned evidence."""
+
+        if observed is None or observed.entry_type is not StorageEntryType.FILE:
+            return False
+        if observed.size != entry.size:
+            return False
+        if entry.modified_at is not None and observed.modified_at != entry.modified_at:
+            return False
+        if (
+            entry.fingerprint is not None
+            and observed.fingerprint is not None
+            and observed.fingerprint != entry.fingerprint
+        ):
+            return False
+        return True
+
+    def _entry_changed(
+        self,
+        library: ResourceLibrary,
+        entry: DownloadArchiveEntry,
+        error: Exception | None,
+    ) -> DirectFileDownloadError:
+        category, status = _storage_category(error) if error is not None else ("entry_changed", 409)
+        return DirectFileDownloadError(
+            f"files_download_{category}",
+            category,
+            "the selected source changed after it was admitted for download",
+            status=status,
+            resource_library_id=library.library_id,
+            path=entry.source_path,
+            next_action="refresh the directory and request the download again",
+        )
 
     def stream_archive(
         self,
@@ -506,76 +560,31 @@ class DirectFileDownloadService:
     ) -> Iterator[bytes]:
         """Stream one admitted archive, generated on the fly.
 
-        The archive is written entry by entry through a bounded ZIP sink:
-        every chunk the writer produces is drained into the response as
-        soon as the next write begins, so only the bounded
-        central-directory metadata ever waits in memory.  File content is
-        streamed straight from ``Storage.read`` in bounded chunks.  An
-        entry that disappears or changes mid-stream is recorded honestly in
-        the appended archive manifest instead of being fabricated, and no
-        archive byte is ever written back to managed Storage.
+        The archive is produced by one bounded producer thread writing into a
+        strictly bounded chunk queue: the response generator drains that queue
+        while each source file is still being read, so the memory held at any
+        moment is bounded by the queue depth — never by a file size or by the
+        archive size.  Nothing is staged on disk and no archive byte is ever
+        written back to managed Storage.
+
+        Every file entry is re-validated against its pinned admission
+        evidence at the read boundary, so a disappeared, shrunk or same-size
+        replaced source is recorded honestly in the appended manifest instead
+        of being fabricated.  A client disconnect stops the producer at the
+        next bounded write.
         """
 
-        sink = _ZipStreamSink()
-        archive = zipfile.ZipFile(sink, mode="w", compression=zipfile.ZIP_DEFLATED)
-        outcomes: list[dict[str, object]] = []
-        for entry in manifest.entries:
-            if entry.status is DownloadItemStatus.FAILED:
-                # An admission-time failure (symlink/unsupported entry):
-                # it is never followed and never fabricated.
-                outcomes.append(
-                    {
-                        "path": entry.archive_path,
-                        "status": "failed",
-                        "note": entry.note or "entry unavailable",
-                    }
-                )
-                continue
-            if entry.is_directory:
-                self._archive_directory_entry(archive, entry)
-                outcomes.append({"path": entry.archive_path, "status": "included"})
-                yield from sink.drain()
-                continue
-            full = _join_resource_library_path(library.root_path, entry.source_path)
-            try:
-                observed = storage.stat(full)
-                if observed.entry_type is not StorageEntryType.FILE or observed.size != entry.size:
-                    # The confirmed scope pins the entry observed at
-                    # admission; a changed source is never fabricated.
-                    raise StorageError(
-                        StorageErrorCode.INVALID_PATH,
-                        "stat",
-                        full,
-                        "entry changed after admission",
-                    )
-            except (StorageError, OSError):
-                outcomes.append(
-                    {
-                        "path": entry.archive_path,
-                        "status": "failed",
-                        "note": "entry disappeared or changed mid-stream",
-                    }
-                )
-                yield from sink.drain()
-                continue
-            complete = self._archive_file_entry(archive, entry, storage, full, chunk_size)
-            outcomes.append(
-                {
-                    "path": entry.archive_path,
-                    "status": "included" if complete else "failed",
-                    "note": (None if complete else "entry disappeared or shrank mid-stream"),
-                }
-            )
-            yield from sink.drain()
-        # The bounded manifest note: one honest per-item outcome record.
-        payload = json.dumps(
-            {"items": outcomes, "note": manifest.manifest_note},
-            ensure_ascii=False,
-            sort_keys=True,
-        ).encode("utf-8")
-        archive.writestr(ARCHIVE_MANIFEST_NAME, payload)
-        archive.close()
-        yield from sink.drain()
+        producer = _ArchiveProducer(
+            self,
+            library=library,
+            storage=storage,
+            manifest=manifest,
+            chunk_size=chunk_size,
+        )
+        try:
+            yield from producer.drain()
+        finally:
+            producer.close()
 
     @staticmethod
     def _archive_directory_entry(archive: zipfile.ZipFile, entry: DownloadArchiveEntry) -> None:
@@ -583,16 +592,28 @@ class DirectFileDownloadService:
         info.external_attr = 0o700 << 16 | 0x10
         archive.writestr(info, b"")
 
-    @staticmethod
     def _archive_file_entry(
+        self,
         archive: zipfile.ZipFile,
         entry: DownloadArchiveEntry,
         storage: Storage,
         full: str,
         chunk_size: int,
     ) -> bool:
-        """Stream one archive file entry; True when fully served."""
+        """Stream one archive file entry; True when fully served.
 
+        The live provider entry is re-validated against the pinned evidence
+        immediately before the read; a same-size replacement is refused here
+        (the caller records the honest outcome) instead of being published as
+        the admitted content.
+        """
+
+        try:
+            observed = storage.stat(full)
+        except (StorageError, OSError):
+            return False
+        if not self._entry_matches(entry, observed):
+            return False
         info = zipfile.ZipInfo(entry.archive_path)
         complete = False
         with storage.read(full) as stream:
@@ -633,10 +654,7 @@ class DirectFileDownloadService:
         storage = self._open_storage(library)
         ascii_name, _rfc_name = self.disposition(manifest.filename)
         filename_param = quote(manifest.filename)
-        disposition = (
-            f"attachment; filename=\"{ascii_name}\"; "
-            f"filename*=UTF-8''{filename_param}"
-        )
+        disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{filename_param}"
         if manifest.single_file is not None:
             entry = manifest.single_file
             content_type = self.content_type_for(manifest.filename)
@@ -691,23 +709,169 @@ def _storage_category(error: Exception) -> tuple[str, int]:
     return "storage_failure", 503
 
 
+class _ArchiveProducer:
+    """One bounded producer behind an on-the-fly archive stream.
+
+    A single daemon thread writes the ZIP into a strictly bounded chunk
+    queue while the WSGI response generator drains it, so no whole file and
+    no whole archive is ever held in memory: the peak in-memory footprint is
+    ``MAX_PENDING_CHUNKS`` bounded chunks regardless of the admitted scope.
+    The producer performs zero Storage mutation and owns no credential; a
+    client disconnect sets ``_closed`` and the next bounded write stops it.
+    """
+
+    #: At most this many chunks wait between the ZIP writer and the response.
+    MAX_PENDING_CHUNKS = 32
+
+    def __init__(
+        self,
+        service: DirectFileDownloadService,
+        *,
+        library: ResourceLibrary,
+        storage: Storage,
+        manifest: DownloadManifest,
+        chunk_size: int,
+    ) -> None:
+        self._service = service
+        self._library = library
+        self._storage = storage
+        self._manifest = manifest
+        self._chunk_size = chunk_size
+        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=self.MAX_PENDING_CHUNKS)
+        self._closed = False
+        self._done = threading.Event()
+        self._thread = threading.Thread(
+            target=self._run,
+            name="mediaflow-download-archive",
+            daemon=True,
+        )
+        self._thread.start()
+
+    @property
+    def pending_limit(self) -> int:
+        """The exact bounded chunk backlog this producer may hold."""
+
+        return self.MAX_PENDING_CHUNKS
+
+    def _publish(self, data: bytes) -> None:
+        """Enqueue one bounded archive chunk, honouring a client stop."""
+
+        while not self._closed:
+            try:
+                self._queue.put(data, timeout=0.05)
+                return
+            except queue.Full:
+                continue
+
+    def _run(self) -> None:
+        try:
+            self._build()
+        except BaseException:
+            # A disconnect or a provider failure ends the archive honestly:
+            # the response simply ends; nothing is fabricated or replayed.
+            pass
+        finally:
+            self._done.set()
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                pass
+
+    def _build(self) -> None:
+        sink = _ZipStreamSink(self._publish)
+        archive = zipfile.ZipFile(sink, mode="w", compression=zipfile.ZIP_DEFLATED)
+        outcomes: list[dict[str, object]] = []
+        for entry in self._manifest.entries:
+            if self._closed:
+                return
+            if entry.status is DownloadItemStatus.FAILED:
+                # An admission-time failure (symlink/unsupported entry):
+                # it is never followed and never fabricated.
+                outcomes.append(
+                    {
+                        "path": entry.archive_path,
+                        "status": "failed",
+                        "note": entry.note or "entry unavailable",
+                    }
+                )
+                continue
+            if entry.is_directory:
+                self._service._archive_directory_entry(archive, entry)
+                outcomes.append({"path": entry.archive_path, "status": "included"})
+                continue
+            full = _join_resource_library_path(self._library.root_path, entry.source_path)
+            try:
+                observed = self._storage.stat(full)
+            except (StorageError, OSError):
+                observed = None
+            if not self._service._entry_matches(entry, observed):
+                # The confirmed scope pins the evidence observed at
+                # admission; a disappeared, shrunk or replaced source is
+                # never fabricated.
+                outcomes.append(
+                    {
+                        "path": entry.archive_path,
+                        "status": "failed",
+                        "note": "entry disappeared or changed mid-stream",
+                    }
+                )
+                continue
+            complete = self._service._archive_file_entry(
+                archive, entry, self._storage, full, self._chunk_size
+            )
+            outcomes.append(
+                {
+                    "path": entry.archive_path,
+                    "status": "included" if complete else "failed",
+                    "note": (None if complete else "entry disappeared or shrank mid-stream"),
+                }
+            )
+        # The bounded manifest note: one honest per-item outcome record.
+        payload = json.dumps(
+            {"items": outcomes, "note": self._manifest.manifest_note},
+            ensure_ascii=False,
+            sort_keys=True,
+        ).encode("utf-8")
+        archive.writestr(ARCHIVE_MANIFEST_NAME, payload)
+        archive.close()
+
+    def drain(self) -> Iterator[bytes]:
+        """Yield bounded chunks as the producer makes them."""
+
+        while True:
+            try:
+                chunk = self._queue.get(timeout=0.05)
+            except queue.Empty:
+                if self._done.is_set() and self._queue.empty():
+                    return
+                continue
+            if chunk is None:
+                return
+            yield chunk
+
+    def close(self) -> None:
+        """Stop the producer when the response ends (never a mutation)."""
+
+        self._closed = True
+        self._thread.join(timeout=2.0)
+
+
 class _ZipStreamSink:
     """The bounded sink behind one on-the-fly ZIP archive.
 
-    The writer's chunks accumulate here until the streaming generator
-    drains them into the response, so at any moment only the chunks since
-    the last drain wait in memory — bounded by one ZIP write.  The byte
-    offset is tracked for the central directory.  The archive is never
-    staged on disk or in unbounded memory, and nothing is written back to
+    Every write is handed straight to the producer's bounded publisher, so
+    the writer never accumulates the archive in memory: the only backlog is
+    the bounded queue behind it.  The byte offset is tracked for the central
+    directory.  Nothing is staged on disk and nothing is written back to
     managed Storage.
     """
 
-    def __init__(self) -> None:
-        self._chunks: list[bytes] = []
+    def __init__(self, publish) -> None:
+        self._publish = publish
         self._position = 0
 
     def write(self, data: bytes) -> int:
-        self._chunks.append(data)
+        self._publish(data)
         self._position += len(data)
         return len(data)
 
@@ -716,7 +880,3 @@ class _ZipStreamSink:
 
     def flush(self) -> None:
         return None
-
-    def drain(self) -> Iterator[bytes]:
-        chunks, self._chunks = self._chunks, []
-        yield from chunks

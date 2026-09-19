@@ -35,9 +35,11 @@ import {
   normalizeTransferProjection,
   normalizeTransferResult,
   normalizeFilesUploadResult,
+  normalizeFilesUploadProjection,
   type DeleteImpactModel,
   type DirectFileCommandResult,
   type FilesDownloadSelection,
+  type FilesUploadProjection,
   type FilesUploadResult,
   type RemovalPreviewModel,
   type RenameEvidenceModel,
@@ -3838,7 +3840,7 @@ export async function createNotificationSuccessorDraft(
 
 export interface FilesUploadItemPayload {
   readonly relativePath: string;
-  readonly bytes: ReadableStream<Uint8Array> | Uint8Array;
+  readonly bytes: Blob | Uint8Array;
   readonly size: number;
 }
 
@@ -3850,103 +3852,88 @@ export interface FilesUploadOptions {
 
 export const MAX_FILES_UPLOAD_ITEMS = 512;
 export const MAX_FILES_DOWNLOAD_PATHS = 50;
+export type { FilesUploadProjection } from "../../entities/library/direct-files";
 
-function uploadHeaders(
-  token: string | null,
-  contentLength: number,
-): Record<string, string> {
-  const headers: Record<string, string> = {
-    "Content-Length": String(contentLength),
-  };
-  if (token !== null) headers.Authorization = `Bearer ${token}`;
-  return headers;
+function uploadHeaders(token: string | null): Record<string, string> {
+  // No script-set Content-Type or Content-Length anywhere in the upload
+  // journey: the admission body is an exact JSON string and each item body
+  // is raw bytes, so the browser computes the exact lengths itself.
+  return token === null ? {} : { Authorization: `Bearer ${token}` };
 }
 
-function uploadItemBody(
-  items: readonly { readonly relativePath: string; readonly size: number }[],
-): { readonly relativePath: string; readonly size: number }[] {
-  return items.map((item) => ({
-    relativePath: item.relativePath,
-    size: item.size,
-  }));
+type UploadRequestResult =
+  | {
+      readonly ok: true;
+      readonly model: Record<string, unknown>;
+      readonly status: number;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+async function uploadRequest(
+  token: string | null,
+  url: string,
+  body: string | Blob,
+  contentType: string | undefined,
+  fetchImpl: FetchLike,
+): Promise<UploadRequestResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "POST",
+      body,
+      headers: {
+        ...uploadHeaders(token),
+        ...(contentType === undefined ? {} : { "Content-Type": contentType }),
+      },
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      model: (await response.json()) as Record<string, unknown>,
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
 }
 
 /**
- * Builds one bounded upload body: [4-byte BE manifest length][manifest JSON]
- * then each item payload in manifest order.  The per-item payload is a
- * streaming ReadableStream, so a large media file is never fully buffered in
- * browser memory; only its declared size is carried in the manifest.
+ * The complete bounded upload journey, exactly as the production Web runs it:
+ * one bounded JSON admission (zero payload bytes) returns the durable Task
+ * identity, every item's exact payload streams as its own raw-bytes request
+ * in manifest order (the browser computes each Content-Length, so a large
+ * media file streams from the file handle without script-side framing), and
+ * the finish call finalizes the durable Task.  Per-item outcomes stay
+ * independent: one refused item can never poison or conceal a sibling's, and
+ * the caller's `onItem` hook observes each truthful outcome as it lands
+ * (driving the durable projection poll and the lifecycle controls).
  */
-function buildUploadBody(options: FilesUploadOptions): {
-  readonly body: ReadableStream<Uint8Array>;
-  readonly total: number;
-} {
-  const manifest = JSON.stringify({
-    destinationDirectory: options.destinationDirectory,
-    conflict: options.conflict,
-    items: uploadItemBody(
-      options.items.map((item) => ({
-        relativePath: item.relativePath,
-        size: item.size,
-      })),
-    ),
-  });
-  const encoder = new TextEncoder();
-  const manifestBytes = encoder.encode(manifest);
-  const header = new DataView(new ArrayBuffer(4));
-  header.setUint32(0, manifestBytes.byteLength, false);
-  let totalPayload = 0;
-  for (const item of options.items) totalPayload += item.size;
-  const total = 4 + manifestBytes.byteLength + totalPayload;
-  const streams: ReadableStream<Uint8Array>[] = [
-    new ReadableStream({
-      start(controller) {
-        controller.enqueue(new Uint8Array(header.buffer));
-        controller.enqueue(manifestBytes);
-        controller.close();
-      },
-    }),
-  ];
-  for (const item of options.items) {
-    const payload = item.bytes;
-    streams.push(
-      payload instanceof Uint8Array
-        ? new ReadableStream({
-            start(controller) {
-              controller.enqueue(payload);
-              controller.close();
-            },
-          })
-        : payload,
-    );
-  }
-  let active = 0;
-  const body = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      if (active >= streams.length) {
-        controller.close();
-        return;
-      }
-      const source = streams[active];
-      active += 1;
-      const reader = source.getReader();
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value !== undefined && value.byteLength > 0) {
-          controller.enqueue(value);
-        }
-      }
-    },
-  });
-  return { body, total };
-}
-
 export async function uploadFiles(
   token: string | null,
   resourceLibraryId: string,
   options: FilesUploadOptions,
   fetchImpl: FetchLike = fetch,
+  onAdmitted?: (taskId: string) => void,
 ): Promise<
   | { readonly ok: true; readonly model: FilesUploadResult }
   | {
@@ -3963,16 +3950,107 @@ export async function uploadFiles(
   ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
-  const built = buildUploadBody(options);
+  const base = `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/uploads`;
+  const admission = await uploadRequest(
+    token,
+    base,
+    JSON.stringify({
+      destinationDirectory: options.destinationDirectory,
+      conflict: options.conflict,
+      items: options.items.map((item) => ({
+        relativePath: item.relativePath,
+        size: item.size,
+      })),
+    }),
+    "application/json",
+    fetchImpl,
+  );
+  if (!admission.ok) {
+    return admission;
+  }
+  const taskId = admission.model.taskId;
+  if (typeof taskId !== "string" || taskId.length === 0) {
+    return { ok: false, status: admission.status, code: "malformed_response" };
+  }
+  // The durable Task identity is live from here: the caller can start
+  // polling the projection while the items stream.
+  onAdmitted?.(taskId);
+  for (const [index, item] of options.items.entries()) {
+    const payload =
+      item.bytes instanceof Blob
+        ? item.bytes
+        : new Blob([new Uint8Array(item.bytes)]);
+    const itemResult = await uploadRequest(
+      token,
+      `${base}/${encodeURIComponent(taskId)}/items/${index}`,
+      payload,
+      "application/octet-stream",
+      fetchImpl,
+    );
+    if (!itemResult.ok) {
+      // One item's transport failure is that item's outcome: the durable
+      // Task records the truth (nothing replayed), and the journey stops so
+      // the operator can decide the next safe action.
+      const finish = await uploadRequest(
+        token,
+        `${base}/${encodeURIComponent(taskId)}/finish`,
+        "",
+        undefined,
+        fetchImpl,
+      );
+      if (finish.ok) {
+        return {
+          ok: true,
+          model: normalizeFilesUploadResult(finish.model),
+        };
+      }
+      return itemResult;
+    }
+  }
+  const finish = await uploadRequest(
+    token,
+    `${base}/${encodeURIComponent(taskId)}/finish`,
+    "",
+    undefined,
+    fetchImpl,
+  );
+  if (!finish.ok) {
+    return finish;
+  }
+  try {
+    return { ok: true, model: normalizeFilesUploadResult(finish.model) };
+  } catch {
+    return { ok: false, status: finish.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Polls the durable projection of one admitted Upload Task: per-item
+ * progress, the terminal/recovery state and the backend-advertised
+ * lifecycle actions, without any raw execution token.
+ */
+export async function fetchUploadProjection(
+  token: string | null,
+  resourceLibraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: FilesUploadProjection }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (!isSafeIdentifier(taskId) || resourceLibraryId.trim().length === 0) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/uploads`,
-      {
-        method: "POST",
-        body: built.body,
-        headers: uploadHeaders(token, built.total),
-      },
+      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/uploads/${encodeURIComponent(taskId)}`,
+      { headers: directFilesReadHeaders(token) },
     );
   } catch {
     return { ok: false, status: 0, code: "transport_unavailable" };
@@ -3992,7 +4070,7 @@ export async function uploadFiles(
   try {
     return {
       ok: true,
-      model: normalizeFilesUploadResult(await response.json()),
+      model: normalizeFilesUploadProjection(await response.json()),
     };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
