@@ -60,6 +60,7 @@ const ITEM_STATUS_LABELS: Record<string, string> = {
 const ACTION_LABELS: Record<string, string> = {
   pause: "暂停",
   cancel: "取消",
+  resume: "继续上传",
 };
 
 function outcomeStateLabel(outcome: FilesUploadItemOutcome): string {
@@ -135,9 +136,9 @@ export function FilesUploadDialog({
     readonly conflict: UploadConflictChoice;
     readonly items: readonly FilesUploadPayload[];
   }) => void;
-  /** One backend-advertised lifecycle control (pause/cancel). */
+  /** One backend-advertised lifecycle control (pause/cancel/resume). */
   readonly onLifecycleAction: (
-    action: "pause" | "cancel",
+    action: "pause" | "cancel" | "resume",
     projection: FilesUploadProjection,
   ) => void;
   readonly onClose: () => void;
@@ -202,9 +203,12 @@ export function FilesUploadDialog({
   const availableActions = (projection?.actions ?? []).filter(
     (action) =>
       action.available &&
-      (action.action === "pause" || action.action === "cancel"),
+      (action.action === "pause" ||
+        action.action === "cancel" ||
+        action.action === "resume"),
   );
   const finished = result !== null || projection?.terminal === true;
+  const paused = projection !== null && projection.status === "PAUSED";
 
   return (
     <ModalDialog
@@ -261,7 +265,9 @@ export function FilesUploadDialog({
           <p className="mf-dialog-hint" role="status">
             {projection.terminal
               ? "上传已完成;每项结果独立记录,未自动重试。请刷新目录查看实际状态。"
-              : `上传进度:${projection.processedItems}/${projection.totalItems} 项已完成;可在下方暂停或取消。`}
+              : paused
+                ? "上传已暂停;未上传的项目保持待上传。可继续上传或取消。"
+                : `上传进度:${projection.processedItems}/${projection.totalItems} 项已完成;可在下方暂停或取消。`}
           </p>
           {projection.durableState === "mutation_effect_uncertain" && (
             <p className="mf-dialog-error" role="alert">
@@ -310,7 +316,7 @@ export function FilesUploadDialog({
                   onClick={() =>
                     projection !== null &&
                     onLifecycleAction(
-                      action.action as "pause" | "cancel",
+                      action.action as "pause" | "cancel" | "resume",
                       projection,
                     )
                   }

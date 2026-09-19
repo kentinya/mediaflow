@@ -2757,6 +2757,341 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(within(dialog).getByText(/\u5df2\u4e0a\u4f20/)).toBeVisible();
   });
 
+  it("pauses the streaming upload at the item boundary and resumes the live selection", async () => {
+    const user = userEvent.setup();
+    const pickedA = new File(["aa"], "a.txt", { type: "text/plain" });
+    const pickedB = new File(["bb"], "b.txt", { type: "text/plain" });
+    const itemRequests: { url: string; size: number }[] = [];
+    let resumed = false;
+    const scenario = { paused: false, terminal: false };
+    const projectionBody = () =>
+      jsonResponse({
+        operation: "upload",
+        taskId: "task-upload-pause",
+        taskStatus: scenario.terminal
+          ? "completed"
+          : scenario.paused
+            ? "paused"
+            : "running",
+        status: scenario.terminal
+          ? "SUCCESS"
+          : scenario.paused
+            ? "PAUSED"
+            : "RUNNING",
+        totalItems: 2,
+        processedItems: 0,
+        succeededItems: 0,
+        skippedItems: 0,
+        failedItems: 0,
+        items: [
+          {
+            path: "a.txt",
+            destination: "a.txt",
+            status: "PENDING",
+            errorCategory: null,
+          },
+          {
+            path: "b.txt",
+            destination: "b.txt",
+            status: "PENDING",
+            errorCategory: null,
+          },
+        ],
+        outcomesTruncated: false,
+        terminal: scenario.terminal,
+        actions: [
+          {
+            action: "pause",
+            available: !scenario.paused && !scenario.terminal,
+          },
+          { action: "cancel", available: !scenario.terminal },
+          {
+            action: "resume",
+            available: scenario.paused && !scenario.terminal,
+          },
+        ],
+        version: "2026-09-17T00:00:00Z",
+        sideEffects: "storage_mutations",
+        retrySafe: false,
+        nextAction: "the upload progress appears here",
+      });
+    const innerFetch = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onUpload: () =>
+        jsonResponse({
+          admitted: true,
+          conflict: "no_overwrite",
+          destinationDirectory: "",
+          manifestDigest: "upload-pause-1",
+          status: "RUNNING",
+          taskId: "task-upload-pause",
+          taskStatus: "running",
+          totalItems: 2,
+          succeededItems: 0,
+          skippedItems: 0,
+          failedItems: 0,
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction:
+            "the upload progress appears in the durable Task projection",
+        }),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/files\/uploads\/task-upload-pause\/items\/(\d+)$/.test(url)) {
+          const index = Number(url.match(/items\/(\d+)$/)![1]);
+          const payload = init?.body;
+          const size =
+            payload instanceof Blob
+              ? payload.size
+              : String(payload ?? "").length;
+          itemRequests.push({ url, size });
+          if (!resumed && index === 0) {
+            // The acknowledged pause boundary: HTTP 200, not an item failure.
+            scenario.paused = true;
+            return jsonResponse({
+              index,
+              path: "a.txt",
+              status: "PAUSED",
+              paused: true,
+              phase: "PAUSED",
+              nextIndex: index,
+              taskStatus: "paused",
+              terminal: false,
+              sideEffects: "storage_mutations",
+              retrySafe: false,
+              nextAction: "the upload is paused; resume or cancel it",
+            });
+          }
+          return jsonResponse({
+            index,
+            path: index === 0 ? "a.txt" : "b.txt",
+            status: "SUCCESS",
+            destination: index === 0 ? "a.txt" : "b.txt",
+            taskStatus: "running",
+            terminal: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "continue with the next item or finish the upload",
+          });
+        }
+        if (/\/files\/uploads\/task-upload-pause\/finish$/.test(url)) {
+          scenario.terminal = true;
+          return jsonResponse({
+            manifestDigest: "upload-pause-1",
+            conflict: "no_overwrite",
+            destinationDirectory: "",
+            status: "SUCCESS",
+            taskId: "task-upload-pause",
+            taskStatus: "completed",
+            totalItems: 2,
+            succeededItems: 2,
+            skippedItems: 0,
+            failedItems: 0,
+            items: [
+              {
+                path: "a.txt",
+                status: "SUCCESS",
+                errorCategory: null,
+                destination: "a.txt",
+              },
+              {
+                path: "b.txt",
+                status: "SUCCESS",
+                errorCategory: null,
+                destination: "b.txt",
+              },
+            ],
+            outcomesTruncated: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "refresh the directory to see the current state",
+          });
+        }
+        if (/\/files\/uploads\/task-upload-pause\/resume$/.test(url)) {
+          resumed = true;
+          scenario.paused = false;
+          return jsonResponse({ action: "resume", nextIndex: 0 });
+        }
+        if (/\/api\/v1\/tasks\/task-upload-pause\/pause$/.test(url)) {
+          return jsonResponse({ action: "pause" });
+        }
+        if (/\/files\/uploads\/task-upload-pause$/.test(url)) {
+          return projectionBody();
+        }
+        return innerFetch(input, init);
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "上传" }));
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByLabelText("选择要上传的文件");
+    await user.upload(input, [pickedA, pickedB]);
+    await user.click(within(dialog).getByRole("button", { name: "上传" }));
+
+    // The first item request acknowledges the pause; the client stops
+    // before the next Blob POST and never calls finish while paused.
+    await waitFor(() => expect(itemRequests.length).toBe(1));
+    await waitFor(() =>
+      expect(within(dialog).getByText(/上传已暂停/)).toBeVisible(),
+    );
+    expect(resumed).toBe(false);
+    expect(
+      itemRequests.every((request) => request.url.endsWith("/items/0")),
+    ).toBe(true);
+    // The backend-advertised resume control continues the live selection.
+    const resumeButton = await within(dialog).findByRole("button", {
+      name: "继续上传",
+    });
+    await user.click(resumeButton);
+    await waitFor(() => expect(resumed).toBe(true));
+    // The continuation streams the paused item again plus its sibling, then
+    // the finish closes the journey.
+    await waitFor(() =>
+      expect(
+        itemRequests.some((request) => /items\/1$/.test(request.url)),
+      ).toBe(true),
+    );
+    await waitFor(() =>
+      expect(within(dialog).getByText(/上传已完成/)).toBeVisible(),
+    );
+  });
+
+  it("pauses the streaming upload and cancels it without recording failures", async () => {
+    const user = userEvent.setup();
+    const picked = new File(["aa"], "only.txt", { type: "text/plain" });
+    const itemRequests: string[] = [];
+    let cancelled = false;
+    const scenario = { paused: false };
+    const innerFetch = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onUpload: () =>
+        jsonResponse({
+          admitted: true,
+          conflict: "no_overwrite",
+          destinationDirectory: "",
+          manifestDigest: "upload-cancel-1",
+          status: "RUNNING",
+          taskId: "task-upload-cancel",
+          taskStatus: "running",
+          totalItems: 1,
+          succeededItems: 0,
+          skippedItems: 0,
+          failedItems: 0,
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction:
+            "the upload progress appears in the durable Task projection",
+        }),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/files\/uploads\/task-upload-cancel\/items\/0$/.test(url)) {
+          itemRequests.push(url);
+          scenario.paused = true;
+          return jsonResponse({
+            index: 0,
+            path: "only.txt",
+            status: "PAUSED",
+            paused: true,
+            phase: "PAUSED",
+            nextIndex: 0,
+            taskStatus: "paused",
+            terminal: false,
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "the upload is paused; resume or cancel it",
+          });
+        }
+        if (/\/files\/uploads\/task-upload-cancel\/finish$/.test(url)) {
+          throw new Error("finish must never run while paused or after cancel");
+        }
+        if (/\/api\/v1\/tasks\/task-upload-cancel\/cancel$/.test(url)) {
+          cancelled = true;
+          scenario.paused = false;
+          return jsonResponse({ action: "cancel" });
+        }
+        if (/\/api\/v1\/tasks\/task-upload-cancel\/pause$/.test(url)) {
+          return jsonResponse({ action: "pause" });
+        }
+        if (/\/files\/uploads\/task-upload-cancel$/.test(url)) {
+          return jsonResponse({
+            operation: "upload",
+            taskId: "task-upload-cancel",
+            taskStatus: cancelled
+              ? "cancelled"
+              : scenario.paused
+                ? "paused"
+                : "running",
+            status: cancelled
+              ? "CANCELLED"
+              : scenario.paused
+                ? "PAUSED"
+                : "RUNNING",
+            totalItems: 1,
+            processedItems: 0,
+            succeededItems: 0,
+            skippedItems: 0,
+            failedItems: 0,
+            items: [
+              {
+                path: "only.txt",
+                destination: "only.txt",
+                status: "PENDING",
+                errorCategory: null,
+              },
+            ],
+            outcomesTruncated: false,
+            terminal: cancelled,
+            actions: [
+              { action: "pause", available: !cancelled && !scenario.paused },
+              { action: "cancel", available: !cancelled },
+              { action: "resume", available: scenario.paused && !cancelled },
+            ],
+            version: "2026-09-17T00:00:00Z",
+            sideEffects: "storage_mutations",
+            retrySafe: false,
+            nextAction: "the upload progress appears here",
+          });
+        }
+        return innerFetch(input, init);
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "上传" }));
+    const dialog = await screen.findByRole("dialog");
+    const input = within(dialog).getByLabelText("选择要上传的文件");
+    await user.upload(input, picked);
+    await user.click(within(dialog).getByRole("button", { name: "上传" }));
+
+    // The pause boundary stops the stream without an error banner.
+    await waitFor(() => expect(itemRequests.length).toBe(1));
+    await waitFor(() =>
+      expect(within(dialog).getByText(/上传已暂停/)).toBeVisible(),
+    );
+    // Cancelling the paused upload converges the durable truth: no finish
+    // POST and no further item POSTs ever happen.
+    const cancelButton = await within(dialog).findByRole("button", {
+      name: "取消",
+    });
+    await user.click(cancelButton);
+    await waitFor(() => expect(cancelled).toBe(true));
+    await waitFor(() =>
+      expect(within(dialog).getByText(/上传已完成/)).toBeVisible(),
+    );
+    expect(itemRequests.length).toBe(1);
+  });
+
   it("offers a bounded Download on the row menu and the selection footer", async () => {
     const user = userEvent.setup();
     const downloadRequests: string[][] = [];

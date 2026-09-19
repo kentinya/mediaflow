@@ -3934,6 +3934,7 @@ export async function uploadFiles(
   options: FilesUploadOptions,
   fetchImpl: FetchLike = fetch,
   onAdmitted?: (taskId: string) => void,
+  resume?: { readonly taskId: string; readonly startIndex: number },
 ): Promise<
   | { readonly ok: true; readonly model: FilesUploadResult }
   | {
@@ -3941,6 +3942,8 @@ export async function uploadFiles(
       readonly status: number;
       readonly code: string;
       readonly details?: AutomationMutationFailureDetails;
+      /** The acknowledged pause boundary: stop before the next Blob POST. */
+      readonly paused?: true;
     }
 > {
   if (
@@ -3951,31 +3954,48 @@ export async function uploadFiles(
     return { ok: false, status: 400, code: "invalid_request" };
   }
   const base = `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/uploads`;
-  const admission = await uploadRequest(
-    token,
-    base,
-    JSON.stringify({
-      destinationDirectory: options.destinationDirectory,
-      conflict: options.conflict,
-      items: options.items.map((item) => ({
-        relativePath: item.relativePath,
-        size: item.size,
-      })),
-    }),
-    "application/json",
-    fetchImpl,
-  );
-  if (!admission.ok) {
-    return admission;
+  let taskId: string;
+  if (resume === undefined) {
+    const admission = await uploadRequest(
+      token,
+      base,
+      JSON.stringify({
+        destinationDirectory: options.destinationDirectory,
+        conflict: options.conflict,
+        items: options.items.map((item) => ({
+          relativePath: item.relativePath,
+          size: item.size,
+        })),
+      }),
+      "application/json",
+      fetchImpl,
+    );
+    if (!admission.ok) {
+      return admission;
+    }
+    const admitted = admission.model.taskId;
+    if (typeof admitted !== "string" || admitted.length === 0) {
+      return {
+        ok: false,
+        status: admission.status,
+        code: "malformed_response",
+      };
+    }
+    taskId = admitted;
+    // The durable Task identity is live from here: the caller can start
+    // polling the projection while the items stream.
+    onAdmitted?.(taskId);
+  } else {
+    // Resuming an admitted Upload: the backend already validated the whole
+    // bounded scope and the operator's resume action re-queued it, so this
+    // continuation streams the remaining items of the same selection in
+    // manifest order and finishes the durable Task.  No new admission, no
+    // re-validation, and no re-upload of already-delivered items.
+    taskId = resume.taskId;
   }
-  const taskId = admission.model.taskId;
-  if (typeof taskId !== "string" || taskId.length === 0) {
-    return { ok: false, status: admission.status, code: "malformed_response" };
-  }
-  // The durable Task identity is live from here: the caller can start
-  // polling the projection while the items stream.
-  onAdmitted?.(taskId);
-  for (const [index, item] of options.items.entries()) {
+  const firstIndex = resume === undefined ? 0 : resume.startIndex;
+  for (let index = firstIndex; index < options.items.length; index += 1) {
+    const item = options.items[index];
     const payload =
       item.bytes instanceof Blob
         ? item.bytes
@@ -4006,6 +4026,13 @@ export async function uploadFiles(
       }
       return itemResult;
     }
+    if (itemResult.model.paused === true) {
+      // The acknowledged pause boundary: stop before the next Blob POST.
+      // The operator decides to resume (which continues this exact live
+      // selection from the advertised index) or cancel; the pause is never
+      // an item failure and nothing was recorded as one.
+      return { ok: false, status: 200, code: "upload_paused", paused: true };
+    }
   }
   const finish = await uploadRequest(
     token,
@@ -4022,6 +4049,50 @@ export async function uploadFiles(
   } catch {
     return { ok: false, status: finish.status, code: "malformed_response" };
   }
+}
+
+/**
+ * Resumes one paused Upload: the backend re-queues the durable Task,
+ * publishes it running and returns the live session's next manifest index.
+ * The caller keeps streaming the remaining items of the same selection from
+ * that index and finishes the upload when the last one lands.
+ */
+export async function resumeUpload(
+  token: string | null,
+  resourceLibraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly nextIndex: number }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (!isSafeIdentifier(taskId) || resourceLibraryId.trim().length === 0) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  const result = await uploadRequest(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/uploads/${encodeURIComponent(taskId)}/resume`,
+    "",
+    undefined,
+    fetchImpl,
+  );
+  if (!result.ok) {
+    return result;
+  }
+  const nextIndex = result.model.nextIndex;
+  if (
+    typeof nextIndex !== "number" ||
+    !Number.isInteger(nextIndex) ||
+    nextIndex < 0
+  ) {
+    return { ok: false, status: result.status, code: "malformed_response" };
+  }
+  return { ok: true, nextIndex };
 }
 
 /**

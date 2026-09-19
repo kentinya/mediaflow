@@ -39,6 +39,7 @@ from mediaflow.application.direct_file_transfers import (
 from mediaflow.application.direct_file_uploads import (
     DirectFileUploadError,
     DirectFileUploadService,
+    resume_upload_session,
 )
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
@@ -4883,6 +4884,26 @@ class MediaFlowApi:
             document = binding.direct_uploads.finish_upload(parts[6])
             return self._response(start_response, 200, document)
         if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "uploads"
+            and parts[7] == "resume"
+            and method == "POST"
+        ):
+            # Resume one paused Upload with its still-live browser selection:
+            # the session above the pinned runtime binding returns to RUNNING
+            # and the Web keeps streaming the remaining items in manifest
+            # order.  A genuinely lost session is refused with the explicit
+            # interrupted/resubmit recovery — never a fabricated continuation.
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_uploads is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "Files upload resume")
+            self._require_empty_body(environ, "Files upload resume")
+            document = resume_upload_session(parts[6])
+            return self._response(start_response, 200, document)
+        if (
             len(parts) == 7
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "files"
@@ -9046,14 +9067,18 @@ class MediaFlowApi:
         """Stream one admitted Upload item's exact payload through the executor.
 
         The request body is exactly the item's declared payload bytes: the
-        browser sets the Content-Length itself, and the executor's streamed
-        write consumes the body in bounded chunks so a media file is never
-        buffered whole.  The item's declared size bounds the read; a short
-        body records a truthful truncation and a body longer than declared is
-        refused without fabricating a complete write.
+        browser sets the Content-Length itself and the backend proves, before
+        any read and before any mutation, that the declared body length equals
+        the admitted item size — a missing, invalid, shorter or longer
+        Content-Length is refused without fabricating a complete write, so no
+        excess byte is ever silently ignored and no short body is ever
+        recorded as success.
         """
 
-        from mediaflow.application.direct_file_uploads import _ItemPayloadStream
+        from mediaflow.application.direct_file_uploads import (
+            _ItemPayloadStream,
+            upload_session_item_size,
+        )
 
         if not isinstance(task_id, str) or not task_id:
             raise ValueError("a Files upload item requires the durable Task identity")
@@ -9065,12 +9090,22 @@ class MediaFlowApi:
         if input_stream is None:
             raise ValueError("a Files upload item requires a payload body")
         raw_length = str(environ.get("CONTENT_LENGTH", "") or "").strip()
-        declared_length: int | None = None
-        if raw_length:
-            try:
-                declared_length = int(raw_length)
-            except ValueError as error:
-                raise ValueError("a Files upload item requires a valid Content-Length") from error
+        if not raw_length:
+            raise ValueError("a Files upload item requires an explicit Content-Length")
+        try:
+            declared_length = int(raw_length)
+        except ValueError as error:
+            raise ValueError(
+                "a Files upload item requires a valid numeric Content-Length"
+            ) from error
+        if declared_length < 0:
+            raise ValueError("a Files upload item Content-Length must not be negative")
+        declared_size = upload_session_item_size(task_id, index)
+        if declared_size is not None and declared_length != declared_size:
+            raise ValueError(
+                "the upload item body length must exactly match the admitted "
+                "item size for this request"
+            )
         stream = _ItemPayloadStream(input_stream, declared_length)
         return binding.direct_uploads.execute_item(
             task_id,

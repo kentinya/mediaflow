@@ -21,6 +21,11 @@ from mediaflow.application.direct_file_uploads import (
     DirectFileUploadService,
 )
 from mediaflow.application.organizer import OrganizerExecutor
+from mediaflow.domain.configuration_management import (
+    ConfigurationDestinationPrecheckStatus,
+    ConfigurationStorageCheckStatus,
+    ConfigurationStrategyTestStatus,
+)
 from mediaflow.domain.direct_files import (
     MAX_UPLOAD_ITEMS,
 )
@@ -244,6 +249,85 @@ class UploadConflictTests(UploadTestCase):
                     for path in (root / "source" / "Movies").iterdir()
                 )
             )
+
+    def test_keep_both_suffix_collision_generates_a_genuinely_absent_name(self) -> None:
+        """B's repeated-suffix reproduction for files and directory nodes."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            (root / "source" / "Movies" / "existing.mkv").write_bytes(b"original")
+            (root / "source" / "Movies" / "existing (1).mkv").write_bytes(b"taken")
+            uploads, _transfers = self._uploads(api, active)
+            document = self._upload(
+                uploads,
+                root,
+                items=[("Movies/existing.mkv", b"both")],
+                conflict="keep_both",
+            )
+            item = document["items"][0]
+            self.assertEqual(item["status"], "SUCCESS", document)
+            # The generated destination is the genuinely absent (2), never
+            # the occupied (1).
+            self.assertEqual(item["destination"], "Movies/existing (2).mkv")
+            self.assertEqual(
+                (root / "source" / "Movies" / "existing (2).mkv").read_bytes(), b"both"
+            )
+            self.assertEqual(
+                (root / "source" / "Movies" / "existing (1).mkv").read_bytes(), b"taken"
+            )
+            self.assertEqual(
+                (root / "source" / "Movies" / "existing.mkv").read_bytes(), b"original"
+            )
+
+    def test_keep_both_directory_suffix_collision_is_honest_for_directory_nodes(self) -> None:
+        """A file occupying the directory node slot, with (1) also occupied."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            # "Show" exists as a *file*, occupying the directory node slot; the
+            # first generated directory name "Show (1)" is occupied by a file
+            # too, so the genuinely absent "Show (2)" must be used.
+            (root / "source" / "Show").write_bytes(b"a file occupies the dir slot")
+            (root / "source" / "Show (1)").write_bytes(b"taken")
+            uploads, _transfers = self._uploads(api, active)
+            document = self._upload(
+                uploads,
+                root,
+                items=[("Show/note.txt", b"both")],
+                conflict="keep_both",
+            )
+            item = document["items"][0]
+            self.assertEqual(item["status"], "SUCCESS", document)
+            # The renamed node is the absent (2) directory; the occupied (1)
+            # is never rewritten and the occupying file is never replaced.
+            self.assertEqual(item["destination"], "Show (2)/note.txt")
+            self.assertEqual((root / "source" / "Show (2)" / "note.txt").read_bytes(), b"both")
+            self.assertEqual((root / "source" / "Show (1)").read_bytes(), b"taken")
+            self.assertEqual(
+                (root / "source" / "Show").read_bytes(), b"a file occupies the dir slot"
+            )
+
+    def test_existing_directory_is_merged_into_not_renamed(self) -> None:
+        """Directory-merge stays the separate keep-both boundary."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "source" / "Show").mkdir()
+            uploads, _transfers = self._uploads(api, active)
+            document = self._upload(
+                uploads,
+                root,
+                items=[("Show/note.txt", b"both")],
+                conflict="keep_both",
+            )
+            item = document["items"][0]
+            self.assertEqual(item["status"], "SUCCESS", document)
+            # The existing directory is merged into; nothing is renamed.
+            self.assertEqual(item["destination"], "Show/note.txt")
+            self.assertEqual((root / "source" / "Show" / "note.txt").read_bytes(), b"both")
 
     def test_one_failed_item_never_blocks_its_siblings(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -476,10 +560,12 @@ class UploadDurableTaskTests(UploadTestCase):
             actions = {action["action"]: action for action in projection["actions"]}
             self.assertTrue(actions["pause"]["available"])
             self.assertTrue(actions["cancel"]["available"])
-            # Resume is honestly unavailable: the browser payload bytes are
-            # not durable, so a paused upload is resubmitted as a new one.
+            # Resume is unavailable while running: the session streams the
+            # items in manifest order and needs no operator resume.
             self.assertFalse(actions["resume"]["available"])
-            del uploads._admitted[task_id]
+            from mediaflow.application.direct_file_uploads import drop_upload_session
+
+            drop_upload_session(task_id)
 
     def test_projection_is_terminal_and_truthful_after_execution(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -541,28 +627,152 @@ class UploadDurableTaskTests(UploadTestCase):
             # it at this safe item boundary.
             uploads._direct.tasks.request_pause(task_id)
             first = uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
-            self.assertEqual(first["status"], "FAILED")
-            self.assertEqual(first["errorCategory"], "upload_paused")
+            # A pause is never an item failure: the boundary response names
+            # the pause, the item keeps its own pending row and nothing was
+            # read or written.
+            self.assertEqual(first["status"], "PAUSED")
+            self.assertTrue(first["paused"])
+            self.assertEqual(first["nextIndex"], 0)
             self.assertEqual(first["taskStatus"], "paused")
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
             projection = uploads.upload_projection(task_id)
             self.assertEqual(projection["status"], "PAUSED")
             self.assertFalse(projection["terminal"])
+            self.assertEqual(projection["processedItems"], 0)
             actions = {action["action"]: action for action in projection["actions"]}
-            self.assertFalse(actions["resume"]["available"])
-            document = uploads.finish_upload(task_id)
-            # Every item was refused at the safe pause boundary with its own
-            # truthful outcome (never delivered, so finish records the
-            # bounded truncation category); nothing was written and nothing
-            # is replayed.
-            by_path = {item["path"]: item for item in document["items"]}
-            self.assertEqual(by_path["Movies/a.mkv"]["status"], "FAILED")
-            self.assertEqual(by_path["Movies/b.mkv"]["status"], "FAILED")
+            # The still-live browser session can resume this exact upload.
+            self.assertTrue(actions["resume"]["available"])
+            # Finish while paused is refused: it would fabricate a terminal
+            # aggregate over a journey the operator explicitly paused.
+            with self.assertRaises(Exception) as caught:
+                uploads.finish_upload(task_id)
+            self.assertEqual(caught.exception.category, "finish_unavailable")
             self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
             self.assertFalse((root / "source" / "Movies" / "b.mkv").exists())
-            # The durable item rows record the same refused truth.
+            # The durable item rows keep their pending truth.
             rows = {item.source_path: item for item in runtime.list_items(task_id)}
-            self.assertEqual(rows["Movies/a.mkv"].status.value, "failed")
-            self.assertEqual(rows["Movies/b.mkv"].status.value, "failed")
+            self.assertEqual(rows["Movies/a.mkv"].status.value, "paused")
+            self.assertEqual(rows["Movies/b.mkv"].status.value, "paused")
+
+    def test_paused_upload_resumes_and_finishes_with_the_live_selection(self) -> None:
+        """The complete pause-to-resume-to-finish journey, per B's blocker."""
+
+        from mediaflow.application.direct_file_uploads import resume_upload_session
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            uploads, _transfers = self._uploads(api, active)
+            manifest = self._manifest(
+                "", "no_overwrite", [("Movies/a.mkv", b"aa"), ("Movies/b.mkv", b"bb")]
+            )
+            admitted = uploads.upload(resource_library_id="source", manifest=manifest)
+            task_id = admitted["taskId"]
+            uploads._direct.tasks.request_pause(task_id)
+            paused = uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(paused["status"], "PAUSED")
+            # The Task resume action continues the still-live session: the
+            # browser selection streams the remaining items in order.
+            resumed = resume_upload_session(task_id)
+            self.assertEqual(resumed["nextIndex"], 0)
+            self.assertEqual(runtime.get_task(task_id).status.value, "running")
+            first = uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(first["status"], "SUCCESS")
+            second = uploads.execute_item(task_id, 1, io.BytesIO(b"bb"))
+            self.assertEqual(second["status"], "SUCCESS")
+            document = uploads.finish_upload(task_id)
+            self.assertEqual(document["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"aa")
+            self.assertEqual((root / "source" / "Movies" / "b.mkv").read_bytes(), b"bb")
+            # The terminal projection is reachable and truthful.
+            projection = uploads.upload_projection(task_id)
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["succeededItems"], 2)
+
+    def test_pause_after_a_delivered_item_resumes_at_the_next_manifest_index(self) -> None:
+        from mediaflow.application.direct_file_uploads import resume_upload_session
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            uploads, _transfers = self._uploads(api, active)
+            manifest = self._manifest(
+                "", "no_overwrite", [("Movies/a.mkv", b"aa"), ("Movies/b.mkv", b"bb")]
+            )
+            admitted = uploads.upload(resource_library_id="source", manifest=manifest)
+            task_id = admitted["taskId"]
+            first = uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(first["status"], "SUCCESS")
+            uploads._direct.tasks.request_pause(task_id)
+            paused = uploads.execute_item(task_id, 1, io.BytesIO(b"bb"))
+            self.assertEqual(paused["status"], "PAUSED")
+            self.assertEqual(paused["nextIndex"], 1)
+            # The acknowledged pause marks exactly the undelivered item.
+            rows = {item.source_path: item for item in runtime.list_items(task_id)}
+            self.assertEqual(rows["Movies/a.mkv"].status.value, "success")
+            self.assertEqual(rows["Movies/b.mkv"].status.value, "paused")
+            resume_upload_session(task_id)
+            second = uploads.execute_item(task_id, 1, io.BytesIO(b"bb"))
+            self.assertEqual(second["status"], "SUCCESS")
+            document = uploads.finish_upload(task_id)
+            self.assertEqual(document["status"], "SUCCESS")
+
+    def test_paused_upload_cancel_never_treats_pause_as_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            uploads, _transfers = self._uploads(api, active)
+            manifest = self._manifest(
+                "", "no_overwrite", [("Movies/a.mkv", b"aa"), ("Movies/b.mkv", b"bb")]
+            )
+            admitted = uploads.upload(resource_library_id="source", manifest=manifest)
+            task_id = admitted["taskId"]
+            uploads._direct.tasks.request_pause(task_id)
+            paused = uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(paused["status"], "PAUSED")
+            # Cancelling a paused upload converges the durable truth without
+            # recording any item failure.
+            uploads._direct.tasks.cancel(task_id)
+            document = uploads.finish_upload(task_id)
+            self.assertEqual(document["status"], "CANCELLED")
+            projection = uploads.upload_projection(task_id)
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["taskStatus"], "cancelled")
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            self.assertFalse((root / "source" / "Movies" / "b.mkv").exists())
+
+    def test_lost_session_is_an_explicit_interrupted_recovery_not_not_found(self) -> None:
+        """A genuinely lost in-process session keeps its Task and refuses."""
+        from mediaflow.application.direct_file_uploads import (
+            drop_upload_session,
+            resume_upload_session,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            uploads, _transfers = self._uploads(api, active)
+            manifest = self._manifest("", "no_overwrite", [("Movies/a.mkv", b"aa")])
+            admitted = uploads.upload(resource_library_id="source", manifest=manifest)
+            task_id = admitted["taskId"]
+            drop_upload_session(task_id)
+            with self.assertRaises(Exception) as caught:
+                uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(caught.exception.category, "session_interrupted")
+            self.assertNotIn("not_found", str(caught.exception.code))
+            with self.assertRaises(Exception) as caught:
+                uploads.finish_upload(task_id)
+            self.assertEqual(caught.exception.category, "session_interrupted")
+            # A lost session cannot resume: the browser bytes are not durable.
+            with self.assertRaises(Exception) as caught:
+                resume_upload_session(task_id)
+            self.assertEqual(caught.exception.code, "resume_unavailable")
+            # The durable Task row survives for the operator projection.
+            self.assertEqual(runtime.get_task(task_id).command, "files_upload")
 
     def test_unknown_task_projection_is_a_bounded_not_found(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -785,6 +995,75 @@ class UploadFramedApiTests(UploadTestCase):
             self.assertEqual(repeat_status, 409, repeat_body)
             self.assertIn("item_already_delivered", repeat_body.decode())
 
+    def test_item_body_length_must_equal_the_admitted_item_size(self) -> None:
+        """B's length-mismatch reproduction, end to end through the route.
+
+        A manifest declaring two bytes followed by an item request with
+        ``Content-Length: 7`` and body ``abEXTRA`` must be refused before any
+        mutation; the missing-header case fails closed as well.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [{"relativePath": "a.mkv", "size": 2}],
+            }
+            _status, body = self._call(api, self._admission_environ(manifest))
+            task_id = json.loads(body)["taskId"]
+            environ = self._item_environ(task_id, 0, b"abEXTRA")
+            environ["CONTENT_LENGTH"] = "7"
+            status, mismatch_body = self._call(api, environ)
+            self.assertEqual(status, 400, mismatch_body)
+            self.assertFalse((root / "source" / "a.mkv").exists())
+            # The declared two bytes still stream exactly after the refusal:
+            # the mismatched request never consumed nor wrote anything.
+            exact_status, exact_body = self._call(api, self._item_environ(task_id, 0, b"ab"))
+            self.assertEqual(exact_status, 200, exact_body)
+            self.assertEqual(json.loads(exact_body)["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "a.mkv").read_bytes(), b"ab")
+
+    def test_item_shorter_longer_and_missing_lengths_fail_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, _runtime = self._activate(root)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [{"relativePath": "a.mkv", "size": 2}],
+            }
+            _status, body = self._call(api, self._admission_environ(manifest))
+            task_id = json.loads(body)["taskId"]
+            # A shorter declared length than the admitted size is refused.
+            short = self._item_environ(task_id, 0, b"a")
+            short["CONTENT_LENGTH"] = "1"
+            status, short_body = self._call(api, short)
+            self.assertEqual(status, 400, short_body)
+            self.assertFalse((root / "source" / "a.mkv").exists())
+            # A missing Content-Length fails closed instead of trusting the
+            # body.
+            missing = self._item_environ(task_id, 0, b"ab")
+            missing["CONTENT_LENGTH"] = ""
+            status, missing_body = self._call(api, missing)
+            self.assertEqual(status, 400, missing_body)
+            self.assertFalse((root / "source" / "a.mkv").exists())
+            # An invalid Content-Length fails closed as well.
+            invalid = self._item_environ(task_id, 0, b"ab")
+            invalid["CONTENT_LENGTH"] = "two"
+            status, invalid_body = self._call(api, invalid)
+            self.assertEqual(status, 400, invalid_body)
+            self.assertFalse((root / "source" / "a.mkv").exists())
+            # Nothing was recorded and the session still accepts the exact
+            # journey.
+            exact_status, exact_body = self._call(api, self._item_environ(task_id, 0, b"ab"))
+            self.assertEqual(exact_status, 200, exact_body)
+            self.assertEqual(json.loads(exact_body)["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "a.mkv").read_bytes(), b"ab")
+
     def test_admission_requires_multipart_free_json_and_bounded_size(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -947,6 +1226,361 @@ class UploadFramedApiTests(UploadTestCase):
             self.assertTrue(final["terminal"])
             # No item was written and the admission state is cleaned up.
             self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+
+    def test_upload_pause_resume_and_finish_through_the_production_routes(self) -> None:
+        """The complete Web/API pause-to-resume journey per B's blocker.
+
+        The pause is acknowledged at the item boundary (a PAUSED boundary
+        response, never an item failure), the browser stops before the next
+        payload POST, the resume route continues the still-live selection and
+        the finish records the honest terminal aggregate.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [
+                    {"relativePath": "Movies/a.mkv", "size": 2},
+                    {"relativePath": "Movies/b.mkv", "size": 2},
+                ],
+            }
+            _status, body = self._call(api, self._admission_environ(manifest))
+            task_id = json.loads(body)["taskId"]
+            projection_path = f"/api/v1/resource-libraries/source/files/uploads/{task_id}"
+
+            def projection():
+                status, payload = self._call(
+                    api,
+                    {
+                        "REQUEST_METHOD": "GET",
+                        "PATH_INFO": projection_path,
+                        "QUERY_STRING": "",
+                        "CONTENT_LENGTH": "0",
+                        "REMOTE_ADDR": "127.0.0.1",
+                        "HTTP_AUTHORIZATION": "Bearer admin-token",
+                        "wsgi.input": io.BytesIO(b""),
+                    },
+                )
+                self.assertEqual(status, 200, payload)
+                return json.loads(payload)
+
+            current = projection()["version"]
+            pause_status, pause_document = request(
+                api,
+                f"/api/v1/tasks/{task_id}/pause",
+                method="POST",
+                body={"expectedUpdatedAt": current},
+            )
+            self.assertEqual(pause_status, 200, pause_document)
+            # The first item request acknowledges the pause at the safe item
+            # boundary: HTTP 200 with a PAUSED boundary document — the Web
+            # stops here and never posts the next Blob.
+            paused_status, paused_body = self._call(api, self._item_environ(task_id, 0, b"aa"))
+            self.assertEqual(paused_status, 200, paused_body)
+            paused = json.loads(paused_body)
+            self.assertEqual(paused["status"], "PAUSED")
+            self.assertTrue(paused["paused"])
+            self.assertEqual(paused["nextIndex"], 0)
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            # The durable projection shows the paused truth with resume
+            # advertised (the session is still live in this process).
+            after_pause = projection()
+            self.assertEqual(after_pause["taskStatus"], "paused")
+            self.assertEqual(after_pause["processedItems"], 0)
+            actions = {action["action"]: action for action in after_pause["actions"]}
+            self.assertTrue(actions["resume"]["available"])
+            self.assertFalse(after_pause["terminal"])
+            # Finish while paused is refused with a bounded conflict.
+            finish_status, finish_body = self._call(
+                api,
+                {
+                    "REQUEST_METHOD": "POST",
+                    "PATH_INFO": f"{projection_path}/finish",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "HTTP_AUTHORIZATION": "Bearer admin-token",
+                    "wsgi.input": io.BytesIO(b""),
+                },
+            )
+            self.assertEqual(finish_status, 409, finish_body)
+            self.assertIn("finish_unavailable", finish_body.decode())
+            # Resume through the upload resume route; the journey continues
+            # with the exact same selection in manifest order.
+            resume_status, resume_body = self._call(
+                api,
+                {
+                    "REQUEST_METHOD": "POST",
+                    "PATH_INFO": f"{projection_path}/resume",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "HTTP_AUTHORIZATION": "Bearer admin-token",
+                    "wsgi.input": io.BytesIO(b""),
+                },
+            )
+            self.assertEqual(resume_status, 200, resume_body)
+            resumed = json.loads(resume_body)
+            self.assertEqual(resumed["nextIndex"], 0)
+            self.assertEqual(runtime.get_task(task_id).status.value, "running")
+            # The Web re-streams the remaining items from the advertised index.
+            for index, payload in enumerate([b"aa", b"bb"]):
+                item_status, item_payload = self._call(
+                    api, self._item_environ(task_id, index, payload)
+                )
+                self.assertEqual(item_status, 200, item_payload)
+                self.assertEqual(json.loads(item_payload)["status"], "SUCCESS")
+            finish_status, finish_payload = self._call(
+                api,
+                {
+                    "REQUEST_METHOD": "POST",
+                    "PATH_INFO": f"{projection_path}/finish",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "HTTP_AUTHORIZATION": "Bearer admin-token",
+                    "wsgi.input": io.BytesIO(b""),
+                },
+            )
+            self.assertEqual(finish_status, 200, finish_payload)
+            document = json.loads(finish_payload)
+            self.assertEqual(document["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"aa")
+            self.assertEqual((root / "source" / "Movies" / "b.mkv").read_bytes(), b"bb")
+            # The resume route is unauthenticated-refused like its siblings.
+            unauth_status, _unauth = self._call(
+                api,
+                {
+                    "REQUEST_METHOD": "POST",
+                    "PATH_INFO": f"{projection_path}/resume",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "wsgi.input": io.BytesIO(b""),
+                },
+            )
+            self.assertEqual(unauth_status, 401)
+
+
+class UploadPinnedBindingTests(UploadTestCase):
+    """B3: the admitted Upload keeps its pinned Active execution path.
+
+    A session registry above the replaceable runtime binding owns each
+    admitted plan and its exact pinned binding, so a normal configuration
+    activation between admission, item streaming and finish affects new
+    uploads only.
+    """
+
+    def _fixture(self, root: Path):
+        """One activated revision with its own configuration service/objects."""
+
+        from mediaflow.application.configuration_objects import ConfigurationObjectService
+        from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+        from mediaflow.infrastructure.sqlite_configuration_management import (
+            SQLiteConfigurationRepository,
+        )
+
+        document = self._document(root)
+        (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+        (root / "destination" / "Movies").mkdir(parents=True, exist_ok=True)
+        repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+        self.addCleanup(repository.close)
+        service = ManagedConfigurationService(
+            repository, bootstrap_database_path=str(root / "configuration.sqlite3")
+        )
+        objects = ConfigurationObjectService(
+            service,
+            storage_browser_cursor_secret="upload-test-secret",
+        )
+        draft = service.import_draft(document, actor="operator")
+        validated = service.validate(draft.revision_id, actor="operator")
+        for storage_id in ("source-storage", "media-target"):
+            evidence = objects.storage_check(
+                validated.revision_id,
+                storage_id=storage_id,
+                expected_version=validated.version,
+                expected_digest=validated.digest,
+                actor="operator",
+            )
+            self.assertEqual(evidence.status, ConfigurationStorageCheckStatus.PASSED)
+        strategy = objects.recognition_strategy_test(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            resource_library_id="source",
+            synthetic_path="Example.Movie.2024.1080p.mkv",
+        )
+        self.assertEqual(strategy.status, ConfigurationStrategyTestStatus.COMPLETED)
+        destination = objects.destination_precheck(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            recognition_type="C",
+            sample={
+                "title": "The Matrix",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            },
+        )
+        self.assertEqual(destination.status, ConfigurationDestinationPrecheckStatus.COMPLETED)
+        active = objects.activate_checked(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="operator",
+        )
+        return document, service, objects, active
+
+    def _activate_successor(self, root: Path, service, objects, document):
+        """Publish one valid successor revision and return its Active row."""
+        import copy as copy_module
+
+        candidate = copy_module.deepcopy(document)
+        candidate["resourceLibraries"][0]["name"] = "Source Renamed"
+        draft = service.import_draft(candidate, actor="operator")
+        validated = service.validate(draft.revision_id, actor="operator")
+        for storage_id in ("source-storage", "media-target"):
+            evidence = objects.storage_check(
+                validated.revision_id,
+                storage_id=storage_id,
+                expected_version=validated.version,
+                expected_digest=validated.digest,
+                actor="operator",
+            )
+            self.assertEqual(evidence.status, ConfigurationStorageCheckStatus.PASSED)
+        strategy = objects.recognition_strategy_test(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            resource_library_id="source",
+            synthetic_path="Example.Movie.2024.1080p.mkv",
+        )
+        self.assertEqual(strategy.status, ConfigurationStrategyTestStatus.COMPLETED)
+        destination = objects.destination_precheck(
+            validated.revision_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="operator",
+            recognition_type="C",
+            sample={
+                "title": "The Matrix",
+                "mediaType": "movie",
+                "year": 1999,
+                "genres": ["Action"],
+                "extension": "mkv",
+            },
+        )
+        self.assertEqual(destination.status, ConfigurationDestinationPrecheckStatus.COMPLETED)
+        return objects.activate_checked(
+            validated.revision_id,
+            expected_version=validated.version,
+            actor="operator",
+        )
+
+    def _api(self, root: Path, document, service):
+        from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+        from mediaflow.interfaces.service_api import MediaFlowApi
+
+        runtime = SQLiteTaskRepository(root / "runtime.sqlite3")
+        self.addCleanup(runtime.close)
+        api = MediaFlowApi(
+            runtime,
+            None,
+            principals=(ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),),
+            configuration_service=service,
+            bootstrap_document=document,
+            storage_browser_cursor_secret="upload-test-secret",
+        )
+        return api, runtime
+
+    def test_activation_between_admission_items_and_finish_keeps_the_pinned_upload(self) -> None:
+        """B's exact reproduction: revision A admitted, revision B activated."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document, service, objects, active = self._fixture(root)
+            api, runtime = self._api(root, document, service)
+            old_binding = api._prepare_runtime_binding_for_revision(active)
+            self.assertIsNotNone(old_binding.direct_uploads)
+            uploads = DirectFileUploadService(direct_files=old_binding.direct_files)
+
+            manifest = self._manifest(
+                "", "no_overwrite", [("Movies/a.mkv", b"aa"), ("Movies/b.mkv", b"bb")]
+            )
+            admitted = uploads.upload(resource_library_id="source", manifest=manifest)
+            task_id = admitted["taskId"]
+
+            # A valid successor revision becomes Active before the next item
+            # request: the admitted Upload keeps its exact revision-A pin.
+            successor = self._activate_successor(root, service, objects, document)
+            new_binding = api._prepare_runtime_binding_for_revision(successor)
+            self.assertIsNotNone(new_binding.direct_uploads)
+            self.assertIsNotNone(new_binding.direct_uploads is not uploads)
+
+            # The item request through the NEW binding streams under the
+            # OLD pinned session (never files_upload_unknown).
+            document_result = uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(document_result["status"], "SUCCESS", document_result)
+            second = uploads.execute_item(task_id, 1, io.BytesIO(b"bb"))
+            self.assertEqual(second["status"], "SUCCESS")
+            finished = uploads.finish_upload(task_id)
+            self.assertEqual(finished["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"aa")
+            self.assertEqual((root / "source" / "Movies" / "b.mkv").read_bytes(), b"bb")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+            # The durable Task names the admission revision, not the new one.
+            task = runtime.get_task(task_id)
+            self.assertEqual(task.configuration_snapshot_id, active.revision_id)
+
+    def test_a_new_upload_after_activation_uses_the_new_active_revision(self) -> None:
+        from mediaflow.application.direct_file_uploads import resume_upload_session
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document, service, objects, active = self._fixture(root)
+            api, runtime = self._api(root, document, service)
+            old_binding = api._prepare_runtime_binding_for_revision(active)
+            old_uploads = DirectFileUploadService(direct_files=old_binding.direct_files)
+            # Admit one upload under revision A and pause it (session live).
+            admitted = old_uploads.upload(
+                resource_library_id="source",
+                manifest=self._manifest("", "no_overwrite", [("Movies/a.mkv", b"aa")]),
+            )
+            task_id = admitted["taskId"]
+            old_uploads._direct.tasks.request_pause(task_id)
+            paused = old_uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(paused["status"], "PAUSED")
+
+            # Activate revision B; a new upload goes through the new binding.
+            successor = self._activate_successor(root, service, objects, document)
+            new_binding = api._prepare_runtime_binding_for_revision(successor)
+            new_uploads = DirectFileUploadService(direct_files=new_binding.direct_files)
+            new_document = new_uploads.upload(
+                resource_library_id="source",
+                manifest=self._manifest("", "no_overwrite", [("Movies/c.mkv", b"cc")]),
+            )
+            new_task_id = new_document["taskId"]
+            self.assertNotEqual(new_task_id, task_id)
+            item = new_uploads.execute_item(new_task_id, 0, io.BytesIO(b"cc"))
+            self.assertEqual(item["status"], "SUCCESS")
+            finished = new_uploads.finish_upload(new_task_id)
+            self.assertEqual(finished["status"], "SUCCESS")
+            self.assertEqual(
+                runtime.get_task(new_task_id).configuration_snapshot_id,
+                successor.revision_id,
+            )
+            # The old paused session still resumes and streams under its own pin.
+            resume_upload_session(task_id)
+            resumed = old_uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
+            self.assertEqual(resumed["status"], "SUCCESS")
 
 
 if __name__ == "__main__":

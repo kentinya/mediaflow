@@ -1049,6 +1049,65 @@ test("upload streams a real browser file through the durable task journey", asyn
   // the success path.
   expect(failedResponses).toEqual([]);
 });
+test("upload pause and resume continue the same live selection", async ({
+  page,
+}) => {
+  // The deterministic pause demo directory: the fake backend pauses the
+  // upload after its first delivered item. The real browser must stop
+  // before the next Blob POST (no item failure, no finish while paused),
+  // then the backend-advertised resume control continues the same live
+  // selection and the journey finishes with a silent error surface.
+  const itemUrls: string[] = [];
+  const finishUrls: string[] = [];
+  const failedResponses: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (
+      /files\/uploads\/task-[^/]+\/items\/\d+$/.test(url.split("?")[0] ?? "")
+    ) {
+      itemUrls.push(url);
+    }
+    if (/files\/uploads\/task-[^/]+\/finish$/.test(url.split("?")[0] ?? "")) {
+      finishUrls.push(url);
+    }
+  });
+  page.on("response", (response) => {
+    if (response.url().includes("/files/uploads") && response.status() >= 400) {
+      failedResponses.push(`${response.status()} ${response.url()}`);
+    }
+  });
+  await openFiles(page, VIEWER_TOKEN, "?path=Movies/e2e-pause", false);
+
+  await page.getByRole("button", { name: "上传", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: /上传到/ });
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("选择要上传的文件", { exact: true }).setInputFiles([
+    { name: "one.txt", mimeType: "text/plain", buffer: Buffer.from("one") },
+    { name: "two.txt", mimeType: "text/plain", buffer: Buffer.from("two") },
+  ]);
+  await expect(dialog.getByText(/已选择 2 项/)).toBeVisible();
+  await dialog.getByRole("button", { name: "上传", exact: true }).click();
+
+  // The pause boundary: the paused state is a status, not an error, and the
+  // journey stops before the next payload POST.
+  await expect(dialog.getByText(/上传已暂停/)).toBeVisible({ timeout: 10_000 });
+  expect(failedResponses).toEqual([]);
+  const itemsBeforeResume = itemUrls.length;
+  await expect(dialog.getByRole("button", { name: "继续上传" })).toBeVisible();
+
+  // Resume continues the same selection; the journey finishes honestly.
+  await dialog.getByRole("button", { name: "继续上传" }).click();
+  await expect(dialog.getByText(/上传已完成/)).toBeVisible({
+    timeout: 10_000,
+  });
+  await expect(
+    dialog.getByRole("button", { name: "关闭", exact: true }),
+  ).toBeVisible();
+  // A finish ran only once, after the resume — never while paused.
+  expect(finishUrls.length).toBe(1);
+  expect(failedResponses).toEqual([]);
+  void itemsBeforeResume;
+});
 test("copy completes through the live destination picker with one confirmed submission", async ({
   page,
 }) => {

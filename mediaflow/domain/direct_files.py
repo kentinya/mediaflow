@@ -199,6 +199,28 @@ class UploadItemStatus(StrEnum):
     UNCERTAIN = "UNCERTAIN"
 
 
+class UploadSessionPhase(StrEnum):
+    """The explicit state machine of one in-process Upload Session.
+
+    The session is the browser's live streaming authority above the durable
+    Task: it owns the exact validated plan and the pinned binding from
+    admission through terminal cleanup.  ``RUNNING`` streams items in
+    manifest order; ``PAUSED`` is acknowledged only between item mutations
+    and is never recorded as an item failure; ``CANCELLED`` stops all further
+    streaming with zero further mutation; ``FINISHED`` is the honest terminal
+    aggregate after every undelivered item keeps its own refused outcome.  A
+    session that is no longer live in this process can never resume — the
+    browser payload bytes are not durable — so those cases fail with an
+    explicit interrupted/resubmit recovery instead of a fabricated
+    continuation.
+    """
+
+    RUNNING = "RUNNING"
+    PAUSED = "PAUSED"
+    CANCELLED = "CANCELLED"
+    FINISHED = "FINISHED"
+
+
 class UploadConflictChoice(StrEnum):
     """The explicit per-item destination-conflict choice of one Upload.
 

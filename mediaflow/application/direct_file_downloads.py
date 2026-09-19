@@ -592,44 +592,6 @@ class DirectFileDownloadService:
         info.external_attr = 0o700 << 16 | 0x10
         archive.writestr(info, b"")
 
-    def _archive_file_entry(
-        self,
-        archive: zipfile.ZipFile,
-        entry: DownloadArchiveEntry,
-        storage: Storage,
-        full: str,
-        chunk_size: int,
-    ) -> bool:
-        """Stream one archive file entry; True when fully served.
-
-        The live provider entry is re-validated against the pinned evidence
-        immediately before the read; a same-size replacement is refused here
-        (the caller records the honest outcome) instead of being published as
-        the admitted content.
-        """
-
-        try:
-            observed = storage.stat(full)
-        except (StorageError, OSError):
-            return False
-        if not self._entry_matches(entry, observed):
-            return False
-        info = zipfile.ZipInfo(entry.archive_path)
-        complete = False
-        with storage.read(full) as stream:
-            with archive.open(info, mode="w") as writer:
-                served = 0
-                while served < entry.size:
-                    chunk = stream.read(min(chunk_size, entry.size - served))
-                    if not chunk:
-                        # The entry disappeared or shrank mid-stream: stop
-                        # this entry honestly; the manifest records it.
-                        break
-                    writer.write(chunk)
-                    served += len(chunk)
-                complete = served == entry.size
-        return complete
-
     # ------------------------------------------------------------------
     # Response helpers (interface layer)
     # ------------------------------------------------------------------
@@ -709,6 +671,30 @@ def _storage_category(error: Exception) -> tuple[str, int]:
     return "storage_failure", 503
 
 
+class _ArchiveIntegrityError(RuntimeError):
+    """The archive can no longer guarantee its integrity or its manifest."""
+
+
+@dataclass(frozen=True)
+class _ArchiveMessage:
+    """One explicit producer→response queue protocol message."""
+
+
+@dataclass(frozen=True)
+class _ArchiveEntryFailure(_ArchiveMessage):
+    """One entry's honest failed outcome, folded into the archive manifest."""
+
+    path: str
+    note: str
+
+
+@dataclass(frozen=True)
+class _ArchiveTerminal(_ArchiveMessage):
+    """One unrecoverable producer failure: the response aborts truthfully."""
+
+    error: BaseException
+
+
 class _ArchiveProducer:
     """One bounded producer behind an on-the-fly archive stream.
 
@@ -718,6 +704,15 @@ class _ArchiveProducer:
     ``MAX_PENDING_CHUNKS`` bounded chunks regardless of the admitted scope.
     The producer performs zero Storage mutation and owns no credential; a
     client disconnect sets ``_closed`` and the next bounded write stops it.
+
+    The queue protocol is explicit — a published item is always exactly one
+    of ``_ArchiveData`` (bounded response bytes), ``_ArchiveEntryFailure``
+    (one entry's honest failed outcome inside the manifest), or
+    ``_ArchiveTerminal`` (an unrecoverable producer failure) — and producer
+    exceptions are never swallowed: a failure that still guarantees ZIP
+    integrity becomes a failed manifest entry, while any failure that could
+    corrupt the archive or its manifest aborts the whole response as a
+    terminal transfer error instead of emitting a success-looking archive.
     """
 
     #: At most this many chunks wait between the ZIP writer and the response.
@@ -737,7 +732,9 @@ class _ArchiveProducer:
         self._storage = storage
         self._manifest = manifest
         self._chunk_size = chunk_size
-        self._queue: queue.Queue[bytes | None] = queue.Queue(maxsize=self.MAX_PENDING_CHUNKS)
+        self._queue: queue.Queue[bytes | _ArchiveMessage | None] = queue.Queue(
+            maxsize=self.MAX_PENDING_CHUNKS
+        )
         self._closed = False
         self._done = threading.Event()
         self._thread = threading.Thread(
@@ -763,13 +760,25 @@ class _ArchiveProducer:
             except queue.Full:
                 continue
 
+    def _publish_message(self, message: _ArchiveMessage) -> None:
+        """Enqueue one protocol message, honouring a client stop."""
+
+        while not self._closed:
+            try:
+                self._queue.put(message, timeout=0.05)
+                return
+            except queue.Full:
+                continue
+
     def _run(self) -> None:
         try:
             self._build()
-        except BaseException:
-            # A disconnect or a provider failure ends the archive honestly:
-            # the response simply ends; nothing is fabricated or replayed.
-            pass
+        except BaseException as error:  # never swallowed: surfaced below
+            # An unrecoverable producer failure cannot be healed by a longer
+            # archive: the response aborts with the terminal failure marker
+            # instead of a success-looking (possibly corrupt) ZIP.
+            if not self._closed:
+                self._publish_message(_ArchiveTerminal(error))
         finally:
             self._done.set()
             try:
@@ -781,79 +790,170 @@ class _ArchiveProducer:
         sink = _ZipStreamSink(self._publish)
         archive = zipfile.ZipFile(sink, mode="w", compression=zipfile.ZIP_DEFLATED)
         outcomes: list[dict[str, object]] = []
-        for entry in self._manifest.entries:
-            if self._closed:
-                return
-            if entry.status is DownloadItemStatus.FAILED:
-                # An admission-time failure (symlink/unsupported entry):
-                # it is never followed and never fabricated.
+        integrity_broken = False
+        try:
+            for entry in self._manifest.entries:
+                if self._closed:
+                    return
+                if entry.status is DownloadItemStatus.FAILED:
+                    # An admission-time failure (symlink/unsupported entry):
+                    # it is never followed and never fabricated.
+                    outcomes.append(
+                        {
+                            "path": entry.archive_path,
+                            "status": "failed",
+                            "note": entry.note or "entry unavailable",
+                        }
+                    )
+                    continue
+                if entry.is_directory:
+                    self._service._archive_directory_entry(archive, entry)
+                    outcomes.append({"path": entry.archive_path, "status": "included"})
+                    continue
+                full = _join_resource_library_path(self._library.root_path, entry.source_path)
+                try:
+                    observed = self._storage.stat(full)
+                except (StorageError, OSError):
+                    observed = None
+                if not self._service._entry_matches(entry, observed):
+                    # The confirmed scope pins the evidence observed at
+                    # admission; a disappeared, shrunk or replaced source is
+                    # never fabricated.
+                    outcomes.append(
+                        {
+                            "path": entry.archive_path,
+                            "status": "failed",
+                            "note": "entry disappeared or changed mid-stream",
+                        }
+                    )
+                    continue
+                complete, failed_mid_stream = self._archive_file_entry(
+                    archive, entry, self._storage, full, self._chunk_size
+                )
+                if failed_mid_stream:
+                    # A per-entry read failure after the entry started: the
+                    # half-written local header cannot be repaired inside a
+                    # valid ZIP, so the archive can no longer guarantee its
+                    # integrity and the response aborts as a terminal
+                    # transfer failure instead of emitting a truncated
+                    # success-looking entry.
+                    integrity_broken = True
+                    break
                 outcomes.append(
                     {
                         "path": entry.archive_path,
-                        "status": "failed",
-                        "note": entry.note or "entry unavailable",
+                        "status": "included" if complete else "failed",
+                        "note": (None if complete else "entry disappeared or shrank mid-stream"),
                     }
                 )
-                continue
-            if entry.is_directory:
-                self._service._archive_directory_entry(archive, entry)
-                outcomes.append({"path": entry.archive_path, "status": "included"})
-                continue
-            full = _join_resource_library_path(self._library.root_path, entry.source_path)
+            if integrity_broken:
+                raise _ArchiveIntegrityError(
+                    "a download source read failed after the archive entry had started"
+                )
+            # The bounded manifest note: one honest per-item outcome record.
+            payload = json.dumps(
+                {"items": outcomes, "note": self._manifest.manifest_note},
+                ensure_ascii=False,
+                sort_keys=True,
+            ).encode("utf-8")
+            archive.writestr(ARCHIVE_MANIFEST_NAME, payload)
+            archive.close()
+        finally:
             try:
-                observed = self._storage.stat(full)
-            except (StorageError, OSError):
-                observed = None
-            if not self._service._entry_matches(entry, observed):
-                # The confirmed scope pins the evidence observed at
-                # admission; a disappeared, shrunk or replaced source is
-                # never fabricated.
-                outcomes.append(
-                    {
-                        "path": entry.archive_path,
-                        "status": "failed",
-                        "note": "entry disappeared or changed mid-stream",
-                    }
-                )
-                continue
-            complete = self._service._archive_file_entry(
-                archive, entry, self._storage, full, self._chunk_size
-            )
-            outcomes.append(
-                {
-                    "path": entry.archive_path,
-                    "status": "included" if complete else "failed",
-                    "note": (None if complete else "entry disappeared or shrank mid-stream"),
-                }
-            )
-        # The bounded manifest note: one honest per-item outcome record.
-        payload = json.dumps(
-            {"items": outcomes, "note": self._manifest.manifest_note},
-            ensure_ascii=False,
-            sort_keys=True,
-        ).encode("utf-8")
-        archive.writestr(ARCHIVE_MANIFEST_NAME, payload)
-        archive.close()
+                archive.close()
+            except Exception:
+                pass
 
     def drain(self) -> Iterator[bytes]:
-        """Yield bounded chunks as the producer makes them."""
+        """Yield bounded chunks as the producer makes them.
+
+        The explicit protocol: data chunks are yielded, an entry failure is
+        folded into the manifest (the producer only publishes those after the
+        affected entry is closed), and a terminal failure aborts the response
+        mid-stream with an error instead of fabricating a complete archive.
+        """
 
         while True:
-            try:
-                chunk = self._queue.get(timeout=0.05)
-            except queue.Empty:
-                if self._done.is_set() and self._queue.empty():
-                    return
+            item = self._queue.get(timeout=0.05) if not self._queue.empty() else None
+            if item is None:
+                try:
+                    item = self._queue.get(timeout=0.05)
+                except queue.Empty:
+                    if self._done.is_set() and self._queue.empty():
+                        return
+                    continue
+            if isinstance(item, _ArchiveTerminal):
+                raise DirectFileDownloadError(
+                    "files_download_transfer_interrupted",
+                    "transfer_interrupted",
+                    "the download archive could not be completed: the source "
+                    "read failed after streaming had begun",
+                    status=503,
+                    resource_library_id=self._library.library_id,
+                    next_action=(
+                        "retry the download once the Storage is reachable "
+                        "again; nothing was mutated and no partial archive "
+                        "was written anywhere"
+                    ),
+                ) from item.error
+            if isinstance(item, _ArchiveEntryFailure):
                 continue
-            if chunk is None:
-                return
-            yield chunk
+            yield item
 
     def close(self) -> None:
         """Stop the producer when the response ends (never a mutation)."""
 
         self._closed = True
         self._thread.join(timeout=2.0)
+
+    def _archive_file_entry(
+        self,
+        archive: zipfile.ZipFile,
+        entry: DownloadArchiveEntry,
+        storage: Storage,
+        full: str,
+        chunk_size: int,
+    ) -> tuple[bool, bool]:
+        """Stream one archive file entry after its evidence re-validation.
+
+        Returns ``(fully_served, entry_failed_mid_stream)``.  A source that
+        vanishes or shrinks *before* the first published byte ends the entry
+        honestly (the caller records the failed outcome).  A provider read
+        that fails *after* the entry has started cannot be repaired inside a
+        valid ZIP: the entry is reported failed-mid-stream so the producer
+        aborts the response instead of emitting a truncated success.
+        """
+
+        try:
+            observed = storage.stat(full)
+        except (StorageError, OSError):
+            observed = None
+        if not self._service._entry_matches(entry, observed):
+            return False, False
+        info = zipfile.ZipInfo(entry.archive_path)
+        served = 0
+        try:
+            with storage.read(full) as stream:
+                with archive.open(info, mode="w") as writer:
+                    while served < entry.size:
+                        chunk = stream.read(min(chunk_size, entry.size - served))
+                        if not chunk:
+                            # The entry disappeared or shrank mid-stream:
+                            # stop this entry honestly; the manifest records
+                            # the truncated outcome.
+                            break
+                        writer.write(chunk)
+                        served += len(chunk)
+        except (StorageError, OSError, RuntimeError) as error:
+            if served == 0:
+                # A clean refusal before any archive byte of this entry was
+                # published: the entry ends as an honest failed outcome.
+                _ = error
+                return False, False
+            # The provider failed after the entry started: ZIP integrity for
+            # this entry can no longer be guaranteed.
+            return served == entry.size, True
+        return served == entry.size, False
 
 
 class _ZipStreamSink:
