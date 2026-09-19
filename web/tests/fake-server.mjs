@@ -1149,6 +1149,14 @@ function referenceDirectoryEntries(path) {
         "Movies/Dune (2021)",
         REFERENCE_MODIFIED_LATEST,
       ),
+      // The deterministic e2e pause demo: uploads into this directory pause
+      // after their first delivered item so the real-browser journey can be
+      // driven through pause -> resume without timing races.
+      directoryEntry(
+        "e2e-pause",
+        "Movies/e2e-pause",
+        REFERENCE_MODIFIED_LATEST,
+      ),
       fileEntry(
         "Behind.The.Scenes.mkv",
         "Movies/Behind.The.Scenes.mkv",
@@ -1157,6 +1165,9 @@ function referenceDirectoryEntries(path) {
         { selectable: true, businessStatus: "pending" },
       ),
     ];
+  }
+  if (path === "Movies/e2e-pause") {
+    return [];
   }
   if (path === "Movies/Avatar (2009)") {
     return [
@@ -4928,7 +4939,14 @@ const server = createServer(async (req, res) => {
       delivered: 0,
       terminal: false,
       paused: false,
+      everPaused: false,
       cancelled: false,
+      // Deterministic e2e trigger: uploads admitted for the marked pause
+      // demo directory pause after their first delivered item so the real
+      // browser journey can drive pause -> resume without timing races.
+      e2ePauseAfterFirstItem:
+        manifest.destinationDirectory === "e2e-pause" ||
+        manifest.destinationDirectory === "Movies/e2e-pause",
     });
     sendJson(res, 202, {
       admitted: true,
@@ -5427,6 +5445,51 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    // A paused session streams nothing until resumed: the pause boundary is
+    // not an item failure and never consumes the payload.
+    if (upload.paused && !upload.cancelled) {
+      sendJson(res, 200, {
+        index,
+        path: upload.manifest.items[index]?.relativePath ?? "",
+        status: "PAUSED",
+        paused: true,
+        phase: "PAUSED",
+        nextIndex: index,
+        taskStatus: "paused",
+        terminal: false,
+        sideEffects: "storage_mutations",
+        retrySafe: false,
+        nextAction:
+          "the upload is paused; resume it to stream the remaining items, or cancel it",
+      });
+      return;
+    }
+    // The deterministic e2e pause trigger: the marked upload pauses at the
+    // first delivered item so the real-browser journey can be driven
+    // through pause -> resume -> finish without timing races.
+    if (
+      upload.e2ePauseAfterFirstItem &&
+      upload.delivered === 0 &&
+      !upload.everPaused
+    ) {
+      upload.paused = true;
+      upload.everPaused = true;
+      sendJson(res, 200, {
+        index,
+        path: upload.manifest.items[index]?.relativePath ?? "",
+        status: "PAUSED",
+        paused: true,
+        phase: "PAUSED",
+        nextIndex: index,
+        taskStatus: "paused",
+        terminal: false,
+        sideEffects: "storage_mutations",
+        retrySafe: false,
+        nextAction:
+          "the upload is paused; resume it to stream the remaining items, or cancel it",
+      });
+      return;
+    }
     const payload = await readBoundedBody(req);
     const declared = upload.manifest.items[index]?.size ?? 0;
     if (payload.length !== declared) {
@@ -5494,10 +5557,59 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    // Finish while paused is refused: the pause boundary stays the durable
+    // outcome and resume/cancel decides the rest.
+    if (upload.paused && !upload.cancelled) {
+      sendJson(res, 409, {
+        error: {
+          code: "files_upload_finish_while_paused",
+          message:
+            "the upload is paused; resume it to finish streaming or cancel it to close the Task",
+          details: {
+            category: "finish_unavailable",
+            durableState:
+              "the Task stays paused with its recorded item outcomes",
+            retrySafe: false,
+            nextAction:
+              "resume the upload to stream the remaining items, or cancel it",
+          },
+        },
+      });
+      return;
+    }
     upload.terminal = true;
     const succeeded = upload.items.filter(
       (item) => item?.status === "SUCCESS",
     ).length;
+    if (upload.cancelled) {
+      sendJson(res, 200, {
+        manifestDigest: upload.manifest.manifestDigest,
+        conflict: upload.manifest.conflict,
+        destinationDirectory: upload.manifest.destinationDirectory,
+        status: "CANCELLED",
+        taskId: upload.taskId,
+        taskStatus: "cancelled",
+        totalItems: upload.manifest.items.length,
+        succeededItems: succeeded,
+        skippedItems: 0,
+        failedItems: upload.manifest.items.length - succeeded,
+        items: upload.manifest.items.map((item, index) => ({
+          path: item.relativePath,
+          status: upload.items[index]?.status ?? "FAILED",
+          errorCategory:
+            upload.items[index]?.errorCategory ??
+            (upload.items[index]?.status === "SUCCESS"
+              ? null
+              : "upload_cancelled"),
+          destination: upload.items[index]?.destination ?? item.relativePath,
+        })),
+        outcomesTruncated: false,
+        sideEffects: "storage_mutations",
+        retrySafe: false,
+        nextAction: "refresh the directory to see the current state",
+      });
+      return;
+    }
     sendJson(res, 200, {
       manifestDigest: upload.manifest.manifestDigest,
       conflict: upload.manifest.conflict,
@@ -5583,7 +5695,16 @@ const server = createServer(async (req, res) => {
           available: !upload.terminal,
           path: `/api/v1/tasks/${upload.taskId}/cancel`,
         },
-        { action: "resume", available: false },
+        {
+          action: "resume",
+          available: upload.paused && !upload.terminal && !upload.cancelled,
+          ...(upload.paused && !upload.terminal && !upload.cancelled
+            ? {}
+            : {
+                reason:
+                  "uploaded bytes are not durable; resubmit the selection",
+              }),
+        },
       ],
       version: new Date().toISOString(),
       sideEffects: processed > 0 ? "storage_mutations" : "none",
@@ -6484,6 +6605,58 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const uploadResumeMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/uploads\/([^/]+)\/resume$/,
+  );
+  if (uploadResumeMatch && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const upload = resourceLibraryState(session).filesUploads.get(
+      decodeURIComponent(uploadResumeMatch[2]),
+    );
+    if (!upload) {
+      sendJson(res, 404, {
+        error: {
+          code: "not_found",
+          message: "no admitted Files Upload Task exists under this identity",
+        },
+      });
+      return;
+    }
+    if (!upload.paused || upload.cancelled || upload.terminal) {
+      sendJson(res, 409, {
+        error: {
+          code: "lifecycle_conflict",
+          message: "only a paused upload resumes",
+          details: {
+            reason: "resume_unavailable",
+            durableState: "the upload is not paused",
+            nextAction: "reload the upload projection and retry",
+          },
+        },
+      });
+      return;
+    }
+    upload.paused = false;
+    sendJson(res, 200, {
+      action: "resume",
+      taskId: upload.taskId,
+      nextIndex: upload.delivered,
+      taskStatus: "running",
+      sideEffects: "storage_mutations",
+      retrySafe: false,
+      nextAction:
+        "continue streaming the remaining upload items in the manifest order, then finish the upload",
+    });
+    return;
+  }
+
   const taskControlMatch = url.pathname.match(
     /^\/api\/v1\/tasks\/([^/]+)\/(cancel|pause|resume)$/,
   );
@@ -6566,11 +6739,32 @@ const server = createServer(async (req, res) => {
       } else if (action === "cancel") {
         upload.cancelled = true;
         upload.terminal = true;
+      } else if (action === "resume") {
+        if (!upload.paused) {
+          sendJson(res, 409, {
+            error: {
+              code: "lifecycle_conflict",
+              details: {
+                reason: "resume_unavailable",
+                durableState: `the upload session is ${upload.terminal ? "finished" : "running"}; only a paused upload resumes`,
+                nextAction: "reload the upload projection and retry",
+              },
+            },
+          });
+          return;
+        }
+        upload.paused = false;
       }
       sendJson(res, 200, {
         action,
         taskId: upload.taskId,
-        sideEffects: "none",
+        nextIndex: upload.delivered,
+        taskStatus: upload.terminal
+          ? "cancelled"
+          : upload.paused
+            ? "paused"
+            : "running",
+        sideEffects: "storage_mutations",
         retrySafe: false,
         nextAction: "follow the upload projection for the observed state",
       });

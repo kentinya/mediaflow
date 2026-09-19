@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import posixpath
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
@@ -32,6 +33,7 @@ from typing import BinaryIO
 from uuid import NAMESPACE_URL, uuid5
 
 from mediaflow.application.direct_file_commands import DirectFileError
+from mediaflow.application.operations_lifecycle import OperationsLifecycleConflict
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
     _join_resource_library_path,
@@ -49,6 +51,7 @@ from mediaflow.domain.direct_files import (
     UploadItemPlan,
     UploadItemStatus,
     UploadResult,
+    UploadSessionPhase,
 )
 from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.storage import (
@@ -64,9 +67,24 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 
-__all__ = ["DirectFileUploadService", "DirectFileUploadError"]
+__all__ = [
+    "DirectFileUploadService",
+    "DirectFileUploadError",
+    "UploadSession",
+    "drop_upload_session",
+    "resume_upload_session",
+    "upload_session_item_size",
+]
 
 _CHUNK_SIZE = 64 * 1024
+
+#: Most live Upload Sessions one process keeps above the replaceable runtime
+#: binding.  Each admitted session owns its exact pinned plan and binding
+#: until terminal cleanup; the registry is bounded by evicting terminal
+#: sessions first and the oldest live session beyond this bound, so an
+#: evicted upload fails with the explicit interrupted/resubmit recovery
+#: instead of growing without bound.
+MAX_UPLOAD_SESSIONS = 64
 
 #: Reserved Windows device names that must never become upload destinations.
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -145,6 +163,243 @@ class _UploadState:
     #: sibling can never read another item's bytes as its own content.
     delivered: set[int] = field(default_factory=set)
     digest: str = ""
+    #: The durable Task identity this plan was admitted under.
+    task_id: str = ""
+
+
+class UploadSession:
+    """One live Upload Session above the replaceable runtime binding.
+
+    Admission validates the whole confined scope, pins the exact Active
+    revision and opens the destination Storage once; this session owns that
+    already-validated plan and the exact pinned ``direct_files``/executor
+    binding from admission through terminal cleanup, so a later
+    configuration activation affects new uploads only — the admitted
+    session keeps executing under the binding it was admitted against.  The
+    explicit ``phase`` state machine (``RUNNING``/``PAUSED``/``CANCELLED``/
+    ``FINISHED``) makes the pause/cancel/finish boundaries truthful: pause is
+    acknowledged only between item mutations and is never recorded as an
+    item failure, finish is refused while paused, and a session that is no
+    longer live in this process fails with an explicit interrupted/resubmit
+    recovery instead of a fabricated continuation.
+    """
+
+    def __init__(
+        self,
+        *,
+        direct_files,
+        executor: OrganizerExecutor,
+        state: _UploadState,
+    ) -> None:
+        self.direct_files = direct_files
+        self.executor = executor
+        self.state = state
+        self.phase = UploadSessionPhase.RUNNING
+        self._lock = threading.Lock()
+
+    @property
+    def task_id(self) -> str:
+        return self.state.task_id
+
+    @property
+    def next_index(self) -> int:
+        """The first manifest index whose payload was never delivered."""
+
+        return len(self.state.delivered)
+
+    def acknowledge_pause(self) -> None:
+        """Transition to ``PAUSED`` exactly once at a safe item boundary."""
+
+        with self._lock:
+            if self.phase is UploadSessionPhase.RUNNING:
+                self.phase = UploadSessionPhase.PAUSED
+
+    def mark_cancelled(self) -> None:
+        with self._lock:
+            if self.phase is not UploadSessionPhase.FINISHED:
+                self.phase = UploadSessionPhase.CANCELLED
+
+    def mark_finished(self) -> None:
+        with self._lock:
+            self.phase = UploadSessionPhase.FINISHED
+
+    def paused_document(self, index: int) -> dict[str, object]:
+        """The truthful pause boundary response for one undelivered item.
+
+        Pause is never an item failure: the item keeps its own pending row,
+        its declared payload bytes are drained outcome-independently, and the
+        browser stops before posting the next Blob until the operator
+        resumes.
+        """
+
+        item = self.state.items[index]
+        return {
+            "index": index,
+            "path": item.relative_path,
+            "status": "PAUSED",
+            "paused": True,
+            "phase": self.phase.value,
+            "nextIndex": index,
+            "taskStatus": "paused",
+            "terminal": False,
+            "sideEffects": "storage_mutations",
+            "retrySafe": False,
+            "nextAction": (
+                "the upload is paused; resume it to stream the remaining "
+                "items with the still-live selection, or cancel it"
+            ),
+        }
+
+
+_UPLOAD_SESSIONS: dict[str, UploadSession] = {}
+_UPLOAD_SESSIONS_LOCK = threading.Lock()
+
+
+def _register_upload_session(session: UploadSession) -> None:
+    """Register one live session; the registry stays bounded.
+
+    Terminal sessions (``FINISHED``/``CANCELLED``) are evicted first, then
+    the oldest live session beyond the bound.  An evicted live upload fails
+    every later payload request with the explicit interrupted/resubmit
+    recovery instead of letting the registry grow without bound.
+    """
+
+    with _UPLOAD_SESSIONS_LOCK:
+        while len(_UPLOAD_SESSIONS) >= MAX_UPLOAD_SESSIONS:
+            evicted = False
+            for task_id, existing in list(_UPLOAD_SESSIONS.items()):
+                if existing.phase in {
+                    UploadSessionPhase.FINISHED,
+                    UploadSessionPhase.CANCELLED,
+                }:
+                    _UPLOAD_SESSIONS.pop(task_id, None)
+                    evicted = True
+                    break
+            if not evicted:
+                oldest = next(iter(_UPLOAD_SESSIONS))
+                _UPLOAD_SESSIONS.pop(oldest, None)
+        _UPLOAD_SESSIONS[session.task_id] = session
+
+
+def _upload_session(task_id: str) -> UploadSession | None:
+    with _UPLOAD_SESSIONS_LOCK:
+        return _UPLOAD_SESSIONS.get(task_id)
+
+
+def drop_upload_session(task_id: str) -> UploadSession | None:
+    """Terminal cleanup: pop one session from the bounded registry."""
+
+    with _UPLOAD_SESSIONS_LOCK:
+        return _UPLOAD_SESSIONS.pop(task_id, None)
+
+
+def upload_session_item_size(task_id: str, index: int) -> int | None:
+    """The admitted declared size of one Upload item, for the read boundary.
+
+    The per-item HTTP route uses this to prove the request body is exactly
+    as bounded as the admitted manifest before any byte is read or any
+    mutation is authorized.  ``None`` means no live session (the streaming
+    boundary itself refuses with the interrupted/resubmit recovery).
+    """
+
+    session = _upload_session(task_id)
+    if session is None:
+        return None
+    items = session.state.items
+    if not isinstance(index, int) or isinstance(index, bool):
+        return None
+    if index < 0 or index >= len(items):
+        return None
+    return items[index].size
+
+
+def _session_interrupted_error() -> DirectFileUploadError:
+    """The explicit interrupted/resubmit recovery for a lost session."""
+
+    return DirectFileUploadError(
+        "files_upload_session_interrupted",
+        "session_interrupted",
+        "the live Upload session for this Task is no longer available in "
+        "this process; the browser payload bytes are not durable",
+        status=409,
+        next_action=(
+            "resubmit the upload from the Files workspace; the durable Task "
+            "keeps every already-recorded item outcome"
+        ),
+        durable_state="recorded_item_outcomes_kept",
+    )
+
+
+def resume_upload_session(task_id: str) -> dict[str, object]:
+    """Continue one paused Upload with its still-live browser selection.
+
+    This is the Task resume action for ``files_upload``: the durable Task is
+    re-queued and published running, every paused item row returns to
+    PENDING, and the session returns to ``RUNNING`` so the browser keeps
+    streaming the remaining items in manifest order.  A session that is not
+    live in this process is refused with the explicit interrupted/resubmit
+    recovery — a resumed upload without its browser selection would strand
+    the Task with no streamer at all.
+    """
+
+    session = _upload_session(task_id)
+    if session is None:
+        raise OperationsLifecycleConflict(
+            "resume_unavailable",
+            "the browser upload session is no longer live in this process; "
+            "the paused Task keeps its recorded item outcomes",
+            durable_state=("the Task stays paused with every already-recorded item outcome"),
+            next_action=(
+                "resubmit the upload from the Files workspace; completed "
+                "items keep their outcomes and are never re-uploaded"
+            ),
+        )
+    with session._lock:
+        if session.phase is not UploadSessionPhase.PAUSED:
+            raise OperationsLifecycleConflict(
+                "resume_unavailable",
+                f"the upload session is {session.phase.value.lower()}; only "
+                "a paused upload resumes",
+                durable_state=f"the session remains {session.phase.value}",
+                next_action="refresh the upload projection and retry",
+            )
+        coordinator = session.direct_files.tasks
+        task = coordinator.require(task_id)
+        if task.status is not PersistentTaskStatus.PAUSED:
+            raise OperationsLifecycleConflict(
+                "resume_unavailable",
+                f"a {task.status.value} upload cannot resume",
+                durable_state=f"the Task remains {task.status.value}",
+                next_action="refresh the upload projection and retry",
+            )
+        coordinator.requeue(task_id)
+        coordinator.begin_queued(task_id)
+        now = datetime.now(UTC)
+        for item in coordinator.repository.list_items(task_id):
+            if item.status is TaskItemStatus.PAUSED:
+                coordinator.repository.upsert_item(
+                    replace(
+                        item,
+                        status=TaskItemStatus.PENDING,
+                        stage="files_upload",
+                        error=None,
+                        updated_at=now,
+                    )
+                )
+        session.phase = UploadSessionPhase.RUNNING
+    return {
+        "action": "resume",
+        "taskId": task_id,
+        "taskStatus": "running",
+        "phase": UploadSessionPhase.RUNNING.value,
+        "nextIndex": session.next_index,
+        "sideEffects": "storage_mutations",
+        "retrySafe": False,
+        "nextAction": (
+            "continue streaming the remaining upload items in the manifest "
+            "order, then finish the upload"
+        ),
+    }
 
 
 class DirectFileUploadService:
@@ -158,12 +413,6 @@ class DirectFileUploadService:
     ) -> None:
         self._direct = direct_files
         self._executor = executor or OrganizerExecutor()
-        # The admitted-plan registry of the streaming request: admission pins
-        # the exact validated plan under the durable Task identity and the
-        # same request's payload stream drains it.  A disconnect (the stream
-        # never arrives) leaves the entry for GC; it is never a durable
-        # authority and holds no Storage or credential state.
-        self._admitted: dict[str, _UploadState] = {}
 
     # ------------------------------------------------------------------
     # Public command boundary
@@ -236,12 +485,22 @@ class DirectFileUploadService:
                     now,
                 )
             )
-        # The same request streams its payloads into this exact plan; the
-        # registry is request-scoped (one entry per admitted Task) and the
-        # streaming execute consumes it.
-        self._admitted[task.task_id] = state
+        # The live Upload Session owns this exact validated plan and this
+        # exact pinned binding from admission through terminal cleanup, so a
+        # later configuration activation affects new uploads only.  The
+        # registry is bounded (``MAX_UPLOAD_SESSIONS``) and is never a
+        # durable authority: the durable Task/items/Results are.
+        task_key = task.task_id
+        state.task_id = task_key
+        _register_upload_session(
+            UploadSession(
+                direct_files=self._direct,
+                executor=self._executor,
+                state=state,
+            )
+        )
         return {
-            "taskId": task.task_id,
+            "taskId": task_key,
             "taskStatus": task.status.value,
             "admitted": True,
             "manifestDigest": state.digest,
@@ -269,18 +528,27 @@ class DirectFileUploadService:
         records a truthful truncation, and leftover declared bytes after a
         refused or failed write are drained so no sibling can read this
         item's bytes as its own content.  A pause/cancel request is observed
-        at this safe item boundary; the refused item is never replayed.
+        at this safe item boundary — pause is acknowledged between item
+        mutations and is never recorded as an item failure; the session keeps
+        the exact pinned plan and binding of its admission.
         """
 
-        state = self._admitted.get(task_id)
-        if state is None:
-            raise DirectFileUploadError(
-                "files_upload_unknown",
-                "not_found",
-                "no admitted Upload is streaming under this Task identity",
-                status=404,
-                next_action="resubmit the Upload from the Files workspace",
-            )
+        session = _upload_session(task_id)
+        if session is None:
+            task = self._direct.tasks.repository.get_task(task_id)
+            if task is None or task.command != FILES_UPLOAD_TASK_COMMAND:
+                raise DirectFileUploadError(
+                    "files_upload_unknown",
+                    "not_found",
+                    "no bounded Files Upload Task exists under this identity",
+                    status=404,
+                    next_action="return to the Files workspace and refresh",
+                )
+            raise _session_interrupted_error()
+        # The admitted session owns the pinned plan and binding: even when a
+        # configuration activation replaced this service instance, the item
+        # streams under the exact revision the upload was admitted against.
+        state = session.state
         if (
             isinstance(index, bool)
             or not isinstance(index, int)
@@ -294,10 +562,17 @@ class DirectFileUploadService:
                 status=400,
                 next_action="resubmit the Upload with its exact selection",
             )
-        if self._direct.tasks.cancellation_observed(task_id):
+        item = state.items[index]
+        if session.phase is UploadSessionPhase.FINISHED:
+            raise _session_interrupted_error()
+        if session.phase is UploadSessionPhase.PAUSED:
+            # A paused session streams nothing until the operator resumes;
+            # this response is not an item failure and mutates nothing.
+            return session.paused_document(index)
+        if session.phase is UploadSessionPhase.CANCELLED:
             return {
                 "index": index,
-                "path": state.items[index].relative_path,
+                "path": item.relative_path,
                 "status": "FAILED",
                 "errorCategory": "upload_cancelled",
                 "taskStatus": "cancelled",
@@ -306,20 +581,49 @@ class DirectFileUploadService:
                 "retrySafe": False,
                 "nextAction": "the upload was cancelled; refresh the directory",
             }
-        if self._direct.tasks.pause_requested(task_id):
-            self._direct.tasks.acknowledge_pause(task_id)
+        coordinator = session.direct_files.tasks
+        if coordinator.cancellation_observed(task_id):
+            # The session converges to CANCELLED but stays registered until
+            # finish records every undelivered item's truthful refused
+            # outcome and publishes the honest terminal aggregate.
+            session.mark_cancelled()
             return {
                 "index": index,
-                "path": state.items[index].relative_path,
+                "path": item.relative_path,
                 "status": "FAILED",
-                "errorCategory": "upload_paused",
-                "taskStatus": "paused",
-                "terminal": False,
+                "errorCategory": "upload_cancelled",
+                "taskStatus": "cancelled",
+                "terminal": True,
                 "sideEffects": "storage_mutations",
                 "retrySafe": False,
-                "nextAction": "the upload is paused; the remaining items keep their own outcome",
+                "nextAction": "the upload was cancelled; refresh the directory",
             }
-        task = self._direct.tasks.require(task_id)
+        if coordinator.pause_requested(task_id):
+            try:
+                coordinator.acknowledge_pause(task_id)
+            except ValueError:
+                # A concurrent lifecycle control (cancel) converged first;
+                # re-read the durable truth instead of fabricating a pause.
+                if coordinator.cancellation_observed(task_id):
+                    session.mark_cancelled()
+                    return {
+                        "index": index,
+                        "path": item.relative_path,
+                        "status": "FAILED",
+                        "errorCategory": "upload_cancelled",
+                        "taskStatus": "cancelled",
+                        "terminal": True,
+                        "sideEffects": "storage_mutations",
+                        "retrySafe": False,
+                        "nextAction": "the upload was cancelled; refresh the directory",
+                    }
+                # The durable pause request exists but the coordinator's
+                # narrow acknowledgment precondition no longer holds; the
+                # boundary is still honest (nothing was read or mutated).
+                return session.paused_document(index)
+            session.acknowledge_pause()
+            return session.paused_document(index)
+        task = coordinator.require(task_id)
         if task.status is not PersistentTaskStatus.RUNNING:
             raise DirectFileUploadError(
                 "files_upload_task_not_running",
@@ -347,10 +651,9 @@ class DirectFileUploadService:
                 status=409,
                 next_action="stream the remaining items in the manifest order",
             )
-        item = state.items[index]
         plan = state.planned[index]
         try:
-            task_item = self._direct.tasks.begin_item(
+            task_item = coordinator.begin_item(
                 task_id,
                 state.storage.storage_id,
                 state.library.library_id,
@@ -358,18 +661,13 @@ class DirectFileUploadService:
                 item.relative_path,
             )
         except TaskPauseRequested:
-            self._direct.tasks.acknowledge_pause(task_id)
-            return {
-                "index": index,
-                "path": item.relative_path,
-                "status": "FAILED",
-                "errorCategory": "upload_paused",
-                "taskStatus": "paused",
-                "terminal": False,
-                "sideEffects": "storage_mutations",
-                "retrySafe": False,
-                "nextAction": "the upload is paused; the remaining items keep their own outcome",
-            }
+            # The pause arrived while the previous item was still streaming:
+            # this boundary is still before this item's first mutation, so
+            # the pause is acknowledged here and the item keeps its own
+            # pending row — never a failure.
+            session.acknowledge_pause()
+            coordinator.acknowledge_pause(task_id)
+            return session.paused_document(index)
         state.delivered.add(index)
         try:
             outcome, item_truncated, checksum, written_destination, category = self._execute_item(
@@ -389,7 +687,7 @@ class DirectFileUploadService:
                 "path": item.relative_path,
                 "status": "FAILED",
                 "errorCategory": error.category,
-                "taskStatus": self._direct.tasks.require(task_id).status.value,
+                "taskStatus": coordinator.require(task_id).status.value,
                 "terminal": False,
                 "sideEffects": "storage_mutations",
                 "retrySafe": False,
@@ -407,7 +705,7 @@ class DirectFileUploadService:
             "index": index,
             "path": item.relative_path,
             "status": outcome.value,
-            "taskStatus": self._direct.tasks.require(task_id).status.value,
+            "taskStatus": coordinator.require(task_id).status.value,
             "terminal": False,
             "sideEffects": "storage_mutations",
             "retrySafe": False,
@@ -431,15 +729,40 @@ class DirectFileUploadService:
         Task reaches its honest terminal aggregate.
         """
 
-        state = self._admitted.pop(task_id, None)
-        if state is None:
-            raise DirectFileUploadError(
-                "files_upload_unknown",
-                "not_found",
-                "no admitted Upload is streaming under this Task identity",
-                status=404,
-                next_action="resubmit the Upload from the Files workspace",
-            )
+        session = _upload_session(task_id)
+        if session is None:
+            task = self._direct.tasks.repository.get_task(task_id)
+            if task is None or task.command != FILES_UPLOAD_TASK_COMMAND:
+                raise DirectFileUploadError(
+                    "files_upload_unknown",
+                    "not_found",
+                    "no bounded Files Upload Task exists under this identity",
+                    status=404,
+                    next_action="return to the Files workspace and refresh",
+                )
+            raise _session_interrupted_error()
+        if session.phase is UploadSessionPhase.PAUSED:
+            task = self._direct.tasks.require(task_id)
+            if task.status is not PersistentTaskStatus.CANCELLED:
+                # Finish while paused would fabricate a terminal aggregate
+                # over a journey the operator explicitly paused; the pause
+                # boundary stays the durable outcome and resume/cancel
+                # decides the rest.  A durable cancellation already converged
+                # the Task, so finish records the honest cancelled aggregate.
+                raise DirectFileUploadError(
+                    "files_upload_finish_while_paused",
+                    "finish_unavailable",
+                    "the upload is paused; resume it to finish streaming or "
+                    "cancel it to close the Task",
+                    status=409,
+                    next_action=(
+                        "resume the upload to stream the remaining items, or "
+                        "cancel it; every recorded outcome stays durable"
+                    ),
+                    durable_state="the Task stays paused with its recorded item outcomes",
+                )
+        session.mark_finished()
+        state = session.state
         outcomes: list[UploadItemOutcome] = []
         for index, item in enumerate(state.items):
             item_id = str(
@@ -509,6 +832,10 @@ class DirectFileUploadService:
         if task.status is PersistentTaskStatus.CANCELLED:
             terminal = "cancelled"
         result = self._finalize(state, task_id, outcomes, terminal)
+        # Terminal cleanup: the session's plan and pinned binding are only
+        # needed while the upload streams; the durable Task/items/Results
+        # remain the only authority.
+        drop_upload_session(task_id)
         document = result.document()
         document["destinationDirectory"] = state.destination_directory
         document["nextAction"] = self._next_action(result)
@@ -523,9 +850,10 @@ class DirectFileUploadService:
         a request-scoped execution result — so polling while the upload
         streams, after admission or after a process restart reproduces the
         truthful per-item progress with the backend-advertised lifecycle
-        actions (pause/cancel while running; resume is refused because the
-        browser payload bytes are not durable and a paused upload is
-        resubmitted as a fresh selection).
+        actions.  Resume is advertised only while the exact live browser
+        session of this process is paused (its selection can still stream the
+        remaining items); a paused Task whose session is gone keeps its
+        recorded outcomes and is resubmitted as a fresh selection instead.
         """
 
         repository = self._direct.tasks.repository
@@ -561,7 +889,11 @@ class DirectFileUploadService:
                 failed += 1
             elif status == "FAILED":
                 failed += 1
-            if item.status not in {TaskItemStatus.PENDING}:
+            if item.status not in {TaskItemStatus.PENDING, TaskItemStatus.PAUSED}:
+                # An acknowledged pause keeps undelivered items out of the
+                # processed count: they were never delivered, never failed
+                # and remain resumable — counting them would fabricate
+                # progress the journey has not made.
                 processed += 1
             entry: dict[str, object] = {
                 "path": item.source_display,
@@ -570,6 +902,11 @@ class DirectFileUploadService:
             }
             if item.error and status not in {"SUCCESS", "SKIPPED"}:
                 entry["errorCategory"] = item.error
+            if status == "PENDING" and item.error:
+                # An acknowledged pause keeps undelivered rows non-terminal
+                # and error-free; a pending row that still carries a stale
+                # error category would read as a fabricated failure.
+                entry.pop("errorCategory", None)
             outcomes.append(entry)
         terminal = task.status in {
             PersistentTaskStatus.COMPLETED,
@@ -593,6 +930,12 @@ class DirectFileUploadService:
         else:
             aggregate = "RUNNING"
         total = task.total_items or len(items)
+        session = _upload_session(task_id)
+        resume_available = (
+            task.status is PersistentTaskStatus.PAUSED
+            and session is not None
+            and session.phase is UploadSessionPhase.PAUSED
+        )
         actions = [
             {
                 "action": "pause",
@@ -606,8 +949,12 @@ class DirectFileUploadService:
             },
             {
                 "action": "resume",
-                "available": False,
-                "reason": "uploaded bytes are not durable; resubmit the selection",
+                "available": resume_available,
+                "reason": (
+                    "the still-live browser selection continues this upload"
+                    if resume_available
+                    else "uploaded bytes are not durable; resubmit the selection"
+                ),
             },
         ]
         document: dict[str, object] = {
@@ -1027,6 +1374,19 @@ class DirectFileUploadService:
         *,
         is_directory: bool,
     ) -> str:
+        """One backend-generated keep-both destination that is absent.
+
+        A generated ``stem (n)`` destination is only valid when *no* entry of
+        the same kind occupies it: an existing file (for a file candidate) or
+        an existing directory (for a directory candidate) is occupied, so the
+        suffix search continues until a genuinely absent name is found.  The
+        generated name of the other kind still collides (a directory cannot
+        be published at an occupied file slot and vice versa), so the search
+        skips those too.  This keeps repeated-suffix collisions honest:
+        ``existing.mkv`` + ``existing (1).mkv`` produce ``existing (2).mkv``,
+        never a FAILED rewrite of an occupied path.
+        """
+
         parent = posixpath.dirname(candidate)
         name = posixpath.basename(candidate)
         stem, extension = posixpath.splitext(name)
@@ -1035,11 +1395,7 @@ class DirectFileUploadService:
             renamed = self._join(
                 parent, f"{stem} ({index}){extension}" if extension else f"{name} ({index})"
             )
-            observed = self._safe_stat(library, storage, self._full_destination(library, renamed))
-            if observed is None or (
-                observed.entry_type
-                is (StorageEntryType.DIRECTORY if is_directory else StorageEntryType.FILE)
-            ):
+            if self._safe_stat(library, storage, self._full_destination(library, renamed)) is None:
                 return renamed
             index += 1
             if index > 10_000:

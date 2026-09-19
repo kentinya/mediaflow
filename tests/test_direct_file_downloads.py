@@ -314,6 +314,95 @@ class DownloadArchiveSourceChangeTests(DownloadTestCase):
             self.assertEqual(statuses.get("tree/gone.bin"), "failed")
 
 
+class _DisconnectingReadStorage:
+    """A provider double that serves one read and then loses the connection.
+
+    This is B's reproduction shape: the first read succeeds (partial content
+    reaches the archive entry after response bytes have begun) and the next
+    read raises a provider connection error.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self._inner = LocalStorage("source-storage", root)
+        self.failures = 0
+
+    def __getattr__(self, name):
+        return getattr(self._inner, name)
+
+    def read(self, path):
+        inner = self._inner.read(path)
+        outer = self
+
+        class _Disconnecting:
+            def __init__(self) -> None:
+                self._source = inner
+                self._reads = 0
+
+            def read(self, size=-1):
+                self._reads += 1
+                if self._reads > 1:
+                    outer.failures += 1
+                    from mediaflow.domain.storage import (
+                        StorageError,
+                        StorageErrorCode,
+                    )
+
+                    raise StorageError(
+                        StorageErrorCode.CONNECTION_LOST,
+                        "the provider disconnected mid-read",
+                    )
+                return self._source.read(size)
+
+            def __enter__(self):
+                self._source.__enter__()
+                return self
+
+            def __exit__(self, *exc):
+                return self._source.__exit__(*exc)
+
+            def __getattr__(self, name):
+                return getattr(self._source, name)
+
+        return _Disconnecting()
+
+
+class DownloadArchiveMidEntryFailureTests(DownloadTestCase):
+    """B5: a provider read failure after the entry started never fabricates."""
+
+    def test_mid_entry_provider_failure_aborts_the_response_truthfully(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "tree").mkdir(parents=True)
+            # Big enough that the streamed read spans more than one provider
+            # read (the stream chunk is 256 KiB), so the second read hits the
+            # disconnect after the archive entry has started.
+            (root / "source" / "tree" / "a.bin").write_bytes(b"A" * (512 * 1024))
+            disconnecting = _DisconnectingReadStorage(root / "source")
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": disconnecting}
+            )
+            downloads = self._downloads(api, active)
+            manifest = downloads.download_admission(resource_library_id="source", paths=["tree"])
+            headers, body = downloads.stream_response(
+                resource_library_id="source", manifest=manifest
+            )
+            iterator = iter(body)
+            # Response bytes begin (the archive header/local header), then the
+            # provider disconnects mid-entry.
+            first = next(iterator)
+            self.assertGreater(len(first), 0)
+            with self.assertRaises(Exception) as caught:
+                b"".join(iterator)
+            self.assertIn("transfer_interrupted", str(caught.exception.code))
+            self.assertEqual(caught.exception.status, 503)
+            # Zero mutation: no Task and no write-back anywhere.
+            self.assertEqual(runtime.list_tasks(), ())
+            self.assertFalse((root / "source" / "files.zip").exists())
+            self.assertEqual((root / "source" / "tree" / "a.bin").read_bytes(), b"A" * (512 * 1024))
+            # A genuinely disconnected provider is reported, never swallowed.
+            self.assertGreaterEqual(disconnecting.failures, 1)
+
+
 class DownloadLimitTests(DownloadTestCase):
     def test_over_limit_selection_fails_before_streaming(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

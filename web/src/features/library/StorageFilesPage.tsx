@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -15,6 +16,7 @@ import type {
   StorageFilesEntry,
   StorageFilesModel,
 } from "../../entities/library/storage-files";
+import type { UploadConflictChoice } from "../../entities/library/direct-files";
 import type {
   SystemResourceLibrary,
   SystemStorage,
@@ -55,6 +57,7 @@ import {
   submitDirectFileCommand,
   submitServerBoundPreview,
   submitTransfer,
+  resumeUpload,
   uploadFiles,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
@@ -2371,13 +2374,23 @@ export function StorageFilesPage() {
   // as its own raw-bytes request in manifest order.  Each truthful per-item
   // outcome lands through the projection poll; pause/cancel act at the
   // backend's safe item boundaries.  A failed or uncertain item is never
-  // auto-replayed.
+  // auto-replayed; an acknowledged pause stops the stream before the next
+  // Blob POST and the resume action continues the same live selection.
+  const uploadSelectionRef = useRef<readonly FilesUploadPayload[] | null>(null);
+  const uploadConflictRef = useRef<UploadConflictChoice>("no_overwrite");
   const uploadMutation = useMutation({
     mutationFn: (input: {
       readonly conflict: "no_overwrite" | "skip" | "keep_both";
       readonly items: readonly FilesUploadPayload[];
-    }) =>
-      uploadFiles(
+      /** Set for a resume continuation of the same still-live selection. */
+      readonly resume?: {
+        readonly taskId: string;
+        readonly startIndex: number;
+      };
+    }) => {
+      uploadSelectionRef.current = input.items;
+      uploadConflictRef.current = input.conflict;
+      return uploadFiles(
         token,
         activeLibraryId,
         {
@@ -2391,10 +2404,21 @@ export function StorageFilesPage() {
           // the operator sees per-item progress and can pause or cancel.
           setUploadTaskId(taskId);
         },
-      ),
+        input.resume,
+      );
+    },
     retry: false,
     onSuccess: (result) => {
       if (!result.ok) {
+        if (result.paused === true) {
+          // The acknowledged pause boundary: not an error.  The projection
+          // poll carries the paused truth and the dialog offers resume.
+          setUploadError(null);
+          void queryClient.invalidateQueries({
+            queryKey: ["upload-projection", uploadTaskId],
+          });
+          return;
+        }
         setUploadResult(null);
         setUploadError(
           uploadFailureMessage(result.code, {
@@ -2419,6 +2443,45 @@ export function StorageFilesPage() {
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
   });
+
+  // Resume continues the exact paused upload with the still-live selection:
+  // the backend re-queues the durable Task, the session returns to RUNNING
+  // and the remaining items stream in manifest order, then finish closes it.
+  const [resumingUpload, setResumingUpload] = useState(false);
+  const runUploadResume = async (projection: FilesUploadProjection) => {
+    if (resumingUpload || uploadTaskId === null) return;
+    // The resume authority is the still-live browser selection: without it
+    // the operator resubmits the upload instead of stranding the Task.
+    const items = uploadSelectionRef.current;
+    if (items === null || items.length === 0) {
+      setUploadError(
+        "该上传的浏览器选择已不在本页;请重新发起上传,已完成的项目保持其结果。",
+      );
+      return;
+    }
+    setResumingUpload(true);
+    setUploadError(null);
+    const result = await resumeUpload(
+      token,
+      activeLibraryId,
+      projection.taskId,
+    );
+    if (!result.ok) {
+      setResumingUpload(false);
+      setUploadError(uploadFailureMessage(result.code));
+      return;
+    }
+    void queryClient.invalidateQueries({
+      queryKey: ["upload-projection", projection.taskId],
+    });
+    // The session is running again: continue streaming the remaining items
+    // of the same selection from the advertised index, then finish.
+    uploadMutation.mutate({
+      conflict: uploadConflictRef.current,
+      items,
+      resume: { taskId: projection.taskId, startIndex: result.nextIndex },
+    });
+  };
 
   // The admitted Upload Task's durable projection, polled while it streams:
   // per-item progress and the backend-advertised pause/cancel controls come
@@ -2448,9 +2511,13 @@ export function StorageFilesPage() {
       ? uploadProjectionData.model
       : null;
   const runUploadLifecycleAction = async (
-    action: "pause" | "cancel",
+    action: "pause" | "cancel" | "resume",
     projection: FilesUploadProjection,
   ) => {
+    if (action === "resume") {
+      await runUploadResume(projection);
+      return;
+    }
     const result = await mutateTransferLifecycle(
       token,
       projection.taskId,
@@ -3152,7 +3219,7 @@ export function StorageFilesPage() {
         <FilesUploadDialog
           open
           destinationDirectory={effectivePath}
-          submitting={uploadMutation.isPending}
+          submitting={uploadMutation.isPending || resumingUpload}
           result={uploadResult}
           projection={uploadProjection}
           error={uploadError}
