@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Contract Revision: 2026-09-20 A AUTHORIZED SCOPE REVISION — formal classification library-prefix alignment and direct Files Upload/Download removal
+Contract Revision: 2026-09-20 A AUTHORIZED SCOPE REVISION — destination parity, direct Upload/Download removal and Copy/Move control-plane bounds
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -51,6 +51,27 @@ OrganizerExecutor capabilities used by the remaining journeys.
 The previous Slice 37 Closure Packet recorded the then-delivered Upload/Download surfaces and
 remains historical evidence. This current A-owned revision supersedes those surfaces for the
 reactivated implementation boundary; it does not delete or rewrite the historical record.
+
+## Current A-owned Scope Clarification — Copy/Move Bounds
+
+On 2026-09-20, A clarified the existing bounded Copy/Move contract after production evidence showed
+that the implementation treated `20 GiB` of source media content as an admission limit. Media
+content byte size does not materially determine the in-memory manifest size and must not by itself
+reject a Copy or Move.
+
+For Copy/Move, bounded scope means:
+
+- bounded top-level selection count;
+- bounded recursively enumerated entry count and directory depth;
+- bounded safe relative paths and bounded manifest/checkpoint/operator projections;
+- metadata-only Impact/admission that does not read media bytes;
+- the existing one-Task, per-item execution, fencing, conflict and recovery behavior.
+
+The aggregate media byte count remains useful impact/progress information, but it is not a
+Copy/Move admission ceiling. This clarification does not authorize multi-batch orchestration,
+parallel child Tasks, a native-directory-Move bypass, a new Storage capability, an implicit
+fallback or automatic replay. Delete and bounded text Edit retain their own existing content/scope
+limits.
 
 ## Scope decision
 
@@ -134,7 +155,7 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 | RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/status/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy. |
 | RO-4 | **ResourceLibrary drawer and activation.** | The three-step drawer matches the reference; final `保存` submits one complete candidate and the backend validates and atomically activates it, preserving the previous Active on every failure. |
 | RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex supplies only bounded display feedback and post-mutation reconciliation; it never supplies source/path/execution authority. |
-| RO-6 | **Bounded common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete and supported bounded text Edit for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. Direct browser Upload and Download are outside the current product surface. |
+| RO-6 | **Bounded common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete and supported bounded text Edit for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. Copy/Move are bounded by selection, entry/depth/path and control-plane evidence, not by aggregate source media bytes. Direct browser Upload and Download are outside the current product surface. |
 | RO-7 | **Low-friction direct-operation safety.** | Direct file actions do not run the Organize recognition/planning pipeline or require organize execution-token ceremony. Backend RBAC, explicit mutation intent, Storage capability/confinement, stale/conflict checks, audit, no silent overwrite/delete and `OrganizerExecutor`-only mutation remain mandatory. |
 | RO-8 | **Organize workflow continuity.** | Files-originated Preview remains ResourceLibrary-scoped and Storage-relative, derives SourceIdentity from live Storage, continues through existing Preview/intent/OrganizerExecutor authority and synchronizes each terminal result independently to FileIndex. Formal destination composition uses the same `library/path` prefix semantics as the CLI. |
 | RO-8C | **Formal classification path parity correction.** | For a classified rule with `library = "Movies"` and `path = ["其他电影"]`, every formal Plan, Preview, precheck, execution and result projection composes `Movies/其他电影/...`; the configured `mediaLibraryId` still resolves the actual destination MediaLibrary and Storage root. |
@@ -223,6 +244,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - Copy and Move accept one item or a bounded selection of files/directories plus an explicitly
   selected destination inside an enabled Active ResourceLibrary root. Source and destination paths
   are resolved by the backend; the browser never supplies host paths or credentials.
+- Copy/Move Impact may enumerate bounded metadata and calculate aggregate media bytes for display,
+  but aggregate source content size is not an admission limit. Manifest/checkpoint/projection memory
+  remains bounded through top-level selection, entry count, directory depth, safe path length and
+  bounded output rules.
 - Same-Storage operations use the provider's advertised native capability. The system never silently
   substitutes Copy for Move, Move for Copy, or another organize policy.
 - Cross-Storage Copy is allowed only through an explicitly advertised backend transfer path.
@@ -310,8 +335,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
   client projections are absent while required Storage/provider primitives remain available.
 - Cross-Storage tests prove Copy verification precedes Move source deletion, a failed verification
   preserves the source, partial outcomes are durable and no operation silently falls back.
-- Bounded batch/recursive tests prove independent per-item state and that item/depth/size limits stop
-  unbounded work before destructive effects.
+- Bounded Copy/Move tests prove independent per-item state and that selection count, entry count,
+  directory depth, path and control-plane evidence limits stop unbounded work before destructive
+  effects; aggregate source media bytes are display evidence, not admission authority. Delete and
+  text Edit retain their applicable content/scope size limits.
 - Tests prove read-only Files interactions remain zero-side-effect and do not create Tasks, call
   Providers or invoke any mutation path.
 - Tests prove ResourceLibrary Save rejects invalid/conflicting candidates and preserves prior Active.
@@ -360,6 +387,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
       another path/version and never automatically replay an uncertain result.
 - [x] Same- and cross-Storage Copy/Move expose capability and compound-operation truth; verification
       failure preserves the source and partial results remain independently recoverable.
+- [ ] Copy/Move no longer rejects a file or bounded directory solely because aggregate source media
+      bytes exceed 20 GiB; Impact remains metadata-only and manifest/checkpoint/projection state
+      remains bounded by selection, entry/depth/path and output limits.
 - [x] `+ 添加资源库` saves, validates and atomically activates a complete candidate; any failure keeps
       the previous Active.
 - [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
@@ -384,8 +414,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - shared-shell route/deep-link/auth/401/403/responsive smoke across every V2 product area;
 - Files browse/search/navigation/selection/pagination/drawer interaction evidence;
 - Create Folder/Text File, Rename/Copy/Move/Delete/Edit success and failure evidence against
-  temporary Storage, including conflict, stale source, transfer limits, partial outcome, capability
-  denial, confinement, audit and uncertain-effect non-replay;
+  temporary Storage, including conflict, stale source, control-plane transfer limits, large media
+  byte totals, partial outcome, capability denial, confinement, audit and uncertain-effect
+  non-replay;
 - Direct Upload/Download removal evidence: no Files controls, client calls, HTTP routes, application
   services or dedicated projections/tests remain, while Storage `Read`/`Write`, provider transfer
   primitives and Copy/Move behavior remain available;
