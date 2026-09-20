@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.5
 Parent Slice: 37
-Status: FIX REQUIRED
+Status: PASS
 Task Base: eeac5849b5489f91c26601b9878da5303879377d
 Difficulty: High
 Test Level: T4
@@ -987,35 +987,6 @@ Status: READY FOR B REVIEW
 Head SHA: e29cffb679bb0fbbf28fff6215b64497bcfb4b55
 ```
 
-## B Review Result
-
-```text
-Reviewed: eeac5849b5489f91c26601b9878da5303879377d..e29cffb679bb0fbbf28fff6215b64497bcfb4b55
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
-```
-
-- **P1 — Two legal Upload Sessions contending for the same destination expose a generic 500 after
-  the second session has already durably failed its item.** A deterministic authenticated WSGI
-  probe used two independently admitted Upload Sessions for the same initially absent
-  ResourceLibrary-relative path and blocked the first inside the real OrganizerExecutor-backed
-  write. The second item request returned HTTP 500 `internal_error`, while its durable TaskItem was
-  already `FAILED` with `source is locked by another active task`; the first request then completed
-  successfully and only one Storage mutation occurred. This is reachable from the current Files
-  Upload journey (including two tabs/clients), makes the visible response disagree with durable
-  per-item state, and provides no actionable recovery. It violates Slice RO-6 and RO-9, the Upload
-  transfer-progress Required Surface, and this Task's independent outcome, stable bounded error,
-  conflict, and safe-recovery Acceptance Criteria. `TaskLockError` is currently caught by the
-  generic `RuntimeError` branch in `execute_item` and re-raised while the Upload Task itself remains
-  RUNNING. Handle that proven path-lock contention explicitly and return a bounded per-item outcome
-  that matches the already-persisted FAILED row, preserves siblings, performs no second mutation,
-  and tells the operator to wait for/refresh the in-flight destination before safely retrying the
-  failed item or choosing another conflict action. Add a deterministic two-Session same-target WSGI
-  regression proving response/durable-state agreement, one mutation only, first-session completion,
-  and continued sibling/finalization behavior. Keep the existing one-lock Session design; do not add
-  persistence, fields, protocol changes, chunk/resume support, or another state machine.
-
 ## Developer Completion Report (Correction Round 5)
 
 ### Changed Files
@@ -1133,3 +1104,18 @@ Next: SAME TASK FIX LOOP
 Status: READY FOR B REVIEW
 Head SHA: c397d14ef0d22e74ce8903de9b7a9bf71e9e3a27
 ```
+
+## B Review Result
+
+```text
+Reviewed: eeac5849b5489f91c26601b9878da5303879377d..c397d14ef0d22e74ce8903de9b7a9bf71e9e3a27
+Decision: PASS
+Slice Required Outcomes all satisfied: NO
+Next: NEXT TASK
+```
+
+After five correction rounds, the global complexity review found that the implementation remains
+proportionate to this high-risk Upload/Download boundary: one in-process operation lock per live
+Upload Session, the existing durable Task/path-lock boundary and explicit bounded error mapping.
+The accepted correction adds no lock, persistence model, protocol or state machine. The remaining
+Slice gap is the independent RO-8 Organize/FileIndex journey, not another Upload correction.
