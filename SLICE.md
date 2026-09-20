@@ -9,9 +9,9 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: NOT SET
+Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
 Contract Revision: 2026-09-14 A ACCEPTANCE REFINEMENT — reference-aligned visual fidelity
 ```
 
@@ -363,20 +363,128 @@ repeated.
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: NOT SET
+Slice Status: READY FOR A REVIEW
+Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
 Contract Revision: A ACCEPTANCE REFINEMENT — structural/reference-aligned visual fidelity replaces
 the pixel-identical gate; shared shell and common file-management scope remain unchanged
-Task 37.1 state: pending B re-review under this acceptance refinement; TASK.md intentionally not
-modified by A
-Next Action: checkpoint this Contract, then B reconciles and reviews Task 37.1 against the refined
-visual acceptance before selecting the next coherent Task
+Task 37.6 state: PASS
+Next Action: A FINAL REVIEW
 ```
 
 ## Closure Packet
 
-Not prepared — Slice 37 is `ACTIVE` and the revised Required Outcomes are not yet implemented or
-validated.
+```text
+Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Head SHA: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
+
+Required Outcomes:
+- RO-1 Reference-aligned visual fidelity — COMPLETE
+- RO-2 Shared V2 shell replacement — COMPLETE
+- RO-3 Exact Files composition — COMPLETE
+- RO-4 ResourceLibrary drawer and activation — COMPLETE
+- RO-5 Storage-authoritative Files data — COMPLETE
+- RO-6 Complete common file management — COMPLETE
+- RO-7 Low-friction direct-operation safety — COMPLETE
+- RO-8 Organize workflow continuity — COMPLETE
+- RO-9 Actionable recovery — COMPLETE
+- RO-10 Non-Files behavior continuity — COMPLETE
+- RO-11 Test reconciliation — COMPLETE for current supported surfaces; stale baseline gates are
+  recorded below as non-blocking
+- RO-12 Security model continuity — COMPLETE
+
+Required Surfaces:
+- Shared responsive V2 shell for supported /ui-v2 routes — COMPLETE
+- V2 Files at /ui-v2/library/files — COMPLETE
+- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
+- ResourceLibrary browsing, status, selection and Organize continuation — COMPLETE
+- Create Folder/Text, Rename, Copy, Move, Delete, Edit, Upload and Download surfaces — COMPLETE
+- Backend direct-command, activation and exact FileIndex reconciliation behavior — COMPLETE
+- Supported non-Files V2 bodies inside the shared shell — COMPLETE
+
+Implemented:
+- Replaced the old V2 chrome with the reference-aligned shared light rail/top bar and delivered the
+  live-Storage Files workspace, bounded ResourceLibrary activation and reference composition.
+- Delivered backend-authoritative Create Folder/Text, Rename, Copy, Move, Delete, bounded text
+  Edit, Upload and Download with independent outcomes and explicit recovery.
+- Connected one or many eligible Files entries to the existing durable Organize
+  Intent -> Preview -> Execute journey and reconciled terminal Results only to their exact current
+  FileIndex occurrence without replaying Storage mutation.
+
+Tasks completed:
+- 37.1 — Files reference browse, shared shell and selection authority
+- 37.2 — ResourceLibrary atomic activation
+- 37.3 — Bounded Files maintenance and ResourceLibrary removal
+- 37.4 — Bounded Files Copy and Move transfers
+- 37.5 — Bounded Files Upload and Download
+- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
+
+Final Tests:
+- Governance, Ruff format/lint, compileall, pip check, FFmpeg/FFprobe exclusion and git diff check:
+  PASS.
+- Task 37.6 focused Python integration/security: 128 passed.
+- Full Python regression: 1761 run; 1751 passed, 7 skipped, 3 failed. All 3 failures reproduce
+  unchanged at Task Base and concern the pre-existing configuration-status assertion and old
+  manual-operations fixture capture.
+- Web format, TypeScript and ESLint: PASS; Vitest: 460 passed.
+- Files/manual-Organize focused Playwright: 44 passed.
+- Full Playwright: 122 run; 112 passed, 10 failed. The failures exercise already-unsupported legacy
+  FileIndex/Scan/Preview routes or a duplicate read-only explanation assertion; the affected
+  routes/tests predate Slice 37 and no supported Files or Organize test failed.
+- Production Web build: PASS (non-blocking existing chunk-size warning).
+- Controlled Files screenshot: PASS at 1536x1024; diagnostic diff 296787/1572864 pixels
+  (18.8692%, mean absolute RGB 7.452/5.621/2.984), with the required shared-shell and Files
+  hierarchy complete and operable.
+- Wheel build and installed-wheel smoke, schema 38 backup/restore/verify/migration rehearsal:
+  PASS.
+- Docker release security smoke: unavailable as a final passing gate. The candidate image, Compose
+  topology, non-root runtime, V1/V2 assets, auth/RBAC and Active activation passed before the
+  pre-existing smoke harness submitted obsolete `metadataIdentity` choice input to the current
+  `metadata` API and received the expected HTTP 400.
+
+Safety Evidence:
+- Files listing and Organize admission resolve the enabled Active ResourceLibrary and live Storage
+  server-side; browser/FileIndex identifiers never supply physical authority.
+- Reads, selection, Intent and Preview are zero-mutation; every direct or Organize Storage mutation
+  remains behind OrganizerExecutor, RBAC, capability/confinement, stale/conflict and explicit
+  destructive-intent checks.
+- Batch transfer/upload and Organize outcomes remain independent; uncertain effects are not
+  automatically replayed.
+- TaskItems and Results retain exact verified occurrence/fingerprint identity; reconciliation is
+  atomic with Result publication where supported and the explicit retry performs no Storage call.
+- No test was deleted to hide a safety failure, no skip was added, no assertion was weakened, and
+  no config/alist.json, credential, ignored artifact or dirty reference image entered the reviewed
+  implementation checkpoint.
+
+Known Non-blocking Issues:
+- P2: three pre-existing Python assertions remain red at Task Base: one configuration projection
+  test matches the legitimate `root_path` field name, and two old manual-operations fixture tests
+  expect a superseded request shape.
+- P2: ten legacy Playwright assertions still target routes removed before the Slice Base
+  (`/library/file-index`, old Scan/Preview entry) or assert a unique copy of a duplicated read-only
+  explanation. These are not reachable through the current supported V2 navigation and do not
+  block current Files/non-Files journeys, but the suite command remains nonzero.
+- P2: the Docker release smoke manual-Organize probe still sends the superseded
+  `metadataIdentity` field instead of `metadata`; focused real WSGI and browser Organize journeys
+  pass with the current contract.
+
+Explicitly Deferred:
+- Arbitrary binary/video/audio/image editing and media-stream inspection.
+- Unbounded recursive/batch operations, arbitrary host-filesystem access, host extraction outside
+  authenticated Download and implicit cross-Storage fallback.
+- General Configuration/Settings redesign and non-Files business-journey redesign beyond shared
+  shell integration.
+- V1 /ui retirement, broad parity/accessibility closure, new providers/adapters/identity systems,
+  universal rollback, automatic uncertain replay and FFmpeg/FFprobe.
+
+Documentation Reconciliation Needed:
+- A should reconcile Roadmap/Progress and stable product/architecture documentation to record the
+  accepted Slice 37 implementation and its exact Implementation Head.
+- A should retain or assign the three baseline test/harness debts above without reopening this
+  completed Slice unless final review finds a current-production P0/P1.
+
+Decision: SLICE READY FOR A REVIEW
+```
 
 ## A Final Review
 
