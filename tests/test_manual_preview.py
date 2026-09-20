@@ -439,7 +439,7 @@ class ManualPreviewTests(unittest.TestCase):
             self.assertEqual([], value.target.mutations)
 
         with self.fixture() as value, SQLiteTaskRepository(value.database) as repository:
-            target = Path(value.target_root, "Movies/Anime/One (2001)")
+            target = Path(value.target_root, "Movies/Movies/Anime/One (2001)")
             target.mkdir(parents=True)
             (target / "One (2001).mkv").write_bytes(b"existing-target")
             _, _, previews = self.services(value, repository)

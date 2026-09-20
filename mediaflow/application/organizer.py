@@ -127,6 +127,7 @@ class OrganizePlanner:
             naming.directory,
             naming.directory_segments,
             naming.filename,
+            classification_library_prefix=classification.library,
         )
         if not composition.safe:
             conflict = Conflict(
@@ -251,7 +252,13 @@ class OrganizePlanner:
             source_storage_id=source_storage_id,
             target_storage_id=media_library.storage_id,
             source=source,
-            target=target,
+            # A "." MediaLibrary root contributes no prefix; keep the CLI's
+            # no-root plan target exactly the root-relative destination so the
+            # local strategy CLI and the formal composition agree byte for
+            # byte on the relative target.
+            target=(
+                target[2:] if target.startswith("./") and media_library.root_path == "." else target
+            ),
             recognition_type_id=recognition.recognition_type.type_id,
             naming_policy_id=type_policy.naming_policy_id,
             classification_policy_id=type_policy.classification_policy_id,
@@ -278,6 +285,7 @@ class OrganizePlanner:
                     naming.directory,
                     naming.directory_segments,
                     naming.filename,
+                    classification_library_prefix=classification.library,
                 ).relative_destination
                 if target
                 else ""
@@ -2907,6 +2915,9 @@ def _resolved_execution_target(plan: OrganizePlan) -> str | None:
     root = safe_destination_root(plan.media_library_root)
     if root is None or unsafe_relative_destination_path(plan.relative_destination):
         return ""
+    # A "." root contributes no prefix, matching compose_destination.
+    if root == ".":
+        return plan.relative_destination
     return posixpath.join(root, plan.relative_destination)
 
 

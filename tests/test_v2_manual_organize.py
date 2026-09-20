@@ -287,6 +287,10 @@ class _JourneyFixtureMixin:
                 repository,
                 catalog,
                 configuration_resolver=manual_snapshot,
+                runtime_resolver=lambda snapshot_id, digest: configuration,
+                storage_factory=lambda runtime, ids: runtime.create_storages(
+                    external={"source": source, "target": target}, storage_ids=ids
+                ),
             )
             previews = ManualOrganizePreviewService(
                 repository,
@@ -1626,6 +1630,10 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
                 repository,
                 catalog,
                 configuration_resolver=manual_snapshot,
+                runtime_resolver=lambda snapshot_id, digest: configuration,
+                storage_factory=lambda runtime, ids: runtime.create_storages(
+                    external={"source": source, "target": target}, storage_ids=ids
+                ),
             )
             previews = ManualOrganizePreviewService(
                 repository,
@@ -1954,6 +1962,168 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             after = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
             self.assertEqual("unknown", after.processing_disposition.value)
             self.assertIsNone(after.processing_result_id)
+
+    def save_choice(self, value, intent, item, body, *, token: str = OPERATOR_TOKEN):
+        return self.request(
+            value,
+            f"/api/v1/operations/organize/intents/{intent['intentId']}"
+            f"/items/{item['itemId']}/choice",
+            "POST",
+            {"expectedVersion": intent["version"], **body},
+            token=token,
+        )
+
+    def test_files_source_saves_choice_without_a_file_index_row(self) -> None:
+        """A live Files selection saves a valid Choice with no FileIndex row.
+
+        This is the recorded P1: the Files admission derives its source
+        identity from live Storage, so Save Choice must validate against that
+        same pinned Storage authority instead of demanding a FileIndex row.
+        """
+
+        with self.journey(names=("Movies/One.2001.mkv",)) as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            # The admitted intent really carries the live-Storage authority,
+            # not a FileIndex-derived identity.
+            stored = value.repository.get_manual_intent(intent["intentId"])
+            self.assertTrue(stored.items[0].source.is_storage_source)
+            # Remove every FileIndex row: the Files selection is still the
+            # current live Storage source and must keep its authority.
+            value.index.close()
+            value.index = InMemoryFileIndexRepository()
+
+            status, updated = self.save_choice(
+                value,
+                intent,
+                item,
+                {
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, updated)
+            self.assertEqual("C", updated["items"][0]["choice"]["recognitionTypeId"])
+            # Save Choice is zero Storage mutation.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_files_source_choice_rejections_preserve_durable_state(self) -> None:
+        """Missing and replaced Files sources reject with no durable change."""
+
+        with self.journey(names=("Movies/One.2001.mkv",)) as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            stored_before = value.repository.get_manual_intent(intent["intentId"])
+            version_before = (stored_before.version, stored_before.items[0].version)
+
+            # A source that disappeared before Save Choice is source_missing.
+            (value.source_root / "Movies" / "One.2001.mkv").unlink()
+            status, document = self.save_choice(value, intent, item, {"recognitionTypeId": "C"})
+            self.assertEqual(404, status, document)
+            self.assertEqual("source_missing", document["error"]["code"])
+            self.assertEqual("none", document["error"]["details"]["sideEffects"])
+            after = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual(version_before, (after.version, after.items[0].version))
+            self.assertEqual("open", after.status.value)
+
+            # A replaced source (same path, different content) is source_stale.
+            (value.source_root / "Movies" / "One.2001.mkv").write_bytes(b"replacement" * 40)
+            status, document = self.save_choice(value, intent, item, {"recognitionTypeId": "C"})
+            self.assertEqual(409, status, document)
+            self.assertEqual("source_stale", document["error"]["code"])
+            after = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual(version_before, (after.version, after.items[0].version))
+            self.assertEqual("open", after.status.value)
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            # The rejection never leaks internal identity implementation detail.
+            self.assertNotIn("fingerprint", json.dumps(document))
+            self.assertNotIn("occurrenceId", json.dumps(document))
+
+    def test_file_index_intent_keeps_its_scoped_file_index_validation(self) -> None:
+        """The legacy FileIndex-originated path keeps its existing behavior."""
+
+        with self.journey(names=("Movies/One.2001.mkv",)) as value:
+            record = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
+            status, intent = self.request(
+                value,
+                "/api/v1/operations/organize/intents",
+                "POST",
+                {
+                    "scopeKind": "file",
+                    "fileId": record.file_id,
+                    "resourceLibraryId": "library",
+                },
+            )
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            stored = value.repository.get_manual_intent(intent["intentId"])
+            self.assertFalse(stored.items[0].source.is_storage_source)
+            version_before = (stored.version, stored.items[0].version)
+
+            # The FileIndex-originated path still requires its scoped FileIndex
+            # occurrence: with every row gone it fails closed as source_missing.
+            empty_index = InMemoryFileIndexRepository()
+            value.index.close()
+            value.index = empty_index
+            value.catalog._repository = empty_index
+            status, document = self.save_choice(value, intent, item, {"recognitionTypeId": "C"})
+            self.assertEqual(404, status, document)
+            self.assertEqual("source_missing", document["error"]["code"])
+            after = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual(version_before, (after.version, after.items[0].version))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_files_source_choice_is_optimistic_and_keeps_preview_invalidation(self) -> None:
+        """Optimistic versions and prior-Preview invalidation stay unchanged."""
+
+        with self.journey(names=("Movies/One.2001.mkv",)) as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": intent["version"]},
+            )
+            self.assertEqual(201, status, preview)
+            self.assertTrue(preview["current"])
+
+            # A stale expected version is refused without a durable change.
+            stored_before = value.repository.get_manual_intent(intent["intentId"])
+            status, document = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                "POST",
+                {"expectedVersion": intent["version"] + 5, "recognitionTypeId": "C"},
+            )
+            self.assertEqual(409, status, document)
+            after = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual(
+                (stored_before.version, stored_before.items[0].version),
+                (after.version, after.items[0].version),
+            )
+
+            # A valid Files choice edit still invalidates the prior Preview.
+            status, updated = self.save_choice(value, intent, item, {"recognitionTypeId": "C"})
+            self.assertEqual(200, status, updated)
+            self.assertEqual("C", updated["items"][0]["choice"]["recognitionTypeId"])
+            status, refreshed = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}",
+            )
+            self.assertEqual(200, status, refreshed)
+            self.assertFalse(refreshed["current"])
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
 
 
 if __name__ == "__main__":

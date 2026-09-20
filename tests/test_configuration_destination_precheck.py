@@ -137,19 +137,24 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertEqual(result["mediaLibraryRootPath"], "Movies")
                 self.assertEqual(
                     result["relativeDestination"],
-                    "Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
+                    "Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
                 )
                 self.assertEqual(
                     result["destinationPath"],
-                    "Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
+                    "Movies/Movies/Action/The Matrix (1999) [tmdbid-synthetic]/"
+                    "The Matrix (1999).mkv",
                 )
                 self.assertTrue(result["destinationPath"].startswith("Movies/"))
                 self.assertTrue(result["destinationRootExists"])
                 self.assertTrue(result["destinationRootIsDirectory"])
-                self.assertEqual(result["deepestExistingAncestor"], "Movies/Action")
+                self.assertEqual(result["deepestExistingAncestor"], "Movies")
                 self.assertEqual(
                     result["directoriesToCreate"],
-                    ["Movies/Action/The Matrix (1999) [tmdbid-synthetic]"],
+                    [
+                        "Movies/Movies",
+                        "Movies/Movies/Action",
+                        "Movies/Movies/Action/The Matrix (1999) [tmdbid-synthetic]",
+                    ],
                 )
                 self.assertFalse(result["targetExists"])
                 self.assertEqual(result["conflictProjection"]["projectedOutcome"], "ready")
@@ -189,7 +194,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             target_root = root / "target-private"
             (target_root / "Movies").mkdir(parents=True)
             (root / "source-private").mkdir()
-            relative = Path("Movies/Action/The Matrix (1999) [tmdbid-synthetic]")
+            relative = Path("Movies/Movies/Action/The Matrix (1999) [tmdbid-synthetic]")
             filename = "The Matrix (1999).mkv"
             (target_root / relative).mkdir(parents=True)
             (target_root / relative / filename).write_bytes(b"existing")
@@ -234,6 +239,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             (target_root / "Movies").mkdir(parents=True)
             existing = (
                 target_root
+                / "Movies"
                 / "Movies"
                 / "Action"
                 / "The Matrix (1999) [tmdbid-synthetic]"
@@ -307,6 +313,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             severe = (
                 target_root
                 / "Movies"
+                / "Movies"
                 / "Anime"
                 / "Your Name (2016) [tmdbid-synthetic]"
                 / "Your Name (2016).mkv"
@@ -378,6 +385,7 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
             (target_root / "Movies").mkdir(parents=True)
             severe = (
                 target_root
+                / "Movies"
                 / "Movies"
                 / "Anime"
                 / "Your Name (2016) [tmdbid-synthetic]"
@@ -528,8 +536,12 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertIn("ClassificationPolicy", result["items"][1]["message"])
                 self.assertIsNone(result["items"][0]["failureCategory"])
                 self.assertIsNone(result["items"][2]["failureCategory"])
-                self.assertTrue(result["items"][0]["destinationPath"].startswith("Movies/Action/"))
-                self.assertTrue(result["items"][2]["destinationPath"].startswith("Movies/Anime/"))
+                self.assertTrue(
+                    result["items"][0]["destinationPath"].startswith("Movies/Movies/Action/")
+                )
+                self.assertTrue(
+                    result["items"][2]["destinationPath"].startswith("Movies/Movies/Anime/")
+                )
                 self.assertEqual(result["items"][0]["projectedOutcome"], "ready")
                 self.assertEqual(result["items"][2]["projectedOutcome"], "ready")
             finally:
@@ -1124,8 +1136,9 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                     self.assertEqual(
                         evidence.result["directoriesToCreate"],
                         [
-                            "Movies/Action",
-                            "Movies/Action/The Matrix (1999) [tmdbid-synthetic]",
+                            "Movies/Movies",
+                            "Movies/Movies/Action",
+                            "Movies/Movies/Action/The Matrix (1999) [tmdbid-synthetic]",
                         ],
                     )
                     self.assertFalse(evidence.result["targetExists"])

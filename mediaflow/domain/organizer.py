@@ -36,9 +36,17 @@ class DestinationComposition:
 
 
 def safe_destination_root(value: str) -> str | None:
-    """Normalize a MediaLibrary root; it is the only destination input allowed absolute."""
+    """Normalize a MediaLibrary root; it is the only destination input allowed absolute.
+
+    The single-segment current-directory marker ``.`` is accepted and
+    contributes no path prefix: ``posixpath.join(".", relative)`` yields the
+    unchanged relative destination.  It lets a caller with no configured root
+    compose exactly the root-relative destination.
+    """
     if not value or "\\" in value or "\x00" in value:
         return None
+    if value == ".":
+        return "."
     if any(part in {".", ".."} for part in value.split("/")):
         return None
     absolute = value.startswith("/")
@@ -71,11 +79,16 @@ def compose_destination(
     naming_directory: str,
     naming_directory_segments: tuple[str, ...],
     naming_filename: str,
+    classification_library_prefix: str | None = None,
 ) -> DestinationComposition:
     root = safe_destination_root(media_library_root)
     unsafe: str | None = None
     if root is None:
         unsafe = "mediaLibrary.rootPath"
+    elif classification_library_prefix is not None and unsafe_relative_destination_path(
+        classification_library_prefix
+    ):
+        unsafe = "classification.library"
     elif unsafe_relative_destination_path(classification_relative_path):
         unsafe = "classification.relativePath"
     elif unsafe_relative_destination_path(naming_directory):
@@ -90,8 +103,14 @@ def compose_destination(
     if unsafe is not None:
         return DestinationComposition("", "", "", unsafe)
     assert root is not None
+    prefix_segments = (
+        (classification_library_prefix,) if classification_library_prefix is not None else ()
+    )
     relative = posixpath.join(
-        classification_relative_path, *naming_directory_segments, naming_filename
+        *prefix_segments,
+        classification_relative_path,
+        *naming_directory_segments,
+        naming_filename,
     )
     return DestinationComposition(root, relative, posixpath.join(root, relative))
 

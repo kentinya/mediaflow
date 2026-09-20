@@ -2410,10 +2410,10 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                 "Later Active Only"
             ]
             first_destination = (
-                "Movies/Anime/Example Movie (2024) [tmdbid-4242]/Example Movie (2024).mkv"
+                "Movies/Movies/Anime/Example Movie (2024) [tmdbid-4242]/Example Movie (2024).mkv"
             )
             second_destination = (
-                "Movies/Later Active Only/Example Movie (2024) [tmdbid-4242]/"
+                "Movies/Movies/Later Active Only/Example Movie (2024) [tmdbid-4242]/"
                 "Example Movie (2024).mkv"
             )
             config = root / "bootstrap.json"

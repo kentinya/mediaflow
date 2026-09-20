@@ -4,6 +4,7 @@ from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, datetime
 from uuid import uuid4
 
+from mediaflow.application.manual_source_validation import ManualSourceValidator
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.manual_organize import (
     MAX_MANUAL_INTENT_ITEMS,
@@ -45,6 +46,9 @@ class ManualOrganizeIntentService:
         configuration: object | None = None,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
         max_items: int = MAX_MANUAL_INTENT_ITEMS,
+        source_validator: object | None = None,
+        runtime_resolver: Callable[[str, str], object] | None = None,
+        storage_factory: Callable[[object, set[str]], Mapping[str, object]] | None = None,
     ) -> None:
         if isinstance(max_items, bool) or not 1 <= max_items <= MAX_MANUAL_INTENT_ITEMS:
             raise ValueError(f"manual intent limit must be between 1 and {MAX_MANUAL_INTENT_ITEMS}")
@@ -55,6 +59,9 @@ class ManualOrganizeIntentService:
         self._configuration = configuration
         self._clock = clock
         self._max_items = max_items
+        self._runtime_resolver = runtime_resolver
+        self._storage_factory = storage_factory
+        self._source_validator = source_validator or self._default_source_validator()
 
     @property
     def repository(self):
@@ -448,8 +455,7 @@ class ManualOrganizeIntentService:
                     "manual intent item version is stale; no choice was changed",
                     intent=intent,
                 )
-        record = self._resolve_file(item.source.file_id)
-        self._assert_source_unchanged(item.source, record)
+        record = self._resolve_choice_source(item, intent)
         if isinstance(choice, dict):
             normalized = self._choice_from_patch(item.choice, choice)
         elif isinstance(choice, ManualChoice):
@@ -599,6 +605,81 @@ class ManualOrganizeIntentService:
     def _expected_version(value: int, name: str = "expected version") -> None:
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ManualIntentError(f"{name} must be a positive integer", code="malformed_version")
+
+    def _resolve_choice_source(self, item, intent):
+        """Resolve one item's current source authority for a choice edit.
+
+        The two intent origins keep deliberately different authorities:
+
+        * a FileIndex-originated item is re-resolved against its current scoped
+          FileIndex occurrence, exactly as before; and
+        * a Files-originated item (created from the pinned Active
+          ResourceLibrary and live Storage) is re-observed against that live
+          Storage and deliberately needs no matching FileIndex row.
+
+        Both paths are zero-mutation and preserve the previous intent/item
+        versions on every rejection.
+        """
+
+        source = item.source
+        if not isinstance(source, ManualSourceIdentity) or not source.is_storage_source:
+            record = self._resolve_file(source.file_id)
+            self._assert_source_unchanged(source, record)
+            return record
+        return self._validate_storage_source(source)
+
+    def _validate_storage_source(self, source: ManualSourceIdentity) -> ManualSourceIdentity:
+        if self._source_validator is None or self._runtime_resolver is None:
+            raise ManualIntentUnavailable(
+                "the live Storage source authority required by this intent is unavailable",
+                details={"resourceLibraryId": source.resource_library_id},
+            )
+        validated = self._source_validator.validate(
+            source,
+            snapshot_id=self._active_snapshot().snapshot_id,
+            snapshot_digest=self._active_snapshot().digest,
+        )
+        return validated.source
+
+    def _default_source_validator(self):
+        """Build the live-Storage validator when this service owns the authority."""
+
+        if self._storage_factory is None:
+            return None
+        resolver = self._runtime_resolver or self._managed_runtime_resolver
+        if resolver is None:
+            return None
+        return ManualSourceValidator(
+            runtime_resolver=resolver,
+            storage_factory=self._storage_factory,
+        )
+
+    def _managed_runtime_resolver(self, snapshot_id: str, snapshot_digest: str):
+        """Reconstruct one pinned managed runtime snapshot without adapters."""
+
+        if self._configuration_service is None:
+            raise ManualIntentUnavailable(
+                "manual intent live Storage authority requires a managed Active configuration",
+                details={"snapshotId": snapshot_id},
+            )
+        self._configuration_service.validate_runtime_snapshot(snapshot_id, snapshot_digest)
+        revision = self._configuration_service.require(snapshot_id)
+        self._configuration_service.verify_integrity(revision)
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        database_path = self._configuration_service.bootstrap_database_path or str(
+            getattr(self._configuration_service.repository, "database_path", "")
+        )
+        return with_managed_snapshot(
+            load_managed_runtime_configuration(
+                revision.document, bootstrap_database_path=database_path
+            ),
+            snapshot_id=snapshot_id,
+            digest=snapshot_digest,
+        )
 
     def _resolve_file(self, file_id: str):
         repository = getattr(self._file_catalog, "_repository", None)

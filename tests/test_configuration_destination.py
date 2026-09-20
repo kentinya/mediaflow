@@ -180,11 +180,12 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                 self.assertEqual(result["classificationRuleId"], "action-movie")
                 self.assertEqual(
                     result["rootRelativeDestination"],
-                    "Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
+                    "Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
                 )
                 self.assertEqual(
                     result["composedStorageRelativeDestination"],
-                    "Movies/Action/The Matrix (1999) [tmdbid-synthetic]/The Matrix (1999).mkv",
+                    "Movies/Movies/Action/The Matrix (1999) [tmdbid-synthetic]/"
+                    "The Matrix (1999).mkv",
                 )
                 recognition_type = RecognitionType("C", "C")
                 plan = OrganizePlanner().plan(
@@ -212,6 +213,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         result["classificationRelativePath"],
                         "A",
                         "C",
+                        library=result["classificationLibrary"],
                     ),
                 )
                 self.assertEqual(plan.target, result["composedStorageRelativeDestination"])
@@ -412,6 +414,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
 
                 unsafe_cases = (
                     ("mediaLibrary.rootPath", None, None, "../Movies"),
+                    ("classification.library", None, None, None),
                     ("classification.relativePath", "../Action", None, None),
                     ("naming.directorySegments[0]", None, ("..",), None),
                     ("naming.filename", None, None, None),
@@ -424,6 +427,9 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                         "C",
                         ClassificationStatus.CLASSIFIED,
                         "action-movie",
+                        library=contribution == "classification.library"
+                        and "../Escape"
+                        or "Movies",
                     )
                     naming_result = NamingResult(
                         (

@@ -28,18 +28,9 @@ from mediaflow.application.direct_file_commands import (
     DirectFileCommandService,
     DirectFileError,
 )
-from mediaflow.application.direct_file_downloads import (
-    DirectFileDownloadError,
-    DirectFileDownloadService,
-)
 from mediaflow.application.direct_file_transfers import (
     DirectFileTransferError,
     DirectFileTransferService,
-)
-from mediaflow.application.direct_file_uploads import (
-    DirectFileUploadError,
-    DirectFileUploadService,
-    resume_upload_session,
 )
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
@@ -120,9 +111,7 @@ from mediaflow.domain.configuration_management import (
 )
 from mediaflow.domain.direct_files import (
     MAX_DELETE_PATHS,
-    MAX_DOWNLOAD_PATHS,
     MAX_TRANSFER_PATHS,
-    MAX_UPLOAD_MANIFEST_BYTES,
     DirectFileOperation,
 )
 from mediaflow.domain.failure import failure_document
@@ -307,8 +296,6 @@ class _ApiRuntimeBinding:
     files_browser: RuntimeFilesBrowserService | None = None
     direct_files: DirectFileCommandService | None = None
     direct_transfers: DirectFileTransferService | None = None
-    direct_uploads: DirectFileUploadService | None = None
-    direct_downloads: DirectFileDownloadService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
 
@@ -400,6 +387,9 @@ class MediaFlowApi:
                 repository,
                 self._file_catalog,
                 configuration_service,
+                storage_factory=lambda runtime, ids: runtime.create_storages(
+                    external=self._storage_adapters, storage_ids=ids
+                ),
             )
         self._manual_previews = manual_preview_service
         if self._manual_previews is None and self._manual_intents is not None:
@@ -4921,127 +4911,6 @@ class MediaFlowApi:
             else:
                 raise ValueError("the Files direct command operation is not supported")
             return self._response(start_response, 200, result)
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "uploads"
-            and method == "POST"
-        ):
-            # Bounded Upload admission: the browser posts one bounded JSON
-            # manifest (destination directory, explicit conflict choice,
-            # item relative paths and declared sizes) with no payload bytes.
-            # The whole confined scope is validated with zero mutation, one
-            # durable Task is created (items PENDING) and its identity is
-            # returned immediately so the Web can poll the projection and
-            # use the cooperative lifecycle controls before, between and
-            # after the per-item payload requests.
-            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
-            if binding.direct_uploads is None:
-                return self._files_browser_unavailable(start_response)
-            self._require_empty_query(environ, "Files upload")
-            document = self._files_upload_admission(binding, parts[3], environ)
-            return self._response(start_response, 202, document)
-        if (
-            len(parts) == 9
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "uploads"
-            and parts[7] == "items"
-            and method == "POST"
-        ):
-            # One admitted Upload item's exact payload: the browser streams
-            # the declared bytes as the request body and every byte crosses
-            # OrganizerExecutor under the durable Task boundary.  Items are
-            # delivered in manifest order, each with its own independent
-            # truthful outcome, so one refused item can never poison (or
-            # conceal) a sibling's.
-            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
-            if binding.direct_uploads is None:
-                return self._files_browser_unavailable(start_response)
-            self._require_empty_query(environ, "Files upload item")
-            document = self._files_upload_item(binding, parts[3], parts[6], parts[8], environ)
-            return self._response(start_response, 200, document)
-        if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "uploads"
-            and parts[7] == "finish"
-            and method == "POST"
-        ):
-            # Finalize one streamed Upload: undelivered items keep their own
-            # truthful refused outcome, the durable Task reaches its honest
-            # terminal aggregate and the bounded result document is returned.
-            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
-            if binding.direct_uploads is None:
-                return self._files_browser_unavailable(start_response)
-            self._require_empty_query(environ, "Files upload finish")
-            self._require_empty_body(environ, "Files upload finish")
-            document = binding.direct_uploads.finish_upload(parts[6])
-            return self._response(start_response, 200, document)
-        if (
-            len(parts) == 8
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "uploads"
-            and parts[7] == "resume"
-            and method == "POST"
-        ):
-            # Resume one paused Upload with its still-live browser selection:
-            # the session above the pinned runtime binding returns to RUNNING
-            # and the Web keeps streaming the remaining items in manifest
-            # order.  A genuinely lost session is refused with the explicit
-            # interrupted/resubmit recovery — never a fabricated continuation.
-            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
-            if binding.direct_uploads is None:
-                return self._files_browser_unavailable(start_response)
-            self._require_empty_query(environ, "Files upload resume")
-            self._require_empty_body(environ, "Files upload resume")
-            document = resume_upload_session(parts[6])
-            return self._response(start_response, 200, document)
-        if (
-            len(parts) == 7
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "uploads"
-            and method == "GET"
-        ):
-            # The bounded durable projection of one admitted Upload Task.  The
-            # Web polls this read to follow streaming/running progress with the
-            # backend-advertised lifecycle actions; it never needs a raw
-            # execution token and never learns pump/claim internals.
-            self._require(principal, ApiPermission.READ)
-            if binding.direct_uploads is None:
-                return self._files_browser_unavailable(start_response)
-            self._require_empty_query(environ, "Files upload status")
-            try:
-                projection = binding.direct_uploads.upload_projection(parts[6])
-            except DirectFileUploadError as error:
-                if error.category == "not_found":
-                    raise LookupError(f"task {parts[6]!r} was not found") from None
-                raise
-            return self._response(start_response, 200, projection)
-        if (
-            len(parts) == 6
-            and parts[:3] == ["api", "v1", "resource-libraries"]
-            and parts[4] == "files"
-            and parts[5] == "download"
-            and method == "GET"
-        ):
-            # Confined zero-mutation Download: one bounded selection streams
-            # directly (single file) or as one on-the-fly archive (directory
-            # / multi-selection).  No Task is created and no Storage mutation
-            # is ever attempted; admission failures are bounded JSON errors
-            # produced before any byte of the body is committed.
-            self._require(principal, ApiPermission.READ)
-            if binding.direct_downloads is None:
-                return self._files_browser_unavailable(start_response)
-            paths = self._files_download_query(environ)
-            service = binding.direct_downloads
-            manifest = service.download_admission(resource_library_id=parts[3], paths=paths)
-            headers, body = service.stream_response(resource_library_id=parts[3], manifest=manifest)
-            return self._stream_response(start_response, 200, headers, body)
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -7564,8 +7433,6 @@ class MediaFlowApi:
         files_browser = None
         direct_files = None
         direct_transfers = None
-        direct_uploads = None
-        direct_downloads = None
         if runtime_revision is not None and runtime_configuration is not None:
             files_browser = RuntimeFilesBrowserService(
                 self._configuration_service,
@@ -7582,8 +7449,6 @@ class MediaFlowApi:
                 storage_adapters=self._storage_adapters,
             )
             direct_transfers = DirectFileTransferService(direct_files=direct_files)
-            direct_uploads = DirectFileUploadService(direct_files=direct_files)
-            direct_downloads = DirectFileDownloadService(direct_files=direct_files)
         manual_scans = self._manual_scans_override
         if (
             manual_scans is None
@@ -7674,8 +7539,6 @@ class MediaFlowApi:
             files_browser,
             direct_files,
             direct_transfers,
-            direct_uploads,
-            direct_downloads,
             manual_scans,
             runtime_settings,
         )
@@ -9077,139 +8940,6 @@ class MediaFlowApi:
             "operation": query.get("operation", [""])[0],
             "conflict_mode": query.get("conflict", [None])[0],
         }
-
-    @classmethod
-    def _files_download_query(cls, environ: dict) -> list[str]:
-        """The bounded selection of one confined zero-mutation Download.
-
-        ``path`` is the one deliberately repeatable field; a bounded number of
-        non-empty ResourceLibrary-relative paths is all the download accepts.
-        Unknown keys, blank values or an excessive selection fail closed with
-        an actionable stable error before any byte is committed.
-        """
-
-        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"path"}
-        if set(query).difference(allowed):
-            raise DirectFileDownloadError(
-                "files_download_invalid_request",
-                "invalid_request",
-                "the download query contains an unsupported field",
-                status=400,
-                next_action="request the download with only path fields",
-            )
-        paths = query.get("path", [])
-        if not paths or any(not isinstance(path, str) or path == "" for path in paths):
-            raise DirectFileDownloadError(
-                "files_download_invalid_request",
-                "invalid_request",
-                "the download query requires bounded non-empty paths",
-                status=400,
-                next_action="select one or more files or directories to download",
-            )
-        if len(paths) > MAX_DOWNLOAD_PATHS:
-            raise DirectFileDownloadError(
-                "files_download_invalid_request",
-                "invalid_request",
-                "the download selection exceeds the bounded multi-selection limit",
-                status=400,
-                next_action=f"download at most {MAX_DOWNLOAD_PATHS} items per request",
-            )
-        return list(paths)
-
-    @classmethod
-    def _files_upload_admission(cls, binding, resource_library_id: str, environ: dict) -> dict:
-        """Admit one bounded Upload as one durable Task.  Zero payload bytes.
-
-        The body is one bounded JSON manifest (the confined destination
-        directory, the explicit conflict choice, every item's relative path
-        and declared size), bounded by ``MAX_UPLOAD_MANIFEST_BYTES`` like the
-        other direct-command documents.  Admission validates the whole
-        confined scope with zero mutation, creates the durable Task (items
-        PENDING) and returns its identity so the Web can poll the projection
-        and stream the per-item payloads.
-        """
-
-        raw_length = str(environ.get("CONTENT_LENGTH", "0") or "0").strip()
-        try:
-            length = int(raw_length)
-        except ValueError as error:
-            raise ValueError("a Files upload requires a valid Content-Length") from error
-        if length < 0 or length > MAX_UPLOAD_MANIFEST_BYTES:
-            raise ValueError("the Files upload manifest exceeds the bounded size")
-        input_stream = environ.get("wsgi.input")
-        if input_stream is None:
-            raise ValueError("a Files upload requires a request body")
-        raw = input_stream.read(length)
-        try:
-            manifest = json.loads(raw.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise ValueError("the Files upload manifest is not valid JSON") from error
-        if not isinstance(manifest, dict):
-            raise ValueError("the Files upload manifest must be an object")
-        return binding.direct_uploads.upload(
-            resource_library_id=resource_library_id,
-            manifest=manifest,
-            stream=None,
-        )
-
-    @classmethod
-    def _files_upload_item(
-        cls,
-        binding,
-        resource_library_id: str,
-        task_id: str,
-        raw_index: str,
-        environ: dict,
-    ) -> dict:
-        """Stream one admitted Upload item's exact payload through the executor.
-
-        The request body is exactly the item's declared payload bytes: the
-        browser sets the Content-Length itself and the backend proves, before
-        any read and before any mutation, that the declared body length equals
-        the admitted item size — a missing, invalid, shorter or longer
-        Content-Length is refused without fabricating a complete write, so no
-        excess byte is ever silently ignored and no short body is ever
-        recorded as success.
-        """
-
-        from mediaflow.application.direct_file_uploads import (
-            _ItemPayloadStream,
-            upload_session_item_size,
-        )
-
-        if not isinstance(task_id, str) or not task_id:
-            raise ValueError("a Files upload item requires the durable Task identity")
-        try:
-            index = int(raw_index)
-        except ValueError as error:
-            raise ValueError("a Files upload item requires an integer index") from error
-        input_stream = environ.get("wsgi.input")
-        if input_stream is None:
-            raise ValueError("a Files upload item requires a payload body")
-        raw_length = str(environ.get("CONTENT_LENGTH", "") or "").strip()
-        if not raw_length:
-            raise ValueError("a Files upload item requires an explicit Content-Length")
-        try:
-            declared_length = int(raw_length)
-        except ValueError as error:
-            raise ValueError(
-                "a Files upload item requires a valid numeric Content-Length"
-            ) from error
-        if declared_length < 0:
-            raise ValueError("a Files upload item Content-Length must not be negative")
-        declared_size = upload_session_item_size(task_id, index)
-        if declared_size is not None and declared_length != declared_size:
-            raise ValueError(
-                "the upload item body length must exactly match the admitted "
-                "item size for this request"
-            )
-        stream = _ItemPayloadStream(input_stream, declared_length)
-        return binding.direct_uploads.execute_item(
-            task_id,
-            index,
-            stream,
-        )
 
     @classmethod
     def _files_direct_rename_evidence_query(cls, environ: dict) -> str:
@@ -13310,6 +13040,7 @@ class MediaFlowApi:
             404: "Not Found",
             405: "Method Not Allowed",
             409: "Conflict",
+            413: "Payload Too Large",
             422: "Unprocessable Entity",
             500: "Internal Server Error",
             503: "Service Unavailable",

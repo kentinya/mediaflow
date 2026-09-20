@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -34,12 +35,16 @@ from mediaflow.domain.configuration_management import (
     ConfigurationStrategyTestStatus,
 )
 from mediaflow.domain.direct_files import (
+    MAX_TRANSFER_BYTES,
+    MAX_TRANSFER_DEPTH,
+    MAX_TRANSFER_ENTRIES,
     TransferConflictMode,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import (
     StorageCapabilities,
     StorageEntry,
+    StorageEntryType,
     StorageError,
     StorageErrorCode,
 )
@@ -159,10 +164,6 @@ class _CountingExecutor(OrganizerExecutor):
     def execute_direct_remove_empty_directory(self, *args, **kwargs):
         self.boundaries.append("DELETE_EMPTY_DIRECTORY")
         return super().execute_direct_remove_empty_directory(*args, **kwargs)
-
-    def execute_direct_write_stream(self, *args, **kwargs):
-        self.boundaries.append("WRITE_STREAM")
-        return super().execute_direct_write_stream(*args, **kwargs)
 
 
 class TransferTestCase(unittest.TestCase):
@@ -5891,3 +5892,165 @@ class ExecutorBoundaryTests(TransferTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LargeFolderTransferTests(TransferTestCase):
+    """Copy/Move control-plane bounds and truthful 413 serialization.
+
+    Task 37.7 clarified the bounded Copy/Move contract: the recursively
+    enumerated entry count and directory depth are the control-plane bounds,
+    while aggregate source media bytes are impact/progress information and must
+    never reject a Copy or Move by themselves.  A legitimate limit breach must
+    serialize as a bounded JSON 413 instead of the recorded ``KeyError: 413``.
+    """
+
+    def test_large_media_bytes_are_admitted_and_reported_not_rejected(self) -> None:
+        """A selection larger than 20 GiB of media is admitted, not refused.
+
+        The recorded production defect was that ``MAX_TRANSFER_BYTES`` treated
+        aggregate media content as an admission ceiling even though content
+        byte size does not determine the in-memory manifest size.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            # A sparse directory whose declared content clearly exceeds the old
+            # 20 GiB aggregate-content ceiling.  Enumeration stays
+            # metadata-only: no media byte is read here.
+            bulk = root / "source" / "bulk"
+            bulk.mkdir(parents=True)
+            (root / "source" / "Movies").mkdir()
+            for index in range(3):
+                with open(bulk / f"part-{index}.mkv", "wb") as handle:
+                    handle.seek(MAX_TRANSFER_BYTES // 2)
+                    handle.write(b"\0")
+
+            status, document = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "?path=bulk&to=source&toPath=Movies&operation=copy&conflict=fail",
+                token="admin-token",
+            )
+            self.assertEqual(200, status, document)
+            # The aggregate byte count stays visible as impact information.
+            self.assertGreater(document["totalBytes"], MAX_TRANSFER_BYTES)
+            self.assertEqual(4, document["fileCount"] + document["directoryCount"])
+            self.assertEqual("none", document["sideEffects"])
+            self.assertTrue(document["retrySafe"])
+            # The admitted impact is zero-mutation: no Task exists yet.
+            self.assertEqual((), runtime.list_tasks())
+
+    def test_depth_limit_breach_is_truthful_and_mutates_nothing(self) -> None:
+        """The directory-depth control-plane bound still stops the walk."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            deep = root / "source" / "deep"
+            deep.mkdir(parents=True)
+            current = deep
+            for index in range(MAX_TRANSFER_DEPTH + 2):
+                current = current / f"level-{index}"
+            current.mkdir(parents=True)
+            (current / "leaf.mkv").write_bytes(b"media")
+            (root / "source" / "Movies").mkdir()
+
+            status, document = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "?path=deep&to=source&toPath=Movies&operation=copy&conflict=fail",
+                token="admin-token",
+            )
+            self.assertEqual(413, status, document)
+            self.assertEqual("files_transfer_depth_limit_exceeded", document["error"]["code"])
+            self.assertEqual("none", document["error"]["details"]["sideEffects"])
+            self.assertEqual((), runtime.list_tasks())
+
+    def test_large_media_directory_impact_is_admitted_without_reading_bytes(self) -> None:
+        """A large-media directory is admitted as one existing Task scope.
+
+        The provider reports a declared size far above the former aggregate
+        content ceiling, so this proves the admission decision without reading
+        or copying 20 GiB of media.  Admission stays metadata-only and
+        introduces no batch or child Task.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            bulk = root / "source" / "bulk"
+            bulk.mkdir(parents=True)
+            (root / "source" / "Movies").mkdir()
+            for index in range(2):
+                (bulk / f"part-{index}.mkv").write_bytes(b"small")
+
+            class _HugeSizeStorage(LocalStorage):
+                """A provider whose declared regular-file size is 20 GiB."""
+
+                @staticmethod
+                def _inflate(entry):
+                    if entry.entry_type is StorageEntryType.FILE:
+                        return replace(entry, size=MAX_TRANSFER_BYTES)
+                    return entry
+
+                def stat(self, path: str):
+                    return self._inflate(super().stat(path))
+
+                def list(self, path: str):
+                    return tuple(self._inflate(entry) for entry in super().list(path))
+
+            # The pinned runtime uses this adapter, so the declared size is far
+            # above the former aggregate-content ceiling while the bytes on disk
+            # stay tiny: no media content is read and nothing is copied.
+            api, active, runtime = self._activate(
+                root,
+                storage_adapters={
+                    "source-storage": _HugeSizeStorage("source-storage", root / "source")
+                },
+            )
+            transfers = self._transfers(api, active)
+
+            impact = transfers.transfer_impact(
+                resource_library_id="source",
+                paths=["bulk"],
+                destination_resource_library_id="source",
+                destination_directory="Movies",
+                operation="copy",
+            )
+            # Aggregate declared bytes far exceed the former admission ceiling
+            # and remain visible as impact information, not as a rejection.
+            self.assertGreater(impact.manifest.total_bytes, MAX_TRANSFER_BYTES)
+            self.assertEqual(3, impact.manifest.entry_count)
+            # Admission is zero-mutation: nothing is queued or scheduled yet.
+            self.assertEqual((), runtime.list_tasks())
+
+    def test_entry_limit_breach_returns_a_normal_413_json_response(self) -> None:
+        """A control-plane limit breach serializes as HTTP 413, not a traceback.
+
+        The recorded production defect was that transfer admission raised the
+        correct limit error but ``_response()`` had no ``413`` label, so the
+        intended actionable failure was masked by ``KeyError: 413``.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            bulk = root / "source" / "bulk"
+            bulk.mkdir(parents=True)
+            (root / "source" / "Movies").mkdir()
+            for index in range(MAX_TRANSFER_ENTRIES + 1):
+                (bulk / f"entry-{index:05d}.mkv").write_bytes(b"x")
+
+            status, document = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "?path=bulk&to=source&toPath=Movies&operation=copy&conflict=fail",
+                token="admin-token",
+            )
+            self.assertEqual(413, status, document)
+            self.assertEqual("files_transfer_entry_limit_exceeded", document["error"]["code"])
+            details = document["error"]["details"]
+            self.assertEqual("none", details["sideEffects"])
+            self.assertTrue(details["retrySafe"])
+            # The refused admission created no Task and mutated nothing.
+            self.assertEqual((), runtime.list_tasks())

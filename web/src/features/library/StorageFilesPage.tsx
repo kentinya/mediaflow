@@ -2,7 +2,6 @@ import {
   useCallback,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -17,7 +16,6 @@ import type {
   StorageFilesEntry,
   StorageFilesModel,
 } from "../../entities/library/storage-files";
-import type { UploadConflictChoice } from "../../entities/library/direct-files";
 import type {
   SystemResourceLibrary,
   SystemStorage,
@@ -25,7 +23,6 @@ import type {
 import {
   isTextFileName,
   type DirectFileCommandResult,
-  type FilesUploadItemOutcome,
   type RemovalPreviewModel,
 } from "../../entities/library/direct-files";
 import { systemStatusQueryOptions } from "./system-status-query";
@@ -39,30 +36,19 @@ import {
   type TextEditorState,
 } from "./FileCommandDialogs";
 import { TransferDialog } from "./TransferDialog";
-import {
-  FilesUploadDialog,
-  type FilesUploadPayload,
-} from "./FilesUploadDialog";
 import { RowActionMenu } from "./RowActionMenu";
 import {
-  downloadFiles,
   fetchDeleteImpact,
   fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
-  fetchUploadProjection,
-  mutateTransferLifecycle,
   removeResourceLibrary,
-  saveDownloadedFile,
   saveResourceLibrary,
   submitDirectFileCommand,
   submitFilesOrganizeIntent,
   submitTransfer,
-  resumeUpload,
-  uploadFiles,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
-  type FilesUploadProjection,
   type SaveResourceLibraryOptions,
 } from "../../shared/api/api-client";
 import type {
@@ -88,7 +74,6 @@ type FilesDialog =
       readonly operation: "copy" | "move";
       readonly paths: readonly string[];
     }
-  | { readonly kind: "upload" }
   | { readonly kind: "editor"; readonly path: string }
   | { readonly kind: "remove_library"; readonly id: string }
   | null;
@@ -407,69 +392,6 @@ function directFileCommandFailure(
       return "当前账号没有执行该操作所需权限，请切换有权限的账号。";
     default:
       return "命令未执行，当前数据未被修改；请根据原因修正后重试或刷新目录。";
-  }
-}
-
-function uploadFailureMessage(
-  code: string,
-  details?: { readonly durableState?: string },
-): string {
-  if (details?.durableState === "mutation_effect_uncertain") {
-    return "部分上传结果不确定，未自动重试；请刷新目录核实实际状态。";
-  }
-  switch (code) {
-    case "files_upload_count_limit_exceeded":
-    case "files_upload_depth_limit_exceeded":
-    case "files_upload_size_limit_exceeded":
-      return "上传范围超出限制，未执行任何写入；请选择更小的范围分批上传。";
-    case "files_upload_root_protected":
-      return "资源库根目录不能作为上传目标；请选择内部目录。";
-    case "files_upload_capability_denied":
-      return "该资源库使用的存储为只读，不能上传；请选择可写的资源库。";
-    case "files_upload_conflict_denied":
-      return "上传策略不允许覆盖现有内容，请改为“保留两者”或“跳过同名项”后重试。";
-    case "files_upload_uncertain_item":
-      return "部分上传项结果不确定，未自动重试；请刷新目录核实后再重试未成功的项。";
-    case "files_upload_invalid_request":
-    case "files_upload_invalid_path":
-      return "上传请求无效，未执行任何写入；请检查所选内容后重试。";
-    case "files_upload_storage_unavailable":
-    case "files_upload_connection_failed":
-    case "files_upload_timeout":
-    case "files_upload_authentication_failed":
-    case "files_upload_rate_limited":
-    case "files_upload_storage_failure":
-      return "存储暂不可用或写入失败，未做任何修改；请等待存储恢复后重试。";
-    case "forbidden":
-      return "当前账号没有执行上传所需权限，请切换有权限的账号。";
-    default:
-      return "上传未执行，未写入任何内容；请修正原因后重试或刷新目录。";
-  }
-}
-
-function downloadFailureMessage(code: string): string {
-  switch (code) {
-    case "files_download_count_limit_exceeded":
-      return "下载选择超出限制；请减少所选条目后重试。";
-    case "files_download_invalid_path":
-      return "下载路径不是安全的资源库相对路径，请刷新目录后重试。";
-    case "files_download_not_found":
-      return "所选内容不存在，可能已被移动或删除；请刷新目录后重试。";
-    case "files_download_not_a_directory":
-      return "所选目标不是文件夹，无法下载；请刷新目录后重试。";
-    case "files_download_unsupported_entry":
-      return "所选内容包含不受支持的条目类型（如符号链接）；请刷新目录后重试。";
-    case "files_download_storage_unavailable":
-    case "files_download_connection_failed":
-    case "files_download_timeout":
-    case "files_download_authentication_failed":
-    case "files_download_rate_limited":
-    case "files_download_storage_failure":
-      return "存储暂不可用或读取失败；未做任何修改，请等待存储恢复后重试。";
-    case "forbidden":
-      return "当前账号没有下载所需权限，请切换有权限的账号。";
-    default:
-      return "下载未执行，未修改任何内容；请刷新目录后重试。";
   }
 }
 
@@ -981,8 +903,6 @@ function FileBrowseView({
   onRemoveLibraryRequest,
   onCreateFolder,
   onCreateText,
-  onUpload,
-  onDownload,
   onRename,
   onEdit,
   onDelete,
@@ -1016,8 +936,6 @@ function FileBrowseView({
   readonly onRemoveLibraryRequest: (id: string) => void;
   readonly onCreateFolder: () => void;
   readonly onCreateText: () => void;
-  readonly onUpload: () => void;
-  readonly onDownload: (paths: readonly string[]) => void;
   readonly onRename: (
     path: string,
     name: string,
@@ -1174,13 +1092,6 @@ function FileBrowseView({
                 onClick={onCreateText}
               >
                 新建文本文件
-              </button>
-              <button
-                className="mf-button mf-button-secondary"
-                type="button"
-                onClick={() => onUpload()}
-              >
-                上传
               </button>
               <button
                 className="mf-button mf-button-secondary"
@@ -1387,17 +1298,6 @@ function FileBrowseView({
                                 className="mf-card-menu-item"
                                 onClick={() => {
                                   setRowMenuPath(null);
-                                  onDownload([row.path]);
-                                }}
-                              >
-                                下载
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="mf-card-menu-item"
-                                onClick={() => {
-                                  setRowMenuPath(null);
                                   onRename(row.path, row.name, {
                                     size: row.size,
                                     modifiedAt: row.modifiedAt,
@@ -1488,17 +1388,6 @@ function FileBrowseView({
           }
         >
           移动
-        </button>
-        <button
-          className="mf-button mf-button-secondary"
-          type="button"
-          onClick={() => onDownload(selectedPaths)}
-          disabled={selectedCount === 0 || selectedPaths.length > 50}
-          title={
-            selectedPaths.length > 50 ? "单次下载最多选择 50 项" : undefined
-          }
-        >
-          下载
         </button>
         <button
           className="mf-button mf-button-danger"
@@ -1905,12 +1794,6 @@ export function StorageFilesPage() {
   );
   const [editorStale, setEditorStale] = useState(false);
   const [editorSaved, setEditorSaved] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
-  const [uploadResult, setUploadResult] = useState<
-    readonly FilesUploadItemOutcome[] | null
-  >(null);
-  const [downloadError, setDownloadError] = useState<string | null>(null);
-  const [downloadBusy, setDownloadBusy] = useState(false);
   const [removalError, setRemovalError] = useState<string | null>(null);
   const statusQuery = useQuery(systemStatusQueryOptions(token));
   const status = statusQuery.data;
@@ -2397,187 +2280,6 @@ export function StorageFilesPage() {
     [queryClient, pruneAffectedBrowseState],
   );
 
-  // One bounded upload: the durable Task is admitted first (its identity
-  // makes the projection pollable), then every item's exact payload streams
-  // as its own raw-bytes request in manifest order.  Each truthful per-item
-  // outcome lands through the projection poll; pause/cancel act at the
-  // backend's safe item boundaries.  A failed or uncertain item is never
-  // auto-replayed; an acknowledged pause stops the stream before the next
-  // Blob POST and the resume action continues the same live selection.
-  const uploadSelectionRef = useRef<readonly FilesUploadPayload[] | null>(null);
-  const uploadConflictRef = useRef<UploadConflictChoice>("no_overwrite");
-  const uploadMutation = useMutation({
-    mutationFn: (input: {
-      readonly conflict: "no_overwrite" | "skip" | "keep_both";
-      readonly items: readonly FilesUploadPayload[];
-      /** Set for a resume continuation of the same still-live selection. */
-      readonly resume?: {
-        readonly taskId: string;
-        readonly startIndex: number;
-      };
-    }) => {
-      uploadSelectionRef.current = input.items;
-      uploadConflictRef.current = input.conflict;
-      return uploadFiles(
-        token,
-        activeLibraryId,
-        {
-          destinationDirectory: effectivePath,
-          conflict: input.conflict,
-          items: input.items,
-        },
-        fetch,
-        (taskId) => {
-          // The durable Task is admitted: its projection becomes pollable so
-          // the operator sees per-item progress and can pause or cancel.
-          setUploadTaskId(taskId);
-        },
-        input.resume,
-      );
-    },
-    retry: false,
-    onSuccess: (result) => {
-      if (!result.ok) {
-        if (result.paused === true) {
-          // The acknowledged pause boundary: not an error.  The projection
-          // poll carries the paused truth and the dialog offers resume.
-          setUploadError(null);
-          void queryClient.invalidateQueries({
-            queryKey: ["upload-projection", uploadTaskId],
-          });
-          return;
-        }
-        setUploadResult(null);
-        setUploadError(
-          uploadFailureMessage(result.code, {
-            durableState: result.details?.durableState,
-          }),
-        );
-        void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-        return;
-      }
-      setUploadError(null);
-      // The admitted Task's durable projection stays pollable (it has
-      // reached its terminal state, so the poll stops itself): its items
-      // are the authoritative result view.
-      setUploadResult(uploadProjection?.items ?? result.model.items);
-      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-    },
-    onError: () => {
-      setUploadResult(null);
-      setUploadError(
-        "上传结果未知,未自动重试;请刷新目录核实实际状态后再决定下一步。",
-      );
-      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-    },
-  });
-
-  // Resume continues the exact paused upload with the still-live selection:
-  // the backend re-queues the durable Task, the session returns to RUNNING
-  // and the remaining items stream in manifest order, then finish closes it.
-  const [resumingUpload, setResumingUpload] = useState(false);
-  const runUploadResume = async (projection: FilesUploadProjection) => {
-    if (resumingUpload || uploadTaskId === null) return;
-    // The resume authority is the still-live browser selection: without it
-    // the operator resubmits the upload instead of stranding the Task.
-    const items = uploadSelectionRef.current;
-    if (items === null || items.length === 0) {
-      setUploadError(
-        "该上传的浏览器选择已不在本页;请重新发起上传,已完成的项目保持其结果。",
-      );
-      return;
-    }
-    setResumingUpload(true);
-    setUploadError(null);
-    const result = await resumeUpload(
-      token,
-      activeLibraryId,
-      projection.taskId,
-    );
-    if (!result.ok) {
-      setResumingUpload(false);
-      setUploadError(uploadFailureMessage(result.code));
-      return;
-    }
-    void queryClient.invalidateQueries({
-      queryKey: ["upload-projection", projection.taskId],
-    });
-    // The session is running again: continue streaming the remaining items
-    // of the same selection from the advertised index, then finish.
-    uploadMutation.mutate({
-      conflict: uploadConflictRef.current,
-      items,
-      resume: { taskId: projection.taskId, startIndex: result.nextIndex },
-    });
-  };
-
-  // The admitted Upload Task's durable projection, polled while it streams:
-  // per-item progress and the backend-advertised pause/cancel controls come
-  // from this read, never from a raw Task ID or execution token.  The
-  // projection is derived render state from the poll; the dialog renders the
-  // terminal projection's items directly as the authoritative result view.
-  const [uploadTaskId, setUploadTaskId] = useState<string | null>(null);
-  const uploadProjectionQuery = useQuery({
-    queryKey: ["upload-projection", uploadTaskId],
-    queryFn: () => {
-      if (uploadTaskId === null) throw new Error("unreachable");
-      return fetchUploadProjection(token, activeLibraryId, uploadTaskId);
-    },
-    enabled: uploadTaskId !== null && token !== null,
-    refetchInterval: (query) => {
-      const data = query.state.data;
-      if (data && data.ok && data.model.terminal) {
-        return false;
-      }
-      return 700;
-    },
-    retry: false,
-  });
-  const uploadProjectionData = uploadProjectionQuery.data;
-  const uploadProjection: FilesUploadProjection | null =
-    uploadProjectionData !== undefined && uploadProjectionData.ok
-      ? uploadProjectionData.model
-      : null;
-  const runUploadLifecycleAction = async (
-    action: "pause" | "cancel" | "resume",
-    projection: FilesUploadProjection,
-  ) => {
-    if (action === "resume") {
-      await runUploadResume(projection);
-      return;
-    }
-    const result = await mutateTransferLifecycle(
-      token,
-      projection.taskId,
-      action,
-      projection.version,
-    );
-    if (!result.ok) {
-      setUploadError(
-        action === "pause"
-          ? "暂停请求未生效;该上传可能刚刚到达终点。"
-          : "取消请求未生效;该上传可能刚刚到达终点。",
-      );
-      return;
-    }
-    void queryClient.invalidateQueries({
-      queryKey: ["upload-projection", projection.taskId],
-    });
-  };
-
-  const startDownload = async (paths: readonly string[]) => {
-    if (downloadBusy || paths.length === 0) return;
-    setDownloadBusy(true);
-    setDownloadError(null);
-    const result = await downloadFiles(token, activeLibraryId, paths);
-    setDownloadBusy(false);
-    if (!result.ok) {
-      setDownloadError(downloadFailureMessage(result.code));
-      return;
-    }
-    saveDownloadedFile(result.model);
-  };
-
   const removalTargetId = dialog?.kind === "remove_library" ? dialog.id : null;
   const removalPreviewQuery = useQuery({
     queryKey: ["resource-library-removal", removalTargetId],
@@ -2899,14 +2601,6 @@ export function StorageFilesPage() {
                         onCreateText={() => {
                           setCommandError(null);
                           setDialog({ kind: "create_text" });
-                        }}
-                        onUpload={() => {
-                          setUploadError(null);
-                          setUploadResult(null);
-                          setDialog({ kind: "upload" });
-                        }}
-                        onDownload={(paths) => {
-                          void startDownload(paths);
                         }}
                         onRename={(entryPath, name, expected) => {
                           setCommandError(null);
@@ -3244,45 +2938,6 @@ export function StorageFilesPage() {
             void queryClient.invalidateQueries({ queryKey: ["system-status"] });
           }}
         />
-      )}
-      {dialog?.kind === "upload" && (
-        <FilesUploadDialog
-          open
-          destinationDirectory={effectivePath}
-          submitting={uploadMutation.isPending || resumingUpload}
-          result={uploadResult}
-          projection={uploadProjection}
-          error={uploadError}
-          onSubmit={({ conflict, items }) => {
-            setUploadError(null);
-            setUploadResult(null);
-            uploadMutation.mutate({ conflict, items });
-          }}
-          onLifecycleAction={(action, projection) => {
-            void runUploadLifecycleAction(action, projection);
-          }}
-          onClose={() => {
-            setUploadError(null);
-            setUploadResult(null);
-            setUploadTaskId(null);
-            setDialog(null);
-            void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-          }}
-        />
-      )}
-      {downloadError !== null && (
-        <section className="mf-card mf-files-state" role="alert">
-          <p>{downloadError}</p>
-          <div className="mf-actions">
-            <button
-              type="button"
-              className="mf-button mf-button-secondary"
-              onClick={() => setDownloadError(null)}
-            >
-              关闭
-            </button>
-          </div>
-        </section>
       )}
       {dialog?.kind === "remove_library" && (
         <DeleteResourceLibraryDialog
