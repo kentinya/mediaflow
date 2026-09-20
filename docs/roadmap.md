@@ -22,7 +22,7 @@ only in [the development workflow](development-workflow.md).
 | 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PASS / CLOSED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PASS / CLOSED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
-| 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit/Upload/Download, organize continuation and post-mutation reconciliation without introducing a second authority | ACTIVE | 33 and existing Files foundation |
+| 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit/Upload/Download, organize continuation and post-mutation reconciliation without introducing a second authority | PASS / CLOSED | 33 and existing Files foundation |
 
 ## Current boundary
 
@@ -52,10 +52,11 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 are
 closed historical capabilities. The previously planned Slice 34, Slice 35 and Slice 36 boundaries
 were retired from the current Roadmap on 2026-09-14; their historical references remain in Git and
-are not current work commitments. Slice 37 is the only active large Slice. It owns the replacement
-shared V2 shell presentation and the complete Files workspace defined by
-[`file-page-visual-spec.md`](file-page-visual-spec.md); non-Files business behavior remains frozen
-even though its outer shell chrome intentionally changes.
+are not current work commitments. Slice 37 is the most recently closed large Slice. It delivered
+the replacement shared V2 shell presentation and the complete Files workspace defined by
+[`file-page-visual-spec.md`](file-page-visual-spec.md); non-Files business behavior remained frozen
+even though its outer shell chrome intentionally changed. The next active large Slice remains
+unselected until A makes the next Slice decision.
 User experience remains the primary product-design and acceptance criterion, while correctness,
 RBAC, audit, data integrity, ResourceLibrary confinement and OrganizerExecutor-only mutation remain
 mandatory. Slice 30 is `PASS / CLOSED` at Base
@@ -76,9 +77,8 @@ daily-operations journey across actionable Dashboard state, Tasks/Jobs, bounded 
 Web-native exact manual Organize, scheduled Automation and Notification delivery. The accepted Head
 includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
 projection and separate destructive confirmations; the second restores Worker reconstruction of the
-exact pinned source authority and fail-closed pre-mutation revalidation. Slice 37 is the current
-shared-shell and Files-workspace effort; this Roadmap does not retain the retired Slice 34–36
-program rows.
+exact pinned source authority and fail-closed pre-mutation revalidation. Slice 37 is now closed as
+the most recent large Slice; this Roadmap does not retain the retired Slice 34–36 program rows.
 
 ## Roadmap rules
 

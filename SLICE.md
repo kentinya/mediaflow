@@ -9,16 +9,16 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
 Contract Revision: 2026-09-14 A ACCEPTANCE REFINEMENT — reference-aligned visual fidelity
 ```
 
-The Slice Base is immutable. This A-owned rescope supersedes the earlier Files-page-only/frozen-shell
-interpretation without changing that Base. Work produced by Task 37.1 before this revision is
-implementation evidence only and is not accepted merely because it exists; B must reconcile the
-active Task against this checkpointed Contract before further Developer work.
+The Slice Base is immutable. This A-owned rescope superseded the earlier
+Files-page-only/frozen-shell interpretation without changing that Base. Work produced by Task 37.1
+before this revision was implementation evidence only and was reviewed against this checkpointed
+Contract as part of the completed Slice.
 
 ## Scope decision
 
@@ -309,36 +309,36 @@ repeated.
 
 ## Slice Acceptance Criteria
 
-- [ ] At `1536 x 1024`, the Files screenshot preserves the reference shared-shell and Files
+- [x] At `1536 x 1024`, the Files screenshot preserves the reference shared-shell and Files
       hierarchy, visible fixture state, labels and control order. The comparison records material
       differences, but nonzero pixel counts and bounded rendering/layout variations do not fail the
       Slice when the composition remains complete, recognizable and operable; the reference asset
       is not rewritten merely to manufacture a passing comparison.
-- [ ] The old dark horizontal V2 shell is fully replaced by the reference light rail/top bar, using
+- [x] The old dark horizontal V2 shell is fully replaced by the reference light rail/top bar, using
       one shared shell across V2 and retaining auth/deep-link/route recovery.
-- [ ] Required labels, values, row order, selection states, drawer steps and controls from the visual
+- [x] Required labels, values, row order, selection states, drawer steps and controls from the visual
       spec are present. Recognizable implementation-owned icons/thumbnails and bounded table
       truncation are acceptable when the complete value remains available to assistive technology
       and the action/state remains unambiguous.
-- [ ] Create Folder/Text File, Rename, Copy, Move, Delete, supported text Edit, Upload and Download
+- [x] Create Folder/Text File, Rename, Copy, Move, Delete, supported text Edit, Upload and Download
       complete from Files with low-friction success/failure/recovery and bounded multi-selection
       where useful.
-- [ ] Every mutation completes through backend-authoritative `OrganizerExecutor`; Download remains a
+- [x] Every mutation completes through backend-authoritative `OrganizerExecutor`; Download remains a
       confined zero-mutation read.
-- [ ] Delete and Replace/text overwrite require explicit operator intent, never silently affect
+- [x] Delete and Replace/text overwrite require explicit operator intent, never silently affect
       another path/version and never automatically replay an uncertain result.
-- [ ] Same- and cross-Storage Copy/Move expose capability and compound-operation truth; verification
+- [x] Same- and cross-Storage Copy/Move expose capability and compound-operation truth; verification
       failure preserves the source and partial results remain independently recoverable.
-- [ ] `+ 添加资源库` saves, validates and atomically activates a complete candidate; any failure keeps
+- [x] `+ 添加资源库` saves, validates and atomically activates a complete candidate; any failure keeps
       the previous Active.
-- [ ] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
-- [ ] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
+- [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
+- [x] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
       result synchronizes independently without mutation replay.
-- [ ] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
+- [x] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
       backend mutation authority remain intact.
-- [ ] Conflicting old visual tests are replaced and all required T4/full Slice gates pass without
+- [x] Conflicting old visual tests are replaced and all required T4/full Slice gates pass without
       hidden skips or private configuration.
-- [ ] The implementation checkpoint contains only Slice 37 work and necessary evidence.
+- [x] The implementation checkpoint contains only Slice 37 work and necessary evidence.
 
 ## Final Validation Expectations
 
@@ -363,12 +363,12 @@ repeated.
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
+Slice Status: PASS / CLOSED
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
 Contract Revision: A ACCEPTANCE REFINEMENT — structural/reference-aligned visual fidelity replaces
 the pixel-identical gate; shared shell and common file-management scope remain unchanged
 Task 37.6 state: PASS
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Closure Packet
@@ -478,15 +478,45 @@ Explicitly Deferred:
   universal rollback, automatic uncertain replay and FFmpeg/FFprobe.
 
 Documentation Reconciliation Needed:
-- A should reconcile Roadmap/Progress and stable product/architecture documentation to record the
-  accepted Slice 37 implementation and its exact Implementation Head.
-- A should retain or assign the three baseline test/harness debts above without reopening this
-  completed Slice unless final review finds a current-production P0/P1.
+- Completed by the A Final Review closure checkpoint below. The three baseline test/harness debts
+  remain non-blocking follow-up facts and do not reopen this closed Slice.
 
-Decision: SLICE READY FOR A REVIEW
+Decision: PASS / CLOSED
 ```
 
 ## A Final Review
 
-Not started. A will review the immutable Slice Base through the eventual Implementation Head only
-after B supplies a complete Closure Packet.
+```text
+Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
+Decision: PASS / CLOSED
+P0/P1 Blockers:
+- None.
+```
+
+Closure Reconciliation:
+
+- All twelve Required Outcomes and all Required Surfaces are complete across the shared V2 shell,
+  Files browse/selection, ResourceLibrary activation, direct file management, Upload/Download,
+  Organize continuation and FileIndex reconciliation.
+- The vertical journey is complete: the operator can enter Files, see live ResourceLibrary-scoped
+  state, act on bounded selections, receive independent success/failure/partial outcomes, and
+  recover through refresh, corrected input, explicit re-confirmation or durable task state.
+- The reviewed implementation preserves the architecture and safety invariants: read/analysis
+  stages remain zero-mutation, all Storage mutation crosses OrganizerExecutor, authority is
+  backend-resolved from Active ResourceLibrary/Storage bindings, overwrite/delete are explicit,
+  and uncertain effects are never automatically replayed. RecognitionType identity remains
+  independent of downstream policy reuse.
+- Validation is truthful: focused direct-Files/activation/Organize Python coverage passed
+  (`256 passed`, `13 subtests passed`); the full Python suite passed `1751`, skipped `7` and
+  failed `3` pre-existing P2 assertions; Web format, typecheck, lint, Vitest (`460 passed`) and
+  production build passed; focused Files/Organize Playwright passed `56`; full Playwright passed
+  `112` and retained `10` pre-existing legacy/duplicate P2 failures. Ruff, compileall, pip check,
+  governance, FFmpeg/FFprobe runtime exclusion and diff checks passed. The Docker release smoke
+  remains unavailable only because its pre-existing probe submits the superseded `metadataIdentity`
+  field; current focused WSGI/browser Organize coverage passes.
+- The canonical reference image in the reviewed Base..Head is unchanged. The separate dirty
+  worktree image observed during review is pre-existing user work and is excluded from the reviewed
+  checkpoint. Explicitly Deferred scope remains deferred and was not silently expanded.
+
+The Slice is therefore `PASS / CLOSED` as of 2026-09-20. The next legal action is for A to select
+the next large Slice in a subsequent A turn.

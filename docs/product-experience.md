@@ -187,9 +187,9 @@ activation.
 Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
 Storage-relative directory/file views. Current listings are lazy, deterministic and read-only,
 with confined roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path
-access. Active Slice 37 adds Create Folder/Text File, Rename, Copy, Move, Delete, supported bounded
-text Edit, Upload and Download commands to this Files workspace, with bounded multi-selection where
-meaningful. Live Storage remains the physical source and authority. Files may
+access. Closed Slice 37 delivered Create Folder/Text File, Rename, Copy, Move, Delete, supported
+bounded text Edit, Upload and Download commands to this Files workspace, with bounded
+multi-selection where meaningful. Live Storage remains the physical source and authority. Files may
 additionally show a bounded FileIndex-derived recognition/business-status projection or reconcile
 that projection after a known mutation, but FileIndex does not enumerate the physical listing and
 does not provide source or execution authority. Viewing it does not recursively scan Storage or
@@ -459,11 +459,10 @@ have delivered and closed the architecture/platform foundation, bounded Dashboar
 operator shell, centralized information architecture, shared route/authentication recovery,
 read-only Library journey and the complete Operations workspace. Slice 33's accepted Worker
 correction reconstructs the exact pinned source authority across the resident Worker boundary and
-fails closed before mutation when source evidence cannot be proved. Slice 37 is now the only active
-large Slice: it replaces the old V2 shell presentation with the shared shell shown in the Files
-reference and completes the Files workspace defined by
-[`file-page-visual-spec.md`](file-page-visual-spec.md). The previously planned later migration
-boundaries are not current work commitments.
+fails closed before mutation when source evidence cannot be proved. Closed Slice 37 replaced the
+old V2 shell presentation with the shared shell shown in the Files reference and completed the
+Files workspace defined by [`file-page-visual-spec.md`](file-page-visual-spec.md). The previously
+planned later migration boundaries remain retired until A selects the next large Slice.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -587,7 +586,7 @@ FileIndex dependency; failed reconciliation cannot silently replay a Storage mut
 
 ## Files Page Visual Fidelity Update — 2026-09-14
 
-Slice 37 makes [`docs/pics/文件页.png`](pics/文件页.png) the sole visual reference for the V2 Files
+Slice 37 made [`docs/pics/文件页.png`](pics/文件页.png) the sole visual reference for the V2 Files
 page and shared V2 shell at `1536 x 1024`. The reference light navigation rail and top bar replace
 the previous dark horizontal shell across supported V2 routes; this is a complete shared-shell
 replacement, not a Files card rendered inside the old shell. The Files composition,
@@ -598,5 +597,7 @@ screenshot and pixel diff remain evidence, but nonzero raster differences are no
 failure when the required hierarchy, fixture state, labels and controls remain complete,
 recognizable and operable. Loading, empty, permission, provider, direct-command and
 configuration-activation failures remain bounded recovery states. Other pages' business journeys
-and backend behavior are frozen, while their shared outer chrome intentionally changes to the
-replacement shell.
+and backend behavior are frozen, while their shared outer chrome intentionally changed to the
+replacement shell. Slice 37 is PASS / CLOSED at Base
+`b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
+`9e105d88c624e2ec8cfcc6fc71bef50cb929e99f`.
