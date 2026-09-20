@@ -9,13 +9,13 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 37 — **Files Workspace, Common File Management and V2 Shell** —
-is `PASS / CLOSED` after A's 2026-09-20 Final Review. The canonical reference light rail/top bar,
-ResourceLibrary authority, bounded common file management, Organize continuation and exact
-FileIndex reconciliation are delivered. The next active large Slice remains unselected until A's
-next Slice-selection turn. Slice 33's closure entries and the retired Slice 34–36 references remain
-historical and are not erased. The closed Contract is maintained in [`SLICE.md`](../SLICE.md) and
-[`file-page-visual-spec.md`](file-page-visual-spec.md); the Roadmap boundary is maintained in
-[`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
+was `PASS / CLOSED` after A's 2026-09-20 Final Review and is now `ACTIVE` under an A-authorized
+P1 correction. The correction aligns formal `ClassificationRule.result.library` destination
+prefix semantics with the local CLI while preserving the delivered Files journey and prior
+closure evidence. Slice 33's closure entries, the prior Slice 37 closure packet and the retired
+Slice 34–36 references remain historical and are not erased. The active Contract is maintained in
+[`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md). This pointer is
+not a closure-ledger entry.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
