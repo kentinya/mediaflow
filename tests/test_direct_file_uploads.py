@@ -16,6 +16,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from mediaflow.application.direct_file_transfers import DirectFileTransferService
 from mediaflow.application.direct_file_uploads import (
@@ -765,6 +766,10 @@ class UploadDurableTaskTests(UploadTestCase):
                 uploads.execute_item(task_id, 0, io.BytesIO(b"aa"))
             self.assertEqual(caught.exception.category, "session_interrupted")
             self.assertNotIn("not_found", str(caught.exception.code))
+            # The refused request itself changed nothing and is safe to retry
+            # as a resubmission.
+            self.assertEqual(caught.exception.details["sideEffects"], "none")
+            self.assertIs(caught.exception.details["retrySafe"], True)
             with self.assertRaises(Exception) as caught:
                 uploads.finish_upload(task_id)
             self.assertEqual(caught.exception.category, "session_interrupted")
@@ -989,12 +994,18 @@ class UploadFramedApiTests(UploadTestCase):
             order_status, order_body = self._call(api, self._item_environ(task_id, 1, b"bb"))
             self.assertEqual(order_status, 409, order_body)
             self.assertIn("item_out_of_order", order_body.decode())
+            order_details = json.loads(order_body)["error"]["details"]
+            self.assertEqual(order_details["sideEffects"], "none")
+            self.assertIs(order_details["retrySafe"], True)
             self.assertFalse((root / "source" / "b.mkv").exists())
             # Delivering index 0, then repeating it, is refused as well.
             self._call(api, self._item_environ(task_id, 0, b"aa"))
             repeat_status, repeat_body = self._call(api, self._item_environ(task_id, 0, b"aa"))
             self.assertEqual(repeat_status, 409, repeat_body)
             self.assertIn("item_already_delivered", repeat_body.decode())
+            repeat_details = json.loads(repeat_body)["error"]["details"]
+            self.assertEqual(repeat_details["sideEffects"], "none")
+            self.assertIs(repeat_details["retrySafe"], True)
 
     def test_item_body_length_must_equal_the_admitted_item_size(self) -> None:
         """B's length-mismatch reproduction, end to end through the route.
@@ -1506,8 +1517,15 @@ class UploadOperationLockTests(UploadTestCase):
             # concurrent finish must return 409 with zero state change.
             finish_status, finish_body = self._call(api, self._finish_environ(task_id))
             self.assertEqual(finish_status, 409, finish_body)
-            body_text = finish_body.decode()
-            self.assertIn("upload_item_in_progress", body_text)
+            document = json.loads(finish_body)
+            self.assertEqual(document["error"]["code"], "files_upload_item_in_progress")
+            details = document["error"]["details"]
+            self.assertEqual(details["category"], "upload_item_in_progress")
+            # Truthful zero-effect, retry-safe recovery: the refused finish
+            # changed nothing, so it must not claim Storage mutations.
+            self.assertEqual(details["sideEffects"], "none")
+            self.assertIs(details["retrySafe"], True)
+            self.assertIn("changed nothing", details["durableState"])
             # The Task is still running — no terminal aggregate was published.
             task = runtime.get_task(task_id)
             self.assertEqual(task.status.value, "running")
@@ -1550,9 +1568,10 @@ class UploadOperationLockTests(UploadTestCase):
     ) -> None:
         """(2) Two concurrent deliveries for one item invoke exactly one
         OrganizerExecutor mutation while the other receives a stable 409.
-        The 409 may be the ordering guard (item_already_delivered) or the
-        operation lock (upload_item_in_progress); both are valid.  Both
-        results are internally consistent."""
+        The 409 is the ordering guard (item_already_delivered) or the
+        operation lock (upload_item_in_progress); both are bounded refusals
+        with truthful zero-effect recovery.  Both results are internally
+        consistent."""
 
         write_started = threading.Event()
         gate = threading.Event()
@@ -1628,6 +1647,300 @@ class UploadOperationLockTests(UploadTestCase):
             self.assertEqual(projection["status"], "SUCCESS")
             self.assertEqual(projection["succeededItems"], 1)
             self.assertEqual(projection["failedItems"], 0)
+
+    def test_finish_waits_at_the_lock_before_any_decision_then_the_item_is_bounded(
+        self,
+    ) -> None:
+        """B4 P1(a): the operation lock fences *every* decision.
+
+        An item request that has already reached the operation-lock
+        acquisition (before any phase/Task/order decision) must not execute
+        against a Task the concurrent finish already made terminal.  With the
+        lock acquired first, exactly one side proceeds: finish publishes the
+        honest terminal aggregate and the item request is refused with a
+        bounded 409 — never a generic 500, never a fabricated write, never a
+        success document for a PENDING row.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(root)
+            from mediaflow.application import direct_file_uploads as uploads_module
+
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [{"relativePath": "Movies/a.mkv", "size": 11}],
+            }
+            status, body = self._call(api, self._admission_environ(manifest))
+            self.assertEqual(status, 202, body)
+            task_id = json.loads(body)["taskId"]
+            session = uploads_module._upload_session(task_id)
+            self.assertIsNotNone(session)
+            # Deterministically hold the session at the operation-lock
+            # acquisition: the item request has passed the session lookup and
+            # is waiting *before* every phase/Task/order decision.
+            gated = self._GatedOperationLock(session._operation_lock)
+            session._operation_lock = gated
+            item_results: list[tuple[int, bytes]] = []
+
+            def item_thread():
+                item_results.append(self._call(api, self._item_environ(task_id, 0, b"hello-world")))
+
+            t = threading.Thread(target=item_thread)
+            t.start()
+            self.assertTrue(gated.reached.wait(timeout=5), "the item never reached the lock")
+            # The waiting item holds nothing yet, so finish wins the session
+            # and publishes the one honest terminal aggregate.
+            finish_status, finish_body = self._call(api, self._finish_environ(task_id))
+            self.assertEqual(finish_status, 200, finish_body)
+            self.assertEqual(json.loads(finish_body)["status"], "FAILED")
+            task = runtime.get_task(task_id)
+            self.assertEqual(task.status.value, "failed")
+            # Release the item: it re-reads the terminal truth under the lock
+            # and is refused with the bounded interrupted recovery.
+            gated.gate.set()
+            t.join(timeout=5)
+            self.assertEqual(len(item_results), 1)
+            item_status, item_body = item_results[0]
+            self.assertNotEqual(item_status, 500, item_body)
+            self.assertEqual(item_status, 409, item_body)
+            document = json.loads(item_body)
+            self.assertTrue(document["error"]["code"].startswith("files_upload_"))
+            details = document["error"]["details"]
+            self.assertEqual(details["category"], "session_interrupted")
+            # The refused request itself changed nothing, so its own recovery
+            # evidence is truthful: zero effect and retry-safe.
+            self.assertEqual(details["sideEffects"], "none")
+            self.assertIs(details["retrySafe"], True)
+            # No file was written and exactly one terminal aggregate exists.
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            projection = uploads_module.DirectFileUploadService(
+                direct_files=api._prepare_runtime_binding_for_revision(active).direct_files
+            ).upload_projection(task_id)
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["status"], "FAILED")
+            self.assertEqual(projection["failedItems"], 1)
+            self.assertEqual(projection["succeededItems"], 0)
+
+    def test_item_waits_at_the_lock_before_any_decision_then_finish_is_bounded(
+        self,
+    ) -> None:
+        """B4 P1(a) converse: an item that wins the lock keeps finish bounded.
+
+        The item acquires the operation lock first and blocks inside the real
+        executor; the concurrent finish must not return a success document nor
+        mutate anything — it is the same bounded 409 with truthful
+        zero-effect, retry-safe recovery, and the item still completes once.
+        """
+
+        write_started = threading.Event()
+        gate = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            blocking = self._BlockingWriteStorage(
+                "source-storage",
+                root / "source",
+                write_started=write_started,
+                gate=gate,
+            )
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": blocking}
+            )
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [{"relativePath": "Movies/a.mkv", "size": 11}],
+            }
+            status, body = self._call(api, self._admission_environ(manifest))
+            self.assertEqual(status, 202, body)
+            task_id = json.loads(body)["taskId"]
+            item_results: list[tuple[int, bytes]] = []
+
+            def item_thread():
+                item_results.append(self._call(api, self._item_environ(task_id, 0, b"hello-world")))
+
+            t = threading.Thread(target=item_thread)
+            t.start()
+            self.assertTrue(write_started.wait(timeout=5))
+            finish_status, finish_body = self._call(api, self._finish_environ(task_id))
+            self.assertEqual(finish_status, 409, finish_body)
+            details = json.loads(finish_body)["error"]["details"]
+            self.assertEqual(details["category"], "upload_item_in_progress")
+            # Truthful zero-effect, retry-safe recovery — never a
+            # success-status document and never a "storage_mutations" claim
+            # for a request that changed nothing.
+            self.assertEqual(details["sideEffects"], "none")
+            self.assertIs(details["retrySafe"], True)
+            self.assertEqual(runtime.get_task(task_id).status.value, "running")
+            gate.set()
+            t.join(timeout=5)
+            item_status, item_body = item_results[0]
+            self.assertEqual(item_status, 200, item_body)
+            self.assertEqual(json.loads(item_body)["status"], "SUCCESS")
+            # The same finish now succeeds and reaches the honest terminal.
+            finish_status2, finish_body2 = self._call(api, self._finish_environ(task_id))
+            self.assertEqual(finish_status2, 200, finish_body2)
+            self.assertEqual(json.loads(finish_body2)["status"], "SUCCESS")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"hello-world")
+
+    def test_a_different_next_item_reaches_the_lock_busy_branch(self) -> None:
+        """B4 P1(b): a *different* next item must hit the lock-busy branch.
+
+        Item 0 holds the operation lock inside the executor; the concurrently
+        submitted item 1 is not an ordering violation, so it must reach the
+        lock-busy branch and be refused as one bounded 409 with truthful
+        zero-effect recovery — not HTTP 200, not a FAILED row, and not a
+        fabricated per-item outcome for an item that was never executed.
+        """
+
+        write_started = threading.Event()
+        gate = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            blocking = self._BlockingWriteStorage(
+                "source-storage",
+                root / "source",
+                write_started=write_started,
+                gate=gate,
+            )
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": blocking}
+            )
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [
+                    {"relativePath": "Movies/first.mkv", "size": 5},
+                    {"relativePath": "Movies/second.mkv", "size": 6},
+                ],
+            }
+            status, body = self._call(api, self._admission_environ(manifest))
+            self.assertEqual(status, 202, body)
+            task_id = json.loads(body)["taskId"]
+            first_results: list[tuple[int, bytes]] = []
+
+            def first_thread():
+                first_results.append(self._call(api, self._item_environ(task_id, 0, b"first")))
+
+            t = threading.Thread(target=first_thread)
+            t.start()
+            self.assertTrue(write_started.wait(timeout=5))
+            # Item 1 is the genuinely different next item, not an ordering
+            # violation: it reaches the operation lock and is refused there.
+            second_status, second_body = self._call(api, self._item_environ(task_id, 1, b"second"))
+            self.assertNotEqual(second_status, 500, second_body)
+            self.assertEqual(second_status, 409, second_body)
+            details = json.loads(second_body)["error"]["details"]
+            self.assertEqual(details["category"], "upload_item_in_progress")
+            self.assertEqual(details["sideEffects"], "none")
+            self.assertIs(details["retrySafe"], True)
+            # The durable truth is unchanged: item 1 keeps its own PENDING row
+            # and no Result was fabricated for it.
+            rows = {row.source_path: row.status.value for row in runtime.list_items(task_id)}
+            self.assertEqual(rows["Movies/second.mkv"], "pending")
+            self.assertEqual(rows["Movies/first.mkv"], "processing")
+            self.assertEqual(list(runtime.list_results(task_id)), [])
+            gate.set()
+            t.join(timeout=5)
+            self.assertEqual(first_results[0][0], 200, first_results[0][1])
+            # Item 1 streams normally afterwards — the busy refusal was not an
+            # outcome and left nothing behind.
+            after_status, after_body = self._call(api, self._item_environ(task_id, 1, b"second"))
+            self.assertEqual(after_status, 200, after_body)
+            self.assertEqual(json.loads(after_body)["status"], "SUCCESS")
+            finish_status, finish_body = self._call(api, self._finish_environ(task_id))
+            self.assertEqual(finish_status, 200, finish_body)
+            self.assertEqual(json.loads(finish_body)["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "Movies" / "second.mkv").read_bytes(), b"second")
+
+    def test_a_concurrent_cancel_at_the_boundary_is_never_a_generic_500(self) -> None:
+        """The Task-admission boundary stays bounded under a concurrent cancel.
+
+        A cancel that converges exactly between the item's own checks and the
+        durable Task admission must surface as the honest cancelled outcome,
+        never as a generic internal error.  The deterministic scheduling point
+        is the coordinator's ``begin_item``: the cancel lands while the item
+        request is already past every session/Task check.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            api, active, runtime = self._activate(root)
+            from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [{"relativePath": "Movies/a.mkv", "size": 2}],
+            }
+            status, body = self._call(api, self._admission_environ(manifest))
+            self.assertEqual(status, 202, body)
+            task_id = json.loads(body)["taskId"]
+            binding = api._prepare_runtime_binding_for_revision(active)
+            coordinator = binding.direct_files.tasks
+            real_begin = PersistentTaskCoordinator.begin_item
+            converged = threading.Event()
+
+            def begin_after_cancel(self, *args, **kwargs):
+                # Exactly the window B described: the request already passed
+                # its own checks, and the cancellation converges here.
+                if not converged.is_set():
+                    converged.set()
+                    coordinator.cancel(args[0])
+                return real_begin(self, *args, **kwargs)
+
+            with mock.patch.object(PersistentTaskCoordinator, "begin_item", begin_after_cancel):
+                item_status, item_body = self._call(api, self._item_environ(task_id, 0, b"aa"))
+            self.assertTrue(converged.is_set(), "the boundary was never reached")
+            self.assertNotEqual(item_status, 500, item_body)
+            self.assertEqual(item_status, 200, item_body)
+            self.assertEqual(json.loads(item_body)["errorCategory"], "upload_cancelled")
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            # The session converged to the truthful cancelled truth.
+            self.assertEqual(runtime.get_task(task_id).status.value, "cancelled")
+
+    class _GatedOperationLock:
+        """Forward to the real lock; the first acquire signals and waits.
+
+        Holding a request at exactly the operation-lock acquisition is the
+        deterministic scheduling point B reproduced: the request has already
+        resolved the session and the item index but has made no phase, Task,
+        order or finalization decision.
+        """
+
+        def __init__(self, real: threading.Lock) -> None:
+            self._real = real
+            self.reached = threading.Event()
+            self.gate = threading.Event()
+            self._first = True
+            self._guard = threading.Lock()
+
+        def acquire(self, blocking: bool = True) -> bool:
+            with self._guard:
+                first = self._first
+                if first:
+                    self._first = False
+            if first:
+                self.reached.set()
+                self.gate.wait(timeout=10)
+            return self._real.acquire(blocking)
+
+        def release(self) -> None:
+            self._real.release()
+
+        def __enter__(self):
+            self.acquire()
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            self.release()
+            return None
 
 
 class UploadPinnedBindingTests(UploadTestCase):
