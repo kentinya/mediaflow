@@ -110,10 +110,12 @@ server runtime.
 The V2 program preserves the current `/api/v1/*` authority, Python application/domain behavior,
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
 and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
-The current active focus is Slice 37: replacing the former V2 shell presentation with the shared
-light shell in the canonical Files reference and completing Files with common bounded file
-management. Non-Files business-surface migrations and final cutover remain outside the current
-Roadmap boundary; existing non-Files route behavior is retained inside the replacement shell.
+Slice 37 is PASS / CLOSED at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation
+Head `9e105d88c624e2ec8cfcc6fc71bef50cb929e99f`. It replaced the former V2 shell presentation with
+the shared light shell in the canonical Files reference and completed Files common bounded file
+management. Non-Files business-surface migrations and final cutover remain outside the closed Slice;
+existing non-Files route behavior is retained inside the replacement shell. A selects the next
+large Slice separately.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
@@ -579,3 +581,13 @@ The frontend owns presentation and exact user intent only. It does not become St
 make FileIndex a physical-source/execution authority. Focused backend/application behavior for
 ResourceLibrary save/activation, direct file commands and post-mutation index reconciliation is
 part of the confirmed Files journey; unrelated business behavior remains unchanged.
+
+## Slice 37 delivery — 2026-09-20
+
+The current implementation delivered the Slice 37 Files journey across the shared V2 shell,
+ResourceLibrary activation, live Storage browsing, bounded direct file commands, durable
+Copy/Move/Upload work, confined Download streaming, Storage-source Organize continuation and exact
+FileIndex reconciliation. The implementation preserves the single Python authority and
+OrganizerExecutor mutation boundary described above. The explicitly deferred binary/media editing,
+unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems,
+universal rollback and automatic uncertain replay remain deferred.

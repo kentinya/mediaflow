@@ -11,17 +11,17 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 33 — Operations Workspace — PASS / CLOSED
-Slice 33 Base: 827c36b410687e41b1da53ba6475d8c03a47dbfd
-Slice 33 Implementation Head: e4a5f7696d1742f7b6ef2a784c3b5d234b707d08
-Active large Slice: Slice 37 — Files Workspace, Common File Management and V2 Shell
+Most recently closed large Slice: Slice 37 — Files Workspace, Common File Management and V2 Shell — PASS / CLOSED
 Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Slice 37 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
+Slice 37 A Final Review: PASS / CLOSED — 2026-09-20
+Active large Slice: none — A selects the next large Slice
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32 and 33 are closed. Slice 37 replaces the prior V2 shell
-presentation and completes the Files workspace. The previously planned Slice 34–36 boundaries are
-retired from the current Roadmap; their historical references remain historical and do not change
+product requirements. Slices 30, 31, 32, 33 and 37 are closed. Slice 37 replaced the prior V2
+shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
+are retired from the current Roadmap; their historical references remain historical and do not change
 the stable requirements layer.
 
 ## Stable V2 requirements

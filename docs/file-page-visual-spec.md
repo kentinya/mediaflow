@@ -1,6 +1,6 @@
 # Files Page Visual Specification
 
-Status: ACTIVE Slice 37 reference
+Status: PASS / CLOSED — Slice 37 A Final Review 2026-09-20
 Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
 Reference size: `1536 x 1024` pixels
 Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
@@ -10,7 +10,7 @@ it. The image is an existing user asset and must not be edited, regenerated, com
 or replaced. The 2026-09-14 A rescope makes the reference shell the replacement for the prior dark
 horizontal V2 shell rather than a Files-only imitation inside it.
 
-## Current Code Status — 2026-09-14
+## Implementation Status — 2026-09-20
 
 The current implementation already establishes the data and authority boundary required by this
 page:
@@ -34,12 +34,12 @@ page:
   `fileId`, read a FileIndex row or echo occurrence/fingerprint authority from the browser. The
   resulting Preview remains the source of truth for the existing server-authoritative organize
   continuation and Worker revalidation.
-- The current page permits local selection of multiple entries, but its Preview mutation currently
-  rejects more than one path with `Batch Preview is planned`; only one selected file can proceed
-  through the implemented Preview path.
-- The current implementation does not yet provide the complete backend-authoritative common file
-  command set from Files. Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit,
-  Upload and Download are now required by Slice 37 and remain distinct from media organization.
+- The page admits bounded multi-item Organize continuation through the existing durable
+  Intent -> Preview -> Execute journey and preserves independent item outcomes.
+- Slice 37 delivered the complete backend-authoritative common file command set from Files:
+  Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit, Upload and Download.
+  These remain distinct from media organization and retain the same live-Storage authority,
+  explicit intent, bounded scope and OrganizerExecutor-only mutation guarantees.
 
 The codebase still contains FileIndex-backed compatibility and legacy operation paths, including
 indexed discovery and older file-scoped APIs. Those paths are not the source or authority for the
@@ -48,11 +48,12 @@ display, and completed Organize or direct file-management mutations may reconcil
 terminal outcome back to FileIndex. FileIndex is never the source/path/execution authority and a
 reconciliation failure never replays Storage mutation.
 
-The current Task 37.1 checkpoint contains the replacement shared shell and the read-only Files
-composition. Its controlled screenshot is reference-aligned but not pixel-identical. Under the
-2026-09-14 A acceptance refinement, pixel-diff counts are diagnostic evidence rather than an
-independent pass/fail gate; B still owns Task review, and the remaining ResourceLibrary activation,
-direct file actions and synchronization work require later coherent implementation and evidence.
+The Slice 37 implementation contains the replacement shared shell, live Files composition,
+ResourceLibrary activation, common file commands and Organize/FileIndex reconciliation. Its
+controlled screenshot is reference-aligned but not pixel-identical. Under the 2026-09-14 A
+acceptance refinement, pixel-diff counts are diagnostic evidence rather than an independent
+pass/fail gate; the final review evidence and non-blocking baseline debts are recorded in
+[`SLICE.md`](../SLICE.md).
 
 ## Scope
 
@@ -329,7 +330,7 @@ failure never replays Storage mutation.
 
 ## Acceptance
 
-The future implementation is accepted only when all of the following are true:
+Slice 37 was accepted only when all of the following were true:
 
 1. A deterministic screenshot at exactly `1536 x 1024` is captured and compared with
    `docs/pics/文件页.png` in the controlled browser/font environment. The report records observed
@@ -359,5 +360,6 @@ The future implementation is accepted only when all of the following are true:
       focused direct-file, ResourceLibrary activation and post-mutation reconciliation behavior
       stays within the revised Files journey.
 
-Required browser evidence, visual-diff reporting and implementation Tasks remain B-planned work.
-This document defines acceptance semantics; it does not issue Task PASS or Slice closure.
+The final browser evidence, visual-diff reporting and implementation Task history remain in Git and
+the Closure Packet/A Final Review in [`SLICE.md`](../SLICE.md). This document records the accepted
+visual and journey contract; it does not select the next Slice.
