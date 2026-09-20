@@ -798,39 +798,224 @@ Tests (modified):
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b27d7a5e911c65fe98c214bf169a5c62b843af62
+Head SHA: 2ff47490150956a9b31621fff4e947f4b49e78f1
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: eeac5849b5489f91c26601b9878da5303879377d..a680da63215dc5e017e6da4bf6233f3a6578ba60
+Reviewed: eeac5849b5489f91c26601b9878da5303879377d..2ff47490150956a9b31621fff4e947f4b49e78f1
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — `finish` can race an in-flight item write and publish mutually contradictory durable and
-  user-visible outcomes.** Through the current authenticated WSGI routes, a one-item Upload was
-  admitted normally; its item POST was held only while its real request stream was being read, and a
-  concurrent POST to the same Task's `/finish` route returned HTTP 200 `FAILED` with
-  `upload_stream_truncated` and instructed the operator to retry. Releasing the unchanged item
-  request then wrote the exact file successfully through the normal executor and returned HTTP 200
-  `SUCCESS` with `taskStatus=failed`; the subsequent durable projection reported aggregate
-  `SUCCESS` while still reporting `taskStatus=failed`. This is reachable in the supported API
-  assembly without an invalid configuration or weakened Storage double, and it violates Slice
-  RO-6/RO-9, the Upload transfer-progress Required Surface, and this Task's independent truthful
-  outcome, durable progress, duplicate-submission and safe-recovery Acceptance Criteria. Use the
-  smallest correction: add one operation lock per live `UploadSession`; `execute_item` holds it for
-  the complete single-item execution and result publication, while `finish_upload` and another
-  concurrent item request attempt to acquire the same lock without waiting. A busy session returns
-  one bounded stable HTTP 409 (for example `upload_item_in_progress`) and changes no Task, TaskItem,
-  Result, Session phase or Storage state. After the first item request releases the lock, the
-  existing delivered/order checks and normal `finish_upload` path remain authoritative. This lock
-  is session-local, so it must not serialize unrelated uploads. Do not add database fields, a new
-  upload protocol, resumable/chunk persistence or another lifecycle/state machine for this fix.
-  Add only the two deterministic WSGI-route regressions required by the defect: (1) an in-flight
-  item makes concurrent `finish` return 409 with zero state change, then the same `finish` succeeds
-  after that item completes; (2) two concurrent deliveries for one item invoke exactly one
-  OrganizerExecutor mutation while the other receives the stable 409. Both tests must prove one
-  internally consistent terminal Task/projection/result and no generic 500/TaskLockError.
+- **P1 — The session lock is acquired after the checks it must fence, so the original terminal race
+  remains reachable and the busy response is not consistently an HTTP 409.** In the current
+  authenticated WSGI assembly, deterministic scheduling at the existing operation-lock acquisition
+  reproduced an item request that had passed the Session/Task/order checks, followed by concurrent
+  `/finish`: finish returned HTTP 200 `FAILED/upload_stream_truncated`, then the unchanged item
+  request acquired the released lock and returned HTTP 500 `internal_error` against the already
+  terminal Task. A second production-route probe blocked item 0 in the real executor and submitted
+  item 1 concurrently; item 1 returned HTTP 200 with body `FAILED/upload_item_in_progress` while its
+  durable row remained PENDING, rather than the required stable 409. The finish-busy 409 document is
+  also internally contradictory: it says no state changed and instructs retry, but exposes
+  `sideEffects=storage_mutations` and `retrySafe=false`. These current API outcomes break Slice
+  RO-6/RO-9, the Upload progress Required Surface, and this Task's truthful independent outcome,
+  bounded error and safe-recovery Acceptance Criteria. Keep the deliberately simple one-lock
+  design: acquire the Session operation lock before any phase, Task-state, delivered/order or
+  finalization decision; perform and publish all such decisions inside its `try/finally`; after
+  acquisition, re-read terminal/session truth so a retained reference cannot execute after finish.
+  Every busy item/finish path must raise the same bounded `DirectFileUploadError` HTTP 409 with
+  truthful zero-effect, retry-safe recovery instead of returning a success-status document. Extend
+  the two concurrency regressions to cover the pre-acquisition finish window and a different next
+  item that actually reaches the lock-busy branch; prove no Task/TaskItem/Result/Session/Storage
+  change, no generic 500, exactly one mutation and one internally consistent terminal projection.
+  Do not add persistence, protocol changes, chunk/resume support or another state machine.
+
+## Developer Completion Report (Correction Round 4)
+
+### Changed Files
+
+Implementation (modified):
+
+- `mediaflow/application/direct_file_uploads.py` — `DirectFileUploadError` now
+  carries explicit `side_effects` / `retry_safe` (conservative Upload defaults
+  preserved); new `_busy_session_error()` is the one bounded busy refusal
+  (`files_upload_item_in_progress`, 409, `sideEffects=none`, `retrySafe=true`);
+  `UploadSession` exposes `begin_operation()` / `end_operation()` and documents
+  the operation lock as the fence for *every* execution decision;
+  `execute_item`, `finish_upload` and `resume_upload_session` acquire that lock
+  **before** any phase, Task-state, delivered/order or finalization decision and
+  take all of them inside its `try/finally`; the previously inline cancelled,
+  pause-boundary and per-item failure documents are now truthful helpers
+  (`_cancelled_item_document`, `_acknowledge_pause_boundary`); a terminal Task
+  observed after acquisition is the honest `session_interrupted` recovery; a
+  concurrent cancellation landing at the durable Task admission is translated
+  from the provable state change instead of surfacing a generic 500.
+
+Tests (modified):
+
+- `tests/test_direct_file_uploads.py` — `UploadOperationLockTests` extended from
+  2 to 6 deterministic regressions: the two original ones now also assert the
+  busy 409 document is truthful (`sideEffects=none`, `retrySafe=true`,
+  `durableState` naming zero change); new pre-acquisition finish-window test
+  (item waits **before** every decision, concurrent finish wins and publishes
+  one consistent terminal projection, the released item is a bounded 409 — never
+  500 — and writes nothing); new converse item-wins test; new different-next-item
+  test that actually reaches the lock-busy branch (409, sibling row stays
+  PENDING, no fabricated Result, the item then streams normally); new
+  concurrent-cancel-at-admission test. A `_GatedOperationLock` double holds a
+  request at exactly the lock acquisition. Ordering-guard, lost-session and
+  cancelled-item refusals now assert their truthful zero-effect recovery.
+
+### Implemented
+
+- B's P1 (lock acquired after the checks it must fence): the session operation
+  lock is now the single fence for the whole decision. A request that waits at
+  it re-reads the current session phase, cancellation, pause, durable Task
+  status and delivered set *after* acquisition, so a retained reference can no
+  longer execute against a Task another operation already finished. The
+  pre-acquisition window B reproduced now yields: concurrent finish publishes
+  the honest terminal aggregate, and the released item request returns a bounded
+  HTTP 409 `files_upload_session_interrupted` (no generic 500, no file written,
+  no Result fabricated) against one internally consistent terminal projection.
+- B's P1 (busy response must be a bounded 409, not a success-status document):
+  `execute_item` no longer returns a 200 body for a busy session; both it and
+  `finish_upload` raise the same `DirectFileUploadError` HTTP 409
+  (`upload_item_in_progress`). B's second probe scenario (item 0 blocked in the
+  real executor, item 1 submitted concurrently) now returns HTTP 409 while item
+  1's durable row stays PENDING with no Result — previously HTTP 200 with a
+  `FAILED` body over a PENDING row.
+- B's P1 (internally contradictory 409 document): `side_effects` and
+  `retry_safe` are explicit per category. The busy refusal, the ordering guards,
+  the interrupted resubmit, the cancelled item and the finish-while-paused
+  refusal all report truthful zero-effect, retry-safe recovery
+  (`sideEffects=none` / `retrySafe=true`) instead of the former blanket
+  `storage_mutations` / `false`; write-failure categories keep the conservative
+  `storage_mutations` / not-retry-safe defaults, so nothing was relabelled as
+  safe that may have touched Storage.
+- Ancillary within B's "no generic 500" requirement: an operator cancellation
+  converging exactly between the item's own checks and the durable Task
+  admission surfaced as a generic 500 in the same authenticated assembly. It is
+  now translated from the provable durable state change (CANCELLED → the honest
+  cancelled item outcome; any other non-RUNNING state → the interrupted/resubmit
+  recovery). Any *other* `RuntimeError` still propagates unchanged, so a genuine
+  defect is never masked.
+- Deliberately kept to B's constraint: no persistence, no protocol change, no
+  chunk/resume support, no new state machine; the deliberate one-lock design is
+  unchanged and remains session-local, so unrelated uploads are never
+  serialized.
+
+### Tests and Results
+
+- `.venv/bin/python -m unittest tests.test_direct_file_uploads` — 45 tests
+  PASS (41 preserved + 4 new; 6 in `UploadOperationLockTests`).
+- Falsification: with the pre-fix `HEAD` implementation restored in the working
+  tree, `UploadOperationLockTests` reports 5 failures (including
+  `500 == 500 internal_error` and `'storage_mutations' != 'none'`); with the fix
+  all 45 pass. The pre-acquisition window, the different-next-item branch and
+  the cancel-at-admission boundary therefore each detect the real defect rather
+  than restating it.
+- `.venv/bin/python -m unittest tests.test_direct_file_downloads
+  tests.test_direct_file_transfers tests.test_direct_file_operations
+  tests.test_source_directory_cleanup tests.test_manual_organize_execution
+  tests.test_configuration_organize tests.test_organizer
+  tests.test_organizer_mutation_authority tests.test_organizer_rollback
+  tests.test_local_storage tests.test_smb_storage tests.test_openlist_storage
+  tests.test_s3_storage tests.test_runtime_files_browser tests.test_api_security
+  tests.test_task_persistence tests.test_task_pause_resume tests.test_task_retry`
+  — 403 PASS (the complete Task 37.5 required Python set except the two new
+  modules already counted above).
+- `.venv/bin/python -m unittest discover -s tests` — 1753 tests, 3 failures,
+  7 skipped; the 3 failures (`test_manual_operations_contract` × 2,
+  `test_configuration_status::test_hostile_configuration_content_is_never_exposed`)
+  reproduce identically on a clean `git archive HEAD` checkout with all
+  working-tree changes excluded (verified this round, not inherited from an
+  earlier report) and are the pre-existing environmental failures (this host
+  runs as `root`). No Task 37.5 test or module is among them.
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS;
+  `.venv/bin/python -m pip check` — clean; ffprobe/ffmpeg scan — clean.
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS;
+  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS.
+- `web`: `format:check` PASS, `typecheck` PASS, `lint` PASS,
+  `NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx`
+  38/38 PASS, `NODE_ENV=test npm run test -- --run` 460/460 PASS (33 files),
+  `npm run build` PASS.
+- Playwright `tests/e2e/library-files.spec.ts --project=chromium` — 30/30 PASS.
+- `cd web && npm run test:e2e` — 108 passed / 10 failed. The 10 failures are
+  pre-existing and unrelated: they are the same 10 tests that fail on a clean
+  `git archive HEAD` checkout built and run this round, all in
+  `library-file-detail.spec.ts` and `manual-operations.spec.ts`, and all fail at
+  the memory-only auth step (`getByLabel('API token')` never appears) before any
+  upload/Download code is reached. `manual-operations.spec.ts:241` passes in
+  isolation; the set is stable across both trees.
+- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE,
+  unchanged from previous rounds and reproduced this round: the release fixture
+  aborts before any container check because the bind source
+  `/tmp/.../media/incoming` does not exist.
+- `git diff --check` — clean; `config/alist.json` is absent (and ignored),
+  credentials are absent, the pre-existing dirty `docs/pics/文件页.png` is
+  untouched (mtime unchanged), `web/test-results/` and `dist/` artifacts are
+  absent from the checkpoint.
+
+### Decisions
+
+- The lock is acquired as the *first* action on a resolved live session and
+  released in `finally`, with every phase/Task/order/finalization decision
+  inside it. This is B's "keep the deliberately simple one-lock design" applied
+  literally: no second lock, no state-machine addition, no persisted fencing.
+- The lock stays a plain session-local `threading.Lock` (non-blocking acquire);
+  the new `begin_operation`/`end_operation` methods only name the acquisition
+  boundary and keep the invariant readable at each call site.
+- Busy paths raise instead of returning a success-status document. That makes
+  the HTTP status the single source of truth for "refused", so the Web client's
+  error path (not its item-outcome path) handles it, and no PENDING row can ever
+  be described by a 200 body.
+- `side_effects`/`retry_safe` are explicit with conservative defaults rather
+  than derived, so each zero-effect category must state its own evidence and no
+  write-failure category silently inherits a retry-safe claim.
+- The concurrent-cancel-at-admission translation is narrow on purpose: it
+  applies only when the durable Task is provably no longer RUNNING; every other
+  `RuntimeError` still propagates, so a genuine internal defect is not converted
+  into a business refusal.
+- `resume_upload_session` participates in the same lock because it is an
+  execution decision too (it re-queues the Task and clears paused rows); without
+  it a resume could interleave with an in-flight item's publication.
+
+### Remaining In-Slice Work
+
+- The Files-originated multi-item Organize continuation and terminal
+  Organize→FileIndex reconciliation journey (RO-8 remainder) — the next Task;
+  not implemented here by design.
+- Resumable/chunked upload sessions across requests and browser drag-and-drop
+  polish remain explicit non-goals of this Task.
+
+### Risks / Deviations
+
+- The Docker security smoke gate remains UNAVAILABLE in this environment
+  (pre-existing; the fixture aborts on a missing bind source before any
+  container check; reproduced this round).
+- The three pre-existing full-suite failures and the ten pre-existing
+  Playwright failures are unrelated and were each reproduced this round on a
+  clean `git archive HEAD` checkout. Per the workflow I do not declare them
+  non-blocking; that judgement is B's.
+- Resume remains in-process by design: a genuinely lost session refuses with
+  `files_upload_session_interrupted` / `resume_unavailable` and the operator
+  resubmits; already-recorded item outcomes stay durable.
+- Providers that publish no fingerprint (SMB/OpenList/S3 regular entries) rely
+  on size + mtime as same-size-replacement evidence; a replacement preserving
+  both is not detectable with provider-neutral metadata alone. Unchanged from
+  earlier rounds and recorded for B's judgement.
+- `docs/pics/文件页.png` remains the pre-existing dirty file, untouched;
+  `config/alist.json` is absent and no credentials entered the checkpoint.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: e29cffb679bb0fbbf28fff6215b64497bcfb4b55
+```
+
