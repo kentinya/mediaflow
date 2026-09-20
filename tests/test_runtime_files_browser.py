@@ -355,6 +355,47 @@ class RuntimeFilesBrowserApiTests(unittest.TestCase):
                 self.assertEqual(files["configuration"]["revisionId"], active_second.revision_id)
                 self.assertEqual([item["name"] for item in files["entries"]], ["draft-only.mkv"])
 
+    def test_resource_library_projection_marks_only_regular_files_as_organize_eligible(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            storage_root = root / "library"
+            storage_root.mkdir()
+            (storage_root / "Movie.2001.mkv").write_bytes(b"media")
+            (storage_root / "Season").mkdir()
+            os.symlink(
+                str(storage_root / "Movie.2001.mkv"),
+                str(storage_root / "linked.mkv"),
+            )
+            database = root / "runtime.sqlite3"
+            document = _document(storage_root, database)
+            with (
+                SQLiteConfigurationRepository(database) as configuration_repository,
+                SQLiteTaskRepository(database) as task_repository,
+                SQLiteFileIndexRepository(database) as file_index,
+            ):
+                managed = ManagedConfigurationService(
+                    configuration_repository,
+                    bootstrap_database_path=str(database),
+                )
+                _activate(managed, document)
+                api = _api(task_repository, file_index, managed, document)
+                status, files = _request(api, "/api/v1/resource-libraries/resources/files")
+                self.assertEqual(status, 200)
+                entries = {entry["name"]: entry for entry in files["entries"]}
+                # Regular files are the only Organize candidates; a directory is
+                # navigation and a symbolic link is never organized.
+                self.assertTrue(entries["Movie.2001.mkv"]["organizeEligible"])
+                self.assertFalse(entries["Season"]["organizeEligible"])
+                self.assertFalse(entries["linked.mkv"]["organizeEligible"])
+                self.assertTrue(entries["linked.mkv"]["isSymlink"])
+                # Privacy/authority: the projection still publishes no physical
+                # FileIndex identity and performs no Task work.
+                self.assertNotIn("fileId", entries["Movie.2001.mkv"])
+                self.assertEqual((), task_repository.list_tasks())
+                self.assertEqual(storage_root.joinpath("Movie.2001.mkv").read_bytes(), b"media")
+
     def test_files_preserves_read_only_paging_path_and_rbac_boundaries(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

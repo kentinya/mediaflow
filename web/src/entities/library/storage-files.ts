@@ -55,6 +55,11 @@ export interface StorageFilesEntry {
   readonly isSymlink: boolean;
   readonly traversable: boolean;
   readonly selectable: boolean;
+  /**
+   * Backend-admitted Organize eligibility of one live Storage entry: regular
+   * non-symlink files only.  Directories remain navigation.
+   */
+  readonly organizeEligible: boolean;
   /** Optional display-only projection; never source or execution authority. */
   readonly recognitionResult: string | null;
   readonly businessStatus: string | null;
@@ -194,6 +199,17 @@ function normalizeEntry(raw: unknown, index: number): StorageFilesEntry {
     fail(`entries[${index}].traversable`);
   if (typeof record.selectable !== "boolean")
     fail(`entries[${index}].selectable`);
+  if (
+    record.organizeEligible !== undefined &&
+    typeof record.organizeEligible !== "boolean"
+  )
+    fail(`entries[${index}].organizeEligible`);
+  const entryType = normalizeEntryType(record.entryType ?? record.type);
+  const isSymlink = record.isSymlink;
+  const organizeEligible =
+    typeof record.organizeEligible === "boolean"
+      ? record.organizeEligible
+      : entryType === "file" && isSymlink !== true;
   return {
     name: normalizeBoundedText(
       record.name,
@@ -205,7 +221,7 @@ function normalizeEntry(raw: unknown, index: number): StorageFilesEntry {
       `entries[${index}].path`,
       MAX_PATH_LENGTH,
     ),
-    type: normalizeEntryType(record.entryType ?? record.type),
+    type: entryType,
     size: normalizeBoundedCount(record.size, `entries[${index}].size`),
     modifiedAt: normalizeBoundedText(
       record.modifiedAt,
@@ -213,9 +229,10 @@ function normalizeEntry(raw: unknown, index: number): StorageFilesEntry {
       MAX_TEXT_LENGTH,
     ),
     isDirectory: record.isDirectory,
-    isSymlink: record.isSymlink,
+    isSymlink,
     traversable: record.traversable,
     selectable: record.selectable,
+    organizeEligible,
     recognitionResult: normalizeOptionalText(
       record.recognitionResult,
       `entries[${index}].recognitionResult`,

@@ -894,6 +894,15 @@ class RuntimeFilesBrowserService:
         for raw_entry in document["entries"]:
             entry = dict(raw_entry)
             entry["path"] = _strip_resource_library_path(entry["path"], library.root_path)
+            # The Files workspace treats directories as navigation and regular
+            # files as the only admissible manual-organize candidates.  The
+            # generic Storage browser reports directory-picker ``selectable``
+            # semantics, so the ResourceLibrary projection publishes its own
+            # explicit eligibility flag instead of reinterpreting that field.
+            entry["organizeEligible"] = (
+                entry.get("entryType") == StorageEntryType.FILE.value
+                and entry.get("isSymlink") is not True
+            )
             entries.append(entry)
         document["resourceLibrary"] = {
             "id": library.library_id,

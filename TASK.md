@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.6
 Parent Slice: 37
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: f1e157cd9488f742958339a477373c639dad0257
 Difficulty: High
 Test Level: T4
@@ -225,15 +225,174 @@ SMB/OpenList/S3/TMDB service, credential or real media directory is permitted.
 
 ### Changed Files
 
+- `mediaflow/application/storage_browser.py` — `RuntimeFilesBrowserService.browse_resource_library`
+  now publishes an explicit `organizeEligible` flag (regular non-symlink files only) instead of
+  letting the Files table inherit the generic directory-picker `selectable` semantics.
+- `mediaflow/application/manual_organize_preview.py` — new bounded Files admission
+  `ManualOrganizePreviewService.admit_storage_paths`: validates the ordered unique path list,
+  enforces the existing manual-organize item bound, pins the exact Active snapshot, resolves the
+  ResourceLibrary's live Storage, stats every path (rejecting directories, symlinks, missing,
+  escaped, duplicate, unverifiable or changed entries), builds immutable `ManualSourceIdentity`
+  values server-side and admits one durable intent through the existing
+  `ManualOrganizeIntentService.create_from_sources`. `_source_identity_from_storage` now rejects
+  symlinks explicitly with `source_symlink`.
+- `mediaflow/application/manual_organize_execution.py` — terminal `PersistentResultRecord` now
+  carries the exact admitted source occurrence ID, fingerprint and verified state; the execution
+  document exposes a bounded, secret-free `fileIndexReconciliation` per item
+  (`synchronized` / `no_matching_occurrence` / `attention_required` / `pending`) with one safe
+  bounded action; new `reconcile_file_index` re-applies the durable Result to a current exact
+  FileIndex occurrence without any Storage call or Organize replay.
+- `mediaflow/application/operations_lifecycle.py` — operator projection whitelists the bounded
+  `fileIndexReconciliation` evidence (state, next action, action envelope only; no occurrence IDs
+  or fingerprints).
+- `mediaflow/infrastructure/sqlite_runtime.py` — TaskItem/Result persistence stores the exact
+  source occurrence identity; `file_index_reconciliation_state` reads the display state of one
+  durable Result; `reconcile_result_to_file_index` re-applies the same atomic exact-occurrence
+  reconciliation used at Result publication inside one `BEGIN IMMEDIATE` transaction.
+- `mediaflow/interfaces/service_api.py` — new authenticated routes:
+  `POST /api/v1/resource-libraries/{id}/files/organize` (paths-only admission, RBAC
+  `MANAGE_MANUAL_ORGANIZE`, returns the ordinary bounded Intent document) and
+  `POST /api/v1/operations/organize/executions/{id}/file-index-reconciliation` (display-only
+  recovery); the execution document now flows through the service-level document so
+  reconciliation evidence is included; `organize` added to the ResourceLibrary files capability
+  envelope.
+- `tests/test_runtime_files_browser.py` — projection eligibility test (regular file eligible,
+  directory/symlink not, no FileIndex identity, zero Task work).
+- `tests/test_v2_manual_organize.py` — six new real-WSGI journey tests: multi-file admission from
+  live Storage, fail-closed ineligible/malformed selections, RBAC refusal, non-current Active
+  refusal, exact-occurrence execution + reconciliation, same-path replacement never receiving the
+  older occurrence's Result.
+- `web/src/entities/library/storage-files.ts` — `organizeEligible` normalization with fail-closed
+  type checks and a derived fallback.
+- `web/src/entities/operations/organize.ts` — bounded `fileIndexReconciliation` model and
+  normalization for execution items.
+- `web/src/shared/navigation/files-return.ts` (new) — bounded, validated return-to-Files URL
+  context (ResourceLibrary identity + relative directory only; no tokens, host paths or backend
+  authority).
+- `web/src/shared/api/api-client.ts` — `submitFilesOrganizeIntent` (paths-only POST) and
+  `reconcileOrganizeExecutionFileIndex`; stable transport/error envelopes.
+- `web/src/features/library/StorageFilesPage.tsx` — row action and selection footer both start the
+  same admission; multi-selection includes only visibly eligible files and states how many other
+  selected entries remain excluded; admission failure preserves ResourceLibrary/directory/selection
+  with stable actionable messages; success navigates to the existing Intent page carrying the
+  bounded return context.
+- `web/src/features/operations/OrganizeIntentPage.tsx`,
+  `web/src/features/operations/OrganizePreviewPage.tsx` — propagate the bounded return context and
+  offer `返回文件` back to the originating Files directory.
+- `web/src/features/operations/OrganizeExecutionPage.tsx` — per-item FileIndex reconciliation
+  state label, next action and one bounded `重新核对文件索引` action; return-to-Files link.
+- `web/tests/fake-server.mjs`, `web/tests/e2e/library-files.spec.ts`,
+  `web/tests/e2e/manual-organize.spec.ts` — fixture support and browser tests for row/footer
+  admission, exclusion of ineligible rows, failure context retention, automatic navigation through
+  the existing workflow, return to Files, and the reconciliation-miss recovery without replay.
+
 ### Implemented
+
+- Files-originated Organize admission: one or several eligible regular files from
+  `/ui-v2/library/files` enter the existing durable Intent → exact Preview → explicit Execute
+  journey with server-resolved live Storage identity. The browser submits only the ResourceLibrary
+  identity and normalized relative paths — never FileIndex IDs, occurrence IDs, fingerprints,
+  Storage roots, credentials or tokens.
+- Exact Result identity: admitted TaskItems and terminal Results retain the live source occurrence
+  ID, fingerprint and verified state; same-path replacement or stale FileIndex rows can never
+  receive another occurrence's Result.
+- FileIndex reconciliation: terminal Results synchronize only the exact matching current
+  occurrence atomically at publication; each execution item exposes a bounded reconciliation state
+  plus one safe bounded reconciliation action that never calls Storage, never fabricates an index
+  row and never replays the Organize mutation.
+- Files Web journey: eligibility flags, excluded-selection messaging, duplicate-submission
+  prevention, failure context retention, automatic navigation and a bounded return-to-Files action
+  on the Intent/Preview/Execution pages.
+- Compatibility: existing FileIndex-based/non-Files Organize entry points (PreviewNewPage,
+  `submitServerBoundPreview`), direct file commands, Upload/Download, V2 routes and V1 `/ui` are
+  untouched.
 
 ### Tests and Results
 
+- `python3 scripts/check_governance.py` — PASS (`governance check: PASS`)
+- `.venv/bin/ruff format --check .` — PASS (311 files already formatted)
+- `.venv/bin/ruff check .` — PASS (one import-sort violation in `tests/test_v2_manual_organize.py`
+  auto-fixed with `ruff check --fix`; final run: All checks passed)
+- `.venv/bin/python -m unittest tests.test_runtime_files_browser tests.test_manual_organize_intent tests.test_manual_organize_preview` — PASS (26 tests)
+- `.venv/bin/python -m unittest tests.test_manual_organize_execution tests.test_v2_manual_organize tests.test_file_index_lifecycle` — PASS (76 tests)
+- `.venv/bin/python -m unittest tests.test_task_persistence tests.test_api_security` — PASS (26 tests)
+- `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_organizer_rollback` — PASS (45 tests)
+- `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_direct_file_uploads tests.test_direct_file_downloads` — PASS (205 tests)
+- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED: 1758 passed,
+  7 skipped, 3 failures, all three reproduced identically at Task Base
+  `f1e157cd9488f742958339a477373c639dad0257` in a clean worktree with identical assertion output:
+  - `tests.test_configuration_status.ConfigurationSnapshotTests.test_hostile_configuration_content_is_never_exposed`
+    (`'root' unexpectedly found` — the `root_path` field name in the configuration snapshot
+    projection)
+  - `tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_carry_no_forbidden_evidence`
+    (`201 != 400` in the shared `_capture` helper)
+  - `tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture`
+    (same shared `_capture` helper)
+  These modules do not call the new Files admission or reconciliation routes; the same signature
+  fails at the Task Base without any of this Task's changes.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
+- `.venv/bin/python -m pip check` — PASS (no broken requirements)
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / PRE-EXISTING / UNRELATED:
+  `Error response from daemon: invalid mount config for type "bind": bind source path does not
+  exist: /tmp/.../media/organized` (first run) and `.../deployment.env` (Base comparison run).
+  Reproduced identically at Task Base `f1e157cd9488f742958339a477373c639dad0257` in a clean
+  worktree; the harness failure is independent of this Task's changes (the Task touches no Docker,
+  compose or smoke-script code).
+- `test -z "$(grep -rn -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml || true)"` — PASS
+- `cd web && npm run format:check` — PASS (5 files initially failing were normalized with
+  Prettier; final run clean)
+- `cd web && npm run typecheck` — PASS
+- `cd web && npm run lint` — PASS (two `no-useless-assignment` findings in
+  `web/src/shared/api/api-client.ts` fixed; final run clean)
+- `cd web && NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx src/features/operations/OrganizeRouter.test.tsx` — PASS (51 tests)
+- `cd web && npx playwright test tests/e2e/library-files.spec.ts tests/e2e/manual-organize.spec.ts --project=chromium` — PASS on re-run (44 passed). The first full run had 2
+  flaky failures (`list and grid presentation switch and bounded pagination`,
+  `empty and recoverable failure states preserve the Files context`); both passed individually and
+  the complete 44-test re-run passed. No assertion was weakened.
+- `cd web && NODE_ENV=test npm run test -- --run` — PASS (460 tests)
+- `cd web && npm run build` — PASS (chunk-size warning only, pre-existing)
+- `cd web && npm run test:e2e` — PASS (112 passed)
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` — PASS
+  (`mediaflow-2.0.0.dev0-py3-none-any.whl`; `dist/` is git-ignored and not committed)
+- `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS (schema 38)
+- `git diff --check` — PASS
+- Checkpoint manifest: only this Task's files staged; `config/alist.json` absent, no credentials,
+  the dirty `docs/pics/文件页.png` left untouched and unstaged, no ignored artifacts included.
+
 ### Decisions
+
+- Files admission lives on `ManualOrganizePreviewService.admit_storage_paths` rather than a new
+  service: it is an admission boundary only and must reuse the existing snapshot pinning, Storage
+  resolution and `create_from_sources` authority so no second Files-specific state machine exists.
+- The ResourceLibrary Files projection publishes a new explicit `organizeEligible` flag instead of
+  reinterpreting the generic Storage browser's directory-picker `selectable` value, keeping the
+  directory-picker contract intact for setup flows.
+- Reconciliation state is derived at document-read time from the durable Result identity plus the
+  current exact FileIndex row, so a stale/missing occurrence can never rewrite an already-known
+  Storage effect; the recovery action re-runs only the same display-only reconciliation.
+- The return-to-Files context travels in the URL search projection (validated, bounded, no
+  identifiers beyond ResourceLibrary ID and relative directory) so ordinary operators never copy
+  raw IDs or tokens.
+- Web table rows show `整理` for every organize-eligible regular file (previously gated on
+  `businessStatus === "pending"`), because eligibility is a Storage-authoritative property while
+  `businessStatus` is FileIndex display feedback.
 
 ### Remaining In-Slice Work
 
+- The three pre-existing full-discovery failures and the pre-existing Docker release security
+  smoke harness failure are unresolved; they reproduce at the Task Base and are outside this
+  Task's scope. B must judge whether they block Slice closure or belong to a separate correction.
+- Slice-final screenshot/closure work remains with B/A after this Task review.
+
 ### Risks / Deviations
+
+- `FAIL / PRE-EXISTING / UNRELATED`: three unittest failures and the Docker security smoke failure
+  listed above, each reproduced at the Task Base with identical signatures. This checkpoint does
+  not claim they are non-blocking; that judgment belongs to B.
+- The first focused Playwright run showed 2 flaky failures that passed on isolated and full
+  re-runs; the complete focused re-run and the full `test:e2e` suite (112 tests) both pass.
+- No test was deleted, no assertion weakened, no skip hidden; `docs/pics/文件页.png` remains dirty
+  and unstaged as required.
 
 ### Checkpoint
 

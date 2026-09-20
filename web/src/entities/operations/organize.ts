@@ -381,6 +381,35 @@ export interface OrganizeExecutionItemModel {
   readonly failure: OrganizeFailureModel | null;
   readonly nextAction: string | null;
   readonly effects: readonly OrganizeExecutionEffectModel[];
+  /**
+   * Bounded FileIndex display reconciliation for this item's durable Result.
+   * It never supplies physical authority and never replays an Organize
+   * mutation; `null` means the backend published no reconciliation evidence.
+   */
+  readonly fileIndexReconciliation: OrganizeFileIndexReconciliationModel | null;
+}
+
+export const ORGANIZE_FILE_INDEX_RECONCILIATION_STATES = [
+  "synchronized",
+  "no_matching_occurrence",
+  "attention_required",
+  "pending",
+] as const;
+
+export type OrganizeFileIndexReconciliationState =
+  (typeof ORGANIZE_FILE_INDEX_RECONCILIATION_STATES)[number];
+
+export interface OrganizeFileIndexReconciliationModel {
+  readonly state: OrganizeFileIndexReconciliationState;
+  readonly nextAction: string | null;
+  readonly action: {
+    readonly available: boolean;
+    readonly method: string | null;
+    readonly path: string | null;
+    readonly sideEffects: string | null;
+    readonly durableOutcome: string | null;
+    readonly nextAction: string | null;
+  } | null;
 }
 
 export interface OrganizeKnownEffectsModel {
@@ -870,6 +899,59 @@ function normalizeExecutionEffect(
   };
 }
 
+function normalizeFileIndexReconciliation(
+  value: unknown,
+): OrganizeFileIndexReconciliationModel | null {
+  if (value === undefined || value === null) return null;
+  let source: Record<string, unknown>;
+  try {
+    source = readRecord(value, "execution.items[].fileIndexReconciliation");
+  } catch {
+    return null;
+  }
+  const rawState = source["state"];
+  if (
+    typeof rawState !== "string" ||
+    !(ORGANIZE_FILE_INDEX_RECONCILIATION_STATES as readonly string[]).includes(
+      rawState,
+    )
+  ) {
+    return null;
+  }
+  const state = rawState as OrganizeFileIndexReconciliationState;
+  let action: OrganizeFileIndexReconciliationModel["action"] = null;
+  const rawAction = source["action"];
+  if (
+    rawAction !== undefined &&
+    rawAction !== null &&
+    typeof rawAction === "object" &&
+    !Array.isArray(rawAction)
+  ) {
+    const record = rawAction as Record<string, unknown>;
+    action = {
+      available: record["available"] === true,
+      method: typeof record["method"] === "string" ? record["method"] : null,
+      path: typeof record["path"] === "string" ? record["path"] : null,
+      sideEffects:
+        typeof record["sideEffects"] === "string"
+          ? record["sideEffects"]
+          : null,
+      durableOutcome:
+        typeof record["durableOutcome"] === "string"
+          ? record["durableOutcome"]
+          : null,
+      nextAction:
+        typeof record["nextAction"] === "string" ? record["nextAction"] : null,
+    };
+  }
+  return {
+    state,
+    nextAction:
+      typeof source["nextAction"] === "string" ? source["nextAction"] : null,
+    action,
+  };
+}
+
 function normalizeExecutionItem(value: unknown): OrganizeExecutionItemModel {
   const source = readRecord(value, "execution.items[]");
   const rawEffects = source["effects"] ?? [];
@@ -931,6 +1013,9 @@ function normalizeExecutionItem(value: unknown): OrganizeExecutionItemModel {
     failure: normalizeOrganizeFailure(source["failure"], "items[].failure"),
     nextAction: optionalText(source, "nextAction"),
     effects,
+    fileIndexReconciliation: normalizeFileIndexReconciliation(
+      source["fileIndexReconciliation"],
+    ),
   };
 }
 

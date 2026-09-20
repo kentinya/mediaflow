@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import sqlite3
 import tempfile
 import unittest
@@ -67,6 +68,7 @@ from mediaflow.infrastructure.runtime_configuration import (
     StorageDefinition,
     with_managed_snapshot,
 )
+from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
@@ -1542,6 +1544,416 @@ class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
                 repository.close()
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+
+
+class FilesAdmissionJourneyTests(unittest.TestCase):
+    """Files-originated live-Storage admission, exact identity and reconciliation.
+
+    The whole journey runs on one real runtime database shared by the Task
+    repository and the durable FileIndex, so exact-occurrence reconciliation is
+    exercised against the same persistence boundary production uses.
+    """
+
+    SOURCE_NAMES = ("Movies/One.2001.mkv", "Movies/Two.2002.mkv")
+
+    @contextmanager
+    def journey(self, *, names: tuple[str, ...] = SOURCE_NAMES, with_symlink: bool = False):
+        with (
+            tempfile.TemporaryDirectory() as source_directory,
+            tempfile.TemporaryDirectory() as target_directory,
+            tempfile.TemporaryDirectory() as runtime_directory,
+        ):
+            source_root = Path(source_directory)
+            target_root = Path(target_directory)
+            candidates = []
+            for position, name in enumerate(names, start=1):
+                path = Path(name)
+                (source_root / path).parent.mkdir(parents=True, exist_ok=True)
+                (source_root / path).write_bytes((name.encode() + b"x" * 200)[:123])
+                candidates.append(
+                    MediaCandidate(
+                        "tmdb",
+                        str(200 + position),
+                        MediaType.MOVIE,
+                        path.stem.split(".", 1)[0],
+                        year=2000 + position,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    )
+                )
+            if with_symlink:
+                os.symlink(
+                    str(source_root / "Movies" / "One.2001.mkv"),
+                    str(source_root / "Movies" / "linked.mkv"),
+                )
+            runtime_path = Path(runtime_directory, "runtime.sqlite3")
+            source_storage = LocalStorage("source", source_root)
+            target_storage = LocalStorage("target", target_root)
+            library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+            index = SQLiteFileIndexRepository(runtime_path)
+            scan = StorageScanner(
+                {"source": source_storage},
+                index,
+                clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+            ).scan(library)
+            self.assertEqual("completed", scan.status.value)
+            configuration = RuntimeConfiguration(
+                development_strategy_configuration(),
+                (
+                    StorageDefinition("source", "local", str(source_root), "Source"),
+                    StorageDefinition("target", "local", str(target_root), "Target"),
+                ),
+                (library,),
+                (),
+                (MediaLibrary("movies", "Movies", "target", "Movies"),),
+                str(Path(runtime_directory, "history.jsonl")),
+                str(runtime_path),
+            )
+            configuration = with_managed_snapshot(
+                configuration, snapshot_id=SNAPSHOT_ID, digest=SNAPSHOT_DIGEST
+            )
+            provider = SyntheticMetadataProvider(tuple(candidates))
+            repository = SQLiteTaskRepository(runtime_path)
+            source = RecordingStorage(source_storage)
+            target = RecordingStorage(target_storage)
+            catalog = FileCatalogService(
+                index,
+                ("library",),
+                ("source",),
+                task_repository=repository,
+            )
+            intents = ManualOrganizeIntentService(
+                repository,
+                catalog,
+                configuration_resolver=manual_snapshot,
+            )
+            previews = ManualOrganizePreviewService(
+                repository,
+                intents,
+                catalog,
+                configuration=configuration,
+                file_index=index,
+                providers=MetadataProviderRegistry((provider,)),
+                storages={"source": source, "target": target},
+            )
+            execution = ManualOrganizeExecutionService(
+                repository,
+                previews,
+                intents,
+                checkpoint_service=ProcessingCheckpointService(repository),
+                storages={"source": source, "target": target},
+            )
+            worker = ManualOrganizeExecutionWorker(
+                execution, worker_id="worker-1", notice=lambda line: None
+            )
+            worker_service = ProcessingWorkerService(repository)
+            worker_service.register_worker(
+                "worker-1",
+                "worker one",
+                10.0,
+                ("scan", "preview", "organize"),
+                configuration_snapshot_id=SNAPSHOT_ID,
+                configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                runtime_schema_version=SCHEMA_VERSION,
+            )
+            api = MediaFlowApi(
+                repository,
+                None,
+                principals=(
+                    ResolvedApiPrincipal(
+                        "operator",
+                        OPERATOR_TOKEN,
+                        frozenset(
+                            {
+                                ApiPermission.READ,
+                                ApiPermission.MANAGE_MANUAL_ORGANIZE,
+                                ApiPermission.EXECUTE_MANUAL_ORGANIZE,
+                            }
+                        ),
+                    ),
+                    ResolvedApiPrincipal(
+                        "viewer",
+                        VIEWER_TOKEN,
+                        frozenset({ApiPermission.READ}),
+                    ),
+                ),
+                system_status=build_configuration_snapshot(configuration),
+                file_catalog=catalog,
+                file_index=index,
+                configuration_snapshot_id=SNAPSHOT_ID,
+                configuration_snapshot_digest=SNAPSHOT_DIGEST,
+                manual_intent_service=intents,
+                manual_preview_service=previews,
+                manual_execution_service=execution,
+                worker_service=worker_service,
+            )
+            try:
+                yield SimpleNamespace(
+                    api=api,
+                    repository=repository,
+                    intents=intents,
+                    previews=previews,
+                    execution=execution,
+                    worker=worker,
+                    configuration=configuration,
+                    index=index,
+                    catalog=catalog,
+                    source=source,
+                    target=target,
+                    source_root=source_root,
+                    target_root=target_root,
+                )
+            finally:
+                index.close()
+                repository.close()
+
+    @staticmethod
+    def request(
+        value,
+        path: str,
+        method: str = "GET",
+        body: dict | None = None,
+        *,
+        token: str = OPERATOR_TOKEN,
+    ) -> tuple[int, dict]:
+        statuses: list[str] = []
+        raw = json.dumps(body).encode() if body is not None else b""
+        path_info, _, query_string = path.partition("?")
+        environ = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path_info,
+            "QUERY_STRING": query_string,
+            "CONTENT_LENGTH": str(len(raw)),
+            "REMOTE_ADDR": "127.0.0.1",
+            "wsgi.input": io.BytesIO(raw),
+            "CONTENT_TYPE": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {token}",
+        }
+        response = b"".join(value.api(environ, lambda status, headers: statuses.append(status)))
+        return int(statuses[0].split()[0]), json.loads(response)
+
+    def admit(self, value, paths, *, token: str = OPERATOR_TOKEN):
+        return self.request(
+            value,
+            "/api/v1/resource-libraries/library/files/organize",
+            "POST",
+            {"paths": list(paths)},
+            token=token,
+        )
+
+    def test_files_admission_creates_one_ordered_multi_file_intent_from_live_storage(self) -> None:
+        with self.journey() as value:
+            status, intent = self.admit(value, ["Movies/Two.2002.mkv", "Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            self.assertEqual("organize", intent["journey"])
+            self.assertTrue(intent["zeroMutation"])
+            self.assertEqual("open", intent["status"])
+            self.assertEqual(
+                ["Two.2002.mkv", "One.2001.mkv"],
+                [Path(item["source"]["path"]).name for item in intent["items"]],
+            )
+            first = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
+            self.assertIsNotNone(first)
+            # The intent carries the server-derived identity of the live source.
+            stored = value.repository.get_manual_intent(intent["intentId"])
+            identities = {item.source.path: item.source for item in stored.items}
+            self.assertEqual(
+                first.occurrence_id,
+                identities["Movies/One.2001.mkv"].occurrence_id,
+            )
+            self.assertEqual(first.fingerprint, identities["Movies/One.2001.mkv"].fingerprint)
+            # Admission is zero Storage mutation, creates no Task and no Preview.
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertIsNone(value.repository.get_manual_execution("does-not-exist"))
+            # The operator document never publishes fingerprints, occurrence IDs
+            # or configuration digests.
+            encoded = json.dumps(intent)
+            for forbidden in ("fingerprint", "occurrenceId", SNAPSHOT_DIGEST):
+                self.assertNotIn(forbidden, encoded)
+
+    def test_files_admission_fails_closed_for_ineligible_and_malformed_selections(self) -> None:
+        with self.journey(with_symlink=True) as value:
+            cases = (
+                (["Movies"], 409, "source_not_file"),
+                (["Movies/linked.mkv"], 409, "source_symlink"),
+                (["Movies/Missing.mkv"], 404, "source_missing"),
+                (["../escape.mkv"], 400, "invalid_path"),
+                (["/etc/passwd"], 400, "invalid_path"),
+                (["Movies/One.2001.mkv", "Movies/One.2001.mkv"], 400, "duplicate_source"),
+                ([], 400, "selection_empty"),
+                (
+                    [f"Movies/Bulk.{index:03d}.mkv" for index in range(101)],
+                    400,
+                    "selection_over_limit",
+                ),
+            )
+            for paths, expected_status, expected_code in cases:
+                status, document = self.admit(value, paths)
+                self.assertEqual(expected_status, status, (paths, document))
+                self.assertEqual(expected_code, document["error"]["code"], paths)
+                self.assertEqual(
+                    "rejected_without_mutation", document["error"]["details"]["durableState"]
+                )
+            # Nothing was admitted, mutated or scheduled by a rejected selection.
+            self.assertEqual((), value.repository.list_tasks())
+            self.assertEqual((), value.repository.list_manual_intents())
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_files_admission_requires_manage_permission(self) -> None:
+        with self.journey() as value:
+            status, document = self.admit(value, ["Movies/One.2001.mkv"], token=VIEWER_TOKEN)
+            self.assertEqual(403, status, document)
+            self.assertEqual((), value.repository.list_manual_intents())
+            self.assertEqual([], value.source.mutations)
+
+    def test_files_admission_rejects_a_non_current_active_selection(self) -> None:
+        with self.journey() as value:
+            # A source that disappeared after the Files listing was rendered
+            # fails without admitting an intent.
+            (value.source_root / "Movies" / "One.2001.mkv").unlink()
+            status, document = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(404, status, document)
+            self.assertEqual("source_missing", document["error"]["code"])
+            self.assertEqual((), value.repository.list_manual_intents())
+
+    def test_files_journey_executes_and_reconciles_the_exact_live_occurrence(self) -> None:
+        with self.journey() as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv", "Movies/Two.2002.mkv"])
+            self.assertEqual(201, status, intent)
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": intent["version"]},
+            )
+            self.assertEqual(201, status, preview)
+            status, execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": [item["itemId"] for item in preview["items"]],
+                    "expectedIntentVersion": intent["version"],
+                },
+            )
+            self.assertEqual(202, status, execution)
+            self.assertEqual([], value.source.mutations)
+            completed = value.worker.run_next()
+            self.assertIsNotNone(completed)
+            self.assertIsNone(value.worker.run_next())
+
+            records = {
+                name: value.index.find_by_path("source", "library", name)
+                for name in ("Movies/One.2001.mkv", "Movies/Two.2002.mkv")
+            }
+            task = value.repository.get_task(execution["taskId"])
+            self.assertIsNotNone(task)
+            items = value.repository.list_items(execution["taskId"])
+            self.assertEqual(2, len(items))
+            for item in items:
+                record = records[item.source_path]
+                self.assertEqual(record.occurrence_id, item.source_occurrence_id)
+                self.assertEqual(record.fingerprint, item.source_fingerprint)
+                self.assertEqual("verified", item.source_fingerprint_state)
+                results = value.repository.list_results_for_item(item.item_id)
+                self.assertEqual(1, len(results))
+                self.assertEqual(record.occurrence_id, results[0].source_occurrence_id)
+                self.assertEqual(record.fingerprint, results[0].source_fingerprint)
+                self.assertEqual("verified", results[0].source_fingerprint_state)
+            # The durable Result reconciled the exact FileIndex occurrence it executed.
+            for name, record in records.items():
+                current = value.index.find_by_path("source", "library", name)
+                self.assertEqual(record.occurrence_id, current.occurrence_id)
+                self.assertNotEqual("unknown", current.processing_disposition.value, name)
+                self.assertIsNotNone(current.processing_result_id)
+
+            status, document = self.request(
+                value,
+                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+            )
+            self.assertEqual(200, status, document)
+            reconciliation = {
+                item["itemId"]: item["fileIndexReconciliation"] for item in document["items"]
+            }
+            self.assertEqual(2, len(reconciliation))
+            for state in reconciliation.values():
+                self.assertEqual("synchronized", state["state"])
+                self.assertFalse(state["action"]["available"])
+            encoded = json.dumps(document)
+            for forbidden in ("fingerprint", "occurrenceId", "executionPlan"):
+                self.assertNotIn(forbidden, encoded)
+
+    def test_same_path_replacement_never_receives_the_older_occurrence_result(self) -> None:
+        with self.journey(names=("Movies/One.2001.mkv",)) as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            status, preview = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+                "POST",
+                {"expectedVersion": intent["version"]},
+            )
+            self.assertEqual(201, status, preview)
+            status, execution = self.request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+                "POST",
+                {
+                    "confirmation": True,
+                    "itemIds": [item["itemId"] for item in preview["items"]],
+                    "expectedIntentVersion": intent["version"],
+                },
+            )
+            self.assertEqual(202, status, execution)
+            self.assertIsNotNone(value.worker.run_next())
+
+            original = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
+            self.assertNotEqual("unknown", original.processing_disposition.value)
+
+            # A different file now occupies the same live path.  A routine
+            # rescan records a new occurrence; the older Result must never bind
+            # to it.
+            (value.source_root / "Movies" / "One.2001.mkv").write_bytes(b"replacement" * 40)
+            scan = StorageScanner(
+                {"source": LocalStorage("source", value.source_root)},
+                value.index,
+                clock=lambda: datetime.now(UTC) + timedelta(hours=4),
+            ).scan(ResourceLibrary("library", "Library", "source", "", exclude_rules=()))
+            self.assertEqual("completed", scan.status.value)
+            replacement = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
+            self.assertNotEqual(original.occurrence_id, replacement.occurrence_id)
+            self.assertEqual("unknown", replacement.processing_disposition.value)
+            self.assertIsNone(replacement.processing_result_id)
+
+            status, document = self.request(
+                value,
+                f"/api/v1/operations/organize/executions/{execution['executionId']}",
+            )
+            self.assertEqual(200, status, document)
+            item = document["items"][0]
+            self.assertEqual("no_matching_occurrence", item["fileIndexReconciliation"]["state"])
+            self.assertTrue(item["fileIndexReconciliation"]["action"]["available"])
+
+            # The bounded reconciliation action re-applies the durable Result
+            # only to a matching current occurrence; the replacement keeps its
+            # own untouched disposition and no mutation is replayed.
+            status, result = self.request(
+                value,
+                f"/api/v1/operations/organize/executions/{execution['executionId']}"
+                "/file-index-reconciliation",
+                "POST",
+                {"itemId": item["itemId"]},
+            )
+            self.assertEqual(200, status, result)
+            self.assertEqual("no_matching_occurrence", result["fileIndexReconciliation"]["state"])
+            self.assertEqual("organize_effect_unchanged", result["durableState"])
+            after = value.index.find_by_path("source", "library", "Movies/One.2001.mkv")
+            self.assertEqual("unknown", after.processing_disposition.value)
+            self.assertIsNone(after.processing_result_id)
 
 
 if __name__ == "__main__":
