@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -1364,6 +1365,269 @@ class UploadFramedApiTests(UploadTestCase):
                 },
             )
             self.assertEqual(unauth_status, 401)
+
+
+class UploadOperationLockTests(UploadTestCase):
+    """B1 P1 regression: finish_upload must not race an in-flight item.
+
+    The operation lock per live UploadSession prevents finish_upload from
+    publishing mutually contradictory durable and user-visible outcomes.
+    Two deterministic WSGI-route regressions prove the fix.
+    """
+
+    class _BlockingWriteStorage(LocalStorage):
+        """A provider that blocks at the start of write until a gate opens.
+
+        The gate blocks before any bytes are written, so the caller knows
+        the operation lock is held (``execute_item`` holds it for the
+        entire execution) when the gate is open.
+        """
+
+        def __init__(
+            self,
+            storage_id: str,
+            root: Path,
+            *,
+            write_started: threading.Event,
+            gate: threading.Event,
+        ) -> None:
+            super().__init__(storage_id, root)
+            self._write_started = write_started
+            self._gate = gate
+
+        def write(self, path, data, *, overwrite: bool = False):
+            # Signal before any write so the test knows the executor has
+            # entered the storage boundary and the operation lock is held.
+            self._write_started.set()
+            # Block until the test releases the gate.
+            self._gate.wait(timeout=5)
+            target = self._resolve(path, "write")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with target.open("wb") as handle:
+                while True:
+                    chunk = data.read(4096)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+
+    @staticmethod
+    def _admission_environ(manifest: dict):
+        body = json.dumps(manifest).encode("utf-8")
+        return {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": "/api/v1/resource-libraries/source/files/uploads",
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(body)),
+            "CONTENT_TYPE": "application/json",
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": "Bearer admin-token",
+            "wsgi.input": io.BytesIO(body),
+        }
+
+    @staticmethod
+    def _item_environ(task_id: str, index: int, payload: bytes):
+        return {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": (
+                f"/api/v1/resource-libraries/source/files/uploads/{task_id}/items/{index}"
+            ),
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(payload)),
+            "CONTENT_TYPE": "application/octet-stream",
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": "Bearer admin-token",
+            "wsgi.input": io.BytesIO(payload),
+        }
+
+    @staticmethod
+    def _finish_environ(task_id: str):
+        return {
+            "REQUEST_METHOD": "POST",
+            "PATH_INFO": f"/api/v1/resource-libraries/source/files/uploads/{task_id}/finish",
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": "0",
+            "REMOTE_ADDR": "127.0.0.1",
+            "HTTP_AUTHORIZATION": "Bearer admin-token",
+            "wsgi.input": io.BytesIO(b""),
+        }
+
+    @staticmethod
+    def _call(api, environ):
+        statuses: list[str] = []
+
+        def start_response(status, headers):
+            statuses.append(status)
+
+        body = b"".join(api(environ, start_response))
+        return int(statuses[0].split()[0]), body
+
+    def test_inflight_item_makes_concurrent_finish_return_409_then_finish_succeeds(
+        self,
+    ) -> None:
+        """(1) An in-flight item makes concurrent finish return 409 with
+        zero state change, then the same finish succeeds after that item
+        completes.  Both results are internally consistent."""
+
+        write_started = threading.Event()
+        gate = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            blocking = self._BlockingWriteStorage(
+                "source-storage",
+                root / "source",
+                write_started=write_started,
+                gate=gate,
+            )
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": blocking}
+            )
+            manifest = {
+                "destinationDirectory": "",
+                "conflict": "no_overwrite",
+                "items": [{"relativePath": "Movies/a.mkv", "size": 11}],
+            }
+            status, body = self._call(api, self._admission_environ(manifest))
+            self.assertEqual(status, 202, body)
+            task_id = json.loads(body)["taskId"]
+            # Start item 0 in a background thread — it will block in the
+            # storage write while holding the operation lock.
+            result_box: list[tuple[int, bytes]] = []
+
+            def item_thread():
+                result_box.append(self._call(api, self._item_environ(task_id, 0, b"hello-world")))
+
+            t = threading.Thread(target=item_thread)
+            t.start()
+            # Wait until the storage write has started — the operation lock
+            # is held for the entire execute_item.
+            self.assertTrue(write_started.wait(timeout=5))
+            # While the item is in-flight (holding the operation lock),
+            # concurrent finish must return 409 with zero state change.
+            finish_status, finish_body = self._call(api, self._finish_environ(task_id))
+            self.assertEqual(finish_status, 409, finish_body)
+            body_text = finish_body.decode()
+            self.assertIn("upload_item_in_progress", body_text)
+            # The Task is still running — no terminal aggregate was published.
+            task = runtime.get_task(task_id)
+            self.assertEqual(task.status.value, "running")
+            # Release the gate so the item completes.
+            gate.set()
+            t.join(timeout=5)
+            self.assertEqual(len(result_box), 1)
+            item_status, item_body = result_box[0]
+            self.assertEqual(item_status, 200, item_body)
+            self.assertEqual(json.loads(item_body)["status"], "SUCCESS")
+            self.assertTrue((root / "source" / "Movies" / "a.mkv").exists())
+            # Now finish succeeds and reaches the honest terminal aggregate.
+            finish_status2, finish_body2 = self._call(api, self._finish_environ(task_id))
+            self.assertEqual(finish_status2, 200, finish_body2)
+            document = json.loads(finish_body2)
+            self.assertEqual(document["status"], "SUCCESS")
+            task = runtime.get_task(task_id)
+            self.assertEqual(task.status.value, "completed")
+            # The projection is internally consistent.
+            proj_status, proj_body = self._call(
+                api,
+                {
+                    "REQUEST_METHOD": "GET",
+                    "PATH_INFO": f"/api/v1/resource-libraries/source/files/uploads/{task_id}",
+                    "QUERY_STRING": "",
+                    "CONTENT_LENGTH": "0",
+                    "REMOTE_ADDR": "127.0.0.1",
+                    "HTTP_AUTHORIZATION": "Bearer admin-token",
+                    "wsgi.input": io.BytesIO(b""),
+                },
+            )
+            self.assertEqual(proj_status, 200)
+            projection = json.loads(proj_body)
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["status"], "SUCCESS")
+            self.assertEqual(projection["taskStatus"], "completed")
+
+    def test_two_concurrent_deliveries_for_one_item_invoke_exactly_one_mutation(
+        self,
+    ) -> None:
+        """(2) Two concurrent deliveries for one item invoke exactly one
+        OrganizerExecutor mutation while the other receives a stable 409.
+        The 409 may be the ordering guard (item_already_delivered) or the
+        operation lock (upload_item_in_progress); both are valid.  Both
+        results are internally consistent."""
+
+        write_started = threading.Event()
+        gate = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            blocking = self._BlockingWriteStorage(
+                "source-storage",
+                root / "source",
+                write_started=write_started,
+                gate=gate,
+            )
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": blocking}
+            )
+            executor = _CountingExecutor()
+            binding = api._prepare_runtime_binding_for_revision(active)
+            self.assertIsNotNone(binding.direct_uploads)
+            uploads = DirectFileUploadService(
+                direct_files=binding.direct_files,
+                executor=executor,
+            )
+            manifest = self._manifest("", "no_overwrite", [("Movies/solo.mkv", b"exact-bytes")])
+            admitted = uploads.upload(resource_library_id="source", manifest=manifest)
+            task_id = admitted["taskId"]
+            # Start the first delivery in a background thread via the
+            # uploads service (which uses the _CountingExecutor).  It will
+            # block in the storage write while holding the operation lock.
+            result_a: list[dict] = []
+
+            def first_delivery():
+                try:
+                    result_a.append(uploads.execute_item(task_id, 0, io.BytesIO(b"exact-bytes")))
+                except Exception as exc:
+                    result_a.append({"_error": str(exc)})
+
+            t = threading.Thread(target=first_delivery)
+            t.start()
+            # Wait until the storage write has started — the operation lock
+            # is held for the entire execute_item.
+            self.assertTrue(write_started.wait(timeout=5))
+            # The second delivery for the same index goes through the WSGI
+            # route and is refused with a stable 409 — either the ordering
+            # guard or the operation lock.
+            result_b_status, result_b_body = self._call(
+                api, self._item_environ(task_id, 0, b"exact-bytes")
+            )
+            self.assertEqual(result_b_status, 409, result_b_body)
+            result_b_text = result_b_body.decode()
+            self.assertTrue(
+                "item_already_delivered" in result_b_text
+                or "upload_item_in_progress" in result_b_text,
+                f"expected a stable refusal, got: {result_b_text}",
+            )
+            # Release the gate so the first delivery completes.
+            gate.set()
+            t.join(timeout=5)
+            self.assertEqual(len(result_a), 1)
+            self.assertNotIn("_error", result_a[0], result_a[0].get("_error"))
+            self.assertEqual(result_a[0]["status"], "SUCCESS")
+            # Exactly one write mutation crossed the Executor boundary.
+            write_count = sum(1 for b in executor.boundaries if b == "WRITE_STREAM")
+            self.assertEqual(write_count, 1)
+            # Finish the upload and verify a single internally consistent
+            # terminal Task/projection/result.
+            finished = uploads.finish_upload(task_id)
+            self.assertEqual(finished["status"], "SUCCESS")
+            self.assertEqual(finished["succeededItems"], 1)
+            task = runtime.get_task(task_id)
+            self.assertEqual(task.status.value, "completed")
+            projection = uploads.upload_projection(task_id)
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["status"], "SUCCESS")
+            self.assertEqual(projection["succeededItems"], 1)
+            self.assertEqual(projection["failedItems"], 0)
 
 
 class UploadPinnedBindingTests(UploadTestCase):

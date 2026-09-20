@@ -196,6 +196,14 @@ class UploadSession:
         self.state = state
         self.phase = UploadSessionPhase.RUNNING
         self._lock = threading.Lock()
+        #: Mutual exclusion between in-flight item execution (including
+        #: result publication) and concurrent ``finish_upload`` or
+        #: concurrent item delivery.  ``execute_item`` holds this lock for
+        #: the complete single-item execution and result publication;
+        #: ``finish_upload`` and another concurrent item request attempt to
+        #: acquire it without waiting — a busy session returns a stable
+        #: ``upload_item_in_progress`` 409 and changes no durable state.
+        self._operation_lock = threading.Lock()
 
     @property
     def task_id(self) -> str:
@@ -652,74 +660,93 @@ class DirectFileUploadService:
                 next_action="stream the remaining items in the manifest order",
             )
         plan = state.planned[index]
-        try:
-            task_item = coordinator.begin_item(
-                task_id,
-                state.storage.storage_id,
-                state.library.library_id,
-                item.relative_path,
-                item.relative_path,
-            )
-        except TaskPauseRequested:
-            # The pause arrived while the previous item was still streaming:
-            # this boundary is still before this item's first mutation, so
-            # the pause is acknowledged here and the item keeps its own
-            # pending row — never a failure.
-            session.acknowledge_pause()
-            coordinator.acknowledge_pause(task_id)
-            return session.paused_document(index)
-        state.delivered.add(index)
-        try:
-            outcome, item_truncated, checksum, written_destination, category = self._execute_item(
-                state, plan, stream
-            )
-        except DirectFileUploadError as error:
-            self._drain_payload(plan, stream)
-            self._record_item(
-                task_item,
-                plan,
-                UploadItemStatus.FAILED,
-                error.category,
-                destination=plan.destination,
-            )
+        # The operation lock prevents finish_upload and a concurrent item
+        # request from racing this execution's result publication.  A busy
+        # session returns a stable409 with zero state change; the lock is
+        # session-local so unrelated uploads are never serialized.
+        if not session._operation_lock.acquire(blocking=False):
             return {
                 "index": index,
                 "path": item.relative_path,
                 "status": "FAILED",
-                "errorCategory": error.category,
+                "errorCategory": "upload_item_in_progress",
+                "taskStatus": coordinator.require(task_id).status.value,
+                "terminal": False,
+                "sideEffects": "storage_mutations",
+                "retrySafe": True,
+                "nextAction": "another upload operation is in progress; retry this request",
+            }
+        try:
+            try:
+                task_item = coordinator.begin_item(
+                    task_id,
+                    state.storage.storage_id,
+                    state.library.library_id,
+                    item.relative_path,
+                    item.relative_path,
+                )
+            except TaskPauseRequested:
+                # The pause arrived while the previous item was still streaming:
+                # this boundary is still before this item's first mutation, so
+                # the pause is acknowledged here and the item keeps its own
+                # pending row — never a failure.
+                session.acknowledge_pause()
+                coordinator.acknowledge_pause(task_id)
+                return session.paused_document(index)
+            state.delivered.add(index)
+            try:
+                outcome, item_truncated, checksum, written_destination, category = (
+                    self._execute_item(state, plan, stream)
+                )
+            except DirectFileUploadError as error:
+                self._drain_payload(plan, stream)
+                self._record_item(
+                    task_item,
+                    plan,
+                    UploadItemStatus.FAILED,
+                    error.category,
+                    destination=plan.destination,
+                )
+                return {
+                    "index": index,
+                    "path": item.relative_path,
+                    "status": "FAILED",
+                    "errorCategory": error.category,
+                    "taskStatus": coordinator.require(task_id).status.value,
+                    "terminal": False,
+                    "sideEffects": "storage_mutations",
+                    "retrySafe": False,
+                    "nextAction": "review the reason and retry this item or the selection",
+                }
+            self._record_item(
+                task_item,
+                plan,
+                outcome,
+                category,
+                checksum=checksum,
+                destination=written_destination,
+            )
+            document: dict[str, object] = {
+                "index": index,
+                "path": item.relative_path,
+                "status": outcome.value,
                 "taskStatus": coordinator.require(task_id).status.value,
                 "terminal": False,
                 "sideEffects": "storage_mutations",
                 "retrySafe": False,
-                "nextAction": "review the reason and retry this item or the selection",
+                "nextAction": "continue with the next item or finish the upload",
             }
-        self._record_item(
-            task_item,
-            plan,
-            outcome,
-            category,
-            checksum=checksum,
-            destination=written_destination,
-        )
-        document: dict[str, object] = {
-            "index": index,
-            "path": item.relative_path,
-            "status": outcome.value,
-            "taskStatus": coordinator.require(task_id).status.value,
-            "terminal": False,
-            "sideEffects": "storage_mutations",
-            "retrySafe": False,
-            "nextAction": "continue with the next item or finish the upload",
-        }
-        if written_destination is not None:
-            document["destination"] = written_destination
-        if checksum is not None:
-            document["checksum"] = checksum
-        if category is not None and outcome is not UploadItemStatus.SUCCESS:
-            document["errorCategory"] = category
-        if outcome is UploadItemStatus.UNCERTAIN:
-            document["durableState"] = "mutation_effect_uncertain"
-        return document
+            if written_destination is not None:
+                document["destination"] = written_destination
+            if checksum is not None:
+                document["checksum"] = checksum
+            if category is not None and outcome is not UploadItemStatus.SUCCESS:
+                document["errorCategory"] = category
+            if outcome is UploadItemStatus.UNCERTAIN:
+                document["durableState"] = "mutation_effect_uncertain"
+            return document
+        finally:
+            session._operation_lock.release()
 
     def finish_upload(self, task_id: str) -> dict[str, object]:
         """Finalize one streamed Upload and return its bounded result.
@@ -761,87 +788,106 @@ class DirectFileUploadService:
                     ),
                     durable_state="the Task stays paused with its recorded item outcomes",
                 )
-        session.mark_finished()
-        state = session.state
-        outcomes: list[UploadItemOutcome] = []
-        for index, item in enumerate(state.items):
-            item_id = str(
-                uuid5(
-                    NAMESPACE_URL,
-                    f"{task_id}:{state.storage.storage_id}:{item.relative_path}",
-                )
+        # The operation lock prevents finish_upload from racing an in-flight
+        # item execution.  A busy session returns a stable 409 with zero
+        # state change; the operator retries after the in-progress item
+        # completes.
+        if not session._operation_lock.acquire(blocking=False):
+            raise DirectFileUploadError(
+                "files_upload_item_in_progress",
+                "upload_item_in_progress",
+                "an upload item is currently being processed; retry the finish after it completes",
+                status=409,
+                next_action=(
+                    "retry the finish request; the upload progress is "
+                    "preserved and no state was changed"
+                ),
+                durable_state="the upload continues; no state was changed",
             )
-            previous = self._direct.tasks.repository.get_item(item_id)
-            delivered = previous is not None and previous.status in {
-                TaskItemStatus.SUCCESS,
-                TaskItemStatus.PARTIAL,
-                TaskItemStatus.FAILED,
-                TaskItemStatus.SKIPPED,
-            }
-            if delivered:
-                # A delivered item keeps its own recorded outcome.
-                record = next(
-                    (
-                        result
-                        for result in self._direct.tasks.repository.list_results(task_id)
-                        if result.item_id == item_id
-                    ),
-                    None,
-                )
-                status = _projection_item_status(previous.status)
-                uncertain = (
-                    status == "PARTIAL"
-                    and record is not None
-                    and (record.effect_certainty == "attempted_unverified")
-                )
-                if uncertain:
-                    status = "UNCERTAIN"
-                checksum = next(
-                    (
-                        operation
-                        for operation in (record.completed_operations if record else ())
-                        if operation.startswith("sha256:")
-                    ),
-                    None,
-                )
-                outcomes.append(
-                    UploadItemOutcome(
-                        item.relative_path,
-                        UploadItemStatus.UNCERTAIN
-                        if uncertain
-                        else (_terminal_item_status(previous.status)),
-                        error_category=previous.error,
-                        destination=previous.destination_path,
-                        checksum=checksum,
+        try:
+            session.mark_finished()
+            state = session.state
+            outcomes: list[UploadItemOutcome] = []
+            for index, item in enumerate(state.items):
+                item_id = str(
+                    uuid5(
+                        NAMESPACE_URL,
+                        f"{task_id}:{state.storage.storage_id}:{item.relative_path}",
                     )
                 )
-                continue
-            plan = state.planned[index]
-            outcomes.append(
-                self._record_refused(
-                    task_id,
-                    state.library,
-                    state.storage,
-                    index,
-                    plan,
-                    "upload_stream_truncated",
+                previous = self._direct.tasks.repository.get_item(item_id)
+                delivered = previous is not None and previous.status in {
+                    TaskItemStatus.SUCCESS,
+                    TaskItemStatus.PARTIAL,
+                    TaskItemStatus.FAILED,
+                    TaskItemStatus.SKIPPED,
+                }
+                if delivered:
+                    # A delivered item keeps its own recorded outcome.
+                    record = next(
+                        (
+                            result
+                            for result in self._direct.tasks.repository.list_results(task_id)
+                            if result.item_id == item_id
+                        ),
+                        None,
+                    )
+                    status = _projection_item_status(previous.status)
+                    uncertain = (
+                        status == "PARTIAL"
+                        and record is not None
+                        and (record.effect_certainty == "attempted_unverified")
+                    )
+                    if uncertain:
+                        status = "UNCERTAIN"
+                    checksum = next(
+                        (
+                            operation
+                            for operation in (record.completed_operations if record else ())
+                            if operation.startswith("sha256:")
+                        ),
+                        None,
+                    )
+                    outcomes.append(
+                        UploadItemOutcome(
+                            item.relative_path,
+                            UploadItemStatus.UNCERTAIN
+                            if uncertain
+                            else (_terminal_item_status(previous.status)),
+                            error_category=previous.error,
+                            destination=previous.destination_path,
+                            checksum=checksum,
+                        )
+                    )
+                    continue
+                plan = state.planned[index]
+                outcomes.append(
+                    self._record_refused(
+                        task_id,
+                        state.library,
+                        state.storage,
+                        index,
+                        plan,
+                        "upload_stream_truncated",
+                    )
                 )
-            )
-        terminal = None
-        task = self._direct.tasks.require(task_id)
-        if task.status is PersistentTaskStatus.CANCELLED:
-            terminal = "cancelled"
-        result = self._finalize(state, task_id, outcomes, terminal)
-        # Terminal cleanup: the session's plan and pinned binding are only
-        # needed while the upload streams; the durable Task/items/Results
-        # remain the only authority.
-        drop_upload_session(task_id)
-        document = result.document()
-        document["destinationDirectory"] = state.destination_directory
-        document["nextAction"] = self._next_action(result)
-        if result.status == "UNCERTAIN":
-            document["durableState"] = "mutation_effect_uncertain"
-        return document
+            terminal = None
+            task = self._direct.tasks.require(task_id)
+            if task.status is PersistentTaskStatus.CANCELLED:
+                terminal = "cancelled"
+            result = self._finalize(state, task_id, outcomes, terminal)
+            # Terminal cleanup: the session's plan and pinned binding are only
+            # needed while the upload streams; the durable Task/items/Results
+            # remain the only authority.
+            drop_upload_session(task_id)
+            document = result.document()
+            document["destinationDirectory"] = state.destination_directory
+            document["nextAction"] = self._next_action(result)
+            if result.status == "UNCERTAIN":
+                document["durableState"] = "mutation_effect_uncertain"
+            return document
+        finally:
+            session._operation_lock.release()
 
     def upload_projection(self, task_id: str) -> dict[str, object]:
         """The durable, bounded operator projection of one Upload Task.
