@@ -801,38 +801,6 @@ Status: READY FOR B REVIEW
 Head SHA: 2ff47490150956a9b31621fff4e947f4b49e78f1
 ```
 
-## B Review Result
-
-```text
-Reviewed: eeac5849b5489f91c26601b9878da5303879377d..2ff47490150956a9b31621fff4e947f4b49e78f1
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
-```
-
-- **P1 — The session lock is acquired after the checks it must fence, so the original terminal race
-  remains reachable and the busy response is not consistently an HTTP 409.** In the current
-  authenticated WSGI assembly, deterministic scheduling at the existing operation-lock acquisition
-  reproduced an item request that had passed the Session/Task/order checks, followed by concurrent
-  `/finish`: finish returned HTTP 200 `FAILED/upload_stream_truncated`, then the unchanged item
-  request acquired the released lock and returned HTTP 500 `internal_error` against the already
-  terminal Task. A second production-route probe blocked item 0 in the real executor and submitted
-  item 1 concurrently; item 1 returned HTTP 200 with body `FAILED/upload_item_in_progress` while its
-  durable row remained PENDING, rather than the required stable 409. The finish-busy 409 document is
-  also internally contradictory: it says no state changed and instructs retry, but exposes
-  `sideEffects=storage_mutations` and `retrySafe=false`. These current API outcomes break Slice
-  RO-6/RO-9, the Upload progress Required Surface, and this Task's truthful independent outcome,
-  bounded error and safe-recovery Acceptance Criteria. Keep the deliberately simple one-lock
-  design: acquire the Session operation lock before any phase, Task-state, delivered/order or
-  finalization decision; perform and publish all such decisions inside its `try/finally`; after
-  acquisition, re-read terminal/session truth so a retained reference cannot execute after finish.
-  Every busy item/finish path must raise the same bounded `DirectFileUploadError` HTTP 409 with
-  truthful zero-effect, retry-safe recovery instead of returning a success-status document. Extend
-  the two concurrency regressions to cover the pre-acquisition finish window and a different next
-  item that actually reaches the lock-busy branch; prove no Task/TaskItem/Result/Session/Storage
-  change, no generic 500, exactly one mutation and one internally consistent terminal projection.
-  Do not add persistence, protocol changes, chunk/resume support or another state machine.
-
 ## Developer Completion Report (Correction Round 4)
 
 ### Changed Files
@@ -1019,3 +987,149 @@ Status: READY FOR B REVIEW
 Head SHA: e29cffb679bb0fbbf28fff6215b64497bcfb4b55
 ```
 
+## B Review Result
+
+```text
+Reviewed: eeac5849b5489f91c26601b9878da5303879377d..e29cffb679bb0fbbf28fff6215b64497bcfb4b55
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — Two legal Upload Sessions contending for the same destination expose a generic 500 after
+  the second session has already durably failed its item.** A deterministic authenticated WSGI
+  probe used two independently admitted Upload Sessions for the same initially absent
+  ResourceLibrary-relative path and blocked the first inside the real OrganizerExecutor-backed
+  write. The second item request returned HTTP 500 `internal_error`, while its durable TaskItem was
+  already `FAILED` with `source is locked by another active task`; the first request then completed
+  successfully and only one Storage mutation occurred. This is reachable from the current Files
+  Upload journey (including two tabs/clients), makes the visible response disagree with durable
+  per-item state, and provides no actionable recovery. It violates Slice RO-6 and RO-9, the Upload
+  transfer-progress Required Surface, and this Task's independent outcome, stable bounded error,
+  conflict, and safe-recovery Acceptance Criteria. `TaskLockError` is currently caught by the
+  generic `RuntimeError` branch in `execute_item` and re-raised while the Upload Task itself remains
+  RUNNING. Handle that proven path-lock contention explicitly and return a bounded per-item outcome
+  that matches the already-persisted FAILED row, preserves siblings, performs no second mutation,
+  and tells the operator to wait for/refresh the in-flight destination before safely retrying the
+  failed item or choosing another conflict action. Add a deterministic two-Session same-target WSGI
+  regression proving response/durable-state agreement, one mutation only, first-session completion,
+  and continued sibling/finalization behavior. Keep the existing one-lock Session design; do not add
+  persistence, fields, protocol changes, chunk/resume support, or another state machine.
+
+## Developer Completion Report (Correction Round 5)
+
+### Changed Files
+
+- `mediaflow/application/direct_file_uploads.py` — `execute_item` handles the coordinator's proven
+  destination path-lock contention explicitly instead of letting `TaskLockError` escape through the
+  generic `RuntimeError` branch as HTTP 500.
+- `tests/test_direct_file_uploads.py` — new deterministic two-Session same-target WSGI regression
+  (`UploadOperationLockTests.test_two_sessions_same_target_record_bounded_failure_and_continue`).
+
+### Implemented
+
+- B's P1 (two legal Sessions, one destination): `PersistentTaskCoordinator.begin_item` publishes the
+  item's terminal `FAILED` row and then raises `TaskLockError`; the generic `RuntimeError` branch
+  re-raised it while the Upload Task stayed `RUNNING`, so the authenticated item route answered
+  HTTP 500 `internal_error` even though the durable row already recorded
+  `source is locked by another active task`. `execute_item` now catches exactly `TaskLockError`
+  (after `TaskPauseRequested`, before the generic branch), drains this request's declared payload in
+  bounded chunks, advances the session's delivery cursor, and returns a bounded per-item outcome
+  that agrees with the durable row: `status: FAILED`, stable `errorCategory: path_locked` (the same
+  category `direct_file_commands._locked_outcome` already publishes for a refused path lock),
+  `sideEffects: none`, `retrySafe: true`, a durable-state sentence, and the recovery action
+  "wait for or refresh the in-flight destination operation, then retry this item or choose another
+  conflict action". No Storage mutation is attempted, siblings keep streaming in order, and finish
+  publishes the honest terminal aggregate. No persistence, field, protocol, chunk/resume or
+  state-machine change; every other `RuntimeError` still propagates unchanged.
+- The regression drives two independently admitted Sessions for the same initially absent
+  ResourceLibrary-relative path through the authenticated WSGI routes, blocks the first inside the
+  real executor, and proves: the second Session's item returns 200 `FAILED` with zero storage
+  effect; exactly one write reaches the contested path and the first Session's bytes win; the
+  durable row is `FAILED` with "source is locked by another active task" and no Result is
+  fabricated; the second Session's sibling still streams and succeeds; the first Session completes
+  `SUCCESS`; and the second Session's finish returns 200 `PARTIAL` with a terminal projection
+  agreeing with the durable rows (failedItems 1 / succeededItems 1, task `partial_success`).
+
+### Tests and Results
+
+- `.venv/bin/python -m unittest tests.test_direct_file_uploads.UploadOperationLockTests` — 7 PASS
+  (includes the new regression).
+- `.venv/bin/python -m unittest tests.test_direct_file_uploads tests.test_direct_file_downloads` —
+  60 PASS.
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers tests.test_direct_file_operations` —
+  145 PASS.
+- `.venv/bin/python -m unittest tests.test_source_directory_cleanup
+  tests.test_manual_organize_execution tests.test_configuration_organize` — 57 PASS.
+- `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority
+  tests.test_organizer_rollback` — 45 PASS.
+- `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage
+  tests.test_openlist_storage tests.test_s3_storage` — 94 PASS.
+- `.venv/bin/python -m unittest tests.test_runtime_files_browser tests.test_api_security
+  tests.test_task_persistence tests.test_task_pause_resume tests.test_task_retry` — 48 PASS.
+- `.venv/bin/python -m unittest discover -s tests` — 1754 tests, 3 FAIL, 7 skipped. The 3 failures
+  (`tests.test_manual_operations_contract` × 2,
+  `tests.test_configuration_status::test_hostile_configuration_content_is_never_exposed`) reproduce
+  identically on a clean `git archive HEAD` checkout in this environment (this host runs as `root`):
+  `FAIL / PRE-EXISTING / UNRELATED`.
+- `.venv/bin/ruff format --check .` — PASS (311 files).
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS ("No broken requirements found.").
+- `test -z "$(grep -rn -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml || true)"` — PASS.
+- `python3 scripts/check_governance.py` — PASS.
+- `cd web && npm run format:check` / `npm run typecheck` / `npm run lint` — PASS.
+- `cd web && NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx` — 38 PASS.
+- `cd web && npx playwright test tests/e2e/library-files.spec.ts --project=chromium` — 30 PASS.
+- `cd web && NODE_ENV=test npm run test -- --run` — 460 PASS (33 files).
+- `cd web && npm run build` — PASS.
+- `cd web && npm run test:e2e` — 108 PASS, 10 FAIL. All ten are the pre-existing
+  `library-file-detail.spec.ts` (7) and `manual-operations.spec.ts` (3) failures recorded in
+  earlier rounds; no web file changed in this Task and those specs never execute the Python
+  change: `FAIL / PRE-EXISTING / UNRELATED`.
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist` +
+  `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl` — PASS.
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL, produced identically before and
+  after this correction commit: the harness builds the committed `git archive HEAD` image and
+  aborts in `assert_v2_manual_organize` with `RuntimeError: manual Organize choice returned
+  HTTP 400 ... operations organize choice requires expectedVersion and bounded choice fields`.
+  This is outside the Upload path this Task changes and is recorded for B's judgement
+  (`FAIL / PRE-EXISTING / UNRELATED`).
+- `git diff --check` — PASS; staged manifest inspected: no `config/alist.json`, credentials,
+  `docs/pics/文件页.png`, ignored artifacts or unrelated files.
+
+### Decisions
+
+- The response uses the established stable category `path_locked` — the exact category the direct
+  Delete loop already publishes for this refusal — while the durable TaskItem keeps the
+  coordinator's fuller "source is locked by another active task" sentence; response and durable
+  state agree on `FAILED`, and this avoids inventing vocabulary or writing the row twice.
+- Only `TaskLockError` is newly translated. The narrow cancel translation and the generic
+  `RuntimeError` propagation stay exactly as corrected in Round 4, so a genuine defect is still
+  never converted into a business refusal.
+- Payload drain plus delivery-cursor advance keeps the request-per-item framing identical to the
+  normal failure path, which is what lets the remaining siblings and `finish_upload` stay truthful.
+
+### Remaining In-Slice Work
+
+- The Files-originated multi-item Organize continuation and terminal Organize→FileIndex
+  reconciliation journey (RO-8 remainder) — the next Task; not implemented here by design.
+
+### Risks / Deviations
+
+- The Docker security smoke gate fails as described above; it is not green in this environment and
+  the judgement is B's.
+- The three Python and ten Playwright pre-existing failures above were each reproduced
+  independently of this Task's change; they remain recorded as unfixed and this report does not
+  claim them non-blocking.
+- Providers that publish no fingerprint (SMB/OpenList/S3 regular entries) keep the previously
+  recorded size+mtime same-size-replacement limitation.
+- `docs/pics/文件页.png` remains the pre-existing dirty file, untouched; `config/alist.json` is
+  absent and no credentials entered the checkpoint.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: c397d14ef0d22e74ce8903de9b7a9bf71e9e3a27
+```
