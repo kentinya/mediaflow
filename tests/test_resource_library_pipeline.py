@@ -253,8 +253,10 @@ class ResourceLibraryPipelineTests(unittest.TestCase):
                 self.assertEqual(source_id, plan.source_location.storage_id)
                 self.assertEqual(source_path, plan.source_location.path)
                 self.assertEqual(target_id, plan.destination_location.storage_id)
+                # The classification rule's library prefix ("Movies") leads
+                # the relative destination beneath the MediaLibrary root.
                 self.assertTrue(
-                    plan.destination_location.path.startswith(f"{destination_root}/Anime/")
+                    plan.destination_location.path.startswith(f"{destination_root}/Movies/Anime/")
                 )
                 executed = service.process_all_libraries((library,), execute=True)
                 self.assertEqual(ExecutionStatus.SUCCESS, executed.items[0].execution.status)

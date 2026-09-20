@@ -568,7 +568,7 @@ class AutomationTaskDefinitionPreviewTests(unittest.TestCase):
     def test_conflict_manual_and_overwrite_fail_closed_per_item(self):
         fixture = self._fixture({"C/One.2001.mkv": b"x" * 10})
         directory, target_directory, source_root, target_root, database = fixture
-        target = target_root / "Movies" / "Anime" / "One (2001)" / "One (2001).mkv"
+        target = target_root / "Movies" / "Movies" / "Anime" / "One (2001)" / "One (2001).mkv"
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(b"existing")
         base = smoke_strategy_configuration()

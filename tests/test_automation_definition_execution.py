@@ -818,7 +818,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             source_file = root / "source/Media/incoming/A/Alpha.Movie.2024.mkv"
             source_file.parent.mkdir(parents=True)
             source_file.write_bytes(b"new")
-            existing = root / "target/Movies/Anime/Alpha Movie (2024)/Alpha Movie (2024).mkv"
+            existing = root / "target/Movies/Movies/Anime/Alpha Movie (2024)/Alpha Movie (2024).mkv"
             existing.parent.mkdir(parents=True)
             existing.write_bytes(b"old")
             configuration = self._configuration(root, definition, strategy=strategy)
@@ -933,10 +933,10 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 alpha_source.write_bytes(b"alpha-new")
                 bravo_source.write_bytes(b"bravo-new")
                 alpha_target = root / (
-                    "target/Movies/Anime/Alpha Movie (2024)/Alpha Movie (2024).mkv"
+                    "target/Movies/Movies/Anime/Alpha Movie (2024)/Alpha Movie (2024).mkv"
                 )
                 bravo_target = root / (
-                    "target/Movies/Anime/Bravo Movie (2024)/Bravo Movie (2024).mkv"
+                    "target/Movies/Movies/Anime/Bravo Movie (2024)/Bravo Movie (2024).mkv"
                 )
                 alpha_target.parent.mkdir(parents=True)
                 alpha_target.write_bytes(b"alpha-old")
@@ -1854,6 +1854,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             target_subtitle = (
                 root
                 / "target"
+                / "Movies"
                 / "Movies"
                 / "Anime"
                 / "Alpha Movie (2024)"

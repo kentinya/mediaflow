@@ -32,7 +32,6 @@ from mediaflow.application.storage_browser import (
 )
 from mediaflow.application.task_runtime import TaskClaimLost, TaskPauseRequested
 from mediaflow.domain.direct_files import (
-    MAX_TRANSFER_BYTES,
     MAX_TRANSFER_DEPTH,
     MAX_TRANSFER_ENTRIES,
     MAX_TRANSFER_PATHS,
@@ -2476,7 +2475,7 @@ class DirectFileTransferService:
                 destinations.append((child_relative, child_destination))
                 if child.entry_type is StorageEntryType.DIRECTORY:
                     if depth + 1 > MAX_TRANSFER_DEPTH:
-                        raise self._limit_error(source, "transfer_depth_limit_exceeded")
+                        raise self._limit_error(source, "depth_limit_exceeded")
                     entries.append(
                         self._manifest_entry(child_relative, child, TransferEntryKind.DIRECTORY)
                     )
@@ -2753,11 +2752,19 @@ class DirectFileTransferService:
     def _enforce_transfer_limits(
         self, library: ResourceLibrary, entries: list[TransferManifestEntry]
     ) -> None:
+        """Enforce the Copy/Move control-plane bounds of the enumerated scope.
+
+        The bounded scope is the recursively enumerated **entry count** plus
+        the directory depth enforced during the walk.  The aggregate media byte
+        count is deliberately *not* an admission ceiling: media content size
+        does not determine the in-memory manifest size, so a large-media
+        selection must not be rejected for its bytes alone.  ``total_bytes``
+        remains impact/progress information on the manifest.  Delete and
+        bounded text Edit keep their own existing content/scope limits.
+        """
+
         if len(entries) > MAX_TRANSFER_ENTRIES:
-            raise self._limit_error(library, "transfer_entry_limit_exceeded")
-        total = sum(entry.size for entry in entries if not entry.is_directory)
-        if total > MAX_TRANSFER_BYTES:
-            raise self._limit_error(library, "transfer_size_limit_exceeded")
+            raise self._limit_error(library, "entry_limit_exceeded")
 
     def _require_capability(
         self,

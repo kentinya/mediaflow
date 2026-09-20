@@ -668,7 +668,11 @@ class StrategyTestRunner:
         plan_error = None
         if show_plan and resolved and metadata and metadata.identity and naming and classification:
             try:
-                library_name = classification.library or classification.media_library_id
+                # The CLI has no configured MediaLibrary root: the temporary
+                # library pins an empty root so plan.target is exactly the
+                # root-relative destination `library/path/naming...`, matching
+                # the formal Organizer composition for the same resolved
+                # strategy input.
                 organize_plan = OrganizePlanner().plan(
                     source_storage_id=storage_id,
                     source=path,
@@ -680,9 +684,9 @@ class StrategyTestRunner:
                     ),
                     media_library=MediaLibrary(
                         classification.media_library_id,
-                        library_name,
+                        classification.library or classification.media_library_id,
                         "strategy-plan-target",
-                        library_name,
+                        ".",
                     ),
                     naming=naming,
                     classification=classification,

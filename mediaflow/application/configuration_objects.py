@@ -2396,6 +2396,7 @@ class ConfigurationObjectService:
                 "mediaLibraryStorageId": str(library.get("storageId", "")),
                 "mediaLibraryRootPath": composition.media_library_root,
                 "classificationRuleId": classification.matched_rule_id,
+                "classificationLibrary": classification.library,
                 "classificationRelativePath": classification.relative_path,
                 "namingDirectorySegments": list(naming.directory_segments),
                 "namingFilename": naming.filename,
@@ -2568,10 +2569,14 @@ class ConfigurationObjectService:
             naming.directory,
             naming.directory_segments,
             naming.filename,
+            classification_library_prefix=classification.library,
         )
         if not composition.safe:
             owners = {
                 "mediaLibrary.rootPath": f"MediaLibrary:{classification.media_library_id}",
+                "classification.library": (
+                    f"ClassificationPolicy:{resolved.classification_policy_id}"
+                ),
                 "classification.relativePath": (
                     f"ClassificationPolicy:{resolved.classification_policy_id}"
                 ),

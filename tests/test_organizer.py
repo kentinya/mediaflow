@@ -137,6 +137,126 @@ class OrganizePlannerTest(unittest.TestCase):
         self.assertEqual("", plan.destination)
         self.assertEqual(ConflictType.INVALID_DESTINATION, plan.conflicts[0].type)
 
+    def test_classification_library_prefix_leads_the_relative_destination(self) -> None:
+        values = self._inputs(root="Media", relative="其他电影")
+        values["classification"] = ClassificationResult(
+            "movies", "其他电影", "A", "A", library="Movies"
+        )
+        plan = OrganizePlanner().plan(**values)
+        self.assertEqual("Movies/其他电影/Movie (2001)/Movie (2001).mkv", plan.relative_destination)
+        self.assertEqual("Media", plan.media_library_root)
+        self.assertEqual("Media/Movies/其他电影/Movie (2001)/Movie (2001).mkv", plan.destination)
+
+    def test_classification_library_prefix_supports_multiple_safe_segments(self) -> None:
+        values = self._inputs(root="Media", relative="Series")
+        values["classification"] = ClassificationResult(
+            "movies", "Series", "A", "A", library="TV Shows"
+        )
+        tv_inputs = dict(values)
+        tv_inputs["naming"] = NamingResult(
+            "Show (2024)/Season 01",
+            "Show - S01E01.mkv",
+            "A",
+            "A",
+            directory_segments=("Show (2024)", "Season 01"),
+        )
+        plan = OrganizePlanner().plan(**tv_inputs)
+        self.assertEqual(
+            "TV Shows/Series/Show (2024)/Season 01/Show - S01E01.mkv",
+            plan.relative_destination,
+        )
+        self.assertEqual(
+            "Media/TV Shows/Series/Show (2024)/Season 01/Show - S01E01.mkv",
+            plan.destination,
+        )
+
+    def test_unsafe_classification_library_prefix_fails_closed(self) -> None:
+        for prefix in (
+            "/absolute",
+            "../escape",
+            "a/../b",
+            "back\\slash",
+            "",
+            "double//slash",
+            "dot/./segment",
+            "trailing/",
+            "nul\x00byte",
+        ):
+            with self.subTest(prefix=prefix):
+                values = self._inputs()
+                values["classification"] = ClassificationResult(
+                    "movies", "Animation", "A", "A", library=prefix
+                )
+                plan = OrganizePlanner().plan(**values)
+                self.assertEqual(PlanStatus.INVALID, plan.status)
+                self.assertEqual(PlanOperation.SKIP, plan.operation)
+                self.assertEqual("", plan.destination)
+                self.assertEqual(ConflictType.INVALID_DESTINATION, plan.conflicts[0].type)
+
+    def test_classification_prefix_does_not_change_media_library_resolution(self) -> None:
+        values = self._inputs()
+        values["classification"] = ClassificationResult(
+            "movies", "Animation", "A", "A", library="Somewhere Else"
+        )
+        # A different classification.library cannot re-route the plan to a
+        # different MediaLibrary: the configured ID remains the authority.
+        with self.assertRaises(PlanningError):
+            OrganizePlanner().plan(
+                source_storage_id="local",
+                source="source.mkv",
+                recognition=values["recognition"],
+                type_policy=values["type_policy"],
+                media_library=MediaLibrary("other", "Other", "local", "Other"),
+                naming=values["naming"],
+                classification=values["classification"],
+            )
+        plan = OrganizePlanner().plan(**values)
+        # The target Storage comes from the configured MediaLibrary ("movies"
+        # -> its own storage), never from classification.library.
+        self.assertEqual("local", plan.target_storage_id)
+        self.assertEqual(
+            "Somewhere Else/Animation/Movie (2001)/Movie (2001).mkv",
+            plan.relative_destination,
+        )
+
+    def test_dry_run_composes_prefixed_destination_with_zero_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.mkv"
+            source.write_bytes(b"media")
+            before = sorted(path.relative_to(root) for path in root.rglob("*"))
+            recognition_type = RecognitionType("A", "A")
+            plan = OrganizePlanner().plan(
+                source_storage_id="local",
+                source="source.mkv",
+                recognition=RecognitionResult(recognition_type, "rule-a"),
+                type_policy=RecognitionTypePolicy(
+                    "type-a",
+                    recognition_type,
+                    "A",
+                    "A",
+                    "A",
+                    OrganizePolicy("A", OrganizeOperationType.MOVE),
+                ),
+                media_library=MediaLibrary("movies", "Movies", "local", "Media"),
+                naming=NamingResult("Movie (2001)", "Movie (2001).mkv", "A", "A"),
+                classification=ClassificationResult(
+                    "movies", "其他电影", "A", "A", library="Movies"
+                ),
+            )
+            execution = OrganizerExecutor().execute(plan, {"local": LocalStorage("local", root)})
+            after = sorted(path.relative_to(root) for path in root.rglob("*"))
+            self.assertEqual(before, after)
+            self.assertTrue(source.exists())
+            self.assertEqual(b"media", source.read_bytes())
+            self.assertEqual(ExecutionStatus.DRY_RUN, execution.status)
+            self.assertEqual("Media", plan.media_library_root)
+            self.assertEqual(
+                "Movies/其他电影/Movie (2001)/Movie (2001).mkv",
+                plan.relative_destination,
+            )
+            self.assertEqual("Media/Movies/其他电影/Movie (2001)/Movie (2001).mkv", plan.target)
+
     def test_absolute_configured_root_is_allowed_and_normalized(self) -> None:
         values = self._inputs(root="/media/Movies/", relative="Animation")
         plan = OrganizePlanner().plan(**values)

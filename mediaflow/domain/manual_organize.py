@@ -398,6 +398,24 @@ class ManualSourceIdentity:
             self.occurrence_state,
         )
 
+    @property
+    def is_storage_source(self) -> bool:
+        """Whether this identity came from live Storage instead of FileIndex.
+
+        A Files-originated source is built directly from the pinned
+        ResourceLibrary Storage (``create_from_sources``); it has no FileIndex
+        observation history and therefore must never be validated against a
+        FileIndex row.  A FileIndex-originated source keeps ``last_scan_id``.
+        """
+
+        return (
+            self.last_scan_id is None
+            and self.scan_status == "ready"
+            and self.fingerprint is not None
+            and self.fingerprint_algorithm is not None
+            and self.occurrence_state == "verified"
+        )
+
     @classmethod
     def from_document(cls, value: object) -> ManualSourceIdentity:
         if not isinstance(value, dict):

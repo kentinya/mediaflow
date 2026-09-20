@@ -82,6 +82,10 @@ class ClassificationRule:
                 )
         path = self.relative_category_path or _category_path(self.category, self.subcategory)
         _validate_relative_path(path)
+        # The library prefix contributes the first relative destination
+        # segment(s), so it is validated with exactly the same bounded
+        # safe-relative-path rules as the rule's relative path.
+        _validate_relative_path(self.library)
         object.__setattr__(self, "relative_category_path", path)
 
 
@@ -147,6 +151,7 @@ def _validate_relative_path(value: str) -> None:
         not value
         or value.startswith(("/", "\\"))
         or "\\" in value
+        or "\x00" in value
         or any(part in {"", ".", ".."} for part in value.split("/"))
     ):
         raise ClassificationError(

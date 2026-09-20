@@ -1,7 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 
-// jsdom does not implement the object-URL API; the Files Download journey
-// triggers a browser save through it, so tests stub bounded no-op versions.
+// jsdom does not implement the object-URL API; journeys that hand bytes to
+// the browser for a local save need it, so tests stub bounded no-op versions.
 if (typeof URL.createObjectURL !== "function") {
   Object.defineProperty(URL, "createObjectURL", {
     value: () => "blob:jsdom/object-url",

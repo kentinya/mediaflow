@@ -40,12 +40,6 @@ FILES_DELETE_TASK_COMMAND = "files_delete"
 #: independent per-item/per-entry outcomes.
 FILES_TRANSFER_TASK_COMMAND = "files_transfer"
 
-#: The command recorded by a bounded Files Upload.  The request streams the
-#: operator-supplied bytes into one exact Active ResourceLibrary directory;
-#: every write is admitted durably before the first mutation and executed only
-#: through OrganizerExecutor, with independent per-item outcomes.
-FILES_UPLOAD_TASK_COMMAND = "files_upload"
-
 
 #: The durable admission/claim status of one bounded Files transfer.  The
 #: transfer row — not the Task row — is the Worker claim authority: only an

@@ -466,7 +466,7 @@ class CurrentSourceManualOrganizeTests(unittest.TestCase):
             record = value.records["One.2001.mkv"]
             preview = previews.create_current(**self.current_request(record))
             item = preview.items[0]
-            target_path = Path(value.target_root, "Movies/Anime/One (2001)/One (2001).mkv")
+            target_path = Path(value.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv")
             target_path.parent.mkdir(parents=True, exist_ok=True)
             target_path.write_bytes(b"existing-destination-before-authorize")
             with self.assertRaises(ManualExecutionError) as raised:
@@ -894,7 +894,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertTrue(run.items[0].effects)
                 self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
                 self.assertTrue(
-                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                    Path(
+                        fixture.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv"
+                    ).exists()
                 )
                 result = repository.list_results(run.task_id)[0]
                 self.assertEqual("C", result.recognition_type)
@@ -1037,7 +1039,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertEqual(1, len(repository.list_tasks()))
                 self.assertTrue(Path(fixture.source_root, "Two.2001.mkv").exists())
                 self.assertTrue(
-                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                    Path(
+                        fixture.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv"
+                    ).exists()
                 )
                 self.assertEqual(
                     run.execution_id, repository.get_manual_execution(run.execution_id).execution_id
@@ -1419,7 +1423,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                             authority.authorization_id, actor="operator", confirmation=True
                         )
                         self.assertEqual("success", run.items[0].status.value)
-                        target = Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv")
+                        target = Path(
+                            fixture.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv"
+                        )
                         self.assertTrue(target.exists())
                         source = Path(fixture.source_root, "One.2001.mkv")
                         if operation is OrganizeOperationType.MOVE:
@@ -1456,7 +1462,8 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 )
                 self.assertTrue(
                     Path(
-                        attachment_fixture.target_root, "Movies/Anime/One (2001)/One (2001).en.srt"
+                        attachment_fixture.target_root,
+                        "Movies/Movies/Anime/One (2001)/One (2001).en.srt",
                     ).exists()
                 )
                 self.assertFalse(Path(attachment_fixture.source_root, "One.2001.en.srt").exists())
@@ -1772,7 +1779,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertIn("result_persistence", result.uncertain_effects)
                 self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
                 self.assertTrue(
-                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                    Path(
+                        fixture.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv"
+                    ).exists()
                 )
                 self.assertFalse(repository.lock_owned("source", "One.2001.mkv", run.task_id))
                 checkpoint = ProcessingCheckpointService(repository).get(
@@ -1814,7 +1823,9 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
                 self.assertEqual(0, len(repository.list_results(raw.task_id)))
                 self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
                 self.assertTrue(
-                    Path(fixture.target_root, "Movies/Anime/One (2001)/One (2001).mkv").exists()
+                    Path(
+                        fixture.target_root, "Movies/Movies/Anime/One (2001)/One (2001).mkv"
+                    ).exists()
                 )
                 recovered = service.reconcile(
                     raw.execution_id,
@@ -1918,7 +1929,7 @@ class ManualOrganizeExecutionTests(unittest.TestCase):
             self.assertEqual(["One.2001.mkv"], executor.calls)
             target = Path(
                 fixture.target_root,
-                "Movies/Anime/One (2001)/One (2001).mkv",
+                "Movies/Movies/Anime/One (2001)/One (2001).mkv",
             )
             self.assertFalse(Path(fixture.source_root, "One.2001.mkv").exists())
             self.assertTrue(target.exists())

@@ -384,21 +384,206 @@ and existing read-only Storage guards.
 
 ### Changed Files
 
+Production:
+
+- `mediaflow/domain/organizer.py` — `compose_destination()` takes an optional
+  `classification_library_prefix` and validates it as the first relative contribution;
+  `safe_destination_root()` accepts the single-segment `.` "no root prefix" marker.
+- `mediaflow/application/organizer.py` — `OrganizePlanner` composes the classification
+  `library` prefix; the `.`-root plan target and `_resolved_execution_target()` agree on the
+  root-relative destination.
+- `mediaflow/domain/classification.py` — `ClassificationRule.library` is validated with the same
+  bounded safe-relative-path rules as the rule's relative path (absolute, traversal, backslash,
+  empty component, NUL all rejected fail-closed).
+- `mediaflow/application/configuration_objects.py` — `destination_preview` and
+  `_resolve_destination` compose and attribute the `classification.library` contribution; the
+  preview result surfaces `classificationLibrary`.
+- `mediaflow/application/strategy_test.py` — the CLI's temporary MediaLibrary pins the `.` root so
+  its plan target is exactly the formal root-relative destination.
+- `mediaflow/application/manual_source_validation.py` (new) — the explicit application-level
+  live-Storage source-validation boundary for Files-originated manual intents.
+- `mediaflow/application/manual_organize.py` — `update_choice` routes source validation by
+  authority: FileIndex-originated items keep scoped FileIndex validation, Files-originated items
+  are re-observed against pinned Active Storage without needing a FileIndex row.
+- `mediaflow/domain/manual_organize.py` — `ManualSourceIdentity.is_storage_source` states the
+  Files-vs-FileIndex authority distinction once.
+- `mediaflow/application/direct_file_transfers.py` — the `413 Payload Too Large` path; aggregate
+  source media bytes are no longer a Copy/Move admission ceiling.
+- Removed upload/download vertical: `mediaflow/application/direct_file_uploads.py`,
+  `mediaflow/application/direct_file_downloads.py` (deleted);
+  `mediaflow/interfaces/service_api.py` (routes, binding fields, helpers, imports);
+  `mediaflow/domain/direct_files.py` (upload/download models and constants);
+  `mediaflow/domain/task_persistence.py` (`FILES_UPLOAD_TASK_COMMAND`).
+
+Tests:
+
+- `tests/test_organizer.py`, `tests/test_configuration_destination.py`,
+  `tests/test_configuration_destination_precheck.py`, `tests/test_configuration_snapshot.py`,
+  `tests/test_resource_library_pipeline.py`, `tests/test_automation_definition_execution.py`,
+  `tests/test_automation_task_definition_preview.py`, `tests/test_manual_preview.py`,
+  `tests/test_manual_organize_execution.py` — updated to the corrected `library/path/...`
+  composition and added focused parity/prefix/zero-mutation coverage.
+- `tests/test_v2_manual_organize.py` — four new Files-originated Save Choice tests.
+- `tests/test_direct_file_transfers.py` — control-plane bound tests (large bytes admitted,
+  entry and depth limits reject truthfully with JSON 413).
+- Deleted `tests/test_direct_file_uploads.py`, `tests/test_direct_file_downloads.py`.
+
+Web:
+
+- `web/src/features/library/FilesUploadDialog.tsx` (deleted),
+  `web/src/features/library/StorageFilesPage.tsx`, `web/src/features/library/StorageFilesPage.test.tsx`,
+  `web/src/shared/api/api-client.ts`, `web/src/entities/library/direct-files.ts`,
+  `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs`, `web/tests/setup.ts`.
+
 ### Implemented
+
+1. **Formal destination parity (`library/path/naming-directory/naming-filename`).** One shared
+   `compose_destination()` now takes the classification `library` as the first relative
+   contribution, so Organize Plan, destination Preview, read-only precheck, manual/automation
+   projections, execution and result evidence all compose the same target.
+   `mediaLibraryId` remains the sole MediaLibrary/Storage/root authority: `library` only prefixes
+   the relative path beneath that root (regression-tested).
+2. **CLI/formal agreement.** The local `strategy-test` CLI now pins a `.` MediaLibrary root, so
+   `plan.target` is the root-relative destination and equals the formal composition for the same
+   resolved input. `Movies/Anime/...` CLI behavior is preserved.
+3. **Fail-closed prefix validation.** `ClassificationRule.library` is validated in the domain and
+   again in the shared composition, so absolute paths, traversal, backslashes, empty components
+   and NULs are rejected before any Storage mutation or Storage adapter construction.
+4. **Direct Files Upload/Download removed vertically.** Web controls, dialog, state, client calls
+   and mocks; the HTTP routes, binding fields and helpers; both application services; the
+   upload-only Task command constant and the upload/download-only domain models are gone. Storage
+   `Read`/`Write`, provider transfer primitives, Copy/Move, text Edit and `OrganizerExecutor`
+   remain. No historical Task/Result rows are deleted and no schema migration is introduced.
+5. **Files-originated Save Choice repaired.** A live Storage source selected from Files can now
+   save a valid Choice with no FileIndex row. The new boundary reuses the exact Files
+   admission/Preview evidence rules (path confinement, regular-file requirement, verified
+   fingerprint, occurrence identity) against the pinned Active runtime, performs zero Storage
+   mutation, and preserves intent/item versions on every rejection. The FileIndex-originated
+   path keeps its scoped FileIndex validation unchanged.
+6. **Copy/Move control-plane bounds corrected.** The missing `413 Payload Too Large` response
+   label is added, so a legitimate bounded-limit breach serializes as truthful JSON instead of
+   `KeyError: 413`. Aggregate source media bytes are removed as a Copy/Move admission ceiling
+   while `totalBytes` stays visible as impact/progress information; selection count, enumerated
+   entry count, depth, safe-path and manifest/checkpoint/projection bounds are unchanged. No
+   batch orchestration, child Task, native directory-Move bypass, new capability or implicit
+   fallback was introduced.
 
 ### Tests and Results
 
+Required gates (all from TASK.md; `tests/test_direct_file_commands.py` is listed by the Task but
+does not exist in this repository or in its history — `tests/test_direct_file_operations.py` is the
+real direct-file command module and is run in its place):
+
+```text
+python3 scripts/check_governance.py                                      PASS
+pytest -q tests/test_organizer.py tests/test_configuration_destination.py
+          tests/test_strategy_cli.py                                     57 passed, 47 subtests
+pytest -q tests/test_classification.py tests/test_runtime_strategy_configuration.py
+          tests/test_configuration_destination_activation.py             28 passed, 24 subtests
+pytest -q tests/test_direct_file_operations.py tests/test_direct_file_transfers.py
+          tests/test_file_catalog_api.py tests/test_runtime_files_browser.py
+                                                                         159 passed, 13 subtests
+pytest -q tests/test_v2_manual_organize.py tests/test_manual_organize_preview.py
+          tests/test_manual_organize_intent.py                           53 passed, 7 subtests
+ruff check mediaflow tests                                               PASS
+python3 -m compileall -q mediaflow                                       PASS
+web: npm run format:check && typecheck && lint                           PASS
+web: npm run test -- --run                                               455 passed (33 files)
+web: npm run build                                                       PASS (pre-existing chunk-size warning)
+required upload/download absence grep                                    0 matches
+git diff --check                                                         PASS
+```
+
+Slice-level regression:
+
+```text
+pytest -q                                                                1703 passed, 7 skipped, 4 failed
+```
+
+The 4 failures are `FAIL / PRE-EXISTING / UNRELATED`; each reproduces unchanged at Task Base
+`1eb43931` and none touches a file this Task changed:
+
+- `tests/test_configuration_status.py::...test_hostile_configuration_content_is_never_exposed`
+- `tests/test_manual_operations_contract.py::...test_real_api_documents_carry_no_forbidden_evidence`
+- `tests/test_manual_operations_contract.py::...test_real_api_documents_match_the_frontend_fixture`
+- `tests/test_release_security.py::...test_release_quality_gate_commands_are_documented_for_task_execution`
+  (this one asserts TASK.md documents `scripts/docker_release_security_smoke_test.py`, which B's
+  Task text does not contain)
+
+Focused browser evidence: `npx playwright test tests/e2e/library-files.spec.ts` → 31 passed.
+
+`UNAVAILABLE`: the Docker `source2` reproduction the Task asks the review to record. The running
+stack under `/opt/mediaflow` is a separate checkout at `7269d03` whose `TASK.md` reads
+`NO ACTIVE IMPLEMENTATION TASK`, so it predates this correction and cannot demonstrate the fixed
+behaviour without deploying an unbuilt candidate image. The correction is instead proven by the
+WSGI-level tests above, which exercise the real `MediaFlowApi` 413 serialization and the real
+admission path.
+
 ### Decisions
+
+- **`library` is a relative prefix, not a root selector.** It is composed after the configured
+  MediaLibrary root; `mediaLibraryId` continues to resolve the MediaLibrary, Storage and root.
+  This matches the CLI's `Movies/...` preview and is asserted by a test that a different
+  `library` cannot re-route the plan to another MediaLibrary.
+- **`library` reuses the existing bounded safe-relative-path validator** rather than a second
+  implementation, so prefix and rule path cannot drift. The domain rejects it at construction and
+  `compose_destination()` re-checks it as a defence in depth.
+- **`. ` as the no-root marker.** A caller with no configured root needs `plan.target` to be the
+  root-relative destination. `.` is accepted as a single-segment root that contributes no prefix,
+  which keeps `OrganizePlan.target` byte-identical between the CLI and the formal composition
+  without inventing a second plan type.
+- **Source authority is decided by the identity, not the caller.** `ManualSourceIdentity` records
+  whether it came from live Storage (`is_storage_source`), and `update_choice` branches on that.
+  This keeps the FileIndex path's scoped validation intact while letting the Files path use its
+  pinned Storage authority, and it needs no new persistence column.
+- **The live-Storage validator always wraps the adapter in `ReadOnlyStorageGuard`.** Save Choice
+  therefore cannot cross a Storage mutation boundary even if a caller supplies a
+  mutation-capable adapter.
+- **`source_stale` is HTTP 409** to match the existing Preview/manual-step contract, so the Web
+  error mapping stays consistent.
+- **Upload/download were removed, not disabled.** No feature flag, compatibility route,
+  deprecation layer or replacement workflow was added, per the Slice Contract.
+- **The aggregate-byte ceiling was removed, not raised.** Media content size does not determine
+  manifest memory size; the entry-count and depth bounds are the control-plane protections that
+  actually bound memory, persistence and API documents.
+- **`execute_direct_write_stream` was kept.** It is a generic streamed Storage `write` boundary;
+  the Task requires Storage `Read`/`Write` and `OrganizerExecutor` capabilities to remain.
 
 ### Remaining In-Slice Work
 
+None known that belongs to this Task. Slice-level items I am aware of but did not touch:
+
+- the three pre-existing Python assertion debts and the legacy Playwright route assertions
+  already recorded as non-blocking P2 in the Slice closure packet;
+- `scripts/docker_release_security_smoke_test.py` is asserted by `test_release_security.py` but
+  is not named in the current TASK.md quality-gate documentation.
+
 ### Risks / Deviations
+
+- **Task-document deviation:** `tests/test_direct_file_commands.py` does not exist and never has
+  in this repository's history; the real direct-file command module
+  `tests/test_direct_file_operations.py` was run instead and every other file in that command was
+  run exactly as written.
+- **Evidence deviation (UNAVAILABLE):** the Docker `source2` reproduction described above. This is
+  a real gap in the requested evidence, not a claim of success.
+- **Behaviour change with a wide blast radius:** the composed destination now includes the
+  `library` prefix, so nine existing test modules that had frozen the old
+  `root/relative-path` target were updated to the corrected composition. Every change was an
+  expectation update to the new contract, verified against `git diff`; no assertion was deleted
+  or weakened and no skip was added.
+- **Pre-existing failures:** the 4 failures above are unchanged from Task Base. I am not
+  claiming they do not affect the Task; that judgement is B's.
+- The pre-existing dirty `docs/pics/文件页.png` remains modified in the working tree exactly as
+  found and is excluded from this checkpoint.
+- `ruff format` was run across `mediaflow` and `tests` because the repository's CI gate is
+  `ruff format --check .`; at Task Base one file already drifted, and the formatter only touched
+  files this Task had already modified.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 0cc19f74069d09a954bd172dc6c741ecd9d69f65
 ```
 
 ## B Review Result

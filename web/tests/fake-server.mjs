@@ -591,11 +591,6 @@ function resourceLibraryState(session) {
       // The admitted Files transfers of this session, keyed by Task ID: the
       // fake Worker advances each one through queued -> running -> terminal.
       filesTransfers: new Map(),
-      // The admitted Files uploads of this session, keyed by Task ID: each
-      // holds the admitted manifest and its per-item outcomes so the real
-      // browser journey (admission -> per-item payload POSTs -> finish) can
-      // be driven end to end.
-      filesUploads: new Map(),
       // The Files-originated Organize admission of this session: the exact
       // ordered paths the browser submitted, or null before the first one.
       filesOrganizePaths: null,
@@ -1158,14 +1153,6 @@ function referenceDirectoryEntries(path) {
         "Movies/Dune (2021)",
         REFERENCE_MODIFIED_LATEST,
       ),
-      // The deterministic e2e pause demo: uploads into this directory pause
-      // after their first delivered item so the real-browser journey can be
-      // driven through pause -> resume without timing races.
-      directoryEntry(
-        "e2e-pause",
-        "Movies/e2e-pause",
-        REFERENCE_MODIFIED_LATEST,
-      ),
       fileEntry(
         "Behind.The.Scenes.mkv",
         "Movies/Behind.The.Scenes.mkv",
@@ -1174,9 +1161,6 @@ function referenceDirectoryEntries(path) {
         { selectable: true, businessStatus: "pending" },
       ),
     ];
-  }
-  if (path === "Movies/e2e-pause") {
-    return [];
   }
   if (path === "Movies/Avatar (2009)") {
     return [
@@ -2068,24 +2052,6 @@ function parseBoundedItemLimit(raw) {
     return { ok: false };
   }
   return { itemLimit: parsed, ok: true };
-}
-
-function readBoundedBody(req) {
-  /** One bounded raw request body (the per-item upload payload). */
-  const chunks = [];
-  let total = 0;
-  return new Promise((resolve) => {
-    req.on("data", (chunk) => {
-      chunks.push(chunk);
-      total += chunk.length;
-      if (total > 16 * 1024 * 1024) {
-        resolve(Buffer.alloc(0));
-        req.destroy();
-      }
-    });
-    req.on("end", () => resolve(Buffer.concat(chunks)));
-    req.on("error", () => resolve(Buffer.alloc(0)));
-  });
 }
 
 function readBoundedJsonBody(req, res) {
@@ -4988,63 +4954,6 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
-  const uploadAdmissionMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/uploads$/,
-  );
-  if (uploadAdmissionMatch && req.method === "POST") {
-    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
-      return;
-    }
-    const parsed = await readBoundedJsonBody(req, res);
-    if (!parsed.ok) {
-      return;
-    }
-    const manifest = parsed.document;
-    const items = Array.isArray(manifest.items) ? manifest.items : [];
-    const state = resourceLibraryState(session);
-    const taskId = `task-e2e-upload-${state.filesUploads.size + 1}`;
-    state.filesUploads.set(taskId, {
-      taskId,
-      manifest: {
-        ...manifest,
-        manifestDigest: `t1.fake-upload-${items.length}`,
-      },
-      items: new Array(items.length).fill(null),
-      delivered: 0,
-      terminal: false,
-      paused: false,
-      everPaused: false,
-      cancelled: false,
-      // Deterministic e2e trigger: uploads admitted for the marked pause
-      // demo directory pause after their first delivered item so the real
-      // browser journey can drive pause -> resume without timing races.
-      e2ePauseAfterFirstItem:
-        manifest.destinationDirectory === "e2e-pause" ||
-        manifest.destinationDirectory === "Movies/e2e-pause",
-    });
-    sendJson(res, 202, {
-      admitted: true,
-      conflict: manifest.conflict ?? "no_overwrite",
-      destinationDirectory: manifest.destinationDirectory ?? "",
-      manifestDigest: `t1.fake-upload-${items.length}`,
-      status: "RUNNING",
-      taskId,
-      taskStatus: "running",
-      totalItems: items.length,
-      succeededItems: 0,
-      skippedItems: 0,
-      failedItems: 0,
-      sideEffects: "storage_mutations",
-      retrySafe: false,
-      nextAction: "the upload progress appears in the durable Task projection",
-    });
-    return;
-  }
   const filesOrganizeMatch = url.pathname.match(
     /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/organize$/,
   );
@@ -5548,315 +5457,6 @@ const server = createServer(async (req, res) => {
       nextAction: terminal
         ? "refresh the source and destination directories to see the current state"
         : "the transfer progress appears here; pause or cancel only when offered",
-    });
-    return;
-  }
-  // ------------------------------------------------------------------
-  // Bounded Files Upload: the real browser journey (one JSON admission,
-  // one raw-bytes payload POST per item in manifest order, one finish)
-  // with the durable projection pollable throughout.
-  // ------------------------------------------------------------------
-  const uploadItemMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/uploads\/([^/]+)\/items\/(\d+)$/,
-  );
-  if (uploadItemMatch && req.method === "POST") {
-    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
-      return;
-    }
-    const upload = resourceLibraryState(session).filesUploads.get(
-      decodeURIComponent(uploadItemMatch[2]),
-    );
-    if (!upload) {
-      sendJson(res, 404, {
-        error: {
-          code: "not_found",
-          message: "no admitted Files Upload Task exists under this identity",
-        },
-      });
-      return;
-    }
-    const index = Number(uploadItemMatch[3]);
-    if (index !== upload.delivered) {
-      sendJson(res, 409, {
-        error: {
-          code: "files_upload_item_out_of_order",
-          message: "Upload payloads must be streamed in the manifest order",
-        },
-      });
-      return;
-    }
-    // A paused session streams nothing until resumed: the pause boundary is
-    // not an item failure and never consumes the payload.
-    if (upload.paused && !upload.cancelled) {
-      sendJson(res, 200, {
-        index,
-        path: upload.manifest.items[index]?.relativePath ?? "",
-        status: "PAUSED",
-        paused: true,
-        phase: "PAUSED",
-        nextIndex: index,
-        taskStatus: "paused",
-        terminal: false,
-        sideEffects: "storage_mutations",
-        retrySafe: false,
-        nextAction:
-          "the upload is paused; resume it to stream the remaining items, or cancel it",
-      });
-      return;
-    }
-    // The deterministic e2e pause trigger: the marked upload pauses at the
-    // first delivered item so the real-browser journey can be driven
-    // through pause -> resume -> finish without timing races.
-    if (
-      upload.e2ePauseAfterFirstItem &&
-      upload.delivered === 0 &&
-      !upload.everPaused
-    ) {
-      upload.paused = true;
-      upload.everPaused = true;
-      sendJson(res, 200, {
-        index,
-        path: upload.manifest.items[index]?.relativePath ?? "",
-        status: "PAUSED",
-        paused: true,
-        phase: "PAUSED",
-        nextIndex: index,
-        taskStatus: "paused",
-        terminal: false,
-        sideEffects: "storage_mutations",
-        retrySafe: false,
-        nextAction:
-          "the upload is paused; resume it to stream the remaining items, or cancel it",
-      });
-      return;
-    }
-    const payload = await readBoundedBody(req);
-    const declared = upload.manifest.items[index]?.size ?? 0;
-    if (payload.length !== declared) {
-      upload.delivered += 1;
-      upload.items[index] = {
-        path: upload.manifest.items[index]?.relativePath ?? "",
-        destination: upload.manifest.items[index]?.relativePath ?? "",
-        status: "FAILED",
-        errorCategory: "upload_stream_truncated",
-      };
-      sendJson(res, 200, {
-        index,
-        path: upload.manifest.items[index]?.relativePath ?? "",
-        status: "FAILED",
-        errorCategory: "upload_stream_truncated",
-        taskStatus: "running",
-        terminal: false,
-        sideEffects: "storage_mutations",
-        retrySafe: false,
-        nextAction: "finish the upload to record the remaining outcomes",
-      });
-      return;
-    }
-    upload.delivered += 1;
-    upload.items[index] = {
-      path: upload.manifest.items[index]?.relativePath ?? "",
-      destination: upload.manifest.items[index]?.relativePath ?? "",
-      status: "SUCCESS",
-      errorCategory: null,
-    };
-    sendJson(res, 200, {
-      index,
-      path: upload.manifest.items[index]?.relativePath ?? "",
-      status: "SUCCESS",
-      destination: upload.manifest.items[index]?.relativePath ?? "",
-      taskStatus: "running",
-      terminal: false,
-      sideEffects: "storage_mutations",
-      retrySafe: false,
-      nextAction: "continue with the next item or finish the upload",
-    });
-    return;
-  }
-  const uploadFinishMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/uploads\/([^/]+)\/finish$/,
-  );
-  if (uploadFinishMatch && req.method === "POST") {
-    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
-      return;
-    }
-    const upload = resourceLibraryState(session).filesUploads.get(
-      decodeURIComponent(uploadFinishMatch[2]),
-    );
-    if (!upload) {
-      sendJson(res, 404, {
-        error: {
-          code: "not_found",
-          message: "no admitted Files Upload Task exists under this identity",
-        },
-      });
-      return;
-    }
-    // Finish while paused is refused: the pause boundary stays the durable
-    // outcome and resume/cancel decides the rest.
-    if (upload.paused && !upload.cancelled) {
-      sendJson(res, 409, {
-        error: {
-          code: "files_upload_finish_while_paused",
-          message:
-            "the upload is paused; resume it to finish streaming or cancel it to close the Task",
-          details: {
-            category: "finish_unavailable",
-            durableState:
-              "the Task stays paused with its recorded item outcomes",
-            retrySafe: false,
-            nextAction:
-              "resume the upload to stream the remaining items, or cancel it",
-          },
-        },
-      });
-      return;
-    }
-    upload.terminal = true;
-    const succeeded = upload.items.filter(
-      (item) => item?.status === "SUCCESS",
-    ).length;
-    if (upload.cancelled) {
-      sendJson(res, 200, {
-        manifestDigest: upload.manifest.manifestDigest,
-        conflict: upload.manifest.conflict,
-        destinationDirectory: upload.manifest.destinationDirectory,
-        status: "CANCELLED",
-        taskId: upload.taskId,
-        taskStatus: "cancelled",
-        totalItems: upload.manifest.items.length,
-        succeededItems: succeeded,
-        skippedItems: 0,
-        failedItems: upload.manifest.items.length - succeeded,
-        items: upload.manifest.items.map((item, index) => ({
-          path: item.relativePath,
-          status: upload.items[index]?.status ?? "FAILED",
-          errorCategory:
-            upload.items[index]?.errorCategory ??
-            (upload.items[index]?.status === "SUCCESS"
-              ? null
-              : "upload_cancelled"),
-          destination: upload.items[index]?.destination ?? item.relativePath,
-        })),
-        outcomesTruncated: false,
-        sideEffects: "storage_mutations",
-        retrySafe: false,
-        nextAction: "refresh the directory to see the current state",
-      });
-      return;
-    }
-    sendJson(res, 200, {
-      manifestDigest: upload.manifest.manifestDigest,
-      conflict: upload.manifest.conflict,
-      destinationDirectory: upload.manifest.destinationDirectory,
-      status:
-        succeeded === upload.manifest.items.length ? "SUCCESS" : "PARTIAL",
-      taskId: upload.taskId,
-      taskStatus: "completed",
-      totalItems: upload.manifest.items.length,
-      succeededItems: succeeded,
-      skippedItems: 0,
-      failedItems: upload.manifest.items.length - succeeded,
-      items: upload.manifest.items.map((item, index) => ({
-        path: item.relativePath,
-        status: upload.items[index]?.status ?? "FAILED",
-        errorCategory: upload.items[index]?.errorCategory ?? null,
-        destination: upload.items[index]?.destination ?? item.relativePath,
-      })),
-      outcomesTruncated: false,
-      sideEffects: "storage_mutations",
-      retrySafe: false,
-      nextAction: "refresh the directory to see the current state",
-    });
-    return;
-  }
-  const uploadProjectionMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/uploads\/([^/]+)$/,
-  );
-  if (uploadProjectionMatch && req.method === "GET") {
-    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    const upload = resourceLibraryState(session).filesUploads.get(
-      decodeURIComponent(uploadProjectionMatch[2]),
-    );
-    if (!upload) {
-      sendJson(res, 404, {
-        error: {
-          code: "not_found",
-          message: "no bounded Files Upload Task exists under this identity",
-        },
-      });
-      return;
-    }
-    const processed = upload.items.filter(Boolean).length;
-    const succeeded = upload.items.filter(
-      (item) => item?.status === "SUCCESS",
-    ).length;
-    sendJson(res, 200, {
-      operation: "upload",
-      taskId: upload.taskId,
-      taskStatus: upload.cancelled
-        ? "cancelled"
-        : upload.paused
-          ? "paused"
-          : "running",
-      status: upload.cancelled
-        ? "CANCELLED"
-        : upload.paused
-          ? "PAUSED"
-          : "RUNNING",
-      totalItems: upload.manifest.items.length,
-      processedItems: processed,
-      succeededItems: succeeded,
-      skippedItems: 0,
-      failedItems: processed - succeeded,
-      items: upload.manifest.items.map((item, index) => ({
-        path: item.relativePath,
-        destination: upload.items[index]?.destination ?? item.relativePath,
-        status: upload.items[index]?.status ?? "PENDING",
-        errorCategory: upload.items[index]?.errorCategory ?? null,
-      })),
-      outcomesTruncated: false,
-      terminal: upload.terminal === true,
-      actions: [
-        {
-          action: "pause",
-          available: !upload.terminal && !upload.paused && !upload.cancelled,
-        },
-        {
-          action: "cancel",
-          available: !upload.terminal,
-          path: `/api/v1/tasks/${upload.taskId}/cancel`,
-        },
-        {
-          action: "resume",
-          available: upload.paused && !upload.terminal && !upload.cancelled,
-          ...(upload.paused && !upload.terminal && !upload.cancelled
-            ? {}
-            : {
-                reason:
-                  "uploaded bytes are not durable; resubmit the selection",
-              }),
-        },
-      ],
-      version: new Date().toISOString(),
-      sideEffects: processed > 0 ? "storage_mutations" : "none",
-      retrySafe: false,
-      nextAction: upload.terminal
-        ? "refresh the directory to see the current state"
-        : "the upload progress appears here; pause or cancel only when offered",
     });
     return;
   }
@@ -6750,58 +6350,6 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  const uploadResumeMatch = url.pathname.match(
-    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/uploads\/([^/]+)\/resume$/,
-  );
-  if (uploadResumeMatch && req.method === "POST") {
-    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
-      sendJson(res, 401, { error: { code: "unauthorized" } });
-      return;
-    }
-    if (LIMITED_TOKENS.has(token)) {
-      sendJson(res, 403, { error: { code: "forbidden" } });
-      return;
-    }
-    const upload = resourceLibraryState(session).filesUploads.get(
-      decodeURIComponent(uploadResumeMatch[2]),
-    );
-    if (!upload) {
-      sendJson(res, 404, {
-        error: {
-          code: "not_found",
-          message: "no admitted Files Upload Task exists under this identity",
-        },
-      });
-      return;
-    }
-    if (!upload.paused || upload.cancelled || upload.terminal) {
-      sendJson(res, 409, {
-        error: {
-          code: "lifecycle_conflict",
-          message: "only a paused upload resumes",
-          details: {
-            reason: "resume_unavailable",
-            durableState: "the upload is not paused",
-            nextAction: "reload the upload projection and retry",
-          },
-        },
-      });
-      return;
-    }
-    upload.paused = false;
-    sendJson(res, 200, {
-      action: "resume",
-      taskId: upload.taskId,
-      nextIndex: upload.delivered,
-      taskStatus: "running",
-      sideEffects: "storage_mutations",
-      retrySafe: false,
-      nextAction:
-        "continue streaming the remaining upload items in the manifest order, then finish the upload",
-    });
-    return;
-  }
-
   const taskControlMatch = url.pathname.match(
     /^\/api\/v1\/tasks\/([^/]+)\/(cancel|pause|resume)$/,
   );
@@ -6859,59 +6407,6 @@ const server = createServer(async (req, res) => {
         sideEffects: "none",
         retrySafe: false,
         nextAction: "follow the transfer projection for the observed state",
-      });
-      return;
-    }
-    const admittedUpload =
-      resourceLibraryState(session).filesUploads.get(taskId);
-    if (admittedUpload) {
-      const upload = admittedUpload;
-      if (upload.terminal) {
-        sendJson(res, 409, {
-          error: {
-            code: "pause_unavailable",
-            details: {
-              category: "lifecycle_conflict",
-              durableState: "the upload already reached a terminal state",
-              nextAction: "reload the upload projection",
-            },
-          },
-        });
-        return;
-      }
-      if (action === "pause") {
-        upload.paused = true;
-      } else if (action === "cancel") {
-        upload.cancelled = true;
-        upload.terminal = true;
-      } else if (action === "resume") {
-        if (!upload.paused) {
-          sendJson(res, 409, {
-            error: {
-              code: "lifecycle_conflict",
-              details: {
-                reason: "resume_unavailable",
-                durableState: `the upload session is ${upload.terminal ? "finished" : "running"}; only a paused upload resumes`,
-                nextAction: "reload the upload projection and retry",
-              },
-            },
-          });
-          return;
-        }
-        upload.paused = false;
-      }
-      sendJson(res, 200, {
-        action,
-        taskId: upload.taskId,
-        nextIndex: upload.delivered,
-        taskStatus: upload.terminal
-          ? "cancelled"
-          : upload.paused
-            ? "paused"
-            : "running",
-        sideEffects: "storage_mutations",
-        retrySafe: false,
-        nextAction: "follow the upload projection for the observed state",
       });
       return;
     }
@@ -9272,7 +8767,6 @@ const server = createServer(async (req, res) => {
       textStale: url.searchParams.get("textStale") === "1",
       commandLog: [],
       filesTransfers: new Map(),
-      filesUploads: new Map(),
       filesOrganizePaths: null,
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
     });
