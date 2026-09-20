@@ -233,6 +233,9 @@ create work merely by viewing it.
 - **Failure:** unsupported capability/type, root or unbounded deletion, destination conflict,
   transfer limit/verification failure, stale evidence, denied authority or uncertain execution fails
   closed with independent affected-item state and a safe next action.
+- **Copy/Move bounds:** source media byte totals are impact/progress information and do not by
+  themselves reject a transfer. Boundedness comes from top-level selection, recursively enumerated
+  entry count and depth, safe relative paths, and bounded manifest/checkpoint/operator projections.
 - **Recovery:** refresh and retry only known-safe items, choose another name/destination, inspect and
   resolve partial transfers, reconfirm current delete/replace scope, or reopen changed text before
   saving. Cross-Storage Move never deletes its source before verified Copy. These commands do not
@@ -575,8 +578,10 @@ Common file management is deliberately lower-friction than media organization: i
 recognition, metadata, naming/classification, organize Preview or execution-token review. It still
 requires backend RBAC, Active Storage binding, path confinement, provider capability and current
 entry checks, explicit Delete/Replace/Save intent, OrganizerExecutor-only mutation and audit-safe
-results. Bounded batch/recursive work preserves per-item outcomes; cross-Storage Move is explicit
-Copy/verify/Delete with source preservation on failed verification; Download remains zero-mutation.
+results. Bounded batch/recursive work preserves per-item outcomes; Copy/Move content byte totals are
+display evidence rather than admission authority, while selection, entry/depth/path and
+control-plane evidence remain bounded. Cross-Storage Move is explicit Copy/verify/Delete with source
+preservation on failed verification; Download remains zero-mutation.
 
 FileIndex is allowed only as a display-feedback source for business status and as a post-mutation
 reconciliation target. The Files-originated organize Preview and direct file commands still derive
