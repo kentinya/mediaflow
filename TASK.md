@@ -398,7 +398,8 @@ SMB/OpenList/S3/TMDB service, credential or real media directory is permitted.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
+(the report itself is committed as the direct child of this implementation checkpoint)
 ```
 
 ## B Review Result
