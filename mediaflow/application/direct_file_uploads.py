@@ -38,7 +38,7 @@ from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
     _join_resource_library_path,
 )
-from mediaflow.application.task_runtime import TaskPauseRequested
+from mediaflow.application.task_runtime import TaskLockError, TaskPauseRequested
 from mediaflow.domain.direct_files import (
     MAX_UPLOAD_BYTES,
     MAX_UPLOAD_CHECKSUM_BYTES,
@@ -731,6 +731,37 @@ class DirectFileUploadService:
                 session.acknowledge_pause()
                 coordinator.acknowledge_pause(task_id)
                 return session.paused_document(index)
+            except TaskLockError:
+                # ``begin_item`` has already published the terminal FAILED row
+                # for this item, but no Storage mutation crossed the executor
+                # boundary.  Treat that path-lock contention as a completed
+                # per-item outcome: consume this request's payload, advance
+                # this session's framing cursor, and let later siblings and
+                # finish observe the same durable failure instead of turning
+                # it into a generic 500.
+                self._drain_payload(plan, stream)
+                state.delivered.add(index)
+                return {
+                    "index": index,
+                    "path": item.relative_path,
+                    "status": "FAILED",
+                    # The same stable category the direct Delete loop publishes
+                    # for a refused path lock; the durable row keeps the fuller
+                    # "source is locked by another active task" sentence.
+                    "errorCategory": "path_locked",
+                    "taskStatus": coordinator.require(task_id).status.value,
+                    "terminal": False,
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "durableState": (
+                        "the item is recorded FAILED before any Storage write "
+                        "because the destination path is locked by another active task"
+                    ),
+                    "nextAction": (
+                        "wait for or refresh the in-flight destination operation, "
+                        "then retry this item or choose another conflict action"
+                    ),
+                }
             except RuntimeError as error:
                 # The durable Task boundary refused the item before any
                 # mutation: a concurrent lifecycle control (cancel) converged
