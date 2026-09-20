@@ -1858,6 +1858,139 @@ class UploadOperationLockTests(UploadTestCase):
             self.assertEqual(json.loads(finish_body)["status"], "SUCCESS")
             self.assertEqual((root / "source" / "Movies" / "second.mkv").read_bytes(), b"second")
 
+    def test_two_sessions_same_target_record_bounded_failure_and_continue(self) -> None:
+        """A destination lock is a durable item failure, not an HTTP 500.
+
+        Two independently admitted sessions plan the same initially absent
+        target.  The first holds the real Storage write; the second must
+        receive the already-persisted FAILED item outcome, then continue with
+        its own sibling and finish honestly.  Only the first session may write
+        the contested target.
+        """
+
+        write_started = threading.Event()
+        gate = threading.Event()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source" / "Movies").mkdir(parents=True, exist_ok=True)
+            blocking = self._BlockingWriteStorage(
+                "source-storage",
+                root / "source",
+                write_started=write_started,
+                gate=gate,
+            )
+            api, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": blocking}
+            )
+            binding = api._prepare_runtime_binding_for_revision(active)
+            self.assertIsNotNone(binding.direct_uploads)
+            uploads = DirectFileUploadService(
+                direct_files=binding.direct_files,
+                executor=OrganizerExecutor(),
+            )
+            write_mock = mock.patch.object(blocking, "write", wraps=blocking.write)
+            writes = write_mock.start()
+            self.addCleanup(write_mock.stop)
+            first_manifest = self._manifest(
+                "",
+                "no_overwrite",
+                [("Movies/same.mkv", b"first")],
+            )
+            second_manifest = self._manifest(
+                "",
+                "no_overwrite",
+                [
+                    ("Movies/same.mkv", b"second"),
+                    ("Movies/sibling.mkv", b"sibling"),
+                ],
+            )
+            first_task_id = uploads.upload(resource_library_id="source", manifest=first_manifest)[
+                "taskId"
+            ]
+            second_task_id = uploads.upload(resource_library_id="source", manifest=second_manifest)[
+                "taskId"
+            ]
+
+            first_results: list[tuple[int, bytes]] = []
+
+            def first_delivery() -> None:
+                first_results.append(
+                    self._call(api, self._item_environ(first_task_id, 0, b"first"))
+                )
+
+            first_thread = threading.Thread(target=first_delivery)
+            first_thread.start()
+            self.assertTrue(write_started.wait(timeout=5))
+
+            second_status, second_body = self._call(
+                api, self._item_environ(second_task_id, 0, b"second")
+            )
+            self.assertEqual(second_status, 200, second_body)
+            second_item = json.loads(second_body)
+            self.assertEqual(second_item["status"], "FAILED")
+            self.assertEqual(second_item["errorCategory"], "path_locked")
+            self.assertEqual(second_item["sideEffects"], "none")
+            self.assertIs(second_item["retrySafe"], True)
+            self.assertIn("wait", second_item["nextAction"])
+
+            second_rows = {row.source_path: row for row in runtime.list_items(second_task_id)}
+            self.assertEqual(second_rows["Movies/same.mkv"].status.value, "failed")
+            self.assertEqual(
+                second_rows["Movies/same.mkv"].error,
+                "source is locked by another active task",
+            )
+            self.assertEqual(list(runtime.list_results(second_task_id)), [])
+            self.assertFalse((root / "source" / "Movies" / "same.mkv").exists())
+
+            gate.set()
+            first_thread.join(timeout=5)
+            self.assertEqual(len(first_results), 1)
+            self.assertEqual(first_results[0][0], 200, first_results[0][1])
+            self.assertEqual(json.loads(first_results[0][1])["status"], "SUCCESS")
+
+            sibling_status, sibling_body = self._call(
+                api, self._item_environ(second_task_id, 1, b"sibling")
+            )
+            self.assertEqual(sibling_status, 200, sibling_body)
+            self.assertEqual(json.loads(sibling_body)["status"], "SUCCESS")
+
+            second_finish_status, second_finish_body = self._call(
+                api, self._finish_environ(second_task_id)
+            )
+            self.assertEqual(second_finish_status, 200, second_finish_body)
+            second_finished = json.loads(second_finish_body)
+            self.assertEqual(second_finished["status"], "PARTIAL")
+            self.assertEqual(second_finished["failedItems"], 1)
+            self.assertEqual(second_finished["succeededItems"], 1)
+            self.assertEqual(runtime.get_task(second_task_id).status.value, "partial_success")
+            projection = uploads.upload_projection(second_task_id)
+            self.assertTrue(projection["terminal"])
+            self.assertEqual(projection["status"], "PARTIAL")
+            self.assertEqual(projection["failedItems"], 1)
+            locked_entry = next(
+                entry for entry in projection["items"] if entry["path"] == "Movies/same.mkv"
+            )
+            self.assertEqual(locked_entry["status"], "FAILED")
+            self.assertEqual(
+                locked_entry["errorCategory"], "source is locked by another active task"
+            )
+
+            first_finished = uploads.finish_upload(first_task_id)
+            self.assertEqual(first_finished["status"], "SUCCESS")
+            self.assertEqual((root / "source" / "Movies" / "same.mkv").read_bytes(), b"first")
+            self.assertEqual(
+                (root / "source" / "Movies" / "sibling.mkv").read_bytes(),
+                b"sibling",
+            )
+            self.assertEqual(
+                writes.call_count,
+                2,
+            )
+            contested_writes = [
+                call for call in writes.call_args_list if str(call.args[0]).endswith("same.mkv")
+            ]
+            self.assertEqual(len(contested_writes), 1)
+
     def test_a_concurrent_cancel_at_the_boundary_is_never_a_generic_500(self) -> None:
         """The Task-admission boundary stays bounded under a concurrent cancel.
 
