@@ -9,16 +9,30 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
+Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Contract Revision: 2026-09-14 A ACCEPTANCE REFINEMENT — reference-aligned visual fidelity
+Contract Revision: 2026-09-20 A AUTHORIZED P1 REACTIVATION — formal classification library-prefix alignment
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
 Files-page-only/frozen-shell interpretation without changing that Base. Work produced by Task 37.1
 before this revision was implementation evidence only and was reviewed against this checkpointed
 Contract as part of the completed Slice.
+
+## Post-closure Reactivation
+
+On 2026-09-20, A reactivated Slice 37 under the post-closure P0/P1 correction loop. The
+newly discovered P1 defect is a user-visible target-path semantic mismatch: the local CLI
+previews `ClassificationRule.result.library` as the first target-path prefix, while the
+formal Organize flow omits it and starts with `result.path`. The same configured rule can
+therefore preview and organize to different destinations.
+
+This correction remains inside RO-8 Organize workflow continuity and the existing final-target
+composition invariant. It does not add a new provider, classification condition, Storage
+capability, mutation path, Files surface or non-Files business journey. The prior Closure Packet
+and A Final Review remain historical facts; this reactivation adds one focused correction Task
+and requires a fresh A review over the original Base through the corrected head.
 
 ## Scope decision
 
@@ -42,6 +56,12 @@ replace are never silent; conflicts, partial transfer and stale content remain e
 
 Arbitrary binary/media-content editing, unbounded recursive operations, arbitrary host paths and
 implicit operation fallback remain outside this Slice.
+
+During this reactivation, Slice 37 also owns the formal destination-composition correction:
+`ClassificationRule.result.library` must be validated as a safe relative path prefix and
+composed before the classification rule's relative `path`, matching the CLI's `Movies/其他电影/...`
+behavior. `mediaLibraryId` continues to select the configured MediaLibrary, Storage and root;
+`library` does not replace that authority.
 
 The detailed visual source of truth is
 [`docs/file-page-visual-spec.md`](docs/file-page-visual-spec.md). The image is authoritative for
@@ -100,7 +120,8 @@ repeated.
 | RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex supplies only bounded display feedback and post-mutation reconciliation; it never supplies source/path/execution authority. |
 | RO-6 | **Complete common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete, supported bounded text Edit, Upload and Download for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. |
 | RO-7 | **Low-friction direct-operation safety.** | Direct file actions do not run the Organize recognition/planning pipeline or require organize execution-token ceremony. Backend RBAC, explicit mutation intent, Storage capability/confinement, stale/conflict checks, audit, no silent overwrite/delete and `OrganizerExecutor`-only mutation remain mandatory. |
-| RO-8 | **Organize workflow continuity.** | Files-originated Preview remains ResourceLibrary-scoped and Storage-relative, derives SourceIdentity from live Storage, continues through existing Preview/intent/OrganizerExecutor authority and synchronizes each terminal result independently to FileIndex. |
+| RO-8 | **Organize workflow continuity.** | Files-originated Preview remains ResourceLibrary-scoped and Storage-relative, derives SourceIdentity from live Storage, continues through existing Preview/intent/OrganizerExecutor authority and synchronizes each terminal result independently to FileIndex. Formal destination composition uses the same `library/path` prefix semantics as the CLI. |
+| RO-8C | **Formal classification path parity correction.** | For a classified rule with `library = "Movies"` and `path = ["其他电影"]`, every formal Plan, Preview, precheck, execution and result projection composes `Movies/其他电影/...`; the configured `mediaLibraryId` still resolves the actual destination MediaLibrary and Storage root. |
 | RO-9 | **Actionable recovery.** | Read, direct-operation, activation, Organize and index-sync failures preserve Files context, explain durable/known state and provide a safe next action without fabricated rows or automatic uncertain replay. |
 | RO-10 | **Non-Files behavior continuity.** | Dashboard, Operations, Review, Configuration, Notifications and Settings retain their existing routes, application behavior, permissions and recovery while adopting the new shared shell chrome; V1 `/ui` remains unchanged. |
 | RO-11 | **Test reconciliation.** | Conflicting legacy shell/Files assertions are removed and replaced by Contract-aligned visual, interaction, mutation, failure and frozen-behavior tests; no safety assertion is weakened or skipped. |
@@ -116,6 +137,8 @@ repeated.
   Rename, Copy, Move, Delete, supported text Edit, Upload and Download;
 - backend/application behavior strictly necessary for direct file commands, ResourceLibrary
   Save/activation and post-mutation FileIndex synchronization;
+- the shared formal destination composition used by Organize Plan, destination Preview/precheck,
+  manual/automation projections and execution result evidence;
 - existing non-Files V2 page bodies only as needed to keep them functional inside the replaced
   shared shell; their business features are not redesigned by this Slice.
 
@@ -334,6 +357,11 @@ repeated.
 - [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
 - [x] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
       result synchronizes independently without mutation replay.
+- [ ] Formal Organize destination composition includes the classification `library` prefix before
+      the classification relative path, matching the local CLI, across Plan, Preview, precheck,
+      execution and result evidence.
+- [ ] The `library` prefix is validated with the same bounded safe-relative-path rules as other
+      destination contributions; unsafe values fail closed without Storage mutation.
 - [x] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
       backend mutation authority remain intact.
 - [x] Conflicting old visual tests are replaced and all required T4/full Slice gates pass without
@@ -356,6 +384,8 @@ repeated.
   Active preservation;
 - exact request/mutation evidence for zero-side-effect reads, live-Storage Preview authority,
   OrganizerExecutor-only direct/organize mutation and non-replaying FileIndex synchronization;
+- formal destination parity evidence for `library/path` composition, CLI/formal target agreement,
+  safe-prefix rejection, MediaLibrary resolution and zero-mutation failure behavior;
 - full Python and Web regression, production frontend build/package validation, governance and
   `git diff --check`;
 - scope/private-file inspection confirming the canonical image and `config/alist.json` are untouched.
@@ -363,12 +393,12 @@ repeated.
 ## Review State
 
 ```text
-Slice Status: PASS / CLOSED
+Slice Status: ACTIVE
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Contract Revision: A ACCEPTANCE REFINEMENT — structural/reference-aligned visual fidelity replaces
-the pixel-identical gate; shared shell and common file-management scope remain unchanged
-Task 37.6 state: PASS
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Contract Revision: A AUTHORIZED P1 REACTIVATION — formal classification library-prefix alignment
+Prior Task 37.6 state: PASS
+Active correction: Task 37.7 pending B planning
+Next Action: B creates the focused correction Task
 ```
 
 ## Closure Packet
