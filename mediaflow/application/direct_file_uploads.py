@@ -99,16 +99,60 @@ class DirectFileUploadError(DirectFileError):
 
     Subclassing the Files direct-command error keeps one global handler: the
     response carries the exact ``error.details`` recovery projection and the
-    exact HTTP status the admission computed.
+    exact HTTP status the admission computed.  ``side_effects`` and
+    ``retry_safe`` stay explicit per category because they differ: the busy
+    refusals, the interrupted resubmit and the ordering guards prove their own
+    zero effect (``none`` / retry-safe), while a refused or failed write may
+    already have touched Storage.  The defaults keep the conservative Upload
+    values, so a category that does not prove otherwise never claims a
+    zero-effect or retry-safe recovery.
     """
+
+    def __init__(
+        self,
+        *args,
+        side_effects: str = "storage_mutations",
+        retry_safe: bool = False,
+        **kwargs,
+    ) -> None:
+        kwargs.setdefault("retry_safe", retry_safe)
+        super().__init__(*args, **kwargs)
+        self.side_effects = side_effects
 
     @property
     def details(self) -> dict[str, object]:
         document = super().details
         document["stage"] = "files_upload"
-        document["sideEffects"] = "storage_mutations"
-        document["retrySafe"] = False
+        document["sideEffects"] = self.side_effects
         return document
+
+
+def _busy_session_error() -> DirectFileUploadError:
+    """The one bounded refusal for a busy Upload Session.
+
+    Another request on this exact Task currently holds the session operation
+    lock (an in-flight item execution, its result publication, a lifecycle
+    acknowledgement or the finalization), so this request performed no phase,
+    Task, item, Result or Storage change and is safe to retry once the
+    in-progress operation completes.
+    """
+
+    return DirectFileUploadError(
+        "files_upload_item_in_progress",
+        "upload_item_in_progress",
+        "another operation on this upload is in progress",
+        status=409,
+        side_effects="none",
+        retry_safe=True,
+        next_action=(
+            "retry this request after the in-progress operation completes, or "
+            "refresh the upload projection to see the durable state"
+        ),
+        durable_state=(
+            "this request changed nothing; no item, Task, Result, session phase "
+            "or file state was modified by it"
+        ),
+    )
 
 
 def _storage_category(error: Exception) -> tuple[str, int]:
@@ -196,18 +240,26 @@ class UploadSession:
         self.state = state
         self.phase = UploadSessionPhase.RUNNING
         self._lock = threading.Lock()
-        #: Mutual exclusion between in-flight item execution (including
-        #: result publication) and concurrent ``finish_upload`` or
-        #: concurrent item delivery.  ``execute_item`` holds this lock for
-        #: the complete single-item execution and result publication;
-        #: ``finish_upload`` and another concurrent item request attempt to
-        #: acquire it without waiting — a busy session returns a stable
-        #: ``upload_item_in_progress`` 409 and changes no durable state.
+        #: Mutual exclusion for *every* execution decision on this session.
+        #: The operation lock is acquired before any phase, Task-state,
+        #: delivered/order or finalization decision and held until that
+        #: request's outcome is published, so a request can never pass the
+        #: checks and then execute against a Task another operation already
+        #: finished.  It is session-local, so unrelated uploads are never
+        #: serialized.
         self._operation_lock = threading.Lock()
 
     @property
     def task_id(self) -> str:
         return self.state.task_id
+
+    def begin_operation(self) -> bool:
+        """Enter one exclusive execution decision; ``False`` when busy."""
+
+        return self._operation_lock.acquire(blocking=False)
+
+    def end_operation(self) -> None:
+        self._operation_lock.release()
 
     @property
     def next_index(self) -> int:
@@ -216,7 +268,11 @@ class UploadSession:
         return len(self.state.delivered)
 
     def acknowledge_pause(self) -> None:
-        """Transition to ``PAUSED`` exactly once at a safe item boundary."""
+        """Transition to ``PAUSED`` exactly once at a safe item boundary.
+
+        The caller owns the session operation lock: the phase transition is
+        part of that request's exclusive decision.
+        """
 
         with self._lock:
             if self.phase is UploadSessionPhase.RUNNING:
@@ -322,7 +378,12 @@ def upload_session_item_size(task_id: str, index: int) -> int | None:
 
 
 def _session_interrupted_error() -> DirectFileUploadError:
-    """The explicit interrupted/resubmit recovery for a lost session."""
+    """The explicit interrupted/resubmit recovery for a lost session.
+
+    The refused request changed nothing itself: the durable Task keeps every
+    already-recorded item outcome, and the browser payload bytes that were
+    never durable must be resubmitted.
+    """
 
     return DirectFileUploadError(
         "files_upload_session_interrupted",
@@ -330,6 +391,8 @@ def _session_interrupted_error() -> DirectFileUploadError:
         "the live Upload session for this Task is no longer available in "
         "this process; the browser payload bytes are not durable",
         status=409,
+        side_effects="none",
+        retry_safe=True,
         next_action=(
             "resubmit the upload from the Files workspace; the durable Task "
             "keeps every already-recorded item outcome"
@@ -362,7 +425,19 @@ def resume_upload_session(task_id: str) -> dict[str, object]:
                 "items keep their outcomes and are never re-uploaded"
             ),
         )
-    with session._lock:
+    # The resume decision is an execution decision on this session: it is
+    # taken under the same operation lock as item streaming and finish, so a
+    # resume can never requeue a Task while an item or the finalization is
+    # still publishing its own outcome.
+    if not session.begin_operation():
+        raise OperationsLifecycleConflict(
+            "resume_unavailable",
+            "another operation on this upload is in progress",
+            durable_state="the session is unchanged; the paused Task keeps its item outcomes",
+            next_action="retry the resume once the in-progress operation completes",
+            retry_safe=True,
+        )
+    try:
         if session.phase is not UploadSessionPhase.PAUSED:
             raise OperationsLifecycleConflict(
                 "resume_unavailable",
@@ -394,7 +469,10 @@ def resume_upload_session(task_id: str) -> dict[str, object]:
                         updated_at=now,
                     )
                 )
-        session.phase = UploadSessionPhase.RUNNING
+        with session._lock:
+            session.phase = UploadSessionPhase.RUNNING
+    finally:
+        session.end_operation()
     return {
         "action": "resume",
         "taskId": task_id,
@@ -557,126 +635,86 @@ class DirectFileUploadService:
         # configuration activation replaced this service instance, the item
         # streams under the exact revision the upload was admitted against.
         state = session.state
-        if (
-            isinstance(index, bool)
-            or not isinstance(index, int)
-            or index < 0
-            or index >= len(state.items)
-        ):
-            raise DirectFileUploadError(
-                "files_upload_invalid_request",
-                "invalid_request",
-                "the Upload item index is outside the admitted scope",
-                status=400,
-                next_action="resubmit the Upload with its exact selection",
-            )
-        item = state.items[index]
-        if session.phase is UploadSessionPhase.FINISHED:
-            raise _session_interrupted_error()
-        if session.phase is UploadSessionPhase.PAUSED:
-            # A paused session streams nothing until the operator resumes;
-            # this response is not an item failure and mutates nothing.
-            return session.paused_document(index)
-        if session.phase is UploadSessionPhase.CANCELLED:
-            return {
-                "index": index,
-                "path": item.relative_path,
-                "status": "FAILED",
-                "errorCategory": "upload_cancelled",
-                "taskStatus": "cancelled",
-                "terminal": True,
-                "sideEffects": "storage_mutations",
-                "retrySafe": False,
-                "nextAction": "the upload was cancelled; refresh the directory",
-            }
-        coordinator = session.direct_files.tasks
-        if coordinator.cancellation_observed(task_id):
-            # The session converges to CANCELLED but stays registered until
-            # finish records every undelivered item's truthful refused
-            # outcome and publishes the honest terminal aggregate.
-            session.mark_cancelled()
-            return {
-                "index": index,
-                "path": item.relative_path,
-                "status": "FAILED",
-                "errorCategory": "upload_cancelled",
-                "taskStatus": "cancelled",
-                "terminal": True,
-                "sideEffects": "storage_mutations",
-                "retrySafe": False,
-                "nextAction": "the upload was cancelled; refresh the directory",
-            }
-        if coordinator.pause_requested(task_id):
-            try:
-                coordinator.acknowledge_pause(task_id)
-            except ValueError:
-                # A concurrent lifecycle control (cancel) converged first;
-                # re-read the durable truth instead of fabricating a pause.
-                if coordinator.cancellation_observed(task_id):
-                    session.mark_cancelled()
-                    return {
-                        "index": index,
-                        "path": item.relative_path,
-                        "status": "FAILED",
-                        "errorCategory": "upload_cancelled",
-                        "taskStatus": "cancelled",
-                        "terminal": True,
-                        "sideEffects": "storage_mutations",
-                        "retrySafe": False,
-                        "nextAction": "the upload was cancelled; refresh the directory",
-                    }
-                # The durable pause request exists but the coordinator's
-                # narrow acknowledgment precondition no longer holds; the
-                # boundary is still honest (nothing was read or mutated).
-                return session.paused_document(index)
-            session.acknowledge_pause()
-            return session.paused_document(index)
-        task = coordinator.require(task_id)
-        if task.status is not PersistentTaskStatus.RUNNING:
-            raise DirectFileUploadError(
-                "files_upload_task_not_running",
-                "task_not_running",
-                "the Upload Task is not streaming in this request sequence",
-                status=409,
-                next_action="resubmit the Upload from the Files workspace",
-            )
-        # Framing order is the manifest order: an out-of-order or repeated
-        # payload request is refused before any read, so one item's bytes can
-        # never be consumed as (or by) a sibling's payload.
-        if index in state.delivered:
-            raise DirectFileUploadError(
-                "files_upload_item_already_delivered",
-                "item_already_delivered",
-                "this Upload item's payload was already delivered",
-                status=409,
-                next_action="continue with the next item or finish the upload",
-            )
-        if index != len(state.delivered):
-            raise DirectFileUploadError(
-                "files_upload_item_out_of_order",
-                "item_out_of_order",
-                "Upload payloads must be streamed in the manifest order",
-                status=409,
-                next_action="stream the remaining items in the manifest order",
-            )
-        plan = state.planned[index]
-        # The operation lock prevents finish_upload and a concurrent item
-        # request from racing this execution's result publication.  A busy
-        # session returns a stable409 with zero state change; the lock is
-        # session-local so unrelated uploads are never serialized.
-        if not session._operation_lock.acquire(blocking=False):
-            return {
-                "index": index,
-                "path": item.relative_path,
-                "status": "FAILED",
-                "errorCategory": "upload_item_in_progress",
-                "taskStatus": coordinator.require(task_id).status.value,
-                "terminal": False,
-                "sideEffects": "storage_mutations",
-                "retrySafe": True,
-                "nextAction": "another upload operation is in progress; retry this request",
-            }
+        # The session operation lock is acquired *before* every phase,
+        # Task-state, delivered/order and finalization decision, and the whole
+        # decision plus its publication happens inside the ``try/finally``: a
+        # request that waited here can therefore never re-read a stale phase,
+        # a terminal Task or a stale delivered set and execute against a Task
+        # another operation already finished.
+        if not session.begin_operation():
+            raise _busy_session_error()
         try:
+            if (
+                isinstance(index, bool)
+                or not isinstance(index, int)
+                or index < 0
+                or index >= len(state.items)
+            ):
+                raise DirectFileUploadError(
+                    "files_upload_invalid_request",
+                    "invalid_request",
+                    "the Upload item index is outside the admitted scope",
+                    status=400,
+                    next_action="resubmit the Upload with its exact selection",
+                )
+            item = state.items[index]
+            # Re-read the session/delivered truth now that this request owns
+            # the session: the checks below are the same ones that decide
+            # whether this request may still mutate anything at all.
+            if session.phase is UploadSessionPhase.FINISHED:
+                raise _session_interrupted_error()
+            if session.phase is UploadSessionPhase.PAUSED:
+                # A paused session streams nothing until the operator resumes;
+                # this response is not an item failure and mutates nothing.
+                return session.paused_document(index)
+            if session.phase is UploadSessionPhase.CANCELLED:
+                return self._cancelled_item_document(index, item)
+            coordinator = session.direct_files.tasks
+            if coordinator.cancellation_observed(task_id):
+                # The session converges to CANCELLED but stays registered until
+                # finish records every undelivered item's truthful refused
+                # outcome and publishes the honest terminal aggregate.
+                session.mark_cancelled()
+                return self._cancelled_item_document(index, item)
+            if coordinator.pause_requested(task_id):
+                return self._acknowledge_pause_boundary(session, coordinator, task_id, index, item)
+            task = coordinator.require(task_id)
+            if task.status is not PersistentTaskStatus.RUNNING:
+                # The durable Task is already terminal or not streaming: the
+                # session has no live execution to continue, so this request
+                # changes nothing and reports the honest interrupted/resubmit
+                # recovery instead of a Task-boundary crash.
+                raise _session_interrupted_error()
+            # Framing order is the manifest order: an out-of-order or repeated
+            # payload request is refused before any read, so one item's bytes
+            # can never be consumed as (or by) a sibling's payload.
+            if index in state.delivered:
+                raise DirectFileUploadError(
+                    "files_upload_item_already_delivered",
+                    "item_already_delivered",
+                    "this Upload item's payload was already delivered",
+                    status=409,
+                    side_effects="none",
+                    retry_safe=True,
+                    next_action="continue with the next item or finish the upload",
+                    durable_state=(
+                        "this request changed nothing; the item keeps its recorded outcome"
+                    ),
+                )
+            if index != len(state.delivered):
+                raise DirectFileUploadError(
+                    "files_upload_item_out_of_order",
+                    "item_out_of_order",
+                    "Upload payloads must be streamed in the manifest order",
+                    status=409,
+                    side_effects="none",
+                    retry_safe=True,
+                    next_action="stream the remaining items in the manifest order",
+                    durable_state=(
+                        "this request changed nothing; the upload keeps its durable progress"
+                    ),
+                )
+            plan = state.planned[index]
             try:
                 task_item = coordinator.begin_item(
                     task_id,
@@ -693,6 +731,19 @@ class DirectFileUploadService:
                 session.acknowledge_pause()
                 coordinator.acknowledge_pause(task_id)
                 return session.paused_document(index)
+            except RuntimeError as error:
+                # The durable Task boundary refused the item before any
+                # mutation: a concurrent lifecycle control (cancel) converged
+                # the Task between the checks above and this admission.  Only
+                # that provable state change is translated; any other
+                # RuntimeError stays a real defect and propagates unchanged.
+                current = coordinator.repository.get_task(task_id)
+                if current is not None and current.status is not PersistentTaskStatus.RUNNING:
+                    if current.status is PersistentTaskStatus.CANCELLED:
+                        session.mark_cancelled()
+                        return self._cancelled_item_document(index, item)
+                    raise _session_interrupted_error() from error
+                raise
             state.delivered.add(index)
             try:
                 outcome, item_truncated, checksum, written_destination, category = (
@@ -715,7 +766,8 @@ class DirectFileUploadService:
                     "taskStatus": coordinator.require(task_id).status.value,
                     "terminal": False,
                     "sideEffects": "storage_mutations",
-                    "retrySafe": False,
+                    "retrySafe": error.retry_safe,
+                    "durableState": error.durable_state,
                     "nextAction": "review the reason and retry this item or the selection",
                 }
             self._record_item(
@@ -746,7 +798,7 @@ class DirectFileUploadService:
                 document["durableState"] = "mutation_effect_uncertain"
             return document
         finally:
-            session._operation_lock.release()
+            session.end_operation()
 
     def finish_upload(self, task_id: str) -> dict[str, object]:
         """Finalize one streamed Upload and return its bounded result.
@@ -768,43 +820,43 @@ class DirectFileUploadService:
                     next_action="return to the Files workspace and refresh",
                 )
             raise _session_interrupted_error()
-        if session.phase is UploadSessionPhase.PAUSED:
-            task = self._direct.tasks.require(task_id)
-            if task.status is not PersistentTaskStatus.CANCELLED:
-                # Finish while paused would fabricate a terminal aggregate
-                # over a journey the operator explicitly paused; the pause
-                # boundary stays the durable outcome and resume/cancel
-                # decides the rest.  A durable cancellation already converged
-                # the Task, so finish records the honest cancelled aggregate.
-                raise DirectFileUploadError(
-                    "files_upload_finish_while_paused",
-                    "finish_unavailable",
-                    "the upload is paused; resume it to finish streaming or "
-                    "cancel it to close the Task",
-                    status=409,
-                    next_action=(
-                        "resume the upload to stream the remaining items, or "
-                        "cancel it; every recorded outcome stays durable"
-                    ),
-                    durable_state="the Task stays paused with its recorded item outcomes",
-                )
-        # The operation lock prevents finish_upload from racing an in-flight
-        # item execution.  A busy session returns a stable 409 with zero
-        # state change; the operator retries after the in-progress item
-        # completes.
-        if not session._operation_lock.acquire(blocking=False):
-            raise DirectFileUploadError(
-                "files_upload_item_in_progress",
-                "upload_item_in_progress",
-                "an upload item is currently being processed; retry the finish after it completes",
-                status=409,
-                next_action=(
-                    "retry the finish request; the upload progress is "
-                    "preserved and no state was changed"
-                ),
-                durable_state="the upload continues; no state was changed",
-            )
+        # The operation lock is acquired before the phase and finalization
+        # decisions, and the whole finalization (from the phase transition
+        # through the terminal aggregate publication and the session cleanup)
+        # happens inside the ``try/finally``: a finish that waited here can
+        # never observe a stale phase and finalize over an in-flight item's
+        # result publication.
+        if not session.begin_operation():
+            raise _busy_session_error()
         try:
+            if session.phase is UploadSessionPhase.PAUSED:
+                task = self._direct.tasks.require(task_id)
+                if task.status is not PersistentTaskStatus.CANCELLED:
+                    # Finish while paused would fabricate a terminal aggregate
+                    # over a journey the operator explicitly paused; the pause
+                    # boundary stays the durable outcome and resume/cancel
+                    # decides the rest.  A durable cancellation already
+                    # converged the Task, so finish records the honest
+                    # cancelled aggregate.
+                    raise DirectFileUploadError(
+                        "files_upload_finish_while_paused",
+                        "finish_unavailable",
+                        "the upload is paused; resume it to finish streaming or "
+                        "cancel it to close the Task",
+                        status=409,
+                        side_effects="none",
+                        retry_safe=True,
+                        next_action=(
+                            "resume the upload to stream the remaining items, or "
+                            "cancel it; every recorded outcome stays durable"
+                        ),
+                        durable_state="the Task stays paused with its recorded item outcomes",
+                    )
+            if session.phase is UploadSessionPhase.FINISHED:
+                # A retained session reference can never finalize twice: the
+                # first finish already dropped the session from the registry,
+                # so this is a genuinely interrupted continuation.
+                raise _session_interrupted_error()
             session.mark_finished()
             state = session.state
             outcomes: list[UploadItemOutcome] = []
@@ -887,7 +939,53 @@ class DirectFileUploadService:
                 document["durableState"] = "mutation_effect_uncertain"
             return document
         finally:
-            session._operation_lock.release()
+            session.end_operation()
+
+    @staticmethod
+    def _cancelled_item_document(index: int, item: UploadItemPlan) -> dict[str, object]:
+        """The honest per-item response of an already cancelled upload."""
+
+        return {
+            "index": index,
+            "path": item.relative_path,
+            "status": "FAILED",
+            "errorCategory": "upload_cancelled",
+            "taskStatus": "cancelled",
+            "terminal": True,
+            "sideEffects": "none",
+            "retrySafe": False,
+            "nextAction": "the upload was cancelled; refresh the directory",
+        }
+
+    def _acknowledge_pause_boundary(
+        self,
+        session: UploadSession,
+        coordinator,
+        task_id: str,
+        index: int,
+        item: UploadItemPlan,
+    ) -> dict[str, object]:
+        """Acknowledge one pause request at this safe item boundary.
+
+        The caller owns the session operation lock, so this boundary is
+        exclusive: nothing was read or mutated, the item keeps its own
+        pending row and the pause is never recorded as a failure.
+        """
+
+        try:
+            coordinator.acknowledge_pause(task_id)
+        except ValueError:
+            # A concurrent lifecycle control (cancel) converged first;
+            # re-read the durable truth instead of fabricating a pause.
+            if coordinator.cancellation_observed(task_id):
+                session.mark_cancelled()
+                return self._cancelled_item_document(index, item)
+            # The durable pause request exists but the coordinator's narrow
+            # acknowledgment precondition no longer holds; the boundary is
+            # still honest (nothing was read or mutated).
+            return session.paused_document(index)
+        session.acknowledge_pause()
+        return session.paused_document(index)
 
     def upload_projection(self, task_id: str) -> dict[str, object]:
         """The durable, bounded operator projection of one Upload Task.
