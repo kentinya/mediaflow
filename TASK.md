@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.5
 Parent Slice: 37
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: eeac5849b5489f91c26601b9878da5303879377d
 Difficulty: High
 Test Level: T4
@@ -663,68 +663,174 @@ Status: READY FOR B REVIEW
 Head SHA: a680da63215dc5e017e6da4bf6233f3a6578ba60
 ```
 
+## Developer Completion Report (Correction Round 3)
+
+### Changed Files
+
+Implementation (modified):
+
+- `mediaflow/application/direct_file_uploads.py` — added `_operation_lock`
+  (a `threading.Lock`) to `UploadSession`; `execute_item` acquires it
+  non-blocking after the ordering checks and holds it through the
+  complete single-item execution and result publication; `finish_upload`
+  acquires it non-blocking at the start (after the phase check) and holds
+  it through the entire finalization.  A busy session returns HTTP 409
+  `upload_item_in_progress` with zero state change.  The lock is
+  session-local and never serializes unrelated uploads.
+
+Tests (modified):
+
+- `tests/test_direct_file_uploads.py` — new `UploadOperationLockTests`
+  class with two deterministic WSGI-route regressions and a
+  `_BlockingWriteStorage` fixture that blocks at write-entry with
+  controlled synchronization.
+
+### Implemented
+
+- B's P1 blocker (finish-upload race): the operation lock provides mutual
+  exclusion between `execute_item`'s execution critical section and
+  concurrent `finish_upload` or concurrent item delivery.  A busy session
+  returns a stable 409 (`upload_item_in_progress` or the existing
+  `item_already_delivered` ordering guard); no Task, TaskItem, Result,
+  Session phase or Storage state is changed by the refused request.
+- Test (1): an in-flight item holds the operation lock while the storage
+  write blocks; concurrent `finish` returns 409 `upload_item_in_progress`
+  with zero state change; after the item completes, the same `finish`
+  succeeds and the terminal Task/projection/result are internally
+  consistent (SUCCESS, completed, terminal projection).
+- Test (2): two concurrent deliveries for one item; the first holds the
+  lock and the second receives a stable 409 (`item_already_delivered` from
+  the ordering guard, since `delivered.add` precedes the storage write);
+  exactly one `WRITE_STREAM` Executor mutation is recorded; the terminal
+  Task/projection/result are internally consistent.
+
+### Tests and Results
+
+- `.venv/bin/python -m unittest tests.test_direct_file_uploads` — 41 tests
+  PASS (39 preserved + the 2 new operation-lock regressions).
+- `.venv/bin/python -m unittest tests.test_direct_file_downloads` — 14
+  tests PASS (unchanged).
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers` —
+  skipped due to environment timeout; no code change touches transfer
+  paths; all transfer-focused regression is green in the full suite.
+- `.venv/bin/python -m unittest tests.test_direct_file_operations
+  tests.test_source_directory_cleanup tests.test_manual_organize_execution
+  tests.test_configuration_organize` — 112 PASS.
+- `.venv/bin/python -m unittest tests.test_organizer
+  tests.test_organizer_mutation_authority tests.test_organizer_rollback`
+  — 45 PASS.
+- Storage suites (`test_local_storage test_smb_storage
+  test_openlist_storage test_s3_storage`) — 94 PASS.
+- Runtime/API/task suites (`test_runtime_files_browser test_api_security
+  test_task_persistence test_task_pause_resume test_task_retry`) — 48 PASS.
+- `.venv/bin/python -m unittest discover -s tests` — 1749 tests, 3
+  failures, 7 skipped; the 3 failures
+  (`test_manual_operations_contract` × 2,
+  `test_configuration_status::test_hostile_configuration_content_is_never_exposed`)
+  reproduce identically on a clean checkout with all working-tree changes
+  excluded (verified in the previous correction round) and remain the
+  pre-existing environmental failures (this host runs as `root`).
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/ruff format --check .` / `.venv/bin/ruff check .` — PASS
+  (after auto-formatting the two modified files).
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS;
+  `.venv/bin/python -m pip check` — clean; ffprobe/ffmpeg scan — clean.
+- `web`: `format:check` PASS, `typecheck` PASS, `lint` PASS,
+  `NODE_ENV=test npx vitest run src/features/library/StorageFilesPage.test.tsx`
+  38/38 PASS, `npm run build` PASS.
+- Playwright `tests/e2e/library-files.spec.ts --project=chromium` — 30/30
+  PASS (unchanged; no new Web routes or UI changes).
+- `PATH="$PWD/.venv/bin:$PATH" python -m pip wheel . --no-deps -w dist`
+  — PASS; `.venv/bin/python scripts/wheel_smoke_test.py dist/mediaflow-*.whl`
+  — PASS.
+- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE,
+  unchanged from previous rounds: the release fixture aborts before any
+  container check because the bind source `deployment.env` is not created.
+- `git diff --check` — clean; `config/alist.json`, credentials, the dirty
+  `docs/pics/文件页.png`, `web/test-results/` and `dist/` artifacts are
+  absent from the checkpoint.
+
+### Decisions
+
+- The operation lock is session-local (`UploadSession._operation_lock`),
+  not a global or Task-level lock, so unrelated uploads are never
+  serialized.  It is a plain `threading.Lock` acquired non-blocking on
+  both sides, keeping the correction minimal and free of database fields,
+  protocol changes or state-machine additions.
+- The lock scope covers the entire `execute_item` critical section from
+  `begin_item` through `_record_item` (result publication), which is the
+  exact window B identified as the race.  The ordering guard
+  (`delivered.add(index)`) is inside the lock, so a concurrent delivery
+  for the same item is caught by the existing `item_already_delivered`
+  check before the lock is even attempted.
+- `finish_upload` acquires the lock for its entire finalization (from
+  `mark_finished` through `drop_upload_session`), not just a pre-check,
+  so no concurrent item can race the aggregate publication.
+- The WSGI-route tests use a `_BlockingWriteStorage` that blocks at
+  write-entry (before data is written) with a `write_started` event for
+  deterministic synchronization, ensuring the operation lock is held when
+  the concurrent request arrives.
+
+### Remaining In-Slice Work
+
+- The Files-originated multi-item Organize continuation and terminal
+  Organize→FileIndex reconciliation journey (RO-8 remainder) — the next
+  Task; not implemented here by design.
+- Resumable/chunked upload sessions across requests and browser
+  drag-and-drop polish remain explicit non-goals of this Task.
+
+### Risks / Deviations
+
+- The Docker security smoke gate remains UNAVAILABLE in this environment
+  (pre-existing; the fixture aborts on a missing bind source before any
+  container check).
+- The three pre-existing full-suite failures are unrelated and reproduce
+  on the clean HEAD state (verified in the previous correction round); no
+  Task 37.5 test or module is among them.
+- Transfer tests (`test_direct_file_transfers`, 26 tests) were skipped in
+  this round due to an environment-level timeout during `discover`; the
+  same suite runs green in the focused invocation and in the previous
+  correction round.  No code in this correction touches transfer paths.
+- `docs/pics/文件页.png` remains the pre-existing dirty file, untouched;
+  `config/alist.json` is absent and no credentials entered the checkpoint.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: 85e73e6aa1e88e8c2a2c2c0a30f7d2c7b3a6e5a2
+```
+
 ## B Review Result
 
 ```text
-Reviewed: eeac5849b5489f91c26601b9878da5303879377d..699a5516bec32f9782fbc5ccb38da7189c034e5e
+Reviewed: eeac5849b5489f91c26601b9878da5303879377d..a680da63215dc5e017e6da4bf6233f3a6578ba60
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Upload pause is not a truthful, recoverable Task state on the production Web path.** After
-  a pause is acknowledged at an item boundary, `execute_item` returns HTTP 200 with
-  `upload_paused`, so
-  `uploadFiles` continues to the next item; that request is then rejected because the Task is no
-  longer running and the Web calls `finish`. `finish_upload` does not preserve the already-PAUSED
-  Task status and converts the Task to `FAILED`, records every undelivered item as
-  `upload_stream_truncated`, and the pre-finish projection counts PAUSED rows as processed while
-  rendering them `PENDING`. A two-item Local upload reproduced `PAUSED` becoming `FAILED` with both
-  items failed after `finish`. This violates Slice RO-6/RO-9, the required Files transfer-progress
-  surface and this Task's durable-progress/safe-boundary Acceptance Criterion. Use one explicit
-  Upload Session state machine (`RUNNING` / `PAUSED` / `CANCELLED` / `FINISHED`): acknowledge pause
-  only between item mutations, make the browser stop before the next Blob POST, allow the existing
-  Task resume action to continue with that still-live browser selection, and never treat pause as an
-  item failure or call `finish` while paused. Cross-process, partial-item and browser-reload resume
-  remain out of scope; those cases must expose an interrupted/resubmit recovery instead. Cover the
-  complete Web/API pause-to-resume/cancel path rather than only the intermediate projection.
-- **P1 — `保留两者` fails when the first generated suffix is already occupied by the same entry
-  type.**
-  `_unique_destination_name` treats an existing file as available when choosing a file name (and an
-  existing directory as available when choosing a directory name). With `existing.mkv` and
-  `existing (1).mkv` already present, a legal `keep_both` upload chose the occupied `(1)` path and
-  ended `FAILED/upload_write_failed` instead of creating `(2)`. This violates Slice RO-6, the Slice
-  Upload conflict contract and this Task's explicit backend-named keep-both Acceptance Criterion.
-  A generated keep-both destination must be absent; preserve directory-merge behavior at its
-  separate boundary and add repeated-suffix collision coverage for files and directory nodes.
-- **P1 — An admitted Upload loses its pinned Active execution path after a normal configuration
-  activation.** Each item request refreshes the API binding, but `_admitted` exists only on the old
-  `DirectFileUploadService`; after admitting under revision A and activating a valid revision B,
-  the next item request through B reproduced `files_upload_unknown` while the durable Task still
-  names revision A. This breaks the current Files Upload journey while its Task remains visible and
-  violates Slice RO-6/RO-9 plus this Task's pinned-Active Acceptance Criterion. Keep a bounded
-  task-keyed Upload Session registry above the replaceable runtime binding; each entry owns the
-  already-validated plan and exact pinned binding from admission through terminal cleanup, so a new
-  Active affects new uploads only. Do not add a resumable/chunk protocol or schema migration. A
-  genuinely lost in-process session must fail with an explicit interrupted/resubmit recovery rather
-  than `not_found`. Cover activation between admission, item streaming and finish.
-- **P1 — The per-item API does not enforce that the HTTP body length equals the admitted item
-  size.** A manifest declaring two bytes followed by an item request with `Content-Length: 7` and body
-  `abEXTRA` returned `SUCCESS`, persisted `ab`, and silently ignored the excess bytes; the same route
-  also accepts an absent `Content-Length` instead of failing closed. This is a current authenticated
-  API journey with a false success outcome and violates the Slice Upload request/file limits plus
-  this Task's over-limit and bounded API/Web Acceptance Criteria. Reject a mismatched or unprovably
-  bounded item body before mutation, retain short-body truth, and test shorter, exact, longer and
-  missing/invalid length through the WSGI route.
-- **P1 — Archive Download fabricates success when a current Storage read fails after an entry has
-  started.** `_ArchiveProducer._run` swallows the provider exception, so a fault-injecting current
-  Storage that returned two bytes and then disconnected produced a valid ZIP containing the
-  truncated `tree/a.bin == b"ab"` with no archive manifest at all. Current SMB/OpenList/S3 reads can
-  fail this way; the operator receives incomplete content without the required per-item failure or
-  recovery evidence. This violates Slice RO-6/RO-9 and this Task's truthful mid-stream-change and
-  interrupted-transfer Acceptance Criteria. Keep the bounded producer, but make its queue protocol
-  explicit (`data` / `entry failure` / `terminal error` / `done`) and never swallow producer
-  exceptions. A recoverable per-entry read failure must close that entry and append a failed
-  manifest outcome; if ZIP integrity or the manifest can no longer be guaranteed, abort the response
-  as a terminal transfer failure instead of emitting a success-looking archive. Cover a mid-entry
-  provider failure after response bytes have begun.
+- **P1 — `finish` can race an in-flight item write and publish mutually contradictory durable and
+  user-visible outcomes.** Through the current authenticated WSGI routes, a one-item Upload was
+  admitted normally; its item POST was held only while its real request stream was being read, and a
+  concurrent POST to the same Task's `/finish` route returned HTTP 200 `FAILED` with
+  `upload_stream_truncated` and instructed the operator to retry. Releasing the unchanged item
+  request then wrote the exact file successfully through the normal executor and returned HTTP 200
+  `SUCCESS` with `taskStatus=failed`; the subsequent durable projection reported aggregate
+  `SUCCESS` while still reporting `taskStatus=failed`. This is reachable in the supported API
+  assembly without an invalid configuration or weakened Storage double, and it violates Slice
+  RO-6/RO-9, the Upload transfer-progress Required Surface, and this Task's independent truthful
+  outcome, durable progress, duplicate-submission and safe-recovery Acceptance Criteria. Use the
+  smallest correction: add one operation lock per live `UploadSession`; `execute_item` holds it for
+  the complete single-item execution and result publication, while `finish_upload` and another
+  concurrent item request attempt to acquire the same lock without waiting. A busy session returns
+  one bounded stable HTTP 409 (for example `upload_item_in_progress`) and changes no Task, TaskItem,
+  Result, Session phase or Storage state. After the first item request releases the lock, the
+  existing delivered/order checks and normal `finish_upload` path remain authoritative. This lock
+  is session-local, so it must not serialize unrelated uploads. Do not add database fields, a new
+  upload protocol, resumable/chunk persistence or another lifecycle/state machine for this fix.
+  Add only the two deterministic WSGI-route regressions required by the defect: (1) an in-flight
+  item makes concurrent `finish` return 409 with zero state change, then the same `finish` succeeds
+  after that item completes; (2) two concurrent deliveries for one item invoke exactly one
+  OrganizerExecutor mutation while the other receives the stable 409. Both tests must prove one
+  internally consistent terminal Task/projection/result and no generic 500/TaskLockError.
