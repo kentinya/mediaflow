@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Contract Revision: 2026-09-20 A AUTHORIZED P1 REACTIVATION — formal classification library-prefix alignment
+Contract Revision: 2026-09-20 A AUTHORIZED SCOPE REVISION — formal classification library-prefix alignment and direct Files Upload/Download removal
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -34,6 +34,24 @@ capability, mutation path, Files surface or non-Files business journey. The prio
 and A Final Review remain historical facts; this reactivation adds one focused correction Task
 and requires a fresh A review over the original Base through the corrected head.
 
+## Current A-owned Scope Revision — Remove Direct Files Upload/Download
+
+On 2026-09-20, A explicitly revised the current Slice boundary after confirming that the operator
+does not need direct browser Upload or Download from the Files workspace. The current product
+surface therefore retains Files browsing, ResourceLibrary activation, Create Folder/Text File,
+Rename, Copy, Move, Delete, bounded text Edit and Organize continuation, but no longer offers
+direct browser Upload or Download.
+
+This is a vertical product-scope removal, not a UI-only hide. The implementation must remove the
+Files Upload/Download controls, dialogs, client calls, HTTP routes, application services, direct
+Upload/Download domain projections and their dedicated tests. It must not remove Storage
+`Read`/`Write`, OpenList/S3 provider transfer primitives, Copy/Move transfer behavior or other
+OrganizerExecutor capabilities used by the remaining journeys.
+
+The previous Slice 37 Closure Packet recorded the then-delivered Upload/Download surfaces and
+remains historical evidence. This current A-owned revision supersedes those surfaces for the
+reactivated implementation boundary; it does not delete or rewrite the historical record.
+
 ## Scope decision
 
 The approved [`docs/pics/文件页.png`](docs/pics/文件页.png) is the product design to implement, not
@@ -45,8 +63,8 @@ behavior remain intact, but their outer shell pixels are intentionally allowed t
 
 Slice 37 also makes Files a practical common file-management surface. In addition to browsing and
 organizing, an authorized operator can create folders or supported text files; rename, copy, move
-and delete files/directories; edit bounded supported text files; and upload or download bounded
-files/directories.
+and delete files/directories; and edit bounded supported text files. Direct browser Upload and
+Download are removed from the current product boundary.
 Single-item actions and bounded multi-selection actions share one Files interaction model. These are
 direct file-management commands, not media recognition/metadata/naming/classification/organize
 decisions. They do not require the full Organize Preview/policy/execution-token ceremony, but every
@@ -81,15 +99,15 @@ authentication boundary.
 **Visible state:** at `1536 x 1024` the route presents the canonical reference composition: shared
 light left rail, top bar, active Files navigation, search, ResourceLibrary summary, information
 banner, directory tree, breadcrumb, file table, selected row, selection footer, pagination and open
-`添加资源库` drawer. The action surfaces expose `新建文件夹`, `新建文本文件`, `上传`, `下载`,
-`重命名`, `复制`, `移动`, `删除` and supported `编辑`. Unsupported actions are absent or explain why
-they are unavailable. Raw backend authority fields are not displayed.
+`添加资源库` drawer. The action surfaces expose `新建文件夹`, `新建文本文件`, `重命名`,
+`复制`, `移动`, `删除` and supported `编辑`. Direct `上传` and `下载` surfaces are absent.
+Unsupported actions are absent or explain why they are unavailable. Raw backend authority fields
+are not displayed.
 
 **Action:** browse or refresh a ResourceLibrary-relative directory, switch presentation, select or
 clear entries, create a folder or supported text file, rename/copy/move/delete eligible files or
-directories, edit and save bounded text, upload into the current directory, download selected
-content, create and activate a ResourceLibrary, or open the existing server-authoritative organize
-Preview journey.
+directories, edit and save bounded text, create and activate a ResourceLibrary, or open the
+existing server-authoritative organize Preview journey.
 
 **Success:** shell and Files visuals match the reference; direct file actions update the live
 listing without leaving hidden stale selection; a saved ResourceLibrary becomes part of the exact
@@ -97,17 +115,15 @@ Active runtime; and terminal Organize results synchronize their known outcome to
 
 **Failure:** missing Active configuration, unavailable Storage, invalid path, stale or changed
 source, unsupported operation, name/destination conflict, edit conflict/encoding/size failure,
-bounded-recursion or transfer-limit failure, partial copy/move/upload/download, denied permission,
-malformed response, activation failure, Organize failure or FileIndex synchronization failure is
-shown on the affected item with no fabricated success, implicit overwrite/delete or uncertain
-replay.
+bounded-recursion or transfer-limit failure, partial copy/move, denied permission, malformed
+response, activation failure, Organize failure or FileIndex synchronization failure is shown on
+the affected item with no fabricated success, implicit overwrite/delete or uncertain replay.
 
-**Recovery:** retry a safe bounded read/download, return to the ResourceLibrary root, correct a name,
-destination or edit conflict, reload changed text, inspect independently completed/failed transfer
-items, explicitly confirm a still-current bounded deletion, select another ResourceLibrary, correct
-and resubmit a failed ResourceLibrary save, inspect the durable Organize result or repair bounded
-index synchronization. Failed or uncertain mutations refresh truth and are never automatically
-repeated.
+**Recovery:** return to the ResourceLibrary root, correct a name, destination or edit conflict,
+reload changed text, inspect independently completed/failed Copy/Move items, explicitly confirm a
+still-current bounded deletion, select another ResourceLibrary, correct and resubmit a failed
+ResourceLibrary save, inspect the durable Organize result or repair bounded index synchronization.
+Failed or uncertain mutations refresh truth and are never automatically repeated.
 
 ## Required Outcomes
 
@@ -118,7 +134,7 @@ repeated.
 | RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/status/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy. |
 | RO-4 | **ResourceLibrary drawer and activation.** | The three-step drawer matches the reference; final `保存` submits one complete candidate and the backend validates and atomically activates it, preserving the previous Active on every failure. |
 | RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex supplies only bounded display feedback and post-mutation reconciliation; it never supplies source/path/execution authority. |
-| RO-6 | **Complete common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete, supported bounded text Edit, Upload and Download for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. |
+| RO-6 | **Bounded common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete and supported bounded text Edit for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. Direct browser Upload and Download are outside the current product surface. |
 | RO-7 | **Low-friction direct-operation safety.** | Direct file actions do not run the Organize recognition/planning pipeline or require organize execution-token ceremony. Backend RBAC, explicit mutation intent, Storage capability/confinement, stale/conflict checks, audit, no silent overwrite/delete and `OrganizerExecutor`-only mutation remain mandatory. |
 | RO-8 | **Organize workflow continuity.** | Files-originated Preview remains ResourceLibrary-scoped and Storage-relative, derives SourceIdentity from live Storage, continues through existing Preview/intent/OrganizerExecutor authority and synchronizes each terminal result independently to FileIndex. Formal destination composition uses the same `library/path` prefix semantics as the CLI. |
 | RO-8C | **Formal classification path parity correction.** | For a classified rule with `library = "Movies"` and `path = ["其他电影"]`, every formal Plan, Preview, precheck, execution and result projection composes `Movies/其他电影/...`; the configured `mediaLibraryId` still resolves the actual destination MediaLibrary and Storage root. |
@@ -134,7 +150,7 @@ repeated.
 - the Files-local `添加资源库` drawer and its backend Save/activation command;
 - bounded ResourceLibrary browsing, status feedback, selection and organize continuation;
 - Files toolbar/action menus, destination picker and transfer progress for Create Folder/Text File,
-  Rename, Copy, Move, Delete, supported text Edit, Upload and Download;
+  Rename, Copy, Move, Delete and supported text Edit;
 - backend/application behavior strictly necessary for direct file commands, ResourceLibrary
   Save/activation and post-mutation FileIndex synchronization;
 - the shared formal destination composition used by Organize Plan, destination Preview/precheck,
@@ -148,8 +164,8 @@ repeated.
   objective. Files must feel like the reference workspace rather than a redesign nested in a legacy
   frame.
 - The ordinary path is direct: choose entries and a common command, supply only the required name,
-  destination, files or supported text, then see progress/result in the same Files context.
-- Create, Rename, Copy, Move and Upload do not add redundant confirmation after valid input unless
+  destination or supported text, then see progress/result in the same Files context.
+- Create, Rename, Copy and Move do not add redundant confirmation after valid input unless
   the operator explicitly chooses Replace. Text Save is the write intent; Delete uses one clear
   permanent-effect confirmation. No direct command exposes organize Preview, policy selection or
   execution tokens.
@@ -237,20 +253,12 @@ repeated.
 - Save is the operator's explicit overwrite intent for the exact loaded Storage version. A changed
   source fails stale rather than silently replacing newer content.
 
-### Upload and Download
+### Direct browser Upload and Download
 
-- Upload accepts one or more bounded browser-selected files or a bounded directory tree into the
-  current directory. It validates every supplied relative path, streams through the backend,
-  enforces request/file/count/depth limits, preserves each item outcome and never exposes Storage
-  credentials to the browser.
-- Upload destination conflicts use the same explicit no-overwrite/skip/keep-both/replace semantics
-  as Copy. Incomplete staging is removed when safely provable or exposed as a recoverable partial
-  artifact; success is not reported until the destination is known complete.
-- Download resolves one item or a bounded selection through the current ResourceLibrary authority.
-  A file streams directly; a directory or multi-selection uses a bounded streamed archive without
-  writing an archive back to managed Storage. Download is a read and does not use OrganizerExecutor.
-- Interrupted downloads are safe to restart as reads. Upload retry is per failed/known-safe item and
-  never automatically repeats an uncertain destination write.
+- Direct browser Upload and Download are intentionally removed from the current Files product
+  surface.
+- This removal does not change Storage `Read`/`Write` contracts or provider primitives needed by
+  OrganizerExecutor, Copy/Move, text Edit or other supported backend workflows.
 
 ### Shared direct-operation behavior
 
@@ -262,10 +270,8 @@ repeated.
   invokes every mutation only through `OrganizerExecutor`.
 - A direct operation is not reclassified as media organization and does not call Parser,
   Recognition, Metadata, Naming, Classification or the organize Planner.
-- Single quick operations may complete synchronously; any long, recursive, upload or batch mutation
-  uses the existing Task system with independent per-item outcomes and progress. Download remains a
-  bounded read/stream rather than a mutation Task unless archive preparation genuinely requires a
-  durable long-running Task.
+- Single quick operations may complete synchronously; any long, recursive or batch mutation uses the
+  existing Task system with independent per-item outcomes and progress.
 - After known success, Files refreshes from live Storage. Any bounded FileIndex reconciliation is
   display bookkeeping only; failure is recorded without replaying the Storage effect.
 
@@ -281,8 +287,8 @@ repeated.
   Move, Delete and Write initiated by Files. Download/read streaming remains zero-mutation.
 - Direct file management uses a smaller admission path than Organize but never bypasses RBAC,
   capability checks, explicit mutation intent, conflict/stale checks, audit or path confinement.
-- Delete and overwrite/Replace remain explicit. No create, rename, copy, move, upload, text Save or
-  deletion silently replaces/removes user data.
+- Delete and overwrite/Replace remain explicit. No create, rename, copy, move, text Save or deletion
+  silently replaces/removes user data.
 - No automatic retry follows an uncertain mutation. Recovery begins by refreshing live Storage and
   showing the known effect state.
 - Files-originated Organize Preview/continuation still derives authority from live Storage and never
@@ -295,12 +301,13 @@ repeated.
 
 ## Test and Compatibility Policy
 
-- Every common file action covers success, invalid input, permission/capability denial, path escape,
-  stale source, target conflict, limits, partial transfer, Storage failure, uncertain effect and safe
-  recovery as applicable.
-- Tests prove Create Folder/Text File, Rename, Copy, Move, Delete, Edit and Upload cannot bypass
+- Every supported common file action covers success, invalid input, permission/capability denial,
+  path escape, stale source, target conflict, limits, partial transfer, Storage failure, uncertain
+  effect and safe recovery as applicable.
+- Tests prove Create Folder/Text File, Rename, Copy, Move, Delete and Edit cannot bypass
   `OrganizerExecutor`, cannot touch an unselected ResourceLibrary/Storage root and cannot silently
-  overwrite/delete. Download tests prove bounded, confined, secret-free zero-mutation streaming.
+  overwrite/delete. Removal tests prove direct Files Upload/Download controls, routes, services and
+  client projections are absent while required Storage/provider primitives remain available.
 - Cross-Storage tests prove Copy verification precedes Move source deletion, a failed verification
   preserves the source, partial outcomes are durable and no operation silently falls back.
 - Bounded batch/recursive tests prove independent per-item state and that item/depth/size limits stop
@@ -319,9 +326,11 @@ repeated.
 
 ## Explicitly Deferred
 
+- Direct browser Upload and Download are removed from the current product scope, not deferred for a
+  later Files implementation.
 - Arbitrary binary/video/audio/image content editing and media-stream inspection.
 - Unbounded recursive/batch operations, arbitrary host-filesystem access, Storage-to-host extraction
-  outside authenticated Download, and implicit cross-Storage fallback.
+  and implicit cross-Storage fallback.
 - General Configuration/Settings redesign beyond truthful navigation inside the new shared shell.
 - Dashboard, Operations, Review/Recovery, Automation and Notification business-journey redesign;
   their shared shell chrome changes, but their existing page behavior remains.
@@ -343,11 +352,10 @@ repeated.
       spec are present. Recognizable implementation-owned icons/thumbnails and bounded table
       truncation are acceptable when the complete value remains available to assistive technology
       and the action/state remains unambiguous.
-- [x] Create Folder/Text File, Rename, Copy, Move, Delete, supported text Edit, Upload and Download
-      complete from Files with low-friction success/failure/recovery and bounded multi-selection
-      where useful.
-- [x] Every mutation completes through backend-authoritative `OrganizerExecutor`; Download remains a
-      confined zero-mutation read.
+- [x] Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit complete from
+      Files with low-friction success/failure/recovery and bounded multi-selection where useful.
+- [ ] Direct Files Upload and Download controls, routes, services, models and dedicated tests are
+      removed; Storage/provider primitives needed by remaining workflows remain intact.
 - [x] Delete and Replace/text overwrite require explicit operator intent, never silently affect
       another path/version and never automatically replay an uncertain result.
 - [x] Same- and cross-Storage Copy/Move expose capability and compound-operation truth; verification
@@ -375,9 +383,12 @@ repeated.
   zero-difference threshold;
 - shared-shell route/deep-link/auth/401/403/responsive smoke across every V2 product area;
 - Files browse/search/navigation/selection/pagination/drawer interaction evidence;
-- Create Folder/Text File, Rename/Copy/Move/Delete/Edit/Upload/Download success and failure evidence
-  against temporary Storage, including conflict, stale source, transfer limits, partial outcome,
-  capability denial, confinement, audit and uncertain-effect non-replay;
+- Create Folder/Text File, Rename/Copy/Move/Delete/Edit success and failure evidence against
+  temporary Storage, including conflict, stale source, transfer limits, partial outcome, capability
+  denial, confinement, audit and uncertain-effect non-replay;
+- Direct Upload/Download removal evidence: no Files controls, client calls, HTTP routes, application
+  services or dedicated projections/tests remain, while Storage `Read`/`Write`, provider transfer
+  primitives and Copy/Move behavior remain available;
 - bounded batch/recursive and cross-Storage transfer evidence, including verify-before-delete and
   source preservation on failure;
 - ResourceLibrary Save/activation success, validation failure, concurrent/stale failure and prior
@@ -395,10 +406,10 @@ repeated.
 ```text
 Slice Status: ACTIVE
 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Contract Revision: A AUTHORIZED P1 REACTIVATION — formal classification library-prefix alignment
+Contract Revision: A AUTHORIZED SCOPE REVISION — formal classification library-prefix alignment and direct Files Upload/Download removal
 Prior Task 37.6 state: PASS
-Active correction: Task 37.7 pending B planning
-Next Action: B creates the focused correction Task
+Active correction: Task 37.7 pending implementation under the A-expanded scope
+Next Action: Developer implements Task 37.7; B reviews the combined checkpoint
 ```
 
 ## Closure Packet
