@@ -583,8 +583,14 @@ None known that belongs to this Task. Slice-level items I am aware of but did no
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 0cc19f74069d09a954bd172dc6c741ecd9d69f65
+Head SHA: 7c0d29f0ef9744b084011765457f9adeb0231de0
+(the report itself is committed as the direct child of this implementation checkpoint)
 ```
+
+The reviewed change is `1eb43931..<report commit>` (`git diff 1eb43931..HEAD`); the report commit
+contains this completion report only and no production or test change. No accepted history was
+amended or rewritten — every commit is new and sits on top of the Task Base chain
+(`1eb43931`, `e3a60d7`, `68d0225`, then this Task's commits).
 
 ## B Review Result
 
