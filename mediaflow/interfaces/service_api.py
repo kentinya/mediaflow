@@ -2082,6 +2082,52 @@ class MediaFlowApi:
             except ManualExecutionError as error:
                 return self._manual_step_error(start_response, error)
             return self._response(start_response, 200, self._organize_execution_document(execution))
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "executions"]
+            and parts[6] == "file-index-reconciliation"
+            and method == "POST"
+        ):
+            # Display-only recovery for one reconciliation miss: the durable
+            # Result is re-applied to a current exact FileIndex occurrence.
+            # This never calls Storage and never replays the Organize mutation.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            if self._manual_execution is None or not callable(
+                getattr(self._manual_execution, "reconcile_file_index", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual organize FileIndex reconciliation is unavailable",
+                    details={
+                        "durableState": "organize_effect_unchanged",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore the manual Organize execution service, then repeat the "
+                            "bounded reconciliation; no Organize mutation is replayed"
+                        ),
+                    },
+                )
+            self._require_empty_query(environ, "operations organize FileIndex reconciliation")
+            document = self._document(environ)
+            if set(document) != {"itemId"} or not isinstance(document["itemId"], str):
+                raise ValueError(
+                    "operations organize FileIndex reconciliation requires only itemId"
+                )
+            try:
+                return self._response(
+                    start_response,
+                    200,
+                    self._manual_execution.reconcile_file_index(
+                        parts[5],
+                        item_id=document["itemId"],
+                        actor=principal.principal_id,
+                    ),
+                )
+            except ManualExecutionError as error:
+                return self._manual_step_error(start_response, error)
         if parts == ["api", "v1", "automation", "task-definitions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._configuration_service is None or self._configuration_objects is None:
@@ -4751,6 +4797,57 @@ class MediaFlowApi:
                     raise LookupError(f"task {parts[6]!r} was not found") from None
                 raise
             return self._response(start_response, 200, projection)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "organize"
+            and method == "POST"
+        ):
+            # Files submits only the enabled ResourceLibrary identity and
+            # normalized ResourceLibrary-relative paths.  The backend pins the
+            # Active snapshot, derives every immutable SourceIdentity from live
+            # Storage, and admits the one durable manual intent through the
+            # existing application boundary; no Preview, Task or Storage
+            # mutation is created here.
+            self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+            self._require_empty_query(environ, "Files organize admission")
+            if self._manual_previews is None or not callable(
+                getattr(self._manual_previews, "admit_storage_paths", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual organize admission is unavailable",
+                    details={
+                        "durableState": "no_intent_created",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore a valid Active runtime and manual Organize services, "
+                            "then resubmit the same bounded selection"
+                        ),
+                    },
+                )
+            document = self._document(environ)
+            if not isinstance(document, dict) or set(document) != {"paths"}:
+                raise ValueError("Files organize admission accepts only bounded relative paths")
+            if not isinstance(document["paths"], list):
+                raise ValueError("Files organize admission paths must be an array")
+            try:
+                intent = self._manual_previews.admit_storage_paths(
+                    resource_library_id=parts[3],
+                    relative_paths=document["paths"],
+                    actor=principal.principal_id,
+                )
+            except ManualPreviewError as error:
+                return self._manual_step_error(start_response, error)
+            except ManualIntentError as error:
+                return self._manual_step_error(start_response, error)
+            return self._response(
+                start_response, 201, self._organize_intent_document(intent, principal)
+            )
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -7799,6 +7896,7 @@ class MediaFlowApi:
                 "rename-evidence",
                 "transfer-impact",
                 "commands",
+                "organize",
                 "transfers",
             }
         ):
@@ -10170,7 +10268,16 @@ class MediaFlowApi:
         return document
 
     def _organize_execution_document(self, execution) -> dict:
-        document = manual_execution_operator_document(execution.document())
+        document_reader = (
+            getattr(self._manual_execution, "document", None)
+            if self._manual_execution is not None
+            else None
+        )
+        if callable(document_reader):
+            source = document_reader(execution.execution_id)
+        else:
+            source = execution.document()
+        document = manual_execution_operator_document(source)
         document["journey"] = "organize"
         execution_id = document.get("executionId")
         status = document.get("status")

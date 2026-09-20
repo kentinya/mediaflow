@@ -11,7 +11,12 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   submitOrganizePreview,
@@ -29,6 +34,11 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import {
+  filesReturnHref,
+  filesReturnSearch,
+  readFilesReturnContext,
+} from "../../shared/navigation/files-return";
 
 function displayEnum(value: string): string {
   return value
@@ -268,6 +278,8 @@ export function OrganizeIntentPage() {
   const { intentId } = useParams({
     from: "/operations/organize/intent/$intentId",
   });
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const filesReturn = readFilesReturnContext(searchParams);
   const token = useAuthToken();
   const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
@@ -284,6 +296,7 @@ export function OrganizeIntentPage() {
         void navigate({
           to: "/operations/organize/preview/$previewId",
           params: { previewId: value.model.previewId },
+          search: filesReturn === null ? {} : filesReturnSearch(filesReturn),
         });
         return;
       }
@@ -393,6 +406,14 @@ export function OrganizeIntentPage() {
                 >
                   Back to Operations
                 </Link>
+                {filesReturn !== null && (
+                  <Link
+                    className="mf-button mf-button-secondary"
+                    to={filesReturnHref(filesReturn)}
+                  >
+                    返回文件
+                  </Link>
+                )}
               </div>
               {previewError !== null && (
                 <StatusBanner variant="error" title="Preview not created">

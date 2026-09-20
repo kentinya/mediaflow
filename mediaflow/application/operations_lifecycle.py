@@ -1238,6 +1238,40 @@ def _bounded_effect_summary(items: list) -> dict[str, object]:
     }
 
 
+_FILE_INDEX_RECONCILIATION_STATES = frozenset(
+    {"synchronized", "no_matching_occurrence", "attention_required", "pending"}
+)
+
+
+def _bounded_file_index_reconciliation(value: object) -> dict[str, object] | None:
+    """Bounded display reconciliation evidence for one execution item.
+
+    Only the reconciliation state, the operator next action and the bounded
+    action envelope are published.  The exact occurrence identity, fingerprint
+    and FileIndex internals stay server-side.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    state = _bounded_evidence_text(value.get("state"), limit=64)
+    if state not in _FILE_INDEX_RECONCILIATION_STATES:
+        return None
+    raw_action = value.get("action")
+    action = raw_action if isinstance(raw_action, dict) else {}
+    return {
+        "state": state,
+        "nextAction": _bounded_evidence_text(value.get("nextAction")),
+        "action": {
+            "available": bool(action.get("available")),
+            "method": _bounded_evidence_text(action.get("method"), limit=16),
+            "path": _bounded_evidence_text(action.get("path"), limit=512),
+            "sideEffects": _bounded_evidence_text(action.get("sideEffects"), limit=64),
+            "durableOutcome": _bounded_evidence_text(action.get("durableOutcome")),
+            "nextAction": _bounded_evidence_text(action.get("nextAction")),
+        },
+    }
+
+
 def _manual_execution_item_operator(item: dict[str, object]) -> dict[str, object]:
     return {
         "itemId": _bounded_identifier(item.get("itemId")),
@@ -1256,6 +1290,9 @@ def _manual_execution_item_operator(item: dict[str, object]) -> dict[str, object
             item.get("error") if isinstance(item.get("error"), str) else None
         ),
         "nextAction": _bounded_evidence_text(item.get("nextAction")),
+        "fileIndexReconciliation": _bounded_file_index_reconciliation(
+            item.get("fileIndexReconciliation")
+        ),
         "effects": [
             {
                 "action": _bounded_evidence_text(effect.get("action"), limit=64),

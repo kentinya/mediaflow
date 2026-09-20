@@ -596,6 +596,11 @@ function resourceLibraryState(session) {
       // browser journey (admission -> per-item payload POSTs -> finish) can
       // be driven end to end.
       filesUploads: new Map(),
+      // The Files-originated Organize admission of this session: the exact
+      // ordered paths the browser submitted, or null before the first one.
+      filesOrganizePaths: null,
+      // A deterministic admission failure for the failure-path journey.
+      filesOrganizeFailure: null,
     };
     RESOURCE_LIBRARY_STATES.set(key, value);
   }
@@ -1029,6 +1034,10 @@ function fileEntry(name, path, size, modifiedAt, options = {}) {
     isSymlink: false,
     traversable: false,
     selectable: options.selectable === true,
+    // Files organizes regular files: the fixture marks the rows the reference
+    // composition presents as organize candidates and keeps skipped sidecars
+    // display-only, exactly like the backend-admitted eligibility flag.
+    organizeEligible: options.organizeEligible ?? options.selectable === true,
     ...(options.selectable === true ? { selectKind: "file" } : {}),
     ...(options.recognitionResult !== undefined
       ? { recognitionResult: options.recognitionResult }
@@ -2270,6 +2279,68 @@ function organizeChoice(recognitionTypeId = "A") {
   };
 }
 
+function organizeIntentItems(state) {
+  const admitted = state.filesOrganizePaths;
+  if (!Array.isArray(admitted) || admitted.length === 0) {
+    return [
+      {
+        choice: organizeChoice(),
+        createdAt: MANUAL_RECORDED_AT,
+        failure: null,
+        fileIndexReconciliation: organizeFileIndexReconciliation(
+          state,
+          ORGANIZE_EXECUTION_ID,
+        ),
+        itemId: ORGANIZE_ITEM_ID,
+        nextAction: "continue to a later manual Preview",
+        position: 0,
+        source: {
+          extension: "mkv",
+          fileId: MANUAL_FILE_SCOPE.fileId,
+          filename: "One.2001.mkv",
+          occurrenceState: "verified",
+          path: "Movies/One.2001.mkv",
+          resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
+          scanStatus: "ready",
+          size: 12,
+          storageId: MANUAL_STORAGE_ID,
+        },
+        status: "ready",
+        updatedAt: MANUAL_RECORDED_AT,
+        version: state.itemVersion,
+      },
+    ];
+  }
+  return admitted.map((path, position) => {
+    const filename = path.split("/").pop() ?? path;
+    const extension = filename.includes(".")
+      ? filename.split(".").pop()
+      : "media";
+    return {
+      choice: organizeChoice(),
+      createdAt: MANUAL_RECORDED_AT,
+      failure: null,
+      itemId: `files-item-${position}`,
+      nextAction: "continue to a later manual Preview",
+      position,
+      source: {
+        extension,
+        fileId: `files-admission-${position}`,
+        filename,
+        occurrenceState: "verified",
+        path,
+        resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
+        scanStatus: "ready",
+        size: 12,
+        storageId: MANUAL_STORAGE_ID,
+      },
+      status: "ready",
+      updatedAt: MANUAL_RECORDED_AT,
+      version: state.itemVersion,
+    };
+  });
+}
+
 function organizeIntentDocument(state) {
   return {
     actions: {
@@ -2310,30 +2381,7 @@ function organizeIntentDocument(state) {
     execution: "not_available_in_this_task",
     failure: null,
     intentId: ORGANIZE_INTENT_ID,
-    items: [
-      {
-        choice: organizeChoice(),
-        createdAt: MANUAL_RECORDED_AT,
-        failure: null,
-        itemId: ORGANIZE_ITEM_ID,
-        nextAction: "continue to a later manual Preview",
-        position: 0,
-        source: {
-          extension: "mkv",
-          fileId: MANUAL_FILE_SCOPE.fileId,
-          filename: "One.2001.mkv",
-          occurrenceState: "verified",
-          path: "Movies/One.2001.mkv",
-          resourceLibraryId: MANUAL_FILE_SCOPE.resourceLibraryId,
-          scanStatus: "ready",
-          size: 12,
-          storageId: MANUAL_STORAGE_ID,
-        },
-        status: "ready",
-        updatedAt: MANUAL_RECORDED_AT,
-        version: state.itemVersion,
-      },
-    ],
+    items: organizeIntentItems(state),
     journey: "organize",
     nextAction: "continue to a later manual Preview",
     optionLimit: 100,
@@ -2468,6 +2516,32 @@ function organizeDestructivePreviewDocument(state) {
   return value;
 }
 
+function organizeFileIndexReconciliation(
+  state,
+  executionId,
+  defaultState = "synchronized",
+) {
+  const current =
+    state.fileIndexReconciled === true ? "synchronized" : defaultState;
+  const nextAction =
+    current === "synchronized"
+      ? "the exact current FileIndex occurrence records this durable Result; no further action is required"
+      : "refresh or rescan this ResourceLibrary, then repeat the bounded FileIndex reconciliation against the durable Result";
+  return {
+    state: current,
+    nextAction,
+    action: {
+      available: current !== "synchronized",
+      durableOutcome:
+        "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
+      method: "POST",
+      nextAction,
+      path: `/api/v1/operations/organize/executions/${executionId}/file-index-reconciliation`,
+      sideEffects: "none",
+    },
+  };
+}
+
 function organizeExecutionDocument(status, state) {
   const finished = status !== "admitted";
   return {
@@ -2573,7 +2647,7 @@ function organizeExecutionDocument(status, state) {
 // terminal failure: aggregate and per-item bounded evidence, and the recovery
 // handoff offered without any transport (available, no method, no route, no
 // reason) — never an API mutation of its own.
-function organizeFailedExecutionDocument() {
+function organizeFailedExecutionDocument(state) {
   const failure = {
     category: "destination_collision",
     durableState: "TaskItem and Result are durable with a failed outcome",
@@ -2637,6 +2711,11 @@ function organizeFailedExecutionDocument() {
         effectCertainty: "none",
         effects: [],
         failure,
+        fileIndexReconciliation: organizeFileIndexReconciliation(
+          state,
+          ORGANIZE_FAILED_EXECUTION_ID,
+          "no_matching_occurrence",
+        ),
         itemId: ORGANIZE_ITEM_ID,
         nextAction:
           "inspect the pre-mutation failure, repair it, then request a fresh Preview",
@@ -4964,6 +5043,72 @@ const server = createServer(async (req, res) => {
       retrySafe: false,
       nextAction: "the upload progress appears in the durable Task projection",
     });
+    return;
+  }
+  const filesOrganizeMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/files\/organize$/,
+  );
+  if (filesOrganizeMatch && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const libraryState = resourceLibraryState(session);
+    const state = organizeState(session);
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const paths = parsed.document.paths;
+    if (
+      !Array.isArray(paths) ||
+      paths.length === 0 ||
+      paths.some((value) => typeof value !== "string")
+    ) {
+      sendJson(res, 400, {
+        error: {
+          code: "selection_empty",
+          message:
+            "Files organize admission requires at least one relative path",
+        },
+      });
+      return;
+    }
+    recordManualRequestForSession({
+      body: { paths: [...paths] },
+      method: "POST",
+      objectId: ORGANIZE_INTENT_ID,
+      objectType: "organize_intent",
+      path: "/api/v1/resource-libraries/:id/files/organize",
+    });
+    if (libraryState.filesOrganizeFailure === "source_missing") {
+      sendJson(res, 404, {
+        error: {
+          code: "source_missing",
+          message: "selected source file no longer exists",
+          details: {
+            durableState: "rejected_without_mutation",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "refresh Files and request a fresh Preview",
+          },
+        },
+      });
+      return;
+    }
+    state.filesOrganizePaths = [...paths];
+    state.intentVersion = 1;
+    state.itemVersion = 1;
+    state.fileIndexReconciled = false;
+    sendJson(res, 201, organizeIntentDocument(state));
     return;
   }
   const directCommandMatch = url.pathname.match(
@@ -7329,6 +7474,48 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  const filesReconciliationMatch = url.pathname.match(
+    /^\/api\/v1\/organize\/executions\/([^/]+)\/file-index-reconciliation$/,
+  );
+  if (filesReconciliationMatch && req.method === "POST") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) {
+      return;
+    }
+    const itemId = parsed.document.itemId;
+    if (typeof itemId !== "string") {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    recordManualRequestForSession({
+      body: { itemId },
+      method: "POST",
+      objectId: filesReconciliationMatch[1],
+      objectType: "organize_file_index_reconciliation",
+      path: "/api/v1/organize/executions/:executionId/file-index-reconciliation",
+    });
+    state.fileIndexReconciled = true;
+    const reconciliation = organizeFileIndexReconciliation(
+      state,
+      filesReconciliationMatch[1],
+    );
+    sendJson(res, 200, {
+      durableState: "organize_effect_unchanged",
+      executionId: filesReconciliationMatch[1],
+      fileIndexReconciliation: reconciliation,
+      itemId,
+      journey: "organize",
+      nextAction: reconciliation.nextAction,
+      retrySafe: true,
+      sideEffects: "none",
+    });
+    return;
+  }
+
   if (
     url.pathname === `/api/v1/organize/executions/${ORGANIZE_EXECUTION_ID}` &&
     req.method === "GET"
@@ -7370,7 +7557,7 @@ const server = createServer(async (req, res) => {
       objectType: "organize_execution",
       path: "/api/v1/organize/executions/:executionId",
     });
-    sendJson(res, 200, organizeFailedExecutionDocument());
+    sendJson(res, 200, organizeFailedExecutionDocument(organizeState(session)));
     return;
   }
 
@@ -9084,6 +9271,10 @@ const server = createServer(async (req, res) => {
       emptied: url.searchParams.get("empty") === "1",
       textStale: url.searchParams.get("textStale") === "1",
       commandLog: [],
+      filesTransfers: new Map(),
+      filesUploads: new Map(),
+      filesOrganizePaths: null,
+      filesOrganizeFailure: url.searchParams.get("organizeFail"),
     });
     res.setHeader(
       "Set-Cookie",

@@ -1809,6 +1809,113 @@ export type OrganizeExecutionRead =
   | { readonly ok: true; readonly model: OrganizeExecutionModel }
   | { readonly ok: false; readonly failure: OperationsFailure };
 
+export interface OrganizeFileIndexReconciliationOptions {
+  readonly executionId: string;
+  readonly itemId: string;
+}
+
+export type OrganizeFileIndexReconciliationResult =
+  | {
+      readonly ok: true;
+      readonly state: string;
+      readonly nextAction: string | null;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly nextAction: string | null;
+    };
+
+/**
+ * Repeat the backend-bounded FileIndex reconciliation for one durable
+ * execution item.  This is display bookkeeping only: it never replays the
+ * Organize mutation and never supplies Storage authority.
+ */
+export async function reconcileOrganizeExecutionFileIndex(
+  token: string | null,
+  options: OrganizeFileIndexReconciliationOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeFileIndexReconciliationResult> {
+  if (
+    !isSafeIdentifier(options.executionId) ||
+    !isSafeIdentifier(options.itemId)
+  ) {
+    return { ok: false, status: 0, code: "invalid_request", nextAction: null };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/executions/${encodeURIComponent(options.executionId)}/file-index-reconciliation`,
+      {
+        method: "POST",
+        headers: operationsMutationHeaders(token),
+        body: JSON.stringify({ itemId: options.itemId }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  const document =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : {};
+  if (!response.ok) {
+    const error = document.error;
+    const envelope =
+      error !== null && typeof error === "object" && !Array.isArray(error)
+        ? (error as Record<string, unknown>)
+        : {};
+    const details =
+      envelope.details !== null &&
+      typeof envelope.details === "object" &&
+      !Array.isArray(envelope.details)
+        ? (envelope.details as Record<string, unknown>)
+        : {};
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" ? envelope.code : "request_rejected",
+      nextAction:
+        typeof details.nextAction === "string" ? details.nextAction : null,
+    };
+  }
+  const reconciliation = document.fileIndexReconciliation;
+  const record =
+    reconciliation !== null &&
+    typeof reconciliation === "object" &&
+    !Array.isArray(reconciliation)
+      ? (reconciliation as Record<string, unknown>)
+      : null;
+  const state = record?.state;
+  if (typeof state !== "string") {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  return {
+    ok: true,
+    state,
+    nextAction:
+      typeof record?.nextAction === "string" ? record.nextAction : null,
+  };
+}
+
 export async function fetchOrganizeExecution(
   token: string | null,
   executionId: string,
@@ -2172,6 +2279,114 @@ function directFilesReadHeaders(token: string | null): HeadersInit {
   return token === null
     ? { Accept: "application/json" }
     : { Accept: "application/json", Authorization: `Bearer ${token}` };
+}
+
+export interface FilesOrganizeAdmissionOptions {
+  readonly resourceLibraryId: string;
+  readonly paths: readonly string[];
+}
+
+export type FilesOrganizeAdmissionResult =
+  | {
+      readonly ok: true;
+      readonly intentId: string;
+      readonly itemCount: number;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly nextAction: string | null;
+    };
+
+/**
+ * Admit one bounded Files selection as the existing durable manual Organize
+ * intent.  The browser submits only the ResourceLibrary identity and
+ * ResourceLibrary-relative paths; every source identity is derived
+ * server-side from the pinned Active Storage.
+ */
+export async function submitFilesOrganizeIntent(
+  token: string | null,
+  options: FilesOrganizeAdmissionOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<FilesOrganizeAdmissionResult> {
+  if (
+    options.resourceLibraryId.trim().length === 0 ||
+    options.paths.length === 0
+  ) {
+    return {
+      ok: false,
+      status: 400,
+      code: "invalid_request",
+      nextAction: null,
+    };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}/files/organize`,
+      {
+        method: "POST",
+        headers: {
+          ...operationsMutationHeaders(token),
+        },
+        body: JSON.stringify({ paths: [...options.paths] }),
+      },
+    );
+  } catch {
+    return {
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+      nextAction: null,
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    payload = null;
+  }
+  if (!response.ok) {
+    const record =
+      payload !== null && typeof payload === "object" && !Array.isArray(payload)
+        ? (payload as Record<string, unknown>)
+        : {};
+    const error = record.error;
+    const envelope =
+      error !== null && typeof error === "object" && !Array.isArray(error)
+        ? (error as Record<string, unknown>)
+        : {};
+    const details =
+      envelope.details !== null &&
+      typeof envelope.details === "object" &&
+      !Array.isArray(envelope.details)
+        ? (envelope.details as Record<string, unknown>)
+        : {};
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" ? envelope.code : "request_rejected",
+      nextAction:
+        typeof details.nextAction === "string" ? details.nextAction : null,
+    };
+  }
+  const document =
+    payload !== null && typeof payload === "object" && !Array.isArray(payload)
+      ? (payload as Record<string, unknown>)
+      : null;
+  const intentId = document?.intentId;
+  if (typeof intentId !== "string" || intentId.length === 0) {
+    return {
+      ok: false,
+      status: response.status,
+      code: "malformed_response",
+      nextAction: null,
+    };
+  }
+  const items = Array.isArray(document?.items) ? document.items : [];
+  return { ok: true, intentId, itemCount: items.length };
 }
 
 /** Bounded zero-mutation open of one allowlisted text file. */

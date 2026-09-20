@@ -200,7 +200,7 @@ test("directory navigation, breadcrumb return, refresh and selection reset", asy
   ).toBe(true);
 });
 
-test("row selection, selected-row styling, clear selection and batch guard", async ({
+test("row selection, selected-row styling and clear selection", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
@@ -222,52 +222,25 @@ test("row selection, selected-row styling, clear selection and batch guard", asy
     page.getByText("已选择 0 个文件", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "批量整理" })).toBeDisabled();
-
-  // More than one selected file is rejected with a bounded message before any
-  // server call; the browser never fabricates a batch mutation.
-  await page.getByRole("checkbox", { name: "选择 sample.mkv" }).check();
-  await page
-    .getByRole("checkbox", { name: "选择 Avatar.2009.1080p.mkv" })
-    .check();
-  await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page.getByText(/批量整理将在后续任务提供/)).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/library\/files/);
+  // Selection is a zero-mutation interaction: nothing is submitted.
   expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
-
-  // The single-file Preview continuation still submits exactly one POST with
-  // the ResourceLibrary identity and relative path only.
-  await page
-    .getByRole("checkbox", { name: "选择 Avatar.2009.1080p.mkv" })
-    .uncheck();
-  await sampleRow.getByRole("button", { name: "整理" }).click();
-  await expect(page.getByText(/无法创建整理预览/)).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/library\/files/);
-  const previewPosts = apiRequests.filter(
-    (request) =>
-      request.method === "POST" &&
-      request.url.includes("/api/v1/operations/previews"),
-  );
-  expect(previewPosts).toHaveLength(1);
-  expect(
-    apiRequests.every(
-      (request) =>
-        request.method === "GET" || request.url.includes("operations/previews"),
-    ),
-  ).toBe(true);
 });
 
-test("general selection preserves ineligible rows while Preview uses only selectable entries", async ({
+test("general selection excludes ineligible rows from the durable Organize admission", async ({
   page,
 }) => {
+  const admissionBodies: string[] = [];
   const previewBodies: string[] = [];
   page.on("request", (request) => {
-    if (
-      request.method() === "POST" &&
-      request.url().includes("/api/v1/operations/previews")
-    ) {
+    if (request.method() !== "POST") return;
+    if (request.url().includes("/files/organize")) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+    if (request.url().includes("/api/v1/operations/previews")) {
       previewBodies.push(request.postData() ?? "");
     }
   });
+  await resetFakeOrganize(page);
   await openFiles(page);
 
   const readmeRow = page.getByRole("row", { name: /readme\.txt/ });
@@ -277,18 +250,133 @@ test("general selection preserves ineligible rows while Preview uses only select
   await expect(page.getByText(/可进入整理预览 0 个/)).toBeVisible();
   await expect(page.getByRole("button", { name: "批量整理" })).toBeDisabled();
 
-  // A mixed general selection remains visible to the operator, but only the
-  // backend-admitted entry is sent to the existing single-file Preview flow.
+  // A mixed general selection stays visible, but only the backend-admitted
+  // eligible file enters the durable Organize intent.
   const sampleRow = page.getByRole("row", { name: /sample\.mkv/ });
   await sampleRow.getByRole("checkbox").check();
   await expect(page.getByText("已选择 2 个文件")).toBeVisible();
   await expect(page.getByText(/可进入整理预览 1 个/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "批量整理" })).toBeEnabled();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(page.getByText(/无法创建整理预览/)).toBeVisible();
-  expect(previewBodies).toHaveLength(1);
-  expect(previewBodies[0]).toContain('"relativePath":"sample.mkv"');
-  expect(previewBodies[0]).not.toContain("readme.txt");
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001\?/,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Manual organize intent" }),
+  ).toBeVisible();
+  expect(admissionBodies).toHaveLength(1);
+  expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
+  expect(admissionBodies[0]).not.toContain("readme.txt");
+  // The retired single-file Preview admission is no longer used by Files.
+  expect(previewBodies).toHaveLength(0);
+  // The return context restores the originating ResourceLibrary and directory.
+  await page.getByRole("link", { name: "返回文件" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/library\/files\?resourceLibraryId=resources/,
+  );
+  await expect(page.getByRole("table")).toBeVisible();
+});
+
+test("the row Organize action admits the existing durable intent for one eligible file", async ({
+  page,
+}) => {
+  const admissionBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/organize")
+    ) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+  });
+  await resetFakeOrganize(page);
+  await openFiles(page);
+
+  // The row action admits exactly one eligible regular file.
+  await page
+    .getByRole("row", { name: /sample\.mkv/ })
+    .getByRole("button", { name: "整理" })
+    .click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Manual organize intent" }),
+  ).toBeVisible();
+  expect(admissionBodies).toHaveLength(1);
+  expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
+
+  // The bounded return action restores the originating Files context.
+  await page.getByRole("link", { name: "返回文件" }).click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/library\/files\?resourceLibraryId=resources/,
+  );
+  await expect(page.getByRole("table")).toBeVisible();
+});
+
+test("the selection footer admits one bounded multi-file intent", async ({
+  page,
+}) => {
+  const admissionBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/organize")
+    ) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+  });
+  await resetFakeOrganize(page);
+  await openFiles(page);
+
+  // The selection footer admits a bounded multi-file selection in one ordered
+  // request and keeps both items in the same durable intent.
+  await page.getByRole("checkbox", { name: "选择 sample.mkv" }).check();
+  await page
+    .getByRole("checkbox", { name: "选择 Avatar.2009.1080p.mkv" })
+    .check();
+  await expect(page.getByText("已选择 2 个文件")).toBeVisible();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Manual organize intent" }),
+  ).toBeVisible();
+  expect(admissionBodies).toHaveLength(1);
+  expect(admissionBodies[0]).toContain(
+    '"paths":["sample.mkv","Avatar.2009.1080p.mkv"]',
+  );
+  await expect(page.getByRole("heading", { name: "sample.mkv" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Avatar.2009.1080p.mkv" }),
+  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "返回文件" })).toBeVisible();
+});
+
+test("a rejected Organize admission keeps Files context, selection and a safe retry", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page, "?organizeFail=source_missing");
+  const admissionBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/organize")
+    ) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+  });
+  await openFiles(page);
+
+  const sampleRow = page.getByRole("row", { name: /sample\.mkv/ });
+  await sampleRow.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+
+  // The failure is explained on the Files item, the ResourceLibrary and
+  // directory context survive and the selection is not silently replaced.
+  await expect(page.getByText(/所选文件已不存在/)).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/library\/files/);
+  await expect(sampleRow.getByRole("checkbox")).toBeChecked();
+  await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
+  expect(admissionBodies).toHaveLength(1);
+  expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
 });
 
 test("list and grid presentation switch and bounded pagination", async ({
@@ -475,6 +563,20 @@ test("controlled 1536x1024 success-state evidence screenshot", async ({
 });
 
 const FAKE_RESET = "/__test__/reset-resource-library";
+const FAKE_RESET_ORGANIZE = "/__test__/reset-organize";
+
+/**
+ * Pin one deterministic manual-Organize fake session for this test: the
+ * admission evidence and the admitted item paths stay isolated from every
+ * other (possibly parallel) worker.
+ */
+async function resetFakeOrganize(page: Page): Promise<void> {
+  await page.goto("/ui-v2/");
+  await page.evaluate(async (target) => {
+    const reset = await fetch(target, { method: "POST" });
+    if (!reset.ok) throw new Error("organize fake reset failed");
+  }, FAKE_RESET_ORGANIZE);
+}
 
 async function resetFakeResourceLibraries(
   page: Page,

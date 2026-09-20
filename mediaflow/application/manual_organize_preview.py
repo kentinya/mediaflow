@@ -555,6 +555,87 @@ class ManualOrganizePreviewService:
     create_current_preview = create_current
     create_source_preview = create_current
 
+    def admit_storage_paths(
+        self,
+        *,
+        resource_library_id: str,
+        relative_paths: Sequence[str] | None,
+        actor: str,
+    ) -> ManualOrganizeIntent:
+        """Admit one ordered Files selection as a durable manual intent.
+
+        This is the bounded Files admission of the existing manual Organize
+        journey.  The browser supplies only the ResourceLibrary identity and
+        normalized ResourceLibrary-relative paths; the pinned Active runtime,
+        the bound Storage, every stat, occurrence and fingerprint are resolved
+        here, and the resulting immutable ``ManualSourceIdentity`` values are
+        admitted through the existing ``create_from_sources`` authority.  It
+        creates a durable intent only: no Storage mutation, no Preview and no
+        execution authority are produced by this call.
+        """
+
+        actor = self._actor(actor)
+        if not self._valid_scope_id(resource_library_id):
+            raise ManualPreviewError(
+                "Files organize admission requires one enabled ResourceLibrary",
+                code="malformed_selection",
+                next_action="select one enabled ResourceLibrary and retry",
+            )
+        if not isinstance(relative_paths, (list, tuple)) or not relative_paths:
+            raise ManualPreviewError(
+                "Files organize admission requires at least one relative path",
+                code="selection_empty",
+                next_action="select one or more regular files and retry",
+            )
+        if len(relative_paths) > self._max_items:
+            raise ManualPreviewError(
+                f"Files organize admission accepts at most {self._max_items} files",
+                code="selection_over_limit",
+                next_action="select a smaller bounded batch and resubmit",
+                details={"limit": self._max_items},
+            )
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in relative_paths:
+            path = self._normalize_library_relative_path(value, allow_empty=False)
+            if path in seen:
+                raise ManualPreviewError(
+                    "the selected files contain a duplicate relative path",
+                    code="duplicate_source",
+                    next_action="remove the duplicate and resubmit the bounded selection",
+                    details={"relativePath": path},
+                )
+            seen.add(path)
+            normalized.append(path)
+        snapshot = self._current_snapshot(None, None)
+        runtime = self._load_runtime(snapshot.snapshot_id, snapshot.digest)
+        library = self._runtime_library(runtime, resource_library_id)
+        storages = self._create_storages(runtime, {library.storage_id})
+        storage = self._guarded_storage(storages, library.storage_id)
+        sources = tuple(
+            self._source_identity_from_storage(storage, library, path) for path in normalized
+        )
+        intent_creator = getattr(self._intent_service, "create_from_sources", None)
+        if not callable(intent_creator):
+            raise ManualPreviewUnavailable("manual intent service cannot admit Storage sources")
+        try:
+            return intent_creator(
+                sources,
+                actor=actor,
+                snapshot_id=snapshot.snapshot_id,
+                snapshot_digest=snapshot.digest,
+            )
+        except ManualIntentError as error:
+            raise ManualPreviewError(
+                str(error),
+                code=error.code,
+                status=error.status,
+                next_action=error.next_action,
+                details=error.details,
+            ) from error
+
+    admit_files_intent = admit_storage_paths
+
     def create_current_from_index(
         self,
         *,
@@ -696,6 +777,14 @@ class ManualOrganizePreviewService:
                 "selected source Storage is unavailable",
                 details={"storageId": library.storage_id, "reason": type(error).__name__},
             ) from error
+        if isinstance(entry, StorageEntry) and entry.entry_type is StorageEntryType.SYMLINK:
+            raise ManualPreviewError(
+                "selected source is a symbolic link, which is never organized",
+                code="source_symlink",
+                status=409,
+                next_action="select a regular file inside the ResourceLibrary",
+                details={"resourceLibraryId": library.library_id, "relativePath": relative_path},
+            )
         if not isinstance(entry, StorageEntry) or entry.entry_type is not StorageEntryType.FILE:
             raise ManualPreviewError(
                 "selected source is not a file",

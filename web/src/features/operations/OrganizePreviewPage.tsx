@@ -17,7 +17,12 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { executeOrganizePreview } from "../../shared/api/api-client";
 import type {
@@ -33,6 +38,11 @@ import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
+import {
+  filesReturnHref,
+  filesReturnSearch,
+  readFilesReturnContext,
+} from "../../shared/navigation/files-return";
 
 function displayEnum(value: string): string {
   return value
@@ -145,6 +155,8 @@ export function OrganizePreviewPage() {
   const { previewId } = useParams({
     from: "/operations/organize/preview/$previewId",
   });
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const filesReturn = readFilesReturnContext(searchParams);
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -187,6 +199,7 @@ export function OrganizePreviewPage() {
         void navigate({
           to: "/operations/organize/execution/$executionId",
           params: { executionId: value.model.executionId },
+          search: filesReturn === null ? {} : filesReturnSearch(filesReturn),
         });
         return;
       }
@@ -427,8 +440,19 @@ export function OrganizePreviewPage() {
                     className="mf-button mf-button-secondary"
                     to="/operations/organize/intent/$intentId"
                     params={{ intentId: model.intentId }}
+                    search={
+                      filesReturn === null ? {} : filesReturnSearch(filesReturn)
+                    }
                   >
                     Back to the durable intent
+                  </Link>
+                )}
+                {filesReturn !== null && (
+                  <Link
+                    className="mf-button mf-button-secondary"
+                    to={filesReturnHref(filesReturn)}
+                  >
+                    返回文件
                   </Link>
                 )}
               </div>

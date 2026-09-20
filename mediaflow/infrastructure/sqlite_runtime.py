@@ -10834,6 +10834,17 @@ class SQLiteTaskRepository:
             destination_path if isinstance(destination_path, str) else None,
             None,
             None,
+            # The exact live-Storage occurrence admitted with this reviewed
+            # item travels with the TaskItem and Result.  Path-only binding
+            # would silently attach an outcome to whichever FileIndex row
+            # currently occupies the same path.
+            source_occurrence_id=value.source.occurrence_id,
+            source_fingerprint=value.source.fingerprint,
+            source_fingerprint_state=(
+                "verified"
+                if value.source.occurrence_state == "verified" and value.source.fingerprint
+                else "unverified"
+            ),
         )
 
     def _insert_result_locked(self, result: PersistentResultRecord) -> None:
@@ -10853,12 +10864,108 @@ class SQLiteTaskRepository:
         )
         self._apply_result_to_file_index_locked(result)
 
+    def _file_index_available_locked(self) -> bool:
+        """Return whether this database owns the durable FileIndex tables."""
+
+        return (
+            self._connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
+            ).fetchone()
+            is not None
+        )
+
+    def file_index_reconciliation_state(
+        self,
+        *,
+        storage_id: str,
+        path: str,
+        occurrence_id: str | None,
+        fingerprint: str | None,
+        result_id: str | None,
+    ) -> str:
+        """Read the bounded display reconciliation state of one durable Result.
+
+        ``synchronized`` means the current FileIndex occurrence with exactly
+        this Storage/path/occurrence/fingerprint identity already records this
+        Result.  ``no_matching_occurrence`` means the FileIndex has no such
+        occurrence at all.  ``attention_required`` means the FileIndex layer is
+        unavailable or the exact occurrence exists without this Result
+        disposition.  It is display bookkeeping only and never supplies
+        physical authority.
+        """
+
+        with self._lock:
+            return self._file_index_reconciliation_state_locked(
+                storage_id=storage_id,
+                path=path,
+                occurrence_id=occurrence_id,
+                fingerprint=fingerprint,
+                result_id=result_id,
+            )
+
+    def _file_index_reconciliation_state_locked(
+        self,
+        *,
+        storage_id: str,
+        path: str,
+        occurrence_id: str | None,
+        fingerprint: str | None,
+        result_id: str | None,
+    ) -> str:
+        if not occurrence_id or not fingerprint:
+            return "no_matching_occurrence"
+        if not self._file_index_available_locked():
+            return "attention_required"
+        row = self._connection.execute(
+            """SELECT file_id, processing_result_id FROM file_index
+            WHERE storage_id=? AND path=? AND occurrence_id=? AND fingerprint=?""",
+            (storage_id, path, occurrence_id, fingerprint),
+        ).fetchone()
+        if row is None:
+            return "no_matching_occurrence"
+        if result_id and row["processing_result_id"] == result_id:
+            return "synchronized"
+        return "attention_required"
+
+    def reconcile_result_to_file_index(self, result_id: str) -> str:
+        """Re-apply one durable Result to its exact current FileIndex occurrence.
+
+        This is the bounded recovery action for a FileIndex reconciliation miss.
+        It reads the durable Result and applies the same display-only
+        reconciliation used atomically at Result publication: no Storage call,
+        no Organize replay and no fabricated FileIndex row.  A newer processing
+        disposition is never overwritten.
+        """
+
+        if not isinstance(result_id, str) or not result_id.strip():
+            raise ValueError("result ID is required")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._connection.execute(
+                    "SELECT * FROM task_results WHERE result_id=?", (result_id,)
+                ).fetchone()
+                if row is None:
+                    raise LookupError(f"result {result_id!r} was not found")
+                result = self._result(row)
+                self._apply_result_to_file_index_locked(result)
+                state = self._file_index_reconciliation_state_locked(
+                    storage_id=result.source_storage_id,
+                    path=result.source_path,
+                    occurrence_id=result.source_occurrence_id,
+                    fingerprint=result.source_fingerprint,
+                    result_id=result.result_id,
+                )
+                self._connection.commit()
+            except BaseException:
+                self._connection.rollback()
+                raise
+        return state
+
     def _bind_item_to_current_occurrence(self, item: PersistentTaskItem) -> PersistentTaskItem:
         if item.source_occurrence_id and item.source_fingerprint:
             return item
-        if not self._connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
-        ).fetchone():
+        if not self._file_index_available_locked():
             return item
         row = self._connection.execute(
             """SELECT occurrence_id, fingerprint, occurrence_state
@@ -10888,9 +10995,7 @@ class SQLiteTaskRepository:
         fingerprint = item["source_fingerprint"] if item else None
         state = item["source_fingerprint_state"] if item else "unverified"
         if not occurrence_id or not fingerprint:
-            if not self._connection.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
-            ).fetchone():
+            if not self._file_index_available_locked():
                 return replace(
                     result,
                     source_occurrence_id=result.source_occurrence_id or occurrence_id,
@@ -10925,9 +11030,7 @@ class SQLiteTaskRepository:
         fingerprint = result.source_fingerprint
         if not occurrence_id or not fingerprint:
             return
-        if not self._connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='file_index'"
-        ).fetchone():
+        if not self._file_index_available_locked():
             return
         row = self._connection.execute(
             """SELECT * FROM file_index

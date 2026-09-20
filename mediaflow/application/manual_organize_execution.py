@@ -1360,6 +1360,9 @@ class ManualOrganizeExecutionService:
     def document(self, execution_id: str) -> dict[str, object]:
         value = self.get(execution_id)
         document = value.document()
+        reconciliation_by_item = {
+            item.item_id: self._file_index_reconciliation(value, item) for item in value.items
+        }
         for item in document["items"]:
             task_item_id = item["taskItemId"]
             try:
@@ -1368,6 +1371,7 @@ class ManualOrganizeExecutionService:
                 checkpoint = None
             item["checkpoint"] = checkpoint.document() if checkpoint is not None else None
             item["checkpointPath"] = f"/api/v1/tasks/{value.task_id}/items/{task_item_id}"
+            item["fileIndexReconciliation"] = reconciliation_by_item.get(str(item.get("itemId")))
         audit_reader = getattr(self._repository, "list_manual_execution_authorization_audit", None)
         if callable(audit_reader):
             item = document.get("authorizationId")
@@ -1376,6 +1380,139 @@ class ManualOrganizeExecutionService:
         return redact_manual_value(document)
 
     execution_document = document
+
+    _FILE_INDEX_RECONCILIATION_NEXT_ACTION = {
+        "synchronized": (
+            "the exact current FileIndex occurrence records this durable Result; "
+            "no further action is required"
+        ),
+        "no_matching_occurrence": (
+            "refresh or rescan this ResourceLibrary, then repeat the bounded FileIndex "
+            "reconciliation against the durable Result"
+        ),
+        "attention_required": (
+            "inspect the current FileIndex occurrence and repeat the bounded reconciliation; "
+            "never replay the Organize mutation"
+        ),
+        "pending": ("wait for this item's durable Result before checking FileIndex reconciliation"),
+    }
+
+    def _file_index_reconciliation(self, execution, item) -> dict[str, object]:
+        """Bounded, secret-free display reconciliation state for one item.
+
+        The state is derived from the durable Result identity and the current
+        FileIndex row with exactly the same Storage/path/occurrence/fingerprint
+        identity.  It never supplies physical authority and never changes the
+        already-published Storage effect.
+        """
+
+        if item.result_id is None:
+            state = "pending"
+        else:
+            reader = getattr(self._repository, "file_index_reconciliation_state", None)
+            if not callable(reader):
+                state = "attention_required"
+            else:
+                try:
+                    state = reader(
+                        storage_id=item.source.storage_id,
+                        path=item.source.path,
+                        occurrence_id=item.source.occurrence_id,
+                        fingerprint=item.source.fingerprint,
+                        result_id=item.result_id,
+                    )
+                except Exception:
+                    state = "attention_required"
+            if state not in self._FILE_INDEX_RECONCILIATION_NEXT_ACTION:
+                state = "attention_required"
+        next_action = self._FILE_INDEX_RECONCILIATION_NEXT_ACTION[state]
+        return {
+            "state": state,
+            "nextAction": next_action,
+            "action": {
+                "available": state in {"no_matching_occurrence", "attention_required"},
+                "method": "POST",
+                "path": (
+                    f"/api/v1/operations/organize/executions/{execution.execution_id}"
+                    "/file-index-reconciliation"
+                ),
+                "sideEffects": "none",
+                "durableOutcome": (
+                    "the durable Result is re-applied to a current exact FileIndex occurrence "
+                    "when one matches; no Storage mutation and no Organize replay"
+                ),
+                "nextAction": next_action,
+            },
+        }
+
+    def reconcile_file_index(
+        self,
+        execution_id: str,
+        *,
+        item_id: str,
+        actor: str,
+    ) -> dict[str, object]:
+        """Repeat the bounded FileIndex reconciliation for one exact Result.
+
+        This is display bookkeeping recovery for a reconciliation miss: it
+        re-applies the already durable Result to a matching current FileIndex
+        occurrence, never calls Storage, never fabricates a FileIndex row and
+        never replays the Organize mutation.
+        """
+
+        actor = self._actor(actor)
+        execution = self.get(execution_id)
+        if execution.actor != actor:
+            raise ManualExecutionError(
+                "reconciliation actor does not match the durable execution subject",
+                code="authorization_actor_mismatch",
+                status=403,
+            )
+        item = next((value for value in execution.items if value.item_id == item_id), None)
+        if item is None:
+            raise ManualExecutionError(
+                "the selected execution item was not found",
+                code="item_not_found",
+                status=404,
+                next_action="reload this execution and choose one of its current items",
+            )
+        if item.result_id is None:
+            raise ManualExecutionError(
+                "this item has no durable Result to reconcile",
+                code="reconciliation_unavailable",
+                next_action="wait for this item's durable Result, then reconcile again",
+            )
+        reconciler = getattr(self._repository, "reconcile_result_to_file_index", None)
+        if not callable(reconciler):
+            raise ManualExecutionError(
+                "FileIndex reconciliation is unavailable in this runtime",
+                code="reconciliation_unavailable",
+                status=503,
+                next_action=(
+                    "restore the durable FileIndex repository, then repeat the bounded "
+                    "reconciliation; the Storage effect is unchanged"
+                ),
+            )
+        try:
+            reconciler(item.result_id)
+        except LookupError as error:
+            raise ManualExecutionError(
+                "the durable Result could not be reloaded for reconciliation",
+                code="result_not_found",
+                status=404,
+                next_action="inspect the Task result evidence and reload this execution",
+            ) from error
+        reconciliation = self._file_index_reconciliation(execution, item)
+        return {
+            "journey": "organize",
+            "executionId": execution_id,
+            "itemId": item_id,
+            "fileIndexReconciliation": reconciliation,
+            "durableState": "organize_effect_unchanged",
+            "sideEffects": "none",
+            "retrySafe": True,
+            "nextAction": reconciliation["nextAction"],
+        }
 
     def discovery_for_intent(self, intent_id: str, *, limit: int = 100) -> dict[str, object]:
         limit = self._discovery_limit(limit)
@@ -2888,6 +3025,15 @@ class ManualOrganizeExecutionService:
     def _result_record(self, execution, item, plan, result):
         identity = plan.media_identity
         policies = item.plan.get("policies", {})
+        source = getattr(item, "source", None)
+        source_occurrence_id = getattr(source, "occurrence_id", None)
+        source_fingerprint = getattr(source, "fingerprint", None)
+        source_fingerprint_state = (
+            "verified"
+            if getattr(source, "occurrence_state", "legacy") == "verified"
+            and source_fingerprint is not None
+            else "unverified"
+        )
         return PersistentResultRecord(
             str(uuid4()),
             execution.task_id,
@@ -2916,6 +3062,12 @@ class ManualOrganizeExecutionService:
             len(result.cleanup_steps),
             result.effect_certainty.value,
             result.uncertain_effects,
+            # The durable Result keeps the exact admitted live-Storage
+            # occurrence, so FileIndex reconciliation can only ever update the
+            # occurrence this Result actually executed.
+            source_occurrence_id=source_occurrence_id,
+            source_fingerprint=source_fingerprint,
+            source_fingerprint_state=source_fingerprint_state,
         )
 
     def _effects(self, item, plan, result):

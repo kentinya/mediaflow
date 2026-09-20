@@ -12,6 +12,7 @@ import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
+import { filesReturnSearch } from "../../shared/navigation/files-return";
 import type {
   StorageFilesEntry,
   StorageFilesModel,
@@ -55,7 +56,7 @@ import {
   saveDownloadedFile,
   saveResourceLibrary,
   submitDirectFileCommand,
-  submitServerBoundPreview,
+  submitFilesOrganizeIntent,
   submitTransfer,
   resumeUpload,
   uploadFiles,
@@ -309,6 +310,39 @@ function updateLibraryRouteState(libraryId: string): void {
   );
 }
 
+function organizeAdmissionFailureMessage(code: string): string {
+  switch (code) {
+    case "source_missing":
+      return "所选文件已不存在，未创建整理意图；请刷新目录后重新选择。";
+    case "source_stale":
+    case "source_changed":
+      return "所选文件已发生变化，未创建整理意图；请刷新目录后重新选择。";
+    case "source_not_file":
+    case "source_symlink":
+      return "所选条目不是可整理的普通文件；目录用于浏览，符号链接不会被整理。";
+    case "source_unverified":
+      return "所选文件身份无法验证，未创建整理意图；请刷新目录后重试。";
+    case "invalid_path":
+    case "malformed_selection":
+      return "所选路径不是安全的资源库相对路径，未创建整理意图。";
+    case "duplicate_source":
+      return "所选文件包含重复条目，未创建整理意图；请去掉重复项后重试。";
+    case "selection_over_limit":
+      return "所选文件超过单次整理上限，未创建整理意图；请减少选择后重试。";
+    case "forbidden":
+    case "permission_denied":
+      return "当前身份没有整理权限，未创建整理意图。";
+    case "storage_unavailable":
+    case "transport_unavailable":
+    case "service_unavailable":
+      return "当前存储或整理服务暂不可用，未创建整理意图；请稍后重试。";
+    case "resource_library_not_found":
+      return "当前资源库在 Active 配置中不可用，未创建整理意图；请重新选择资源库。";
+    default:
+      return "无法创建整理意图，未做任何更改；请刷新目录后重试。";
+  }
+}
+
 function directFileCommandFailure(
   code: string,
   details?: AutomationMutationFailureDetails,
@@ -554,7 +588,7 @@ function buildRows(
     )
     .map((entry) => {
       const status = displayStatus(entry.businessStatus);
-      const organizeEligible = entry.selectable === true;
+      const organizeEligible = entry.organizeEligible === true;
       return {
         name: entry.name,
         path: entry.path,
@@ -575,7 +609,7 @@ function buildRows(
         organizeStatusKind: status.kind,
         organizeAction: entry.isDirectory
           ? "打开"
-          : organizeEligible && entry.businessStatus === "pending"
+          : organizeEligible
             ? "整理"
             : "查看",
         checked: selected.has(entry.path),
@@ -1911,49 +1945,43 @@ export function StorageFilesPage() {
     ),
   );
 
-  const previewMutation = useMutation({
+  const organizeMutation = useMutation({
     mutationFn: async ({
       libraryId,
       paths,
     }: {
       readonly libraryId: string;
       readonly paths: readonly string[];
+      readonly returnPath: string;
     }) => {
-      if (paths.length !== 1) {
-        throw new Error(
-          "批量整理将在后续任务提供；本次预览仅支持选择一个文件。",
-        );
+      if (paths.length === 0) {
+        throw new Error("请选择至少一个可整理的文件。");
       }
-      const result = await submitServerBoundPreview(token, {
-        scopeKind: "file",
+      const result = await submitFilesOrganizeIntent(token, {
         resourceLibraryId: libraryId,
-        relativePath: paths[0],
+        paths,
       });
       if (!result.ok) {
-        throw new Error(
-          result.code === "source_missing"
-            ? "文件已不存在，请刷新后重新预览"
-            : result.code === "source_stale" || result.code === "source_changed"
-              ? "文件已发生变化，请重新预览"
-              : result.code === "storage_unavailable"
-                ? "当前存储暂不可用，请稍后重试"
-                : "无法创建整理预览，请刷新后重试",
-        );
+        throw new Error(organizeAdmissionFailureMessage(result.code));
       }
-      return result.model.previewId;
+      return result.intentId;
     },
-    onSuccess: (previewId) => {
+    onSuccess: (intentId, variables) => {
       setPreviewError(null);
       void navigate({
-        to: "/operations/preview/$previewId",
-        params: { previewId },
+        to: "/operations/organize/intent/$intentId",
+        params: { intentId },
+        search: filesReturnSearch({
+          resourceLibraryId: variables.libraryId,
+          path: variables.returnPath,
+        }),
       });
     },
     onError: (error) => {
       setPreviewError(
         error instanceof Error
           ? error.message
-          : "无法创建整理预览，请刷新后重试",
+          : "无法创建整理意图，请刷新后重试",
       );
     },
   });
@@ -2853,7 +2881,7 @@ export function StorageFilesPage() {
                         view={view}
                         query={query}
                         previewing={
-                          previewMutation.isPending ||
+                          organizeMutation.isPending ||
                           isFetching ||
                           statusFetching
                         }
@@ -2938,21 +2966,23 @@ export function StorageFilesPage() {
                           });
                         }}
                         onPreviewOne={(entryPath) =>
-                          previewMutation.mutate({
+                          organizeMutation.mutate({
                             libraryId: currentLibrary.id,
                             paths: [entryPath],
+                            returnPath: model.path,
                           })
                         }
                         onPreviewSelected={() =>
-                          previewMutation.mutate({
+                          organizeMutation.mutate({
                             libraryId: currentLibrary.id,
                             paths: model.entries
                               .filter(
                                 (entry) =>
                                   selectedFiles.has(entry.path) &&
-                                  entry.selectable === true,
+                                  entry.organizeEligible === true,
                               )
                               .map((entry) => entry.path),
+                            returnPath: model.path,
                           })
                         }
                         onClearSelection={() => setSelectedFiles(new Set())}
