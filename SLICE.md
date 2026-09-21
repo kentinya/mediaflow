@@ -9,7 +9,7 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
 Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — accept the narrow concurrent Local directory replacement race and retain operator guidance
