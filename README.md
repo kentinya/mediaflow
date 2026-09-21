@@ -734,6 +734,17 @@ SourceIdentity from live Storage before entering the existing zero-mutation Prev
 terminal Organize result, the backend synchronizes the known outcome to FileIndex; no other Files
 feature introduces a FileIndex dependency. FileIndex remains the indexed discovery,
 processing-disposition and compatibility surface.
+
+**Concurrent Local directory Delete caution.** Files Delete shows and confirms a bounded impact,
+then re-reads the selected scope before `OrganizerExecutor` mutates Storage. Do not let a downloader,
+sync tool, shell script or another file manager delete and recreate the same selected Local
+directory while the confirmed Delete is running. In the extremely narrow interval between the last
+metadata revalidation and the actual Delete, some filesystems may reuse the previous inode for a
+same-name replacement, so MediaFlow may be unable to distinguish that replacement from the
+confirmed directory. Before deleting an actively managed directory, pause other writers, refresh
+Files, review the current impact and confirm again. If the path changed or another process may still
+recreate it, stop the Delete workflow and retry only after the directory is quiescent.
+
 One-time protected remote execute is available only behind its disabled-by-default feature gate.
 Configuration-driven API principals, least-privilege roles, and redacted audit are complete.
 The authenticated Operator UI exposes the operational Dashboard, Files, managed Configuration,
