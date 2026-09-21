@@ -8,7 +8,7 @@ product-boundary correction, not an invitation to redesign the remaining Files w
 ```text
 Task ID: 37.7
 Parent Slice: 37
-Status: PLANNED
+Status: NO ACTIVE IMPLEMENTATION TASK
 Task Base: 1eb43931219b58d84216fe6d6a7b359c815b6503
 Difficulty: High
 Test Level: T4
@@ -721,24 +721,24 @@ e3a60d7 docs(slice): revise Files transfer scope
 ## B Review Result
 
 ```text
-Reviewed: 1eb43931219b58d84216fe6d6a7b359c815b6503..694e7076ffcd423a690a60bcff1000a0a4ce28ad
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: 1eb43931219b58d84216fe6d6a7b359c815b6503..6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
+Decision: PASS
+Slice Required Outcomes all satisfied: YES
+Next: SLICE READY FOR A REVIEW
 ```
 
-Blockers:
+Review evidence:
 
-- The required Web regression gate is not passing on the reviewed Head. `cd web && npm run test
-  -- --run` produced `454 passed, 1 failed`; the failure is
-  `src/features/library/StorageFilesPage.test.tsx > AddResourceLibraryDrawer > keeps step
-  validation ordered and submits the bounded candidate once`, which timed out at 5000 ms during
-  the full suite. This file and drawer behavior are part of the reviewed Task change, so the
-  failure is a current Task/Files-journey reliability defect, not an unrelated pre-existing
-  failure.
-  Required correction: make the Add ResourceLibrary drawer journey deterministic under the full
-  Web suite and rerun the complete `npm run test -- --run` gate with zero failures; do not merely
-  hide the test, weaken its assertions, or increase the timeout without fixing the underlying
-  suite-order/shared-state or interaction problem.
+- The previous blocker is resolved: `cd web && npm run test -- --run` passes `33 files` and
+  `455 tests` with `0 failed`. The correction is confined to
+  `web/src/features/library/StorageFilesPage.test.tsx`; it resets the real jsdom URL between
+  tests, makes the overflow entry state explicit, and renders presentational drawer tests under
+  an isolated query provider without reducing route-tree coverage.
+- The required focused Python groups pass: `57 passed / 47 subtests`, `28 passed / 24 subtests`,
+  `159 passed / 13 subtests`, and `53 passed / 7 subtests`.
+- Format, lint, compile, build, Upload/Download absence search, `git diff --check`, and the
+  focused Files Playwright journey pass. The full Python regression has four failures that
+  reproduce at immutable Task Base `1eb43931219b58d84216fe6d6a7b359c815b6503`; the failures are
+  unchanged, unrelated P2 baseline debts and do not block this Task.
 
-This result does not close the Slice or update Roadmap. Fixes remain in Task 37.7.
+The Task satisfies its Acceptance Criteria and does not change the Slice boundary or Roadmap.
