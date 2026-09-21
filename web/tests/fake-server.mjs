@@ -1907,7 +1907,12 @@ const MANUAL_SCAN_MODES = ["full", "incremental"];
 const MANUAL_SCAN_ACTION_PATH = "/api/v1/operations/scans";
 const MANUAL_PREVIEW_ACTION_PATH = "/api/v1/operations/previews";
 const MANUAL_FILE_SCOPE = {
+  // The action matrix, Scan admission and Organize intent still identify a
+  // FileIndex source by ID; the current server-bound Preview derives its
+  // source identity from live Storage, so it uses the ResourceLibrary-relative
+  // path instead. Both are the same deterministic fake file.
   fileId: "file-index-example",
+  relativePath: "Movies/One.2001.mkv",
   resourceLibraryId: MANUAL_LIBRARY_ID,
 };
 const MANUAL_UNKNOWN_SOURCE_REASON =
@@ -3176,6 +3181,7 @@ function manualPreviewDocument({
   resourceLibraryId,
   scopeId,
   scopeKind,
+  sourcePath,
 }) {
   const itemId = "preview-item-e2e-001";
   return {
@@ -3208,10 +3214,10 @@ function manualPreviewDocument({
         sideEffects: "none",
         source: {
           extension: "mkv",
-          fileId: fileId ?? MANUAL_FILE_SCOPE.fileId,
+          fileId: fileId ?? null,
           filename: "One.2001.mkv",
           occurrenceState: "verified",
-          path: "Movies/One.2001.mkv",
+          path: sourcePath ?? MANUAL_FILE_SCOPE.relativePath,
           resourceLibraryId,
           scanStatus: "ready",
           size: 12,
@@ -7917,8 +7923,9 @@ const server = createServer(async (req, res) => {
     const fields = boundedManualRequestFields(body.document, [
       "scopeKind",
       "scope",
-      "fileId",
       "resourceLibraryId",
+      "relativePath",
+      "path",
       "snapshotId",
       "snapshotDigest",
     ]);
@@ -7926,33 +7933,34 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    const scopeKind = fields.scopeKind;
-    const fileId = fields.fileId ?? null;
+    const scopeKind = fields.scopeKind ?? fields.scope;
     const resourceLibraryId = fields.resourceLibraryId ?? null;
+    const relativePath = fields.relativePath ?? fields.path ?? null;
     if (
       (scopeKind !== "file" && scopeKind !== "resourceLibrary") ||
-      (scopeKind === "resourceLibrary" && fileId !== null) ||
-      (scopeKind === "file" &&
-        (fileId === null || resourceLibraryId === null)) ||
-      (scopeKind === "resourceLibrary" && resourceLibraryId === null)
+      resourceLibraryId === null ||
+      (scopeKind === "file" && relativePath === null) ||
+      (scopeKind === "resourceLibrary" &&
+        relativePath !== null &&
+        relativePath !== "")
     ) {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
     if (
       scopeKind === "file" &&
-      (fileId !== MANUAL_FILE_SCOPE.fileId ||
-        resourceLibraryId !== MANUAL_FILE_SCOPE.resourceLibraryId)
+      (resourceLibraryId !== MANUAL_FILE_SCOPE.resourceLibraryId ||
+        relativePath !== MANUAL_FILE_SCOPE.relativePath)
     ) {
       recordManualRequestForSession({
-        body: { fileId, resourceLibraryId, scopeKind },
+        body: { relativePath, resourceLibraryId, scopeKind },
         method: "POST",
-        objectId: fileId,
+        objectId: resourceLibraryId,
         objectType: "preview",
         path: "/api/v1/previews",
       });
       sendJson(res, 409, {
-        details: { fileId, resourceLibraryId, scopeKind },
+        details: { relativePath, resourceLibraryId, scopeKind },
         error: {
           code: "source_not_found",
           message: MANUAL_UNKNOWN_SOURCE_REASON,
@@ -7980,17 +7988,21 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    // The current server-bound contract derives SourceIdentity from live
+    // Storage, so the file scope identity the preview document reports is the
+    // submitted ResourceLibrary-relative path.
     const document = manualPreviewDocument({
-      fileId,
+      fileId: null,
       resourceLibraryId,
-      scopeId: scopeKind === "file" ? fileId : resourceLibraryId,
+      scopeId: scopeKind === "file" ? relativePath : resourceLibraryId,
       scopeKind,
+      sourcePath: scopeKind === "file" ? relativePath : "Movies/One.2001.mkv",
     });
     // Persisting the bounded preview document is the fake's read-back state;
     // Preview itself performs no Storage or media mutation.
     MANUAL_PREVIEWS.set(document.previewId, document);
     recordManualRequestForSession({
-      body: { fileId, resourceLibraryId, scopeKind },
+      body: { relativePath, resourceLibraryId, scopeKind },
       method: "POST",
       objectId: document.previewId,
       objectType: "preview",

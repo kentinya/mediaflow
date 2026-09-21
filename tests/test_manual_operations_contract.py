@@ -366,14 +366,17 @@ class ManualOperationsContractTests(unittest.TestCase):
             {**item, "sourcePath": "<page-item-path>"} for item in scan_library_detail["items"]
         ]
 
+        # The current server-bound Preview contract derives SourceIdentity from
+        # live Storage: the browser submits only the ResourceLibrary identity
+        # and the library-relative path, never a FileIndex identifier.
         status, preview_admission = _request(
             api,
             "/api/v1/operations/previews",
             method="POST",
             body={
                 "scopeKind": "file",
-                "fileId": file_id,
                 "resourceLibraryId": "library",
+                "relativePath": "One.2001.mkv",
             },
         )
         self.assertEqual(201, status)
@@ -383,7 +386,7 @@ class ManualOperationsContractTests(unittest.TestCase):
         status, preview_list = _request(
             api,
             "/api/v1/operations/previews",
-            query=f"scopeKind=file&scopeId={file_id}",
+            query="scopeKind=file&scopeId=One.2001.mkv",
         )
         self.assertEqual(200, status)
 
@@ -533,7 +536,13 @@ class ManualOperationsContractTests(unittest.TestCase):
         self.assertEqual("file", preview_detail["scope"]["scopeKind"])
         plan = preview_detail["items"][0]["plan"]
         self.assertEqual("A", plan["recognitionType"])
-        self.assertEqual("Anime/One (2001)/One (2001).mkv", plan["destination"]["relativePath"])
+        # Slice 37 formal destination parity: the classification rule's
+        # `library` value composes as the first relative-path prefix before
+        # the rule's own relative path.
+        self.assertEqual(
+            "Movies/Anime/One (2001)/One (2001).mkv",
+            plan["destination"]["relativePath"],
+        )
         self.assertEqual("target", plan["destination"]["storageId"])
 
     def test_resource_library_discovery_offers_no_action_without_a_selection(self) -> None:

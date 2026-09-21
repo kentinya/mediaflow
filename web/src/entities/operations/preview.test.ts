@@ -44,7 +44,9 @@ describe("normalizeManualPreview", () => {
       statement:
         "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
     });
-    expect(model.items[0]?.targetPath).toBe("Anime/One (2001)/One (2001).mkv");
+    expect(model.items[0]?.targetPath).toBe(
+      "Movies/Anime/One (2001)/One (2001).mkv",
+    );
     expect(model.items[0]?.policies).toEqual({
       recognitionTypePolicyId: "type-A",
       metadataPolicyId: "A",
@@ -181,8 +183,8 @@ describe("normalizeManualPreview", () => {
               conflicts: [
                 {
                   type: "target_exists",
-                  source: "Anime/One (2001)/One (2001).mkv",
-                  destination: "Anime/One (2001)/One (2001).mkv",
+                  source: "Movies/Anime/One (2001)/One (2001).mkv",
+                  destination: "Movies/Anime/One (2001)/One (2001).mkv",
                   details: "an existing target was found",
                 },
               ],

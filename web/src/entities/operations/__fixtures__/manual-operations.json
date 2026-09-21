@@ -108,6 +108,18 @@
         "effectCertainty": "unknown",
         "effects": [],
         "failure": null,
+        "fileIndexReconciliation": {
+          "action": {
+            "available": false,
+            "durableOutcome": "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
+            "method": "POST",
+            "nextAction": "wait for this item's durable Result before checking FileIndex reconciliation",
+            "path": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
+            "sideEffects": "none"
+          },
+          "nextAction": "wait for this item's durable Result before checking FileIndex reconciliation",
+          "state": "pending"
+        },
         "itemId": "<uuid>",
         "nextAction": "admission committed; reconcile this execution before any mutation if startup is interrupted",
         "position": 0,
@@ -202,6 +214,18 @@
           }
         ],
         "failure": null,
+        "fileIndexReconciliation": {
+          "action": {
+            "available": true,
+            "durableOutcome": "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
+            "method": "POST",
+            "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
+            "path": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
+            "sideEffects": "none"
+          },
+          "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
+          "state": "attention_required"
+        },
         "itemId": "<uuid>",
         "nextAction": "inspect the verified Result; no recovery replay is required",
         "position": 0,
@@ -298,6 +322,18 @@
               }
             ],
             "failure": null,
+            "fileIndexReconciliation": {
+              "action": {
+                "available": true,
+                "durableOutcome": "the durable Result is re-applied to a current exact FileIndex occurrence when one matches; no Storage mutation and no Organize replay",
+                "method": "POST",
+                "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
+                "path": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
+                "sideEffects": "none"
+              },
+              "nextAction": "inspect the current FileIndex occurrence and repeat the bounded reconciliation; never replay the Organize mutation",
+              "state": "attention_required"
+            },
             "itemId": "<uuid>",
             "nextAction": "inspect the verified Result; no recovery replay is required",
             "position": 0,
@@ -911,7 +947,7 @@
           "conflicts": [],
           "destination": {
             "filename": "One (2001).mkv",
-            "relativePath": "Anime/One (2001)/One (2001).mkv",
+            "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
             "storageId": "target"
           },
           "destructiveImplications": {
@@ -1162,7 +1198,7 @@
           "conflicts": [],
           "destination": {
             "filename": "One (2001).mkv",
-            "relativePath": "Anime/One (2001)/One (2001).mkv",
+            "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
             "storageId": "target"
           },
           "destructiveImplications": {
@@ -1390,7 +1426,7 @@
           "conflicts": [],
           "destination": {
             "filename": "One (2001).mkv",
-            "relativePath": "Anime/One (2001)/One (2001).mkv",
+            "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
             "storageId": "target"
           },
           "destructiveImplications": {
@@ -1436,7 +1472,7 @@
         "sideEffects": "none",
         "source": {
           "extension": "mkv",
-          "fileId": "<hex-id>",
+          "fileId": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
@@ -1455,10 +1491,10 @@
     "previewId": "<uuid>",
     "scope": {
       "itemCount": 1,
-      "scopeId": "<hex-id>",
+      "scopeId": "One.2001.mkv",
       "scopeKind": "file"
     },
-    "scopeId": "<hex-id>",
+    "scopeId": "One.2001.mkv",
     "scopeKind": "file",
     "selection": {
       "selectedItemIds": ["<uuid>"],
@@ -1615,7 +1651,7 @@
           "conflicts": [],
           "destination": {
             "filename": "One (2001).mkv",
-            "relativePath": "Anime/One (2001)/One (2001).mkv",
+            "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
             "storageId": "target"
           },
           "destructiveImplications": {
@@ -1661,7 +1697,7 @@
         "sideEffects": "none",
         "source": {
           "extension": "mkv",
-          "fileId": "<hex-id>",
+          "fileId": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
           "filename": "One.2001.mkv",
           "occurrenceState": "verified",
           "path": "One.2001.mkv",
@@ -1680,10 +1716,10 @@
     "previewId": "<uuid>",
     "scope": {
       "itemCount": 1,
-      "scopeId": "<hex-id>",
+      "scopeId": "One.2001.mkv",
       "scopeKind": "file"
     },
-    "scopeId": "<hex-id>",
+    "scopeId": "One.2001.mkv",
     "scopeKind": "file",
     "selection": {
       "selectedItemIds": ["<uuid>"],
@@ -1846,7 +1882,7 @@
               "conflicts": [],
               "destination": {
                 "filename": "One (2001).mkv",
-                "relativePath": "Anime/One (2001)/One (2001).mkv",
+                "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
                 "storageId": "target"
               },
               "destructiveImplications": {
@@ -1892,7 +1928,7 @@
             "sideEffects": "none",
             "source": {
               "extension": "mkv",
-              "fileId": "<hex-id>",
+              "fileId": "[redacted: the recorded evidence contained a credential, private endpoint or absolute host path]",
               "filename": "One.2001.mkv",
               "occurrenceState": "verified",
               "path": "One.2001.mkv",
@@ -1911,10 +1947,10 @@
         "previewId": "<uuid>",
         "scope": {
           "itemCount": 1,
-          "scopeId": "<hex-id>",
+          "scopeId": "One.2001.mkv",
           "scopeKind": "file"
         },
-        "scopeId": "<hex-id>",
+        "scopeId": "One.2001.mkv",
         "scopeKind": "file",
         "selection": {
           "selectedItemIds": ["<uuid>"],
@@ -1928,7 +1964,7 @@
       }
     ],
     "limit": 100,
-    "scopeId": "<hex-id>",
+    "scopeId": "One.2001.mkv",
     "scopeKind": "file",
     "total": 1
   },

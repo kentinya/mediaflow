@@ -95,10 +95,26 @@ class ConfigurationSnapshotTests(unittest.TestCase):
         source["classificationPolicies"][0]["rules"][0]["result"]["path"] = [secret]
         document = build_configuration_snapshot(load_runtime_configuration(source)).as_document()
         rendered = json.dumps(document, ensure_ascii=False)
+        # The injected hostile values never appear anywhere in the projection.
         self.assertNotIn(secret, rendered)
-        self.assertNotIn("root", rendered.casefold())
-        self.assertNotIn("template", rendered.casefold())
-        self.assertNotIn("condition", rendered.casefold())
+        # The forbidden raw configuration fields that could carry those values
+        # are never projected. The bounded, intentional `root_path` projection
+        # (a safe ResourceLibrary-relative display segment, not the hostile
+        # Storage root) remains allowed, so this must not be a broad substring
+        # ban on the word "root".
+        for forbidden in (
+            "rootPath",
+            "displayRootPath",
+            "passwordEnv",
+            "template",
+            "condition",
+        ):
+            self.assertNotIn(forbidden, rendered)
+        # The intentional bounded root_path projection stays present and never
+        # carries the hostile value.
+        libraries = document["resource_libraries"]["items"]
+        self.assertTrue(all("root_path" in item for item in libraries))
+        self.assertTrue(all(secret not in item["root_path"] for item in libraries))
 
     def test_system_status_storage_projection_includes_operator_name_but_never_root(
         self,

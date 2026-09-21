@@ -1397,12 +1397,20 @@ class DirectFileOperationsTests(unittest.TestCase):
                 self.assertEqual(set(entry), {"path", "isDirectory", "size", "modifiedAt"})
 
     def test_confirmed_delete_refuses_a_replaced_empty_directory(self) -> None:
-        """A same-name directory replacement after the confirmation fails closed.
+        """A same-name replacement with a new provider identity fails closed.
 
         The executor fence uses the provider's stable directory identity (the
-        inode segment of the Local fingerprint), so the replacement directory
-        created after the operator confirmed the original survives — proved from
-        metadata only, with no content read.
+        inode segment of the Local fingerprint). A same-name replacement whose
+        inode is *not* reused keeps a new identity, so the executor refuses the
+        delete from metadata only, with no content read, and the replacement
+        survives.
+
+        Accepted residual risk (A, 2026-09-21): if the filesystem instead
+        reuses the previous inode and ctime inside the narrow window between
+        the final metadata revalidation and the mutation, the replacement is
+        indistinguishable from the confirmed directory and may be deleted. This
+        test does not assert a refusal in that race and must not pretend the
+        race is closed; README documents the operator prevention/recovery path.
         """
 
         with tempfile.TemporaryDirectory() as directory:
@@ -1420,17 +1428,42 @@ class DirectFileOperationsTests(unittest.TestCase):
                 is_directory=True,
                 fingerprint=observed.fingerprint or "",
             )
-            # Same-name replacement: rmdir + mkdir yields a new inode/ctime.
+            # Same-name replacement: rmdir + mkdir normally yields a new
+            # inode/ctime, but filesystems may legally reuse the inode here.
             storage.delete("victim")
             (root / "source" / "victim").mkdir()
-            result = OrganizerExecutor().execute_direct_delete(
-                storage, "victim", entry_evidence=evidence
-            )
-            self.assertEqual(result.status.value, "FAILED")
-            self.assertTrue(
-                any("entry changed since it was confirmed" in error for error in result.errors)
-            )
-            self.assertTrue((root / "source" / "victim").is_dir())
+            replaced = storage.stat("victim")
+            if replaced.fingerprint == observed.fingerprint:
+                # Accepted residual risk (A, 2026-09-21): the filesystem reused
+                # the previous inode and ctime, so the replacement is
+                # indistinguishable from the confirmed directory and the
+                # executor cannot refuse it. The delete may therefore succeed;
+                # this branch asserts only the truthful outcome shape — a
+                # successful mutation reports a verified effect, a refusal
+                # reports the changed-entry reason — and never that the race is
+                # closed.
+                result = OrganizerExecutor().execute_direct_delete(
+                    storage, "victim", entry_evidence=evidence
+                )
+                if result.status.value == "FAILED":
+                    self.assertTrue(
+                        any(
+                            "entry changed since it was confirmed" in error
+                            for error in result.errors
+                        )
+                    )
+                else:
+                    self.assertEqual(result.status.value, "SUCCESS")
+                    self.assertFalse((root / "source" / "victim").exists())
+            else:
+                result = OrganizerExecutor().execute_direct_delete(
+                    storage, "victim", entry_evidence=evidence
+                )
+                self.assertEqual(result.status.value, "FAILED")
+                self.assertTrue(
+                    any("entry changed since it was confirmed" in error for error in result.errors)
+                )
+                self.assertTrue((root / "source" / "victim").is_dir())
 
     def test_confirmed_recursive_delete_tolerates_confirmed_child_removals(self) -> None:
         """Deleting confirmed children must not break the parent directory fence.
@@ -1461,11 +1494,21 @@ class DirectFileOperationsTests(unittest.TestCase):
     def test_confirmed_recursive_delete_refuses_a_replaced_parent_directory(
         self,
     ) -> None:
-        """A recursive parent replaced after confirmation keeps its new content.
+        """A replaced recursive parent with a new provider identity fails closed.
 
-        The replacement directory has a new provider identity, so the executor's
-        metadata-only directory-identity fence refuses the delete.
+        When the replacement directory receives a new inode/ctime, its provider
+        identity changes, so the executor's metadata-only directory-identity
+        fence refuses the delete and the unconfirmed new content survives.
+
+        Accepted residual risk (A, 2026-09-21): inside the narrow window
+        between the final metadata revalidation and the mutation, the
+        filesystem may reuse the previous inode identity for a same-name
+        replacement, making it indistinguishable from the confirmed directory;
+        the confirmed scope may then be deleted. This test does not claim that
+        race is closed; README documents the operator prevention/recovery path.
         """
+
+        import shutil
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1484,21 +1527,41 @@ class DirectFileOperationsTests(unittest.TestCase):
                 fingerprint=observed.fingerprint or "",
             )
             # Replace the whole directory with different unconfirmed content.
-            import shutil
-
+            # The replacement normally receives a new inode/ctime, but
+            # filesystems may legally reuse the previous inode identity.
             shutil.rmtree(root / "source" / "parent")
             (root / "source" / "parent").mkdir()
             (root / "source" / "parent" / "new.txt").write_text("new", encoding="utf-8")
-            result = OrganizerExecutor().execute_direct_delete(
-                storage, "parent", entry_evidence=evidence
-            )
-            self.assertEqual(result.status.value, "FAILED")
-            self.assertTrue(
-                any("entry changed since it was confirmed" in error for error in result.errors)
-            )
-            self.assertEqual(
-                (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"), "new"
-            )
+            replaced = storage.stat("parent")
+            if replaced.fingerprint == observed.fingerprint:
+                # Accepted residual risk (A, 2026-09-21): the reused inode
+                # identity makes the replacement indistinguishable, so the
+                # confirmed delete may proceed. Assert only the truthful
+                # outcome shape; this never claims the race is closed.
+                result = OrganizerExecutor().execute_direct_delete(
+                    storage, "parent", entry_evidence=evidence
+                )
+                if result.status.value == "FAILED":
+                    self.assertTrue(
+                        any(
+                            "entry changed since it was confirmed" in error
+                            for error in result.errors
+                        )
+                    )
+                else:
+                    self.assertEqual(result.status.value, "SUCCESS")
+                    self.assertFalse((root / "source" / "parent").exists())
+            else:
+                result = OrganizerExecutor().execute_direct_delete(
+                    storage, "parent", entry_evidence=evidence
+                )
+                self.assertEqual(result.status.value, "FAILED")
+                self.assertTrue(
+                    any("entry changed since it was confirmed" in error for error in result.errors)
+                )
+                self.assertEqual(
+                    (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"), "new"
+                )
 
     def test_executor_refuses_delete_evidence_without_provider_identity(self) -> None:
         """Empty provider identity is never a silent size/mtime fallback.

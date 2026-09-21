@@ -288,8 +288,13 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
 test("Zero-mutation Preview admission submits one exact request and lands on the detail", async ({
   page,
 }) => {
+  // The supported Preview entry is ResourceLibrary-scoped: the backend matrix
+  // only resolves a file scope through an exact FileIndex fileId, which the
+  // current Files/Organize surfaces no longer submit. The browser sends only
+  // the ResourceLibrary identity; the server derives SourceIdentity from live
+  // Storage.
   await page.goto(
-    "/ui-v2/operations/preview/new?scopeKind=file&fileId=file-index-example&resourceLibraryId=resources",
+    "/ui-v2/operations/preview/new?scopeKind=resourceLibrary&resourceLibraryId=resources",
   );
   await connect(page, VIEWER_TOKEN);
 
@@ -332,9 +337,11 @@ test("Zero-mutation Preview admission submits one exact request and lands on the
   expect(submissions).toHaveLength(1);
   expect(submissions[0]?.objectType).toBe("preview");
   expect(submissions[0]?.objectId).toBe(PREVIEW_ID);
+  // The current server-bound contract derives SourceIdentity from live
+  // Storage: the browser submits only the ResourceLibrary identity, never an
+  // absolute path, a FileIndex identifier or Storage credential.
   expect(submissions[0]?.body).toEqual({
-    scopeKind: "file",
-    fileId: "file-index-example",
+    scopeKind: "resourceLibrary",
     resourceLibraryId: "resources",
   });
 
@@ -409,17 +416,20 @@ test("Read-only principal sees no manual action and the backend reason", async (
   await page
     .getByRole("button", { name: "Show ResourceLibrary actions" })
     .click();
+  // Scope the explanation assertions to one rendered ResourceLibrary block:
+  // each enabled library renders the same backend reason once, so the
+  // route-owned container (not a unique-text assumption) proves the content.
+  const resourcesBlock = page
+    .getByRole("heading", { name: "Resources" })
+    .locator("..");
   await expect(
-    page.getByRole("heading", { name: "ResourceLibrary actions" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Start bounded Scan" }),
+    resourcesBlock.getByRole("link", { name: "Start bounded Scan" }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("link", { name: "Run zero-mutation Preview" }),
+    resourcesBlock.getByRole("link", { name: "Run zero-mutation Preview" }),
   ).toHaveCount(0);
-  await expect(page.getByText(/^Scan unavailable:/)).toBeVisible();
-  await expect(page.getByText(/^Preview unavailable:/)).toBeVisible();
+  await expect(resourcesBlock.getByText(/^Scan unavailable:/)).toBeVisible();
+  await expect(resourcesBlock.getByText(/^Preview unavailable:/)).toBeVisible();
 });
 
 test("Unknown Scan record renders the bounded not-found state inside the shell", async ({
@@ -485,22 +495,44 @@ test("hostile action-matrix evidence never reaches the built-artifact DOM", asyn
   expect(rendered ?? "").not.toContain("a".repeat(64));
 });
 
-test("FileIndex detail advertises both backend-advertised manual actions", async ({
+test("Files row admits one eligible file into the durable Organize journey", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/library/file-index/file-index-example");
-  await connect(page, VIEWER_TOKEN);
+  // The FileIndex detail route and its "Actions for this file" journey are
+  // retired. The equivalent supported Files row journey admits one eligible
+  // file into the durable intent -> Preview journey; the full intent choice,
+  // exact Preview and Execute admission journey is covered by
+  // library-files.spec.ts and manual-organize.spec.ts against the same fake.
+  const admissionBodies: string[] = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "POST" &&
+      request.url().includes("/files/organize")
+    ) {
+      admissionBodies.push(request.postData() ?? "");
+    }
+  });
+  const reset = await page.request.post(`${BASE_URL}/__test__/reset-organize`);
+  expect(reset.status()).toBe(200);
 
+  await page.goto("/ui-v2/library/files");
+  await connect(page, VIEWER_TOKEN);
+  await expect(page.getByRole("table")).toBeVisible();
+
+  await page
+    .getByRole("row", { name: /sample\.mkv/ })
+    .getByRole("button", { name: "整理" })
+    .click();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
+  );
   await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
+    page.getByRole("heading", { name: "Manual organize intent" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Actions for this file" }),
+    page.getByRole("button", { name: "Create exact Preview" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Start bounded Scan" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Run zero-mutation Preview" }),
-  ).toBeVisible();
+  expect(admissionBodies).toHaveLength(1);
+  expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
+  expect(admissionBodies[0]).not.toContain("Bearer");
 });
