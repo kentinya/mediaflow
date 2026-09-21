@@ -9,7 +9,7 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
 Contract Revision: 2026-09-20 A AUTHORIZED SCOPE REVISION — destination parity, direct Upload/Download removal and Copy/Move control-plane bounds
@@ -435,12 +435,12 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
+Slice Status: FIX REQUIRED
 Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
 Contract Revision: A AUTHORIZED SCOPE REVISION — formal classification library-prefix alignment and direct Files Upload/Download removal
 Prior Task 37.6 state: PASS
 Active correction: Task 37.7 PASS; awaiting A final review under the A-expanded scope
-Next Action: A final review
+Next Action: B plans one focused correction Task for the current Slice
 ```
 
 ## Closure Packet
@@ -709,4 +709,41 @@ Documentation Reconciliation Needed:
   original Slice Base through this corrected Head.
 
 Decision: SLICE READY FOR A REVIEW
+```
+
+## A Final Review — Post-reactivation 2026-09-21
+
+```text
+Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
+Decision: FIX REQUIRED
+P0/P1 Blockers:
+- The current Upload/Download-removal acceptance is not fully satisfied. The reviewed
+  implementation still contains the Upload-specific `_ItemPayloadStream` helper in
+  `mediaflow/interfaces/service_api.py:202-233`. Its docstring and WSGI payload logic describe
+  an admitted Files Upload item, although the helper is now unreachable after the route/service
+  removal. This contradicts the A-authorized boundary requiring the direct Files Upload/Download
+  vertical, including its helpers, to be removed, and makes the Closure Packet's absence claim
+  materially incomplete. Remove this dead Upload helper, then rerun the direct-surface absence
+  inspection and the affected Python/Web regression gates.
+- GitHub Actions `quality` run `#114` on `2026-09-20` at remote commit
+  `7269d033250d606748364d71c7899d20e5714e62` failed in all Python matrix jobs
+  (`3.11`, `3.12`, `3.13`) on the offline unit-test step. The two failing direct-delete
+  tests were `test_confirmed_delete_refuses_a_replaced_empty_directory` and
+  `test_confirmed_recursive_delete_refuses_a_replaced_parent_directory`. Both observed
+  `SUCCESS` where replacement should have failed closed. This is an existing RO-7/Delete
+  fencing invariant, not a new Slice surface: the current Local directory fingerprint is
+  `inode:<ino>:ctime:<ns>`, while `_directory_fingerprint_identity()` discards `ctime` so
+  confirmed child removals do not invalidate a parent. On the GitHub runner, delete/recreate
+  reused the inode, allowing a replacement directory to pass the old fence. The correction
+  must make same-name directory replacement fail closed even when inode reuse occurs, while
+  preserving legitimate recursive deletion of already-confirmed children.
+
+Required correction evidence:
+- run the two direct-delete regression tests on Python `3.11`, `3.12` and `3.13`;
+- prove a same-name directory replacement with reused or equivalent provider identity is rejected
+  before mutation and the replacement content survives;
+- prove confirmed recursive child removals still allow the original parent deletion;
+- rerun `python -m unittest discover -s tests` and record every matrix result, skip and remaining
+  failure truthfully;
+- rerun the direct Upload/Download absence inspection after removing `_ItemPayloadStream`.
 ```
