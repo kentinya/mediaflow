@@ -62,6 +62,12 @@ inode-reuse/ctime-change case. Task 37.9 must align those tests with the accepte
 changing production fencing, adding skips, or claiming the race is fixed. The release-quality Task
 command inventory must also remain present in the active `TASK.md`.
 
+GitHub quality run `#117` then showed that the corrected tests complete successfully on Python
+3.11 and 3.13, while the Python 3.12 matrix job was cancelled by the existing 15-minute test-job
+timeout before its full 1718-test run completed. Task 37.9 therefore also raises only the quality
+test job timeout to 30 minutes; it does not remove a Python version, weaken a test, or change the
+wheel job timeout.
+
 ## Current A-owned Scope Revision — Remove Direct Files Upload/Download
 
 On 2026-09-20, A explicitly revised the current Slice boundary after confirming that the operator
