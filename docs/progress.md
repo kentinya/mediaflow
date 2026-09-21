@@ -9,13 +9,13 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 37 — **Files Workspace, Common File Management and V2 Shell** —
-is `PASS / CLOSED` after A's 2026-09-21 post-reactivation Final Review at Implementation Head
-`2115d1839eb0611f097913eae8a43492d00346a2`. Its correction aligned formal
-`ClassificationRule.result.library` destination-prefix semantics with the local CLI and removed the
-direct browser Upload/Download vertical from the current Files surface. Slice 33's closure entries,
-the prior Slice 37 closure packet and the retired Slice 34–36 references remain historical and are
-not erased. The current Contract is maintained in [`SLICE.md`](../SLICE.md) and the Roadmap boundary
-in [`roadmap.md`](roadmap.md). This pointer is not a closure-ledger entry.
+is `ACTIVE` after A's 2026-09-21 post-closure reactivation for a P1 Files refresh regression:
+an externally removed ResourceLibrary directory can remain visible in the local directory tree
+after `刷新`. The prior A Final Review, Closure Packets and Implementation Head
+`2115d1839eb0611f097913eae8a43492d00346a2` remain historical facts and are not erased. Task 37.9
+is the current B-planned correction Task. The current Contract is maintained in
+[`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md). This pointer is
+not a closure-ledger entry.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the

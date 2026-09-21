@@ -9,10 +9,10 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
+Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — accept the narrow concurrent Local directory replacement race and retain operator guidance
+Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh must remove stale ResourceLibrary directory-tree state
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -33,6 +33,26 @@ composition invariant. It does not add a new provider, classification condition,
 capability, mutation path, Files surface or non-Files business journey. The prior Closure Packet
 and A Final Review remain historical facts; this reactivation adds one focused correction Task
 and requires a fresh A review over the original Base through the corrected head.
+
+## Current Post-closure Reactivation — Files Refresh Truthfulness
+
+On 2026-09-21, A reactivated Slice 37 again under the post-closure P0/P1 correction loop after
+production-like use showed that an externally deleted ResourceLibrary directory such as
+`source/电影/SSH` can remain visible in the Files directory tree after the operator clicks
+`刷新`.
+
+The defect is a P1 user-visible state/recovery break inside RO-3 exact Files composition,
+RO-5 Storage-authoritative Files data, RO-9 actionable recovery and RO-11 test reconciliation.
+The backend Files read already re-reads live Storage and does not use FileIndex as its V2 Files
+authority. The Web page retains `knownDirectoryPaths` and `visitedDirectories` across a refresh,
+so the directory tree can re-render a path that the refreshed Storage listing no longer contains.
+
+This correction is intentionally narrow: refresh must reconcile the local directory-tree and
+selection presentation with the newly fetched live listing. It does not add a FileIndex sync,
+background scan, mutation, cache layer, provider capability, route, or new Files command. The
+prior Closure Packets and A Final Reviews remain immutable historical facts; this reactivation
+adds Task 37.9 and requires a fresh A review over the original Slice Base through the corrected
+head.
 
 ## Current A-owned Scope Revision — Remove Direct Files Upload/Download
 
@@ -423,6 +443,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
       execution and result evidence.
 - [x] The `library` prefix is validated with the same bounded safe-relative-path rules as other
       destination contributions; unsafe values fail closed without Storage mutation.
+- [ ] Files `刷新` re-reads the live ResourceLibrary directory and reconciles local directory-tree
+      and selection state so an externally removed path is no longer shown after refresh; the
+      regression path remains read-only and does not consult FileIndex or mutate Storage.
 - [x] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
       backend mutation authority remain intact.
 - [x] Conflicting old visual tests are replaced and all required T4/full Slice gates pass without
@@ -449,6 +472,8 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
   Active preservation;
 - exact request/mutation evidence for zero-side-effect reads, live-Storage Preview authority,
   OrganizerExecutor-only direct/organize mutation and non-replaying FileIndex synchronization;
+- Files refresh truthfulness evidence showing an externally removed directory disappears from the
+  directory tree and stale selection state without adding a mutation or FileIndex request;
 - formal destination parity evidence for `library/path` composition, CLI/formal target agreement,
   safe-prefix rejection, MediaLibrary resolution and zero-mutation failure behavior;
 - full Python and Web regression, production frontend build/package validation, governance and
@@ -458,11 +483,12 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: PASS / CLOSED
+Slice Status: ACTIVE
 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — concurrent Local directory replacement race accepted with README guidance
+Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh must remove stale ResourceLibrary directory-tree state
 Task 37.8 state: PASS
-Next Action: A selects the next large Slice in a subsequent turn
+Task 37.9 state: PLANNED
+Next Action: Developer implements Task 37.9 after the activation and Task planning checkpoints
 ```
 
 ## Closure Packet
