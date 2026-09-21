@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: FIX REQUIRED
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
-Contract Revision: 2026-09-20 A AUTHORIZED SCOPE REVISION — destination parity, direct Upload/Download removal and Copy/Move control-plane bounds
+Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — accept the narrow concurrent Local directory replacement race and retain operator guidance
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -72,6 +72,26 @@ Copy/Move admission ceiling. This clarification does not authorize multi-batch o
 parallel child Tasks, a native-directory-Move bypass, a new Storage capability, an implicit
 fallback or automatic replay. Delete and bounded text Edit retain their own existing content/scope
 limits.
+
+## Current A-owned Residual Risk Disposition — Concurrent Local Directory Replacement
+
+On 2026-09-21, A accepted the narrow residual race in which another process deletes and recreates
+the same Local directory between the final confirmed-scope revalidation and the actual Delete, and
+the filesystem reuses the previous inode. The existing implementation already requires explicit
+Delete confirmation, re-enumerates and digests the bounded scope before mutation, performs a final
+metadata revalidation and mutates only through `OrganizerExecutor`. Those controls remain mandatory.
+
+Slice 37 does not add a cross-provider directory-generation architecture, birth-time/statx
+dependency, persistent directory handle model or new Storage capability solely to close this
+extremely narrow race. The limitation is documented in README with an operator recovery/prevention
+path: quiesce download, sync and other file-management processes for the selected directory,
+refresh Files, review the current impact and confirm again immediately.
+
+This disposition does not authorize removing the existing scope digest, stale checks, explicit
+confirmation, bounded enumeration, per-item outcomes or non-replay rules. It changes the current
+acceptance meaning by treating inode-reuse inside that final race window as a known non-blocking
+residual risk rather than a Slice P0/P1 blocker. B must reevaluate Task 37.8 against this revision;
+Developer must not implement the superseded directory-generation/fencing expansion.
 
 ## Scope decision
 
@@ -314,6 +334,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
   capability checks, explicit mutation intent, conflict/stale checks, audit or path confinement.
 - Delete and overwrite/Replace remain explicit. No create, rename, copy, move, text Save or deletion
   silently replaces/removes user data.
+- Local directory Delete retains bounded impact, explicit confirmation and final stale revalidation.
+  The accepted concurrent delete/recreate plus inode-reuse residual race is documented in README;
+  operators must quiesce other writers and refresh/reconfirm when the selected path may be changing.
 - No automatic retry follows an uncertain mutation. Recovery begins by refreshing live Storage and
   showing the known effect state.
 - Files-originated Organize Preview/continuation still derives authority from live Storage and never
@@ -437,10 +460,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ```text
 Slice Status: FIX REQUIRED
 Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
-Contract Revision: A AUTHORIZED SCOPE REVISION — formal classification library-prefix alignment and direct Files Upload/Download removal
+Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — concurrent Local directory replacement race accepted with README guidance
 Prior Task 37.6 state: PASS
-Active correction: Task 37.7 PASS; awaiting A final review under the A-expanded scope
-Next Action: B plans one focused correction Task for the current Slice
+Active correction: Task 37.8 requires B reevaluation after the 2026-09-21 A residual-risk disposition
+Next Action: B revises Task 37.8; Developer does not continue directory-generation/fencing work
 ```
 
 ## Closure Packet
@@ -725,25 +748,21 @@ P0/P1 Blockers:
   vertical, including its helpers, to be removed, and makes the Closure Packet's absence claim
   materially incomplete. Remove this dead Upload helper, then rerun the direct-surface absence
   inspection and the affected Python/Web regression gates.
-- GitHub Actions `quality` run `#114` on `2026-09-20` at remote commit
-  `7269d033250d606748364d71c7899d20e5714e62` failed in all Python matrix jobs
-  (`3.11`, `3.12`, `3.13`) on the offline unit-test step. The two failing direct-delete
-  tests were `test_confirmed_delete_refuses_a_replaced_empty_directory` and
-  `test_confirmed_recursive_delete_refuses_a_replaced_parent_directory`. Both observed
-  `SUCCESS` where replacement should have failed closed. This is an existing RO-7/Delete
-  fencing invariant, not a new Slice surface: the current Local directory fingerprint is
-  `inode:<ino>:ctime:<ns>`, while `_directory_fingerprint_identity()` discards `ctime` so
-  confirmed child removals do not invalidate a parent. On the GitHub runner, delete/recreate
-  reused the inode, allowing a replacement directory to pass the old fence. The correction
-  must make same-name directory replacement fail closed even when inode reuse occurs, while
-  preserving legitimate recursive deletion of already-confirmed children.
 
 Required correction evidence:
-- run the two direct-delete regression tests on Python `3.11`, `3.12` and `3.13`;
-- prove a same-name directory replacement with reused or equivalent provider identity is rejected
-  before mutation and the replacement content survives;
-- prove confirmed recursive child removals still allow the original parent deletion;
 - rerun `python -m unittest discover -s tests` and record every matrix result, skip and remaining
   failure truthfully;
 - rerun the direct Upload/Download absence inspection after removing `_ItemPayloadStream`.
 ```
+
+Accepted Residual Risk:
+
+- GitHub Actions `quality` run `#114` on 2026-09-20 exposed two Local directory replacement tests
+  that can observe `SUCCESS` when delete/recreate reuses the inode inside the final revalidation to
+  mutation window.
+- A accepts this as a non-blocking residual risk for Slice 37 because it requires a narrow concurrent
+  replacement race and does not represent the ordinary single-operator path. Existing scope
+  confirmation and stale revalidation remain required and must not be weakened.
+- README contains the operator-facing prevention and recovery guidance. B must remove the
+  replacement-resistant generation architecture from Task 37.8 and reconcile the two host-filesystem
+  tests with this accepted contract without adding skips or representing the race as fixed.
