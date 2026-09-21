@@ -1,4 +1,4 @@
-# Task 37.9 — Files Refresh Truthful Directory State
+# Task 37.9 — Files Refresh Truthful State and Focused Presentation
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
@@ -18,9 +18,11 @@ Planner / Reviewer: B
 Restore a truthful Files refresh journey for live ResourceLibrary browsing. When an operator
 deletes or moves a directory outside the Web page, then clicks `刷新`, the refreshed Files view
 must stop presenting that directory as a current directory-tree entry or as a selected stale
-target. This advances Slice 37 Required Outcomes RO-3, RO-5, RO-9 and RO-11. The related CI/test
-quality correction is already complete and is a required green baseline for this remaining Web
-implementation.
+target. In the same focused Web boundary, remove the Files-page presentation of the business
+concepts `识别结果` and `整理状态` while retaining the explicit `整理` action and its existing
+server-authoritative continuation. This advances Slice 37 Required Outcomes RO-3, RO-5, RO-9 and
+RO-11. The related CI/test quality correction is already complete and is a required green baseline
+for this remaining Web implementation.
 
 ## Why This Task Exists
 
@@ -36,7 +38,8 @@ test contract and Python matrix timeout correction were completed before the Web
 checkpoint: GitHub quality run `#118` passed on commit
 `320d8437a8872f7a08ee84295a0f900a39f84a7d`, including Python 3.11/3.12/3.13 and wheel smoke.
 The remaining implementation unit is therefore one focused Web-state correction plus focused Web
-regression coverage. No backend authority, Storage behavior or production fencing needs to change.
+regression coverage, including the Files presentation boundary. No backend authority, Storage
+behavior, recognition/metadata pipeline or production fencing needs to change.
 
 ## Current Developer Baseline
 
@@ -58,7 +61,9 @@ Goal:
 Entry:
   V2 Files at /ui-v2/library/files with a selected ResourceLibrary.
 Visible state:
-  ResourceLibrary card, current directory listing, directory tree, breadcrumbs and selection.
+  ResourceLibrary card, current directory listing, directory tree, breadcrumbs and selection. The
+  Files page does not display `识别结果` or `整理状态`; the explicit `整理` action remains
+  available.
 Action:
   The operator changes the source outside MediaFlow, then clicks 刷新.
 Success:
@@ -77,6 +82,12 @@ Recovery:
 
 - Update the Files page refresh handling in `web/src/features/library/StorageFilesPage.tsx` so a
   successful refresh cannot re-render directory paths retained only in local tree state.
+- Update the Files page presentation in `web/src/features/library/StorageFilesPage.tsx` so the
+  information banner, table headers/cells and row status presentation do not expose `识别结果`
+  or `整理状态`. Keep `organizeEligible`, the `整理` action, single-item Preview and bounded
+  batch continuation intact.
+- Update `web/src/shared/ui/styles.css` for the six-column Files table and remove status-only
+  presentation styles that become unused. Do not remove generic action or enabled-state styles.
 - Reconcile or clear `knownDirectoryPaths`, `visitedDirectories` and stale selection state at the
   refresh boundary. The implementation may use a small page-local helper or a result reconciliation
   effect, but must preserve the selected ResourceLibrary and current path when the refreshed read
@@ -96,9 +107,15 @@ Recovery:
   `web/tests/e2e/library-files.spec.ts` when the fake-server fixture can express the external
   removal. The browser assertion must cover the visible directory-tree outcome, not only a query
   invocation.
-- Keep the change limited to the Files Web state/reconciliation and its tests. Do not alter the
-  Python Storage browser, FileIndex repository, API routes, mutation services, OrganizerExecutor
-  production code or configuration authority.
+- Update the focused Files table assertions in
+  `web/tests/e2e/library-files.spec.ts` and `web/tests/e2e/library-file-detail.spec.ts` to assert
+  that `识别结果` and `整理状态` are absent as visible page concepts, while the `整理` action and
+  the remaining physical-file columns remain present.
+- Reconcile `docs/file-page-visual-spec.md` with the current Slice presentation boundary before
+  Task completion; the old two-column wording must not remain as the active visual contract.
+- Keep the change limited to the Files Web state/presentation, its focused tests and the visual
+  specification. Do not alter the Python Storage browser, FileIndex repository, API routes,
+  mutation services, OrganizerExecutor production code or configuration authority.
 
 ## Acceptance Criteria
 
@@ -114,6 +131,13 @@ Recovery:
 - [ ] When the current directory no longer exists or the read fails, the existing bounded error
       and recovery state remains truthful: no fabricated row/tree entry, no automatic mutation and
       no automatic retry loop.
+- [ ] The Files page does not render `识别结果` or `整理状态` in the information banner, table
+      headers, row cells or status pills.
+- [ ] The Files table retains the physical/action columns
+      `选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`, and the `整理` action remains available
+      for eligible entries and continues into the existing zero-mutation Preview path.
+- [ ] The API/FileIndex/recognition/metadata/organize data contracts remain unchanged; the
+      presentation removal does not remove backend authority or result synchronization.
 - [ ] The refresh request remains the existing authenticated bounded GET request, and focused
       tests prove there is no POST/PUT/DELETE request and no `/file-index` request for this journey.
 - [ ] Existing Files navigation, pagination, search, direct file commands, Organize continuation,
@@ -135,7 +159,7 @@ Run from the repository root unless noted otherwise:
 
 1. `python3 scripts/check_governance.py`
 2. `cd web && npm run test -- --run src/features/library/StorageFilesPage.test.tsx`
-3. `cd web && npm run test:e2e -- tests/e2e/library-files.spec.ts`
+3. `cd web && npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/library-file-detail.spec.ts`
 4. `cd web && npm run typecheck`
 5. `cd web && npm run lint`
 6. `cd web && npm run format:check`
@@ -164,7 +188,10 @@ No production Storage, FileIndex, TMDB, SMB, OpenList, S3 or R2 service is requi
 - New direct file commands, OrganizerExecutor behavior, conflict policy or mutation capability.
 - Changing the existing current-directory error/recovery semantics beyond removing stale local
   presentation.
-- Reworking the shared shell, Files visual composition or unrelated V2 routes.
+- Reworking the shared shell or unrelated V2 routes. The scoped removal of Files recognition/status
+  feedback is included in this Task.
+- Removing recognition, metadata, FileIndex or organize fields from API/domain contracts, or
+  changing OrganizerExecutor/result synchronization behavior.
 - Full Python regression or unrelated legacy test cleanup unless a focused failure demonstrates a
   Task 37.9 regression.
 

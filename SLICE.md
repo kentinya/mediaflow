@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness with green CI baseline
+Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -69,6 +69,25 @@ to 30 minutes; it did not remove a Python version, weaken a test, or change the 
 The resulting GitHub quality run `#118` on commit `320d8437a8872f7a08ee84295a0f900a39f84a7d`
 passed all Python 3.11/3.12/3.13 jobs and the dependent wheel build/smoke job. CI is now a green
 baseline for the remaining Files Web implementation.
+
+## Current A-owned Scope Clarification — Remove Files Recognition/Status Feedback
+
+On 2026-09-21, A authorized a focused Files presentation correction: the Files page must no
+longer present the business concepts `识别结果` or `整理状态`. This removes those concepts from
+the Files information banner, table headers/cells and row status presentation. The Files table
+continues to expose physical file facts and explicit actions, with the resulting columns:
+`选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`.
+
+This is a presentation-boundary correction, not removal of the underlying recognition, metadata,
+FileIndex or organize data model. The backend/API projections may remain available for their
+existing authorities and result synchronization, but Files must not display those two concepts as
+business feedback. The explicit `整理` operation, single-item Preview path, bounded batch path and
+OrganizerExecutor authority remain in scope and must continue to work.
+
+The current visual source of truth must be reconciled to this clarification before final review.
+The existing visual-spec wording that names the removed columns remains historical/pending
+synchronization until that follow-up is completed; it does not authorize reintroducing the
+removed page presentation.
 
 ## Current A-owned Scope Revision — Remove Direct Files Upload/Download
 
@@ -162,6 +181,11 @@ The detailed visual source of truth is
 [`docs/file-page-visual-spec.md`](docs/file-page-visual-spec.md). The image is authoritative for
 visual detail; this Contract controls product scope, authority and safety.
 
+For the current reactivation, this Contract additionally controls the Files presentation boundary:
+the page does not display `识别结果` or `整理状态`, while the explicit `整理` action and its
+server-authoritative continuation remain available. The visual specification must be synchronized
+before final Slice review.
+
 ## User goal and vertical journey
 
 **Goal:** an authorized operator can enter the redesigned V2 shell, open Files, understand the
@@ -178,8 +202,9 @@ light left rail, top bar, active Files navigation, search, ResourceLibrary summa
 banner, directory tree, breadcrumb, file table, selected row, selection footer, pagination and open
 `添加资源库` drawer. The action surfaces expose `新建文件夹`, `新建文本文件`, `重命名`,
 `复制`, `移动`, `删除` and supported `编辑`. Direct `上传` and `下载` surfaces are absent.
-Unsupported actions are absent or explain why they are unavailable. Raw backend authority fields
-are not displayed.
+The Files page does not display `识别结果` or `整理状态` feedback; the explicit `整理` action
+remains available. Unsupported actions are absent or explain why they are unavailable. Raw backend
+authority fields are not displayed.
 
 **Action:** browse or refresh a ResourceLibrary-relative directory, switch presentation, select or
 clear entries, create a folder or supported text file, rename/copy/move/delete eligible files or
@@ -208,9 +233,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 |---|---|---|
 | RO-1 | **Reference-aligned visual fidelity.** | A controlled `1536 x 1024` Files success screenshot preserves the canonical image's shared-shell and Files hierarchy, visible fixture state, labels, control order and design intent. Pixel-diff counts are diagnostic rather than a pass/fail threshold; bounded differences in font/glyph rendering, icon or thumbnail artwork, exact dimensions/spacing, borders, shadows and color nuance are acceptable when the required composition remains complete, recognizable and operable. |
 | RO-2 | **Shared V2 shell replacement.** | The old dark horizontal shell is replaced by the reference-aligned light left rail/top bar across V2. Files has no alternate shell; existing route/auth/deep-link behavior remains shared and non-Files business journeys remain functional. |
-| RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/status/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy. |
+| RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy; the Files page does not expose `识别结果` or `整理状态` feedback, while the explicit `整理` action remains available. |
 | RO-4 | **ResourceLibrary drawer and activation.** | The three-step drawer matches the reference; final `保存` submits one complete candidate and the backend validates and atomically activates it, preserving the previous Active on every failure. |
-| RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex supplies only bounded display feedback and post-mutation reconciliation; it never supplies source/path/execution authority. |
+| RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex remains available for bounded backend reconciliation and existing result synchronization, but it does not supply Files-page recognition/status presentation, source/path authority or execution authority. |
 | RO-6 | **Bounded common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete and supported bounded text Edit for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. Copy/Move are bounded by selection, entry/depth/path and control-plane evidence, not by aggregate source media bytes. Direct browser Upload and Download are outside the current product surface. |
 | RO-7 | **Low-friction direct-operation safety.** | Direct file actions do not run the Organize recognition/planning pipeline or require organize execution-token ceremony. Backend RBAC, explicit mutation intent, Storage capability/confinement, stale/conflict checks, audit, no silent overwrite/delete and `OrganizerExecutor`-only mutation remain mandatory. |
 | RO-8 | **Organize workflow continuity.** | Files-originated Preview remains ResourceLibrary-scoped and Storage-relative, derives SourceIdentity from live Storage, continues through existing Preview/intent/OrganizerExecutor authority and synchronizes each terminal result independently to FileIndex. Formal destination composition uses the same `library/path` prefix semantics as the CLI. |
@@ -225,7 +250,8 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - the shared V2 shell chrome for every `/ui-v2/*` route, including responsive behavior;
 - V2 Files at `/ui-v2/library/files`;
 - the Files-local `添加资源库` drawer and its backend Save/activation command;
-- bounded ResourceLibrary browsing, status feedback, selection and organize continuation;
+- bounded ResourceLibrary browsing, selection and organize continuation; the Files page does not
+  present recognition/status feedback;
 - Files toolbar/action menus, destination picker and transfer progress for Create Folder/Text File,
   Rename, Copy, Move, Delete and supported text Edit;
 - backend/application behavior strictly necessary for direct file commands, ResourceLibrary
@@ -250,6 +276,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
   protocol/exception details are not substitutes for an actionable reason and recovery.
 - Selection, expanded directories and current ResourceLibrary context must stay truthful after a
   mutation; deleted or renamed entries cannot remain as hidden stale selection.
+- Files presentation must remain focused on live Storage facts and explicit actions: it must not
+  show `识别结果` or `整理状态` business feedback, but it must retain the explicit `整理` action
+  and its existing safe continuation.
 - Existing non-Files routes keep their information and recovery semantics inside the new shell.
   Shell replacement must not fabricate product areas that have not been migrated.
 - Desktop reference fidelity is structural and reference-aligned rather than pixel-identical.
@@ -462,6 +491,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - [ ] Files `刷新` re-reads the live ResourceLibrary directory and reconciles local directory-tree
       and selection state so an externally removed path is no longer shown after refresh; the
       regression path remains read-only and does not consult FileIndex or mutate Storage.
+- [ ] Files no longer renders `识别结果` or `整理状态` in the information banner, table headers,
+      row cells or status pills; the table retains `选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`,
+      the explicit `整理` action remains functional, and the synchronized visual specification
+      records the same presentation boundary.
 - [x] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
       backend mutation authority remain intact.
 - [x] Conflicting old visual tests are replaced and all required T4/full Slice gates pass without
@@ -501,11 +534,12 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ```text
 Slice Status: ACTIVE
 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness with green CI baseline
+Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
 Task 37.8 state: PASS
 Task 37.9 state: PLANNED
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: Developer implements the remaining Files Web refresh reconciliation in Task 37.9
+Next Action: Developer implements Task 37.9 Files refresh reconciliation and the scoped Files
+presentation boundary
 ```
 
 ## Closure Packet
