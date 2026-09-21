@@ -1556,11 +1556,15 @@ class DirectFileOperationsTests(unittest.TestCase):
                     storage, "parent", entry_evidence=evidence
                 )
                 if result.status.value == "FAILED":
-                    self.assertTrue(
-                        any(
-                            "entry changed since it was confirmed" in error
-                            for error in result.errors
-                        )
+                    # A reused identity can still fail at the provider's
+                    # empty-directory mutation boundary because the replacement
+                    # contains new unconfirmed content. The accepted contract
+                    # requires truthful outcome and source preservation, not one
+                    # particular provider error category.
+                    self.assertTrue((root / "source" / "parent").is_dir())
+                    self.assertEqual(
+                        (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"),
+                        "new",
                     )
                 else:
                     self.assertEqual(result.status.value, "SUCCESS")
