@@ -89,6 +89,9 @@ Recovery:
   stable directory identity rather than the full Local fingerprint. Preserve the non-reused-identity
   fail-closed assertions and the reused-identity truthful-outcome assertions; do not add skips,
   weaken production checks or claim the race is fixed.
+- Raise the `.github/workflows/quality.yml` Python test-matrix timeout from 15 to 30 minutes so the
+  complete Python 3.12 quality run can finish. Keep all three Python versions, the `fail-fast:
+  false` matrix behavior and the wheel job's independent timeout unchanged.
 - Keep the release-quality command inventory required by `tests/test_release_security.py` in this
   Task document, including the Docker release-security smoke command and the `.venv` Ruff/Python
   commands. These are documentation requirements for the active Task; they do not authorize
@@ -119,6 +122,8 @@ Recovery:
 - [ ] The two accepted Local directory replacement tests pass on the stable-identity branch
       semantics, with non-reused identity still failing closed and reused identity reported
       truthfully without a skip.
+- [ ] The GitHub quality workflow completes Python 3.11, 3.12 and 3.13 without timeout
+      cancellation, and the dependent wheel job is eligible to run.
 - [ ] `TASK.md` contains the repository-required release-quality command inventory so the release
       security policy test passes for an active Task.
 - [ ] The implementation checkpoint contains only Task 37.9 work; the pre-existing
