@@ -122,6 +122,30 @@ class GovernanceCheckTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Roadmap Slice 27 must be ACTIVE", result.stderr)
 
+    def test_fix_required_slice_allows_one_matching_active_correction_task(self) -> None:
+        repo, _base_sha = init_repo()
+        task_base = git(repo, "rev-parse", "HEAD")
+        write(repo, "SLICE.md", slice_document(27, "FIX REQUIRED", task_base))
+        git(repo, "add", "SLICE.md")
+        git(repo, "commit", "-qm", "record A fix-required review")
+        write(repo, "TASK.md", task_document(27, "PLANNED", task_base))
+
+        result = run_check(repo)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_fix_required_slice_still_requires_an_active_correction_task(self) -> None:
+        repo, _base_sha = init_repo()
+        task_base = git(repo, "rev-parse", "HEAD")
+        write(repo, "SLICE.md", slice_document(27, "FIX REQUIRED", task_base))
+        git(repo, "add", "SLICE.md")
+        git(repo, "commit", "-qm", "record A fix-required review")
+
+        result = run_check(repo)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION TASK", result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()
