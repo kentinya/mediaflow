@@ -8,7 +8,7 @@ post-reactivation review.
 ```text
 Task ID: 37.8
 Parent Slice: 37
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 062bc0b81021503c5eed76c80517b6ce0bada735
 Difficulty: High
 Test Level: T4
@@ -249,9 +249,14 @@ Production / harness:
 
 - `mediaflow/interfaces/service_api.py` — removed the unreachable Upload-only `_ItemPayloadStream`
   WSGI request-body adapter (34 lines). No other production behavior changed.
-- `scripts/docker_release_security_smoke_test.py` — the manual-Organize Choice probe now submits the
-  current supported `metadata` field instead of the superseded `metadataIdentity` shape, and the
-  provider-free Preview limitation is reported explicitly.
+- `mediaflow/application/manual_organize_preview.py` — an offline `MediaQueryType.NONE`
+  MetadataPolicy with a source-linked bounded metadata identity now pins that identity and plans
+  without any Provider, instead of forcing live metadata mode and failing closed. See "Implemented"
+  item 9.
+- `scripts/docker_release_security_smoke_test.py` — the manual-Organize Choice probe submits the
+  current supported `metadata` field instead of the superseded `metadataIdentity` shape, now asserts
+  the real Choice -> Preview -> Execute -> Worker success path, and keeps two network-free
+  fail-closed legs (ungrounded identity rejected; unconfigured live Provider stays unavailable).
 - `scripts/docker_files_transfer_impact_smoke_test.py` — **new** isolated current-candidate Docker
   acceptance harness replacing the retired `/opt/mediaflow` `source2` reproduction.
 
@@ -261,6 +266,10 @@ Tests / fixtures:
   tests with the accepted residual-risk contract (no skips, no weakened safety assertions).
 - `tests/test_configuration_status.py` — replaced the broad `"root"` substring ban with the hostile
   value/forbidden-field assertions plus the intentional bounded `root_path` projection.
+- `tests/test_manual_organize_preview.py` — two regression tests added: an offline
+  `MediaQueryType.NONE` policy plans a source-linked identity with no Provider registry configured at
+  all, and an identity that no durable source authority grounds is still rejected as
+  `metadata_unverified` (both fail without the production change).
 - `tests/test_manual_operations_contract.py` — the Preview admission/listing legs now use the current
   Storage-derived contract (`relativePath`, scopeId = relative path) and the current
   `Movies/Anime/...` destination-composition expectation.
@@ -302,8 +311,18 @@ requirements/architecture docs, `config/alist.json` (absent).
    FileIndex/Scan routes or relied on a unique-text locator are rewritten to the current supported
    Files/Operations journey or route-scoped locator. Full Playwright is `119 passed`, `0 failed`,
    `0 skipped`.
-7. **Docker release-security probe.** The manual-Organize Choice leg submits the current contract and
-   now reaches HTTP 200 (previously the recorded HTTP 400).
+7. **Docker release-security probe (B's blocker).** The probe previously stopped after Choice with
+   `status=unavailable` / `failure.category=provider_failure` and no plan, so the supported success
+   path was never exercised. It now completes the whole path in the isolated deployment: Choice
+   `HTTP 200` -> Preview `HTTP 201` with `zeroMutation=true` and a non-null exact plan ->
+   Execute `HTTP 202` -> Worker terminal `completed` with one `success` item and exactly one
+   non-destructive `COPY` effect (source retained). Two negative legs stay in the same probe and are
+   network-free: a bounded identity that no source evidence grounds is still rejected
+   `400 metadata_unverified`, and a live MetadataPolicy bound to a Provider this deployment does not
+   configure still yields an `unavailable` Preview with `failure.category=provider_failure` and no
+   plan. Nothing was relabeled as success, no assertion was weakened, and no remote Provider is
+   contacted (the unconfigured-provider leg is rejected by the Provider bootstrap before any HTTP
+   client is constructed).
 8. **Isolated transfer-impact acceptance.** The new harness starts a temporary Compose project with
    temporary managed configuration and synthetic sparse media, and proves in Docker that a 21 GiB
    aggregate is admitted for Impact as informational evidence (exactly `22548578304` bytes, one
@@ -311,6 +330,18 @@ requirements/architecture docs, `config/alist.json` (absent).
    with actionable evidence and `storage_unchanged`, that an over-selection request returns a
    structured actionable 400, that malformed/escaping queries fail closed, and that no
    Copy/Move/Delete mutation occurred.
+9. **Offline source-linked Preview (production fix).** `ManualOrganizePreviewService._run_item` forced
+   `live_metadata=True` whenever a Choice carried a bounded metadata reference, even under an offline
+   `MediaQueryType.NONE` policy that performs no lookup by definition. In a deployment without a
+   reachable Provider the isolated harness could therefore only ever report `provider_failure`. The
+   maintained offline pinned-identity path in `StrategyTestRunner.run_path` is now used for exactly
+   that case: when the pinned policy is offline and the reference already passed the Choice/intent
+   source-linked authority check, the identity is pinned directly and the pipeline plans with no
+   Provider at all. Safety is preserved: the reference can only reach this point through
+   `_validate_choice` -> `_validate_metadata_reference` (durable source-linked authority, re-run by
+   Preview itself), and `run_path` re-validates the pinned identity against the effective
+   RecognitionType and MetadataPolicy. Live policies keep their previous behaviour, and no production
+   Provider fallback was added.
 
 ### Tests and Results
 
@@ -337,7 +368,7 @@ python3 scripts/check_governance.py                     PASS (governance check: 
 .venv/bin/ruff check .                                  PASS (All checks passed)
 .venv/bin/python -m compileall -q mediaflow tests scripts  PASS
 .venv/bin/python -m pip check                           PASS (No broken requirements found)
-.venv/bin/python -m unittest discover -s tests          PASS (1716 run, OK, 7 skipped, 0 failed)
+.venv/bin/python -m unittest discover -s tests          PASS (1718 run, OK, 7 skipped, 0 failed)
 cd web && npm run format:check                          PASS
 cd web && npm run typecheck                             PASS
 cd web && npm run lint                                  PASS
@@ -366,20 +397,25 @@ python3 scripts/docker_files_transfer_impact_smoke_test.py   PASS (exit 0)
   - over-selection (>50) -> HTTP 400 files_transfer_invalid_request, actionable nextAction
   - malformed/escaping queries -> bounded actionable 400
   - zero Copy/Move/Delete mutation: target root empty, source selection intact
-python3 scripts/docker_release_security_smoke_test.py        FAIL / PRE-EXISTING / UNRELATED (exit 1)
-  - Image build, image/compose inspection, four-service stack, non-root/mount boundaries,
-    V1/V2 static coexistence, RBAC/denial, managed activation, Worker restart and the
-    manual-Organize Scan + Intent + Choice legs all PASS; the probe now reaches HTTP 200 on
-    Choice (previously the recorded HTTP 400).
-  - It then stops at the provider-free Preview leg: `provider_failure`. The isolated harness has no
-    Metadata Provider and no network by design, and the current Preview contract resolves an
-    explicit metadata identity through the pinned provider — the offline `metadata_identity` plan
-    path was removed in `42381bd` (2026-09-13), which `git merge-base --is-ancestor` confirms is an
-    ancestor of Task Base `062bc0b`. This is a pre-existing harness/contract limitation, not a
-    regression introduced by this Task, and it is not caused by the `metadata` field fix.
-  - Not silently absorbed: the probe still raises, and the focused WSGI
-    (`tests.test_manual_operations_contract`) and browser (`manual-organize.spec.ts`) journeys prove
-    the same Preview/Execute contract with a provider stub.
+python3 scripts/docker_release_security_smoke_test.py        PASS (exit 0)
+  - Terminal result: "Release-security smoke acceptance passed."
+  - Image build from a clean committed checkout, image history/configuration/filesystem inspection,
+    rendered Compose topology, isolated four-service stack, non-root execution and read-only /
+    read-write mount boundaries, V1/V2 static coexistence, safe headers, RBAC/denial and
+    zero-side-effect probes, managed snapshot activation, Worker restart, and the durable
+    Task/Result projection, log and SQLite canary scans all PASS.
+  - manual-Organize success path actually exercised: Choice HTTP 200 -> Preview HTTP 201 with
+    `zeroMutation=true` -> Preview item `status=previewed` with a non-null exact `plan` ->
+    Execute HTTP 202 -> Worker terminal `completed`, one item `status=success`, source retained and
+    exactly one target `COPY` effect.
+  - Negative legs PASS in the same provider-free run: ungrounded identity -> HTTP 400
+    `metadata_unverified`; live MetadataPolicy with an unconfigured Provider -> Preview item
+    `status=unavailable`, `failure.category=provider_failure`, no plan (never relabeled success).
+  - No explicit metadata reference was required: the server derived the bounded identity from the
+    seeded source-linked dry-run Result, matching B's preferred arrangement. No TMDB credential or
+    remote Provider access is used or needed, and the unconfigured-provider leg is rejected before
+    any HTTP client is constructed.
+  - Skips: none. Unavailable matrix legs: Python 3.11/3.12 interpreters only (see below).
 ```
 
 Docker environment note, recorded truthfully: this session's Docker daemon runs in a different mount
@@ -392,7 +428,7 @@ environment workaround, not a harness change; on a normal CI host the default `T
 Python interpreter matrix:
 
 ```text
-Python 3.13.5 (.venv, /usr/bin/python3.13)  PASS — full regression 1716 run, OK, 7 skipped
+Python 3.13.5 (.venv, /usr/bin/python3.13)  PASS — full regression 1718 run, OK, 7 skipped
 Python 3.11                                  UNAVAILABLE — interpreter not installed in this environment
 Python 3.12                                  UNAVAILABLE — interpreter not installed in this environment
 ```
@@ -416,17 +452,27 @@ Python 3.12                                  UNAVAILABLE — interpreter not ins
 - Rewrote the retired FileIndex Playwright coverage as current Files/Operations journeys rather than
   restoring the retired routes, and scoped the duplicate read-only explanation by its route-owned
   ResourceLibrary block instead of changing product copy.
-- Kept the release-security probe honest: the `metadata` rename fixes the actual recorded defect, and
-  the residue is reported as an explicit pre-existing provider-free limitation instead of being
-  masked, retried or downgraded to a success.
+- Fixed the release-security probe's real cause instead of masking it. The blocker was a production
+  gap, not a harness limitation: `_run_item` forced `live_metadata=True` for any bounded metadata
+  reference, so an offline `MediaQueryType.NONE` policy still demanded a Provider it never needed.
+  Restoring the maintained offline pinned-identity seam (already unit-tested in
+  `tests/test_strategy_cli.py`, but unwired since `42381bd`) lets the offline policy plan from
+  source-linked evidence. This is B's sanctioned "existing deterministic seam or equivalent isolated
+  fixture seam" option; no production Provider fallback, no bypass of source-linked authority, no
+  disabled Provider requirement and no fabricated HTTP response were introduced.
+- Followed B's preferred arrangement in the harness: the positive leg submits no explicit metadata
+  reference at all. The server derives the bounded identity from the seeded source-linked dry-run
+  Result, so the offline path is genuinely offline and needs no TMDB credential.
+- Kept the negative assertion B required. A live MetadataPolicy is bound to a Provider this
+  deployment does not configure, so the fail-closed leg proves an `unavailable` Provider failure
+  without contacting any remote service (the bootstrap rejects the unknown id before constructing an
+  HTTP client). The ungrounded-identity leg proves offline pinning cannot admit an invented identity.
 - Built the new transfer-impact harness around the real API and real Compose stack with sparse
   synthetic media, so it proves aggregate-byte admission through metadata only and never reads or
   writes media content.
 
 ### Remaining In-Slice Work
 
-- The release-security harness's provider-free Preview leg still cannot complete offline; the
-  provider seam it would need is outside this Task's scope and was removed before Task Base.
 - The legacy `metadataIdentity` alias still exists on the separate legacy
   `/api/v1/manual-intents/.../choice` route; this Task did not remove it because the harness now uses
   the supported `/operations/organize/...` route.
@@ -435,9 +481,10 @@ Python 3.12                                  UNAVAILABLE — interpreter not ins
 
 ### Risks / Deviations
 
-- The release-security smoke does not pass end to end. It is recorded as
-  `FAIL / PRE-EXISTING / UNRELATED` with the exact failing leg and the git-ancestry evidence; whether
-  this blocks Task or Slice acceptance is B's judgement, not mine.
+- Both Docker gates now pass end to end against the committed candidate. The release-security
+  offline success depends on the pinned MetadataPolicy being genuinely offline (`mediaQueryType=none`)
+  plus a source-linked grounded identity; under a live policy the previous fail-closed Provider
+  requirement is unchanged, which the retained negative leg verifies.
 - Two Docker gates required a `TMPDIR` workaround because the session's Docker daemon cannot see the
   shell's private `/tmp`. Results are genuine Docker executions of the current candidate; the
   workaround is environment-only.
@@ -452,24 +499,82 @@ Python 3.12                                  UNAVAILABLE — interpreter not ins
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: cddd46c44b9cb6116555c1c13d58c706aaf55c3f
+Head SHA: 2115d18ce53d3d0ecb1b41569f30a08d73a5b47c
 (the report itself is committed as the direct child of this implementation checkpoint)
 ```
 
-The reviewed change is `3decbf6..<report commit>` (`git diff 3decbf6..HEAD`); the implementation
-checkpoint is `cddd46c44b9cb6116555c1c13d58c706aaf55c3f` and the report commit contains this
-completion report only and no production or test change. No accepted history was amended or
-rewritten: `eb305ad`, `6753139`, `444b884`, `857440b` and `3decbf6` remain the Task Base..HEAD
-planning/contract chain they were, and this Task's commit is new on top of them.
+The recorded gates were run against the committed `2115d18` candidate (full Python regression
+re-run on the committed tree: 1718 run, OK, 7 skipped, 0 failed; both Docker harnesses exit 0).
+
+This is the correction round for B's `FIX REQUIRED` review of
+`062bc0b81021503c5eed76c80517b6ce0bada735..cddd46c44b9cb6116555c1c13d58c706aaf55c3f`. The
+correction checkpoint `2115d18ce53d3d0ecb1b41569f30a08d73a5b47c` is an ordinary new commit on top of
+that reviewed range; it changes only the three files listed under Changed Files for the blocker fix
+(`mediaflow/application/manual_organize_preview.py`,
+`scripts/docker_release_security_smoke_test.py`, `tests/test_manual_organize_preview.py`) plus this
+report. It does not amend, rebase or rewrite accepted history, and `cddd46c` remains reachable
+exactly as reviewed.
+
+Because both Docker harnesses build their candidate image from `git archive HEAD`, the correction
+had to be committed before those gates could validate it; the recorded Docker results above are for
+`2115d18` and were produced after that commit. The web and Playwright gate results were produced from
+the identical file content of those three files before the commit.
+
+The report commit is the direct child of the implementation checkpoint and contains the completion
+report only, with no production or test change. No accepted history was amended or rewritten:
+`eb305ad`, `6753139`, `444b884`, `857440b`, `3decbf6`, `cddd46c`, `2411df1` and `2115d18` remain the
+Task Base..Head chain they were.
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 062bc0b81021503c5eed76c80517b6ce0bada735..cddd46c44b9cb6116555c1c13d58c706aaf55c3f
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Blockers:
+
+- The Docker release-security manual-Organize probe does not complete the supported success path.
+  Evidence: `python3 scripts/docker_release_security_smoke_test.py` was run against the current
+  candidate with Docker available and exited `1` at `assert_v2_manual_organize`; after the Choice
+  request was corrected from the obsolete `metadataIdentity` field to `metadata`, the Preview item
+  still ended with `status=unavailable`, `failure.category=provider_failure`, and no plan, so the
+  probe never reached the successful Preview/Execute path. This fails the Task Acceptance Criterion
+  requiring the current-contract probe to complete the supported success path. Reconcile the
+  isolated harness with a legal current-candidate provider/fixture arrangement so the bounded
+  Choice -> Preview -> Execute success path is actually exercised, or record the gate as genuinely
+  unavailable only when its external prerequisite is absent; do not treat a provider failure as
+  success or weaken the assertion.
+
+Required Fix Direction:
+
+- Keep the current request contract: submit `metadata`, never restore `metadataIdentity`.
+- Make the isolated Docker harness exercise a legal deterministic success path without real TMDB
+  credentials, remote Provider access, production media, or a production-only fallback. The
+  preferred arrangement is to keep the harness's `MediaQueryType.NONE` configuration genuinely
+  offline: do not submit an explicit metadata reference that forces `live_metadata=True`; instead
+  use a bounded parser/strategy fixture and source-linked evidence that the current Preview
+  implementation accepts without constructing a live Provider. Ensure the resulting Choice still
+  passes the source-authority checks and the generated Plan has the expected target.
+- If the success path intentionally covers an explicit metadata identity, use an existing
+  deterministic test-only Provider injection seam or an equivalent isolated fixture seam. Do not
+  add a production Provider fallback, bypass source-linked metadata authority, disable the current
+  Preview Provider requirement, or fabricate a successful HTTP response in the smoke script.
+- The corrected smoke must prove, in the real current API/Worker path:
+
+  ```text
+  Choice -> HTTP 200
+  Preview -> HTTP 201 and zeroMutation=true
+  Preview item -> status=previewed with a non-null plan
+  Execute -> HTTP 202
+  Worker -> terminal outcome with the expected non-destructive effect
+  ```
+
+- Preserve the existing release-security isolation guarantees and retain the negative assertion:
+  a genuine Provider failure must remain an unavailable/fail-closed Preview, not be relabeled as
+  success. Record the exact command, exit code, terminal result, skips and unavailable matrix legs
+  in the Developer Completion Report, then rerun the full T4 gates.
+
+Fixes remain in Task 37.8. This result does not close the Slice or update the Roadmap.
