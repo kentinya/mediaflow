@@ -205,9 +205,10 @@ def check_repository(repo: Path) -> None:
         _check_no_active_task(repo, slice_state, roadmap)
         return
 
-    if slice_state.status != "ACTIVE":
+    if slice_state.status not in {"ACTIVE", "FIX REQUIRED"}:
         raise ValueError(
-            f"active Task requires committed HEAD Slice {slice_state.slice_id} to be ACTIVE"
+            f"active Task requires committed HEAD Slice {slice_state.slice_id} to be "
+            "ACTIVE or FIX REQUIRED"
         )
     if task_state.parent_slice != slice_state.slice_id:
         raise ValueError(

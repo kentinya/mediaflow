@@ -1,4 +1,4 @@
-# Task 37.8 — Files Upload Helper Removal and Directory Replacement Fencing
+# Task 37.8 — Files Safety and Quality Gate Reconciliation
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md). It is the focused correction Task for the two P1 blockers
@@ -7,7 +7,7 @@ recorded by A after the Slice 37 post-reactivation review.
 ```text
 Task ID: 37.8
 Parent Slice: 37
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 062bc0b81021503c5eed76c80517b6ce0bada735
 Difficulty: High
 Test Level: T4
@@ -16,14 +16,21 @@ Planner / Reviewer: B
 
 ## Goal
 
-Close the current Slice 37 P1 blockers by:
+Close the current Slice 37 P1 blockers and reconcile the bounded, already-known Python quality
+gate debts by:
 
 1. removing the unreachable Files Upload-specific `_ItemPayloadStream` helper so the
    direct browser Upload/Download vertical is absent end to end; and
 2. making confirmed directory Delete fail closed when a same-name directory is deleted and
    recreated, including when the provider reuses an inode or otherwise presents an equivalent
    low-level identity, while preserving legitimate bounded recursive deletion of the originally
-   confirmed directory after its confirmed children are removed.
+   confirmed directory after its confirmed children are removed;
+3. aligning the configuration-status redaction assertion and the two Manual Operations
+   contract/fixture tests with the current supported API semantics without weakening secret or
+   authority checks; and
+4. making the executable governance guard implement the documented
+   `FIX REQUIRED -> active correction Task` lifecycle and keeping release-quality Task
+   documentation complete.
 
 This advances RO-6, RO-7 and RO-11 without adding a new Files surface, Storage capability or
 organize path.
@@ -43,10 +50,25 @@ the inode, so the replacement passed the old fence and Delete returned `SUCCESS`
 Storage mutation safety defect, not a test-only flake: a replacement directory must never be
 deleted under stale confirmation.
 
-The Task keeps both concerns together because they are the remaining post-reactivation
-corrections in the existing direct-Files safety/removal boundary. It does not absorb unrelated
-configuration projection, stale Manual Operations fixtures, legacy Playwright routes or the
-obsolete Docker smoke probe.
+The same full Python quality gate also contains three bounded P2 debts with known causes:
+
+- the configuration-status redaction test rejects the legitimate projected field name
+  `root_path` because it searches for the broad substring `root`, even though the hostile root
+  value is not exposed;
+- two Manual Operations contract tests still submit or compare a superseded Preview
+  request/fixture and receive HTTP 400 before their actual fixture/redaction assertions; and
+- the release-security policy test requires an active Task to name the release-security smoke
+  command explicitly.
+
+These are included because the user explicitly requested that the known P2 Python quality-gate
+debts be reconciled in this correction Task. The Task still excludes legacy Playwright route
+assertions and the old Docker `source2` reproduction because those are separate cross-surface or
+external-environment work.
+
+The executable governance guard also contradicts the authoritative workflow: it currently rejects
+every active Task unless the Slice is `ACTIVE`, while the documented correction loop requires the
+Slice to remain `FIX REQUIRED` until B's correction Task passes. This Task repairs that guard and
+adds regression coverage without weakening parent-Slice, Roadmap, Base or checkpoint validation.
 
 ## Implementation Scope
 
@@ -71,6 +93,20 @@ obsolete Docker smoke probe.
 - Update only the directly affected absence/safety tests and evidence. Do not rewrite historical
   Slice packets or change the parent Contract, Roadmap, Progress, product requirements or
   architecture documents.
+- Update `scripts/check_governance.py` so a committed `FIX REQUIRED` Slice may have one matching
+  active correction Task while the corresponding Roadmap row remains `ACTIVE`. Preserve rejection
+  of `FIX REQUIRED` with no active Task, mismatched parent Slice, non-Active Roadmap state,
+  uncheckpointed Contracts and invalid Base ancestry.
+- Replace the configuration redaction test's broad field-name substring assertion with checks that
+  the injected hostile values and forbidden raw configuration fields are absent while the
+  intentional bounded `root_path` projection remains allowed.
+- Reconcile the two Manual Operations contract tests and their frontend fixture with the current
+  supported Preview request/response contract. The journey must reach the intended successful
+  capture; changing the expected status to 400 or weakening forbidden-evidence assertions is not
+  acceptable.
+- Keep the active Task's release-quality command list complete, including
+  `python3 scripts/docker_release_security_smoke_test.py`; the external smoke may be reported
+  `UNAVAILABLE` when Docker is unavailable, but the command and actual result must be recorded.
 
 Frozen areas:
 
@@ -79,7 +115,7 @@ Frozen areas:
 - Copy/Move transfer semantics, conflict policy, cross-Storage verification and Task fencing
   except for shared identity helpers strictly required by this Delete correction;
 - historical Task/Result persistence and schema;
-- all unrelated P2 baseline failures and unavailable external probes.
+- legacy Playwright route/assertion debts and the old Docker `source2` reproduction.
 
 ## Acceptance Criteria
 
@@ -100,6 +136,15 @@ Frozen areas:
 - [ ] No silent overwrite/delete, implicit fallback or automatic uncertain-effect replay is added.
 - [ ] The focused direct-operation tests pass, including the two GitHub-failing regression cases
       and the valid recursive-child-removal case.
+- [ ] Governance accepts the committed Slice 37 `FIX REQUIRED` state with this matching active
+      Task and `ACTIVE` Roadmap row, while its existing rejection cases remain covered.
+- [ ] Configuration-status redaction tests prove hostile values and forbidden raw configuration
+      fields are absent without rejecting the legitimate bounded `root_path` projection.
+- [ ] Both Manual Operations contract tests complete the current supported Preview/Organize
+      capture successfully, match the reconciled frontend fixture and retain all secret/internal
+      evidence prohibitions.
+- [ ] The active Task documents and runs, or truthfully marks unavailable, the required
+      release-security smoke command.
 - [ ] Python 3.11, 3.12 and 3.13 matrix results are recorded truthfully. Any unavailable local
       interpreter or external gate is explicitly marked `UNAVAILABLE`, not inferred as PASS.
 - [ ] The full offline Python regression, relevant Web regression, direct Upload/Download
@@ -119,6 +164,12 @@ Focused safety and absence checks:
   tests.test_direct_file_operations.DirectFileOperationsTests.test_confirmed_recursive_delete_tolerates_confirmed_child_removals
 
 .venv/bin/python -m unittest tests.test_direct_file_operations tests.test_organizer
+.venv/bin/python -m unittest -v \
+  tests.test_governance \
+  tests.test_configuration_status.ConfigurationSnapshotTests.test_hostile_configuration_content_is_never_exposed \
+  tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_carry_no_forbidden_evidence \
+  tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture \
+  tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution
 ```
 
 The focused suite must include a deterministic fake/provider case that reuses or simulates the
@@ -147,6 +198,7 @@ python3 scripts/check_governance.py
 .venv/bin/python -m pip check
 .venv/bin/python -m unittest discover -s tests
 cd web && npm run format:check && npm run typecheck && npm run lint && npm run test -- --run && npm run build
+python3 scripts/docker_release_security_smoke_test.py
 git diff --check
 test ! -e config/alist.json
 ```
@@ -157,10 +209,9 @@ private-file scope, and the exact current `HEAD` SHA. Run the Python quality job
 
 ## Non-goals
 
-- Fixing the configuration projection test's over-broad `root` assertion.
-- Updating stale Manual Operations fixtures or request shapes.
 - Repairing legacy Playwright routes/assertions.
-- Repairing the Docker release smoke probe or deploying a candidate image.
+- Repairing the obsolete Docker manual-Organize probe, reproducing the old `source2` deployment,
+  or deploying a candidate image solely for that external reproduction.
 - Reintroducing browser Upload/Download, adding compatibility routes, or adding a new transfer
   workflow.
 - Redesigning Storage providers, schema, ResourceLibrary, Organize, Copy/Move or the shared V2
