@@ -9,9 +9,9 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
+Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
 Contract Revision: 2026-09-20 A AUTHORIZED SCOPE REVISION — destination parity, direct Upload/Download removal and Copy/Move control-plane bounds
 ```
 
@@ -435,12 +435,12 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
+Slice Status: READY FOR A REVIEW
+Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
 Contract Revision: A AUTHORIZED SCOPE REVISION — formal classification library-prefix alignment and direct Files Upload/Download removal
 Prior Task 37.6 state: PASS
-Active correction: Task 37.7 pending implementation under the A-expanded scope
-Next Action: Developer implements Task 37.7; B reviews the combined checkpoint
+Active correction: Task 37.7 PASS; awaiting A final review under the A-expanded scope
+Next Action: A final review
 ```
 
 ## Closure Packet
@@ -592,3 +592,121 @@ Closure Reconciliation:
 
 The Slice is therefore `PASS / CLOSED` as of 2026-09-20. The next legal action is for A to select
 the next large Slice in a subsequent A turn.
+
+## Post-reactivation Closure Packet
+
+```text
+Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Head SHA: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
+
+Required Outcomes:
+- RO-1 Reference-aligned visual fidelity — COMPLETE
+- RO-2 Shared V2 shell replacement — COMPLETE
+- RO-3 Exact Files composition — COMPLETE
+- RO-4 ResourceLibrary drawer and activation — COMPLETE
+- RO-5 Storage-authoritative Files data — COMPLETE
+- RO-6 Bounded common file management — COMPLETE; Copy/Move is bounded by control-plane scope,
+  not aggregate media bytes, and direct browser Upload/Download is outside the current surface
+- RO-7 Low-friction direct-operation safety — COMPLETE
+- RO-8 Organize workflow continuity — COMPLETE
+- RO-8C Formal classification path parity correction — COMPLETE
+- RO-9 Actionable recovery — COMPLETE
+- RO-10 Non-Files behavior continuity — COMPLETE
+- RO-11 Test reconciliation — COMPLETE for current supported surfaces; baseline P2 debts remain
+  recorded below
+- RO-12 Security model continuity — COMPLETE
+
+Required Surfaces:
+- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
+- V2 Files at `/ui-v2/library/files` — COMPLETE
+- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
+- ResourceLibrary browsing, status, selection and Organize continuation — COMPLETE
+- Files toolbar/action menus and bounded Create Folder/Text File, Rename, Copy, Move, Delete and
+  supported text Edit — COMPLETE
+- Shared formal `library/path` destination composition across Plan, Preview/precheck, projections,
+  execution and result evidence — COMPLETE
+- Direct browser Upload/Download controls, routes, services, models and dedicated tests — REMOVED
+  per the current A-owned scope revision; absence verified
+- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
+
+Implemented:
+- Corrected formal destination composition to include `ClassificationRule.result.library` as the
+  first safe relative prefix while preserving `mediaLibraryId` authority and CLI parity.
+- Removed the direct Files Upload/Download vertical while preserving generic Storage Read/Write,
+  provider transfer primitives, Copy/Move, text Edit and OrganizerExecutor behavior.
+- Repaired Files-originated Save Choice validation against live Storage without requiring a
+  FileIndex row, retained FileIndex-originated validation, and preserved zero-mutation rejection
+  and stale-source recovery semantics.
+- Removed the aggregate media-byte Copy/Move admission ceiling and added truthful bounded JSON 413
+  serialization for control-plane limit failures.
+- Made the Files drawer regression deterministic under the full Web suite without changing the
+  production component or weakening assertions.
+
+Tasks completed:
+- 37.1 — Files reference browse, shared shell and selection authority
+- 37.2 — ResourceLibrary atomic activation
+- 37.3 — Bounded Files maintenance and ResourceLibrary removal
+- 37.4 — Bounded Files Copy and Move transfers
+- 37.5 — Bounded Files Upload and Download
+- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
+- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
+  validation, Copy/Move control-plane correction and Web regression determinism
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- Focused Python groups — `297 passed`, `91 subtests passed` across the required Task groups.
+- Full Python regression — `1703 passed`, `7 skipped`, `4 failed`, `1392 subtests passed`; all
+  four failures reproduce at Task Base and are recorded as non-blocking P2 baseline debts.
+- Ruff format/check, compileall, pip check and `git diff --check` — PASS.
+- Web format, TypeScript, ESLint and production build — PASS; build retained the existing non-blocking
+  chunk-size warning.
+- Web Vitest — `33 files`, `455 passed`, `0 failed`.
+- Focused Files Playwright — `31 passed`.
+- Direct Upload/Download absence search — zero matches for the dedicated Files vertical identifiers.
+- `config/alist.json` absent and the canonical dirty reference image unchanged from Task Base.
+- Prior Slice-level full Playwright evidence remains `112 passed`, `10` legacy/duplicate P2 failures;
+  current correction-specific Files coverage passes as above.
+- Docker release security smoke and the Docker `source2` reproduction remain unavailable because the
+  existing harness/stack uses the superseded `metadataIdentity` request shape and is not the current
+  candidate checkout.
+
+Safety Evidence:
+- Destination validation is fail-closed for unsafe `library` contributions; `mediaLibraryId`
+  remains the sole MediaLibrary/Storage root authority.
+- Preview, DryRun, Save Choice and other analysis stages remain zero-mutation; OrganizerExecutor
+  remains the only Storage mutation boundary.
+- Files-originated source validation uses pinned Active Storage authority without requiring a
+  FileIndex row; missing/stale sources preserve durable Choice and intent state.
+- Copy/Move keeps bounded selection, entry, depth, path, manifest and checkpoint controls; large
+  aggregate media bytes remain impact/progress information only.
+- No silent overwrite/delete, implicit transfer fallback or uncertain mutation replay was added;
+  generic Storage Read/Write and provider primitives remain available.
+- The reviewed diff contains no credentials, `config/alist.json`, ignored artifacts or modified
+  canonical reference image, and no tests were skipped, deleted to hide a failure, or weakened.
+
+Known Non-blocking Issues:
+- P2: four pre-existing Python failures reproduce at Task Base: one configuration projection
+  assertion rejects the legitimate `root_path` field name; two manual-operations contract tests
+  expect a superseded request/fixture shape; and one release-security test expects a different
+  task quality-gate documentation shape. None is in the Task implementation diff or current
+  Files/destination journey.
+- P2: ten legacy Playwright assertions from the prior closure target unsupported routes or a
+  duplicate read-only explanation; they are outside current supported navigation.
+- P2: Docker release smoke remains unavailable due to the obsolete `metadataIdentity` probe and
+  the unavailable `source2` Docker reproduction.
+
+Explicitly Deferred:
+- Preserve the current Contract list unchanged: arbitrary binary/video/audio/image editing and
+  stream inspection; unbounded recursive/batch operations; arbitrary host filesystem access;
+  host extraction outside authenticated Download; implicit cross-Storage fallback; general
+  Configuration/Settings redesign; V1 `/ui` retirement; new providers/adapters/identity systems;
+  universal rollback; automatic uncertain replay; and FFmpeg/FFprobe.
+
+Documentation Reconciliation Needed:
+- A should reconcile the historical pre-reactivation closure record with this post-reactivation
+  correction packet while preserving both as dated history, and record the final review over the
+  original Slice Base through this corrected Head.
+
+Decision: SLICE READY FOR A REVIEW
+```
