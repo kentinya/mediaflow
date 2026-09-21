@@ -13,8 +13,8 @@ V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 37 — Files Workspace, Common File Management and V2 Shell — PASS / CLOSED
 Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Slice 37 Implementation Head: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Slice 37 A Final Review: PASS / CLOSED — 2026-09-20
+Slice 37 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
+Slice 37 A Final Review: PASS / CLOSED — 2026-09-21
 Active large Slice: none — A selects the next large Slice
 ```
 
@@ -22,7 +22,9 @@ The current V2 package version and implementation status are governance metadata
 product requirements. Slices 30, 31, 32, 33 and 37 are closed. Slice 37 replaced the prior V2
 shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
 are retired from the current Roadmap; their historical references remain historical and do not change
-the stable requirements layer.
+the stable requirements layer. The stable common-file-management target retains its broader future
+capability set; the current Slice 37 delivery boundary explicitly excludes direct browser
+Upload/Download and does not claim those surfaces as delivered.
 
 ## Stable V2 requirements
 
@@ -83,10 +85,10 @@ boundaries are.
   recovery state and never authorizes replay of an uncertain Storage mutation.
 - Browsing, selection, ResourceLibrary configuration and Preview admission must not otherwise
   introduce a FileIndex dependency.
-- Files exposes Create Folder/Text File, Rename, Copy, Move, Delete, allowlisted bounded text Edit,
-  Upload and Download. Mutations use explicitly selected Active source/destination
-  ResourceLibraries and relative paths and execute only through the backend `OrganizerExecutor`;
-  Download is a confined zero-mutation stream.
+- The current Slice 37 Files surface exposes Create Folder/Text File, Rename, Copy, Move, Delete and
+  allowlisted bounded text Edit. Direct browser Upload/Download controls, routes, services and
+  projections are outside the current delivery boundary; generic Storage/provider transfer
+  primitives remain available for supported backend workflows.
 - Direct file commands do not run the media Organize pipeline or require its Preview/execution-token
   ceremony. Conflicts default to no overwrite, Delete requires one explicit permanent-effect
   confirmation, and Replace/Edit Save are explicit overwrite intents bound to current Storage state.
@@ -94,10 +96,9 @@ boundaries are.
   operations require advertised native capability; cross-Storage Copy is explicit, and cross-Storage
   Move is an explicit Copy/verify/Delete-source compound operation that never deletes the source
   after failed verification and never masquerades as a fallback.
-- File/directory-tree Upload is bounded and streamed with safe relative paths and per-item outcomes.
-  File/directory Download is a bounded read;
-  multi-item/directory download may use a streamed archive that is never written into managed
-  Storage. Unbounded recursion and arbitrary binary/media editing remain outside this requirement.
+- Unbounded recursion and arbitrary binary/media editing remain outside this requirement. Any future
+  browser transfer surface must preserve the same bounded, backend-authoritative and
+  OrganizerExecutor-only safety boundary.
 - A known direct-operation result may reconcile bounded FileIndex display state after Storage
   outcome is recorded. FileIndex does not authorize the operation, and reconciliation failure does
   not replay it.

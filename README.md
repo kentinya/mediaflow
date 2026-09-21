@@ -93,12 +93,14 @@ read-only Library journey across bounded Active Storage browsing, FileIndex cata
 physical/indexed context. Slice 33 delivered the Operations command center across actionable
 Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
 scheduled Automation and Notification delivery operation, including the accepted Worker
-pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` at Base
+pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` after A's 2026-09-21
+post-reactivation Final Review at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`9e105d88c624e2ec8cfcc6fc71bef50cb929e99f`. It delivered the replacement light shell in the
-canonical Files reference, bounded ResourceLibrary activation and complete Files
-Create Folder/Text File, Rename/Copy/Move/Delete/text Edit/Upload/Download and Organize
-continuation as specified in [`docs/file-page-visual-spec.md`](docs/file-page-visual-spec.md).
+`2115d1839eb0611f097913eae8a43492d00346a2`. It delivered the replacement light shell in the
+canonical Files reference, bounded ResourceLibrary activation, complete Files
+Create Folder/Text File, Rename/Copy/Move/Delete/text Edit and Organize continuation, plus formal
+`library/path` destination parity. Direct browser Upload/Download was removed from the current
+surface; generic Storage/provider transfer primitives remain available.
 Non-Files business journeys remain unchanged inside the replacement shell. The previously planned
 Slice 34–36 boundaries are retired from the current Roadmap; A will select the next large Slice.
 The V1 API, authentication and Storage authority remain

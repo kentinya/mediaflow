@@ -111,11 +111,12 @@ The V2 program preserves the current `/api/v1/*` authority, Python application/d
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
 and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
 Slice 37 is PASS / CLOSED at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation
-Head `9e105d88c624e2ec8cfcc6fc71bef50cb929e99f`. It replaced the former V2 shell presentation with
-the shared light shell in the canonical Files reference and completed Files common bounded file
-management. Non-Files business-surface migrations and final cutover remain outside the closed Slice;
-existing non-Files route behavior is retained inside the replacement shell. A selects the next
-large Slice separately.
+Head `2115d1839eb0611f097913eae8a43492d00346a2`. It replaced the former V2 shell presentation with
+the shared light shell in the canonical Files reference, completed Files common bounded file
+management, removed the direct browser Upload/Download vertical from the current surface and
+corrected formal `library/path` destination parity. Non-Files business-surface migrations and final
+cutover remain outside the closed Slice; existing non-Files route behavior is retained inside the
+replacement shell. A selects the next large Slice separately.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
@@ -512,7 +513,6 @@ The Files workspace adds deliberately short read and mutation paths for ordinary
 ```text
 selected Active ResourceLibrary source/destination
     -> live list/stat/read + capability/limit admission
-       ├─ Download -> bounded response/archive stream -> read result
        └─ mutation command
             -> OrganizerExecutor
             -> per-item audit/result
@@ -521,13 +521,14 @@ selected Active ResourceLibrary source/destination
 ```
 
 This boundary supports CreateDirectory, bounded text-file creation, Rename, Copy, Move, Delete,
-bounded allowlisted text Read/Write, Upload and Download for one item or a bounded selection. It
+bounded allowlisted text Read/Write for one item or a bounded selection. Direct browser Upload and
+Download are outside the current Files surface; generic Storage/provider transfer primitives remain
+available for supported backend workflows. It
 does not run Scanner, Parser, Recognition, Metadata, Naming, Classification, the organize Planner,
 organize Preview or execution-token review. The shorter journey does not create a second mutation authority: the
 application enforces backend RBAC, selected Active source/destination bindings, relative-path
 confinement, provider capability, item/depth/size limits, stale/conflict checks and explicit
-Delete/Replace/Save intent. Only OrganizerExecutor invokes CreateDirectory/Copy/Move/Delete/Write;
-Download uses confined Storage reads and streams no artifact back into managed Storage.
+Delete/Replace/Save intent. Only OrganizerExecutor invokes CreateDirectory/Copy/Move/Delete/Write.
 
 Same-Storage Copy/Move uses advertised native capability without fallback. Cross-Storage Copy is an
 explicit transfer. Cross-Storage Move is modeled as a visible compound operation with per-item
@@ -543,11 +544,9 @@ Bounded recursive/batch mutations use the existing Task system and independent i
 Delete may include bounded non-empty directories after a lightweight item/size impact summary and
 one explicit confirmation, but ResourceLibrary roots and unbounded recursion are rejected.
 
-File/directory-tree uploads stream safe relative paths to the selected destination under configured
-count/file/depth/request limits and use explicit conflict behavior. Downloads stream a file or a
-bounded directory/multi-selection archive; archive construction is read-only and does not persist a
-hidden file to Storage. Arbitrary binary
-or media-content editing and arbitrary host paths remain outside this boundary.
+Direct browser Upload/Download controls, routes and services are removed from the current Files
+vertical. Arbitrary binary or media-content editing and arbitrary host paths remain outside this
+boundary.
 
 Live Storage is authoritative before and after each command. FileIndex may be reconciled to prevent
 stale display feedback, but it never admits the command; reconciliation failure is recorded and
@@ -582,12 +581,14 @@ make FileIndex a physical-source/execution authority. Focused backend/applicatio
 ResourceLibrary save/activation, direct file commands and post-mutation index reconciliation is
 part of the confirmed Files journey; unrelated business behavior remains unchanged.
 
-## Slice 37 delivery — 2026-09-20
+## Slice 37 delivery — 2026-09-21
 
 The current implementation delivered the Slice 37 Files journey across the shared V2 shell,
-ResourceLibrary activation, live Storage browsing, bounded direct file commands, durable
-Copy/Move/Upload work, confined Download streaming, Storage-source Organize continuation and exact
-FileIndex reconciliation. The implementation preserves the single Python authority and
+ResourceLibrary activation, live Storage browsing, bounded direct file commands, Storage-source
+Organize continuation, formal `library/path` destination parity and exact FileIndex reconciliation.
+The direct browser Upload/Download vertical was removed from the current surface while generic
+Storage/provider transfer primitives remain available. The implementation preserves the single
+Python authority and
 OrganizerExecutor mutation boundary described above. The explicitly deferred binary/media editing,
 unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems,
 universal rollback and automatic uncertain replay remain deferred.
