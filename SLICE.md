@@ -9,9 +9,9 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
+Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
 Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — accept the narrow concurrent Local directory replacement race and retain operator guidance
 ```
 
@@ -404,13 +404,13 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
       and the action/state remains unambiguous.
 - [x] Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit complete from
       Files with low-friction success/failure/recovery and bounded multi-selection where useful.
-- [ ] Direct Files Upload and Download controls, routes, services, models and dedicated tests are
+- [x] Direct Files Upload and Download controls, routes, services, models and dedicated tests are
       removed; Storage/provider primitives needed by remaining workflows remain intact.
 - [x] Delete and Replace/text overwrite require explicit operator intent, never silently affect
       another path/version and never automatically replay an uncertain result.
 - [x] Same- and cross-Storage Copy/Move expose capability and compound-operation truth; verification
       failure preserves the source and partial results remain independently recoverable.
-- [ ] Copy/Move no longer rejects a file or bounded directory solely because aggregate source media
+- [x] Copy/Move no longer rejects a file or bounded directory solely because aggregate source media
       bytes exceed 20 GiB; Impact remains metadata-only and manifest/checkpoint/projection state
       remains bounded by selection, entry/depth/path and output limits.
 - [x] `+ 添加资源库` saves, validates and atomically activates a complete candidate; any failure keeps
@@ -418,10 +418,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
 - [x] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
       result synchronizes independently without mutation replay.
-- [ ] Formal Organize destination composition includes the classification `library` prefix before
+- [x] Formal Organize destination composition includes the classification `library` prefix before
       the classification relative path, matching the local CLI, across Plan, Preview, precheck,
       execution and result evidence.
-- [ ] The `library` prefix is validated with the same bounded safe-relative-path rules as other
+- [x] The `library` prefix is validated with the same bounded safe-relative-path rules as other
       destination contributions; unsafe values fail closed without Storage mutation.
 - [x] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
       backend mutation authority remain intact.
@@ -458,12 +458,11 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: FIX REQUIRED
-Implementation Head: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
+Slice Status: PASS / CLOSED
+Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
 Contract Revision: 2026-09-21 A RESIDUAL RISK DISPOSITION — concurrent Local directory replacement race accepted with README guidance
-Prior Task 37.6 state: PASS
-Active correction: Task 37.8 requires B reevaluation after the 2026-09-21 A residual-risk disposition
-Next Action: B revises Task 37.8; Developer does not continue directory-generation/fencing work
+Task 37.8 state: PASS
+Next Action: A selects the next large Slice in a subsequent turn
 ```
 
 ## Closure Packet
@@ -766,3 +765,42 @@ Accepted Residual Risk:
 - README contains the operator-facing prevention and recovery guidance. B must remove the
   replacement-resistant generation architecture from Task 37.8 and reconcile the two host-filesystem
   tests with this accepted contract without adding skips or representing the race as fixed.
+
+## A Final Review — Post-reactivation Closure 2026-09-21
+
+```text
+Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..2115d1839eb0611f097913eae8a43492d00346a2
+Decision: PASS / CLOSED
+P0/P1 Blockers:
+- None.
+```
+
+Closure Reconciliation:
+
+- All current Slice 37 Required Outcomes and Required Surfaces are complete. The final supported
+  Files surface is the shared V2 shell, live ResourceLibrary browsing, ResourceLibrary activation,
+  Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit and Organize continuation.
+  Direct browser Upload/Download was removed vertically from the current scope; generic Storage
+  Read/Write, provider transfer primitives and Copy/Move behavior remain available.
+- The user journey is complete: the operator enters Files, sees live Storage-authoritative state,
+  performs bounded actions with explicit destructive intent where required, receives independent
+  success/failure/partial outcomes, and recovers through corrected input, refresh, revalidation or
+  durable Organize state. Non-Files V2 journeys remain functional inside the shared shell.
+- The formal destination correction is complete: `ClassificationRule.result.library` is validated
+  as a safe relative prefix and composed before `result.path` consistently across Plan, Preview,
+  precheck, execution and result evidence, with CLI parity and zero-mutation rejection.
+- Safety invariants hold: analysis/read stages remain zero-mutation, only `OrganizerExecutor` mutates
+  Storage, authority is resolved from backend Active ResourceLibrary/Storage bindings, overwrite and
+  delete are explicit, cross-Storage Move verifies before deleting the source, and uncertain effects
+  are never automatically replayed. RecognitionType identity remains independent of downstream policy
+  reuse.
+- A reran the final gates on the reviewed implementation checkpoint: Python `1718` tests passed with
+  `7` skips; Web format/typecheck/lint/Vitest `455` tests and production build passed; Playwright
+  `119` tests passed with no failures or skips; governance, Ruff, compile, dependency, diff and
+  private-file checks passed; Docker release-security and transfer-impact smoke tests passed.
+  Python 3.11/3.12 were unavailable locally and are not inferred. The accepted narrow Local
+  directory replacement/inode-reuse race remains documented residual risk, not a claimed fix.
+- The dirty working-tree copy of `docs/pics/文件页.png` was pre-existing user work and is excluded
+  from the reviewed checkpoint. `config/alist.json` is absent and no secret/private configuration
+  entered the reviewed range. The next legal action is A selecting the next large Slice in a later
+  turn.

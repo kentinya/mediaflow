@@ -187,9 +187,11 @@ activation.
 Authenticated Operator Web/API can browse configured Active-runtime Storage through bounded
 Storage-relative directory/file views. Current listings are lazy, deterministic and read-only,
 with confined roots, breadcrumb/cursor navigation, provider-safe errors and no arbitrary host-path
-access. Closed Slice 37 delivered Create Folder/Text File, Rename, Copy, Move, Delete, supported
-bounded text Edit, Upload and Download commands to this Files workspace, with bounded
-multi-selection where meaningful. Live Storage remains the physical source and authority. Files may
+access. Closed Slice 37 delivered Create Folder/Text File, Rename, Copy, Move, Delete and supported
+bounded text Edit commands to this Files workspace, with bounded multi-selection where meaningful.
+Direct browser Upload/Download is outside the current Files surface; generic Storage/provider
+transfer primitives remain available for supported backend workflows. Live Storage remains the
+physical source and authority. Files may
 additionally show a bounded FileIndex-derived recognition/business-status projection or reconcile
 that projection after a known mutation, but FileIndex does not enumerate the physical listing and
 does not provide source or execution authority. Viewing it does not recursively scan Storage or
@@ -204,8 +206,8 @@ create work merely by viewing it.
   bounded recognition/business-status feedback. FileIndex membership, occurrence, fingerprint and
   other authority fields are not Files-page display state.
 - **Action:** browse a directory, select a bounded file/directory scope, refresh, create a folder or
-  text file, rename/copy/move/delete eligible content, edit supported bounded text, upload/download
-  bounded content, or continue to the shared Scan/Preview/Organize journey.
+  text file, rename/copy/move/delete eligible content, edit supported bounded text, or continue to
+  the shared Scan/Preview/Organize journey.
 - **Success:** the operator reaches an exact ResourceLibrary-relative source/scope without using
   FileIndex as source authority; a common file command refreshes the live listing after its audited
   per-item results, and a new ResourceLibrary becomes browseable only after the backend has successfully
@@ -225,11 +227,10 @@ create work merely by viewing it.
   relevant capabilities, bounded selection/impact, per-item transfer progress and concise conflict,
   stale or partial-state explanations; text editing shows bounded text rather than a media editor.
 - **Action:** create a folder or supported text file; rename, copy, move or delete one/bounded-many
-  files/directories; save supported text; upload bounded selected files/directories; or download
-  bounded files/directories.
+  files/directories; or save supported text.
 - **Success:** the backend revalidates RBAC, selected Active Storage bindings, confinement,
   capability and current entry evidence; OrganizerExecutor performs requested mutations with
-  independent results, Download streams a confined read, and Files returns to refreshed live truth.
+  independent results, and Files returns to refreshed live truth.
 - **Failure:** unsupported capability/type, root or unbounded deletion, destination conflict,
   transfer limit/verification failure, stale evidence, denied authority or uncertain execution fails
   closed with independent affected-item state and a safe next action.
@@ -240,7 +241,8 @@ create work merely by viewing it.
   resolve partial transfers, reconfirm current delete/replace scope, or reopen changed text before
   saving. Cross-Storage Move never deletes its source before verified Copy. These commands do not
   require organize recognition, metadata, naming/classification, Preview or execution-token
-  ceremony, but retain mandatory mutation invariants. Download is a confined zero-mutation read.
+  ceremony, but retain mandatory mutation invariants. Generic Storage reads remain confined and
+  zero-mutation.
 
 ### Add ResourceLibrary from Files
 
@@ -464,8 +466,10 @@ read-only Library journey and the complete Operations workspace. Slice 33's acce
 correction reconstructs the exact pinned source authority across the resident Worker boundary and
 fails closed before mutation when source evidence cannot be proved. Closed Slice 37 replaced the
 old V2 shell presentation with the shared shell shown in the Files reference and completed the
-Files workspace defined by [`file-page-visual-spec.md`](file-page-visual-spec.md). The previously
-planned later migration boundaries remain retired until A selects the next large Slice.
+current Files workspace defined by [`file-page-visual-spec.md`](file-page-visual-spec.md). Its
+post-closure correction also aligned formal `library/path` destination semantics with the local
+CLI and removed the direct browser Upload/Download vertical. The previously planned later
+migration boundaries remain retired until A selects the next large Slice.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -567,8 +571,8 @@ planned later migration boundaries remain retired until A selects the next large
 
 The Files journey is: choose or create a ResourceLibrary, browse its directories, inspect live
 Storage entries and any bounded FileIndex recognition/business-status feedback, perform bounded
-common Create Folder/Text File/Rename/Copy/Move/Delete/supported text Edit/Upload/Download actions,
-or select one or more files to create a zero-mutation organize Preview, confirm the reviewed result,
+common Create Folder/Text File/Rename/Copy/Move/Delete/supported text Edit actions, or select one
+or more files to create a zero-mutation organize Preview, confirm the reviewed result,
 and follow progress in Operations. The
 `+ 添加资源库` action creates a ResourceLibrary; its final `保存` action wraps the existing managed
 configuration validation and activation flow on the server. A successful save publishes a new
@@ -581,7 +585,8 @@ entry checks, explicit Delete/Replace/Save intent, OrganizerExecutor-only mutati
 results. Bounded batch/recursive work preserves per-item outcomes; Copy/Move content byte totals are
 display evidence rather than admission authority, while selection, entry/depth/path and
 control-plane evidence remain bounded. Cross-Storage Move is explicit Copy/verify/Delete with source
-preservation on failed verification; Download remains zero-mutation.
+preservation on failed verification. Direct browser Upload/Download remains outside the current
+Files surface.
 
 FileIndex is allowed only as a display-feedback source for business status and as a post-mutation
 reconciliation target. The Files-originated organize Preview and direct file commands still derive
@@ -605,4 +610,4 @@ configuration-activation failures remain bounded recovery states. Other pages' b
 and backend behavior are frozen, while their shared outer chrome intentionally changed to the
 replacement shell. Slice 37 is PASS / CLOSED at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`9e105d88c624e2ec8cfcc6fc71bef50cb929e99f`.
+`2115d1839eb0611f097913eae8a43492d00346a2`.
