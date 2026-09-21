@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh must remove stale ResourceLibrary directory-tree state
+Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness with green CI baseline
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -62,11 +62,13 @@ inode-reuse/ctime-change case. Task 37.9 must align those tests with the accepte
 changing production fencing, adding skips, or claiming the race is fixed. The release-quality Task
 command inventory must also remain present in the active `TASK.md`.
 
-GitHub quality run `#117` then showed that the corrected tests complete successfully on Python
+GitHub quality run `#117` then showed that the corrected tests completed successfully on Python
 3.11 and 3.13, while the Python 3.12 matrix job was cancelled by the existing 15-minute test-job
-timeout before its full 1718-test run completed. Task 37.9 therefore also raises only the quality
-test job timeout to 30 minutes; it does not remove a Python version, weaken a test, or change the
-wheel job timeout.
+timeout before its full 1718-test run completed. Task 37.9 raised only the quality test job timeout
+to 30 minutes; it did not remove a Python version, weaken a test, or change the wheel job timeout.
+The resulting GitHub quality run `#118` on commit `320d8437a8872f7a08ee84295a0f900a39f84a7d`
+passed all Python 3.11/3.12/3.13 jobs and the dependent wheel build/smoke job. CI is now a green
+baseline for the remaining Files Web implementation.
 
 ## Current A-owned Scope Revision — Remove Direct Files Upload/Download
 
@@ -499,10 +501,11 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ```text
 Slice Status: ACTIVE
 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh must remove stale ResourceLibrary directory-tree state
+Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness with green CI baseline
 Task 37.8 state: PASS
 Task 37.9 state: PLANNED
-Next Action: Developer implements Task 37.9 after the activation and Task planning checkpoints
+Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
+Next Action: Developer implements the remaining Files Web refresh reconciliation in Task 37.9
 ```
 
 ## Closure Packet
