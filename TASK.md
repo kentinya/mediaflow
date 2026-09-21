@@ -60,10 +60,12 @@ The same full Python quality gate also contains three bounded P2 debts with know
 - the release-security policy test requires an active Task to name the release-security smoke
   command explicitly.
 
-These are included because the user explicitly requested that the known P2 Python quality-gate
-debts be reconciled in this correction Task. The Task still excludes legacy Playwright route
-assertions and the old Docker `source2` reproduction because those are separate cross-surface or
-external-environment work.
+These are included because the user explicitly requested that the known P2 quality-gate debts be
+reconciled in this correction Task. The Task also owns the ten recorded legacy Playwright
+failures, the obsolete Docker manual-Organize probe and replacement of the old `/opt/mediaflow`
+`source2` reproduction with isolated current-candidate evidence. This remains test and acceptance
+reconciliation for already-owned Slice 37 journeys; it does not restore retired product routes or
+authorize production-media mutation.
 
 The executable governance guard also contradicts the authoritative workflow: it currently rejects
 every active Task unless the Slice is `ACTIVE`, while the documented correction loop requires the
@@ -107,6 +109,25 @@ adds regression coverage without weakening parent-Slice, Roadmap, Base or checkp
 - Keep the active Task's release-quality command list complete, including
   `python3 scripts/docker_release_security_smoke_test.py`; the external smoke may be reported
   `UNAVAILABLE` when Docker is unavailable, but the command and actual result must be recorded.
+- Reconcile the recorded full Playwright failures:
+  - rewrite assertions that still navigate to retired FileIndex or old Scan/Preview routes to the
+    current supported Files/Operations entry when the same user outcome remains required;
+  - remove an obsolete route test only when the product route is explicitly retired and equivalent
+    current-journey coverage proves the applicable auth, failure and recovery semantics;
+  - scope duplicate read-only copy assertions by role, section or route-owned container instead of
+    changing product copy to satisfy a fragile unique-text locator; and
+  - add no skip, retry-only masking or weakened safety assertion.
+- Update `scripts/docker_release_security_smoke_test.py` so its manual-Organize probe submits the
+  current supported Choice/Preview request contract rather than the obsolete `metadataIdentity`
+  field. Reuse a current application/API fixture or shared request builder where practical so the
+  harness does not maintain a second drifting protocol. HTTP 400 is not a passing outcome.
+- Replace the old environment-specific `source2` reproduction with an isolated Docker acceptance
+  harness for the current candidate, implemented as
+  `scripts/docker_files_transfer_impact_smoke_test.py` or an equivalently isolated command recorded
+  in the completion report. It must use a temporary Compose project, temporary managed
+  configuration and synthetic sparse media larger than 20 GiB, call the real transfer-impact API,
+  prove aggregate bytes are informational, prove control-plane limit failures remain structured,
+  and perform zero Copy/Move/Delete mutation.
 
 Frozen areas:
 
@@ -115,7 +136,7 @@ Frozen areas:
 - Copy/Move transfer semantics, conflict policy, cross-Storage verification and Task fencing
   except for shared identity helpers strictly required by this Delete correction;
 - historical Task/Result persistence and schema;
-- legacy Playwright route/assertion debts and the old Docker `source2` reproduction.
+- unrelated product redesign and external production deployment state.
 
 ## Acceptance Criteria
 
@@ -145,6 +166,20 @@ Frozen areas:
       evidence prohibitions.
 - [ ] The active Task documents and runs, or truthfully marks unavailable, the required
       release-security smoke command.
+- [ ] Full Playwright passes with zero failures and no new skips. Retired routes are not restored;
+      affected tests either follow the current supported Files/Operations journey or are removed
+      only with explicit replacement coverage.
+- [ ] Duplicate read-only explanation coverage uses a route/section/role-scoped locator and retains
+      the intended content assertion.
+- [ ] The Docker release-security manual-Organize probe uses the current API contract and completes
+      the supported success path; an obsolete HTTP 400 is not accepted.
+- [ ] Isolated current-candidate Docker evidence proves a bounded synthetic `source2`-equivalent
+      directory with aggregate media bytes above 20 GiB is admitted for Impact without reading
+      media content or mutating Storage.
+- [ ] The isolated large-byte smoke also proves entry/depth/path/control-plane violations return
+      structured actionable errors, including truthful HTTP 413 where applicable.
+- [ ] Docker gates use only temporary/synthetic data and record `UNAVAILABLE` when Docker is absent;
+      no result from the old `/opt/mediaflow` checkout is presented as current-candidate evidence.
 - [ ] Python 3.11, 3.12 and 3.13 matrix results are recorded truthfully. Any unavailable local
       interpreter or external gate is explicitly marked `UNAVAILABLE`, not inferred as PASS.
 - [ ] The full offline Python regression, relevant Web regression, direct Upload/Download
@@ -198,20 +233,25 @@ python3 scripts/check_governance.py
 .venv/bin/python -m pip check
 .venv/bin/python -m unittest discover -s tests
 cd web && npm run format:check && npm run typecheck && npm run lint && npm run test -- --run && npm run build
+cd web && npx playwright test
 python3 scripts/docker_release_security_smoke_test.py
+python3 scripts/docker_files_transfer_impact_smoke_test.py
 git diff --check
 test ! -e config/alist.json
 ```
 
 Before returning `READY FOR B REVIEW`, inspect `git diff --name-status`, the complete diff,
 private-file scope, and the exact current `HEAD` SHA. Run the Python quality job on all available
-3.11/3.12/3.13 interpreters or record unavailable interpreters explicitly.
+3.11/3.12/3.13 interpreters or record unavailable interpreters explicitly. If the Developer
+implements the isolated transfer-impact scenario inside an existing Docker harness rather than
+the named dedicated script, the completion report must record the exact equivalent command and
+evidence.
 
 ## Non-goals
 
-- Repairing legacy Playwright routes/assertions.
-- Repairing the obsolete Docker manual-Organize probe, reproducing the old `source2` deployment,
-  or deploying a candidate image solely for that external reproduction.
+- Restoring retired FileIndex, Scan or Preview routes solely to make legacy tests pass.
+- Reading or mutating the real `/opt/mediaflow` `source2` library or any production/user media.
+- Treating the old `/opt/mediaflow` checkout as current-candidate validation.
 - Reintroducing browser Upload/Download, adding compatibility routes, or adding a new transfer
   workflow.
 - Redesigning Storage providers, schema, ResourceLibrary, Organize, Copy/Move or the shared V2
