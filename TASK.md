@@ -435,6 +435,14 @@ Web:
   `web/src/shared/api/api-client.ts`, `web/src/entities/library/direct-files.ts`,
   `web/tests/e2e/library-files.spec.ts`, `web/tests/fake-server.mjs`, `web/tests/setup.ts`.
 
+Correction round (B `FIX REQUIRED`, single blocker — Web gate not passing):
+
+- `web/src/features/library/StorageFilesPage.test.tsx` — added a `beforeEach` URL reset, a
+  `renderDrawer` harness that mounts the presentational drawer under the shared query provider
+  without the route tree, a `setFilesRouteState` helper that states the Files deep-link entry
+  state explicitly, and converted the three component-only drawer tests to `renderDrawer`. Test
+  count (33) and assertion count (201) are unchanged; no skip, no timeout change.
+
 ### Implemented
 
 1. **Formal destination parity (`library/path/naming-directory/naming-filename`).** One shared
@@ -467,12 +475,83 @@ Web:
    entry count, depth, safe-path and manifest/checkpoint/projection bounds are unchanged. No
    batch orchestration, child Task, native directory-Move bypass, new capability or implicit
    fallback was introduced.
+7. **Correction round — Files journey determinism (B blocker).** The Web gate failure was a
+   test-file shared-state defect, not a drawer interaction or assertion defect:
+
+   - *Root cause 1 — leaked Files route state.* `StorageFilesPage` persists the selected
+     ResourceLibrary into the real jsdom URL via
+     `window.history.replaceState("?resourceLibraryId=...")`. Nothing reset it between tests, so
+     every later test silently inherited the previously selected library. The overflow journey
+     (`keeps every overflow library discoverable in the searchable 更多 list`) was passing only
+     because an earlier test had left a non-first library selected; run alone on a clean URL it
+     fails, because with the first card selected the promoted card is `资源库C` (a visible card)
+     rather than an overflow entry. The file now resets the URL in `beforeEach`, and that journey
+     states its own entry state explicitly through `setFilesRouteState` — the product's real Files
+     deep-link input rather than an accident of test order.
+   - *Root cause 2 — unrelated router mount.* `AddResourceLibraryDrawer` is a presentational form
+     that resolves no route, query or router context. Its three component-only tests nevertheless
+     mounted the full route tree via `renderWithProviders`, paying ~590 ms of first-query cost
+     against ~86 ms under the shared query provider alone. They now render through `renderDrawer`;
+     the page-level test that genuinely exercises the route tree keeps `renderWithProviders`.
+   - Verified without hiding, skipping or weakening anything: the named test passes 10/10 runs
+     under 6× CPU oversubscription at 2295–3008 ms (limit 5000 ms), the whole file passes 10/10
+     under that load, and six shuffled-order runs pass 6/6 where the pre-fix file failed 4 of 5.
 
 ### Tests and Results
 
-Required gates (all from TASK.md; `tests/test_direct_file_commands.py` is listed by the Task but
-does not exist in this repository or in its history — `tests/test_direct_file_operations.py` is the
-real direct-file command module and is run in its place):
+Correction round re-run (every gate below was re-executed on the corrected working tree; the
+counts are identical to the round-1 report because this correction changes only how the Web test
+file manages shared state):
+
+```text
+python3 scripts/check_governance.py                                      PASS
+pytest -q tests/test_organizer.py tests/test_configuration_destination.py
+          tests/test_strategy_cli.py                                     57 passed, 47 subtests
+pytest -q tests/test_classification.py tests/test_runtime_strategy_configuration.py
+          tests/test_configuration_destination_activation.py             28 passed, 24 subtests
+pytest -q tests/test_direct_file_operations.py tests/test_direct_file_transfers.py
+          tests/test_file_catalog_api.py tests/test_runtime_files_browser.py
+                                                                         159 passed, 13 subtests
+pytest -q tests/test_v2_manual_organize.py tests/test_manual_organize_preview.py
+          tests/test_manual_organize_intent.py                           53 passed, 7 subtests
+ruff check mediaflow tests                                               PASS
+python3 -m compileall -q mediaflow                                       PASS
+web: npm run format:check && typecheck && lint                           PASS
+web: npm run test -- --run                                               455 passed (33 files), 0 failed
+web: npm run build                                                       PASS (pre-existing chunk-size warning)
+required upload/download absence grep (grep -rn -E, rg not installed)    0 matches
+focused Files Playwright tests/e2e/library-files.spec.ts                 31 passed
+git diff --check                                                         PASS
+```
+
+Web gate, the exact command B reported failing (`cd web && npm run test -- --run`):
+
+```text
+Test Files  33 passed (33)
+     Tests  455 passed (455)
+  Duration  151.64s
+```
+
+Determinism evidence for the named blocker
+(`StorageFilesPage.test.tsx > AddResourceLibraryDrawer > keeps step validation ordered and submits
+the bounded candidate once`):
+
+```text
+corrected file, 10 runs under 6x CPU oversubscription  -> 33 passed (33) x10, drawer test 2295-3008 ms
+corrected file, --sequence.shuffle x6 (seeds 777..4662) -> 33 passed (33) x6
+pre-fix file,   --sequence.shuffle                      -> failed 4 of 5 shuffled runs
+pre-fix file,   overflow journey alone on a clean URL   -> FAIL (Unable to find /资源库C/);
+                                                           passes in-file only via leaked URL state
+```
+
+The 10-run and shuffle evidence is the reason this is reported as a fix rather than a lucky pass:
+the same stress and shuffle conditions that reproduced the order-dependence on the reviewed Head
+pass repeatedly on the corrected tree.
+
+Required gates (round 1, unchanged re-verified above; `tests/test_direct_file_commands.py` is
+listed by the Task but does not exist in this repository or in its history —
+`tests/test_direct_file_operations.py` is the real direct-file command module and is run in its
+place):
 
 ```text
 python3 scripts/check_governance.py                                      PASS
@@ -548,6 +627,24 @@ admission path.
   actually bound memory, persistence and API documents.
 - **`execute_direct_write_stream` was kept.** It is a generic streamed Storage `write` boundary;
   the Task requires Storage `Read`/`Write` and `OrganizerExecutor` capabilities to remain.
+- **Correction round: the blocker was test shared state, not the drawer.** `AddResourceLibraryDrawer`
+  and the failing test body are byte-identical at Task Base `1eb43931` and at the reviewed Head
+  `694e707` (`git show <rev>:…` compared by hash), and the drawer journey costs ~1.3 s when run
+  alone. The failure was therefore in how the file shared state across tests, which is exactly the
+  "suite-order/shared-state" category B named. I fixed that rather than touching the component.
+- **The URL reset is a correctness fix, not a convenience.** Files route state
+  (`?resourceLibraryId=`) is written to the real jsdom URL by the page and nothing reset it, so a
+  test could silently depend on a previous test's selection. Resetting in `beforeEach` makes each
+  test's entry state explicit. This immediately surfaced a latent issue in the overflow journey,
+  which had been passing only via leaked state; that journey now declares its own entry state
+  through `setFilesRouteState`, preserving every original assertion and intent.
+- **Only the component-only drawer tests left the router harness.** The three tests that render
+  `AddResourceLibraryDrawer` directly do not exercise routing, so mounting the route tree only
+  added unrelated state and cost. The page-level test that does exercise the route tree still uses
+  `renderWithProviders`, so route-tree coverage was not reduced.
+- **I did not raise any timeout and did not add a skip.** The file still has 33 tests and 201
+  assertions — identical to the reviewed Head — and the corrected tree passes the full suite
+  repeatedly, including under 6× CPU oversubscription and under shuffled order.
 
 ### Remaining In-Slice Work
 
@@ -560,6 +657,24 @@ None known that belongs to this Task. Slice-level items I am aware of but did no
 
 ### Risks / Deviations
 
+- **Correction-round scope:** this round changes exactly one test file
+  (`web/src/features/library/StorageFilesPage.test.tsx`) and nothing else. No production code,
+  application service, route, domain model or other test was touched, because the blocker's cause
+  was test shared state rather than product behaviour.
+- **Latent test defect surfaced, not introduced.** Making the entry state explicit revealed that
+  the overflow journey had been relying on leaked URL state. It now sets that state itself. This
+  is a strengthening of the test's precondition, not a change to what it asserts; its assertions
+  are unchanged.
+- **Remaining flakiness under extreme CPU oversubscription is pre-existing and unrelated.**
+  Under a deliberately hostile 6× CPU oversubscription I observed failures in
+  `ManualOperationsRouter.test.tsx`, `AutomationRouter.test.tsx` and `OrganizeRouter.test.tsx`
+  (missing page heading after `renderApp`). I ran the same three files, same load, 8 iterations
+  each against Task Base `1eb43931` in a clean worktree and against the corrected tree: Base
+  failed 6 of 8, corrected failed 8 of 8. These files are not touched by this Task, the failure
+  mode is independent of the Files drawer, and it reproduces at the Task Base commit, so it is
+  `FAIL / PRE-EXISTING / UNRELATED`. The required gate command is run at normal load, where it is
+  green; I am recording this because it is real, not because I claim it is irrelevant — that
+  judgement is B's.
 - **Task-document deviation:** `tests/test_direct_file_commands.py` does not exist and never has
   in this repository's history; the real direct-file command module
   `tests/test_direct_file_operations.py` was run instead and every other file in that command was
@@ -583,23 +698,47 @@ None known that belongs to this Task. Slice-level items I am aware of but did no
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 7c0d29f0ef9744b084011765457f9adeb0231de0
-(the report itself is committed as the direct child of this implementation checkpoint)
+Head SHA: 55620d26ccd22e1a6cd79ad8dca7b9ac6dc58a19
+(correction round; the completion report is committed as the direct child of this checkpoint)
 ```
 
-The reviewed change is `1eb43931..<report commit>` (`git diff 1eb43931..HEAD`); the report commit
-contains this completion report only and no production or test change. No accepted history was
-amended or rewritten — every commit is new and sits on top of the Task Base chain
-(`1eb43931`, `e3a60d7`, `68d0225`, then this Task's commits).
+Corrected change range: `694e7076ffcd423a690a60bcff1000a0a4ce28ad..55620d2` (B's reviewed Head through
+this correction). The full Task range remains `1eb43931219b58d84216fe6d6a7b359c815b6503..HEAD`.
+
+No accepted history was amended or rewritten. The correction is a new commit on top of the
+reviewed checkpoint `694e707`, which itself sits on the round-1 implementation commit `7c0d29f`:
+
+```text
+55620d2 fix(task-37.7): make the Files drawer journey deterministic under the full Web suite
+694e707 docs(task): report Task 37.7 completion and review range
+7c0d29f fix(task-37.7): formal destination parity, remove Files upload/download, ...
+68d0225 docs(slice): clarify Copy Move control-plane bounds
+e3a60d7 docs(slice): revise Files transfer scope
+313169b docs(task): plan formal classification destination parity
+1eb43931 (Task Base)
+```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING | PASS | FIX REQUIRED
-Slice Required Outcomes all satisfied: PENDING | YES | NO
-Next: PENDING | SAME TASK FIX LOOP | NEXT TASK | SLICE READY FOR A REVIEW
+Reviewed: 1eb43931219b58d84216fe6d6a7b359c815b6503..694e7076ffcd423a690a60bcff1000a0a4ce28ad
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Blockers:
+
+- The required Web regression gate is not passing on the reviewed Head. `cd web && npm run test
+  -- --run` produced `454 passed, 1 failed`; the failure is
+  `src/features/library/StorageFilesPage.test.tsx > AddResourceLibraryDrawer > keeps step
+  validation ordered and submits the bounded candidate once`, which timed out at 5000 ms during
+  the full suite. This file and drawer behavior are part of the reviewed Task change, so the
+  failure is a current Task/Files-journey reliability defect, not an unrelated pre-existing
+  failure.
+  Required correction: make the Add ResourceLibrary drawer journey deterministic under the full
+  Web suite and rerun the complete `npm run test -- --run` gate with zero failures; do not merely
+  hide the test, weaken its assertions, or increase the timeout without fixing the underlying
+  suite-order/shared-state or interaction problem.
+
+This result does not close the Slice or update Roadmap. Fixes remain in Task 37.7.
