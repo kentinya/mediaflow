@@ -290,7 +290,12 @@ def prepare_deployment_files(
     for policy in document.get("metadataPolicies", []):
         if policy.get("id") == "A":
             policy["mediaQueryType"] = "none"
-            break
+        if policy.get("id") == "C":
+            # Leave MetadataPolicy C live but bound to a Provider this isolated
+            # deployment does not configure.  The Provider bootstrap rejects the
+            # unknown id before constructing any HTTP client, so the fail-closed
+            # Preview leg below stays completely network-free.
+            policy["providerId"] = "release-unconfigured"
     document["storages"].append(
         {
             "id": "release-openlist",
@@ -822,6 +827,10 @@ def assert_v2_manual_organize(
 
     source = source_root / "Release Manual Organize.2001.mkv"
     source.write_bytes(b"release-security-manual-organize" * 8)
+    # A second source that stays deliberately un-seeded: no durable Result grounds
+    # a metadata identity for it, so it carries the fail-closed legs below.
+    unseeded = source_root / "Release Fail Closed.2001.mkv"
+    unseeded.write_bytes(b"release-security-fail-closed" * 8)
     status, scan = json_request(
         base,
         "/api/v1/operations/scans",
@@ -856,6 +865,12 @@ def assert_v2_manual_organize(
     )
     if item is None:
         raise RuntimeError("manual Organize scan did not index its temporary source")
+    unseeded_item = next(
+        (value for value in files.get("items", []) if value.get("filename") == unseeded.name),
+        None,
+    )
+    if unseeded_item is None:
+        raise RuntimeError("manual Organize scan did not index its fail-closed source")
     # The isolated release harness has no live Provider. Seed only a bounded,
     # source-linked dry-run Result so the normal API intent authority can use
     # an already reviewed identity without contacting an external service.
@@ -917,6 +932,13 @@ with (
     )
     if status != 201:
         raise RuntimeError(f"manual Organize intent returned HTTP {status}")
+    assert_manual_organize_fails_closed(
+        base,
+        admin,
+        seeded_file_id=item["fileId"],
+        unseeded_file_id=unseeded_item["fileId"],
+        resource_library_id="source",
+    )
     intent_item = intent["items"][0]
     status, intent = json_request(
         base,
@@ -964,17 +986,17 @@ with (
     if preview_item is None:
         raise RuntimeError("manual Organize Preview omitted the selected item")
     if preview_item.get("status") != "previewed":
-        # This isolated harness has no Metadata Provider and no network, so an
-        # explicit metadata identity cannot be resolved offline here: the
-        # current Preview contract resolves the bounded identity through the
-        # pinned provider (the retired offline `metadata_identity` plan path was
-        # removed in 42381bd, before this Task). Report the exact bounded
-        # blocker instead of hiding it; the focused WSGI and browser Organize
-        # journeys prove the same Preview/Execute contract with a provider stub.
+        # The pinned MetadataPolicy is offline (`mediaQueryType=none`) and the
+        # Choice identity is grounded in the source-linked dry-run Result seeded
+        # above, so this isolated harness must reach the real success path with
+        # no network and no TMDB credential.  A Provider failure here is a hard
+        # regression, never an accepted outcome.
         raise RuntimeError(
-            "manual Organize Preview item is not executable in this provider-free "
-            f"harness: {preview_item}"
+            "manual Organize Preview item did not reach the offline source-linked "
+            f"success path: {preview_item}"
         )
+    if not preview_item.get("plan"):
+        raise RuntimeError("manual Organize Preview item did not produce an exact plan")
     status, execution = json_request(
         base,
         f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
@@ -1019,6 +1041,138 @@ with (
     moved = list(target_root.rglob("Release Manual Organize*.mkv"))
     if len(moved) != 1:
         raise RuntimeError(f"manual Organize expected one target effect, found {len(moved)}")
+
+
+def assert_manual_organize_fails_closed(
+    base: str,
+    admin: str,
+    *,
+    seeded_file_id: str,
+    unseeded_file_id: str,
+    resource_library_id: str,
+) -> None:
+    """A genuine Provider failure must stay an unavailable/fail-closed Preview.
+
+    The offline success above must not have become a blanket fallback: a bounded
+    identity that no source evidence grounds is still rejected, and a live
+    MetadataPolicy with no reachable Provider still reports `unavailable`
+    instead of being relabeled as success.
+    """
+
+    # The source-linked dry-run Result legitimately grounds provider id 603, so an
+    # invented identity must remain unverified at Choice admission.
+    status, intent = json_request(
+        base,
+        "/api/v1/operations/organize/intents",
+        admin,
+        method="POST",
+        body={
+            "scopeKind": "file",
+            "fileId": seeded_file_id,
+            "resourceLibraryId": resource_library_id,
+        },
+    )
+    if status != 201:
+        raise RuntimeError(f"manual Organize negative intent returned HTTP {status}")
+    intent_item = intent["items"][0]
+    status, body = json_request(
+        base,
+        f"/api/v1/operations/organize/intents/{intent['intentId']}"
+        f"/items/{intent_item['itemId']}/choice",
+        admin,
+        method="POST",
+        body={
+            "expectedVersion": intent["version"],
+            "expectedItemVersion": intent_item["version"],
+            "recognitionTypeId": "A",
+            "metadata": {
+                "provider": "tmdb",
+                "providerId": "999999",
+                "mediaType": "movie",
+                "title": "Not Grounded By Any Source Evidence",
+            },
+            "namingPolicyId": "A",
+            "classificationPolicyId": "A",
+            "organizePolicyId": "A",
+        },
+    )
+    if status != 400 or (body.get("error") or {}).get("code") != "metadata_unverified":
+        raise RuntimeError(
+            "manual Organize accepted an ungrounded metadata identity instead of "
+            f"failing closed: HTTP {status} {body}"
+        )
+
+    # A live MetadataPolicy has no reachable Provider in this isolated harness, so
+    # its Preview must remain an unavailable Provider failure, never a success.
+    # This uses the deliberately un-seeded source, whose absence of durable source
+    # authority leaves the offline pinned-identity path inapplicable.
+    status, intent = json_request(
+        base,
+        "/api/v1/operations/organize/intents",
+        admin,
+        method="POST",
+        body={
+            "scopeKind": "file",
+            "fileId": unseeded_file_id,
+            "resourceLibraryId": resource_library_id,
+        },
+    )
+    if status != 201:
+        raise RuntimeError(f"manual Organize live-policy intent returned HTTP {status}")
+    intent_item = intent["items"][0]
+    status, intent = json_request(
+        base,
+        f"/api/v1/operations/organize/intents/{intent['intentId']}"
+        f"/items/{intent_item['itemId']}/choice",
+        admin,
+        method="POST",
+        body={
+            "expectedVersion": intent["version"],
+            "expectedItemVersion": intent_item["version"],
+            # RecognitionType C pins MetadataPolicy C, which this harness leaves
+            # live while pointing it at a Provider this deployment does not
+            # configure.  The Provider bootstrap rejects that id before any HTTP
+            # client exists, so the leg proves fail-closed behaviour without
+            # contacting a remote Provider.
+            "recognitionTypeId": "C",
+            "namingPolicyId": "A",
+            "classificationPolicyId": "A",
+            "organizePolicyId": "A",
+        },
+    )
+    if status != 200:
+        raise RuntimeError(f"manual Organize live-policy choice returned HTTP {status}: {intent}")
+    status, preview = json_request(
+        base,
+        f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+        admin,
+        method="POST",
+        body={"expectedVersion": intent["version"]},
+    )
+    if status != 201 or not preview.get("zeroMutation"):
+        raise RuntimeError("manual Organize live-policy Preview was not zero-mutation evidence")
+    live_item = next(
+        (
+            value
+            for value in preview.get("items", [])
+            if value.get("itemId") == intent_item["itemId"]
+        ),
+        None,
+    )
+    if live_item is None:
+        raise RuntimeError("manual Organize live-policy Preview omitted the selected item")
+    if live_item.get("status") != "unavailable" or live_item.get("plan"):
+        raise RuntimeError(
+            f"a live MetadataPolicy without a reachable Provider was not fail-closed: {live_item}"
+        )
+    failure = live_item.get("failure") or {}
+    if failure.get("category") != "provider_failure":
+        raise RuntimeError(
+            f"manual Organize live-policy failure was not a Provider failure: {failure}"
+        )
+    for surface in json.dumps(live_item):
+        if "api.themoviedb.org" in surface:
+            raise RuntimeError("manual Organize failure leaked a remote Provider endpoint")
 
 
 def seed_release_state(command: list[str], environment: dict[str, str], canaries) -> None:

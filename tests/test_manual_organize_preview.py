@@ -5,6 +5,7 @@ import json
 import sqlite3
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -14,10 +15,12 @@ from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_preview import ManualOrganizePreviewService
 from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.strategy_test import SyntheticMetadataProvider
+from mediaflow.domain.classification import ClassificationRule
 from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.manual_organize import (
     ManualConfigurationSnapshot,
+    ManualIntentError,
     ManualPolicyOption,
     ManualRecognitionOption,
 )
@@ -29,12 +32,14 @@ from mediaflow.domain.manual_organize_preview import (
 )
 from mediaflow.domain.metadata import (
     MediaCandidate,
+    MediaQueryType,
     MediaType,
     MetadataError,
     MetadataErrorCode,
 )
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities
+from mediaflow.domain.task_persistence import PersistentResultRecord
 from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.runtime_configuration import (
@@ -45,7 +50,7 @@ from mediaflow.infrastructure.runtime_configuration import (
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
-from tests.test_file_catalog import file_record
+from tests.test_file_catalog import NOW, file_record
 
 SNAPSHOT_ID = "active-1"
 SNAPSHOT_DIGEST = "a" * 64
@@ -522,6 +527,205 @@ class ManualOrganizePreviewTests(unittest.TestCase):
                 self.assertEqual(ManualPreviewItemStatus.UNAVAILABLE, item.status)
                 self.assertNotIn("preview-secret", item.error)
                 self.assertIn("[redacted]", item.error)
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
+    @staticmethod
+    def _offline_configuration(configuration):
+        """Keep one pinned snapshot but make MetadataPolicy A genuinely offline.
+
+        A pinned offline identity carries only the bounded source-linked fields, so
+        the classification policy needs the same media-type fallback rule a real
+        deployment configuration has; the development fixture only ships
+        genre-constrained rules.
+        """
+
+        strategy = configuration.strategy
+        fallback = ClassificationRule(
+            "offline-movie",
+            "Any movie",
+            "movies",
+            "Movies",
+            "Movies",
+            priority=1,
+            media_types=(MediaType.MOVIE,),
+        )
+        return replace(
+            configuration,
+            strategy=replace(
+                strategy,
+                metadata_policies=tuple(
+                    replace(policy, media_query_type=MediaQueryType.NONE)
+                    for policy in strategy.metadata_policies
+                ),
+                classification_policies=tuple(
+                    replace(policy, rules=(*policy.rules, fallback))
+                    if policy.policy_id == "A"
+                    else policy
+                    for policy in strategy.classification_policies
+                ),
+            ),
+        )
+
+    def test_offline_policy_pins_source_linked_identity_without_any_provider(self):
+        """A `none` MetadataPolicy must plan from source-linked evidence offline.
+
+        The Choice can only carry an identity the source-linked authority already
+        grounded, so an offline policy pins that bounded identity directly instead
+        of demanding a live Provider this isolated deployment does not have.  No
+        Provider registry is configured here: a live lookup could only fail.
+        """
+
+        fixture = self._fixture(("One.2001.mkv",))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            index,
+            configuration,
+            _,
+        ) = fixture
+        try:
+            with SQLiteTaskRepository(database) as repository:
+                repository.append_result(
+                    PersistentResultRecord(
+                        "result-offline",
+                        "task-offline",
+                        "item-offline",
+                        "source",
+                        "One.2001.mkv",
+                        "target",
+                        "Movies/One (2001)/One (2001).mkv",
+                        "A",
+                        "tmdb",
+                        "129",
+                        "A",
+                        "A",
+                        "A",
+                        "A",
+                        "move",
+                        "dry_run",
+                        NOW,
+                        title="One",
+                    )
+                )
+                catalog = FileCatalogService(
+                    index, ("library",), ("source",), task_repository=repository
+                )
+                intents = ManualOrganizeIntentService(
+                    repository, catalog, configuration_resolver=manual_snapshot
+                )
+                source = MutationSpyStorage(LocalStorage("source", source_root))
+                target = MutationSpyStorage(LocalStorage("target", target_root))
+                previews = ManualOrganizePreviewService(
+                    repository,
+                    intents,
+                    configuration=self._offline_configuration(configuration),
+                    storages={"source": source, "target": target},
+                )
+                intent = intents.create(["one"], actor="operator")
+                intent = intents.update_choice(
+                    intent.intent_id,
+                    intent.items[0].item_id,
+                    {
+                        "recognitionTypeId": "A",
+                        "metadata": {
+                            "provider": "tmdb",
+                            "providerId": "129",
+                            "mediaType": "movie",
+                            "title": "One",
+                        },
+                        "namingPolicyId": "A",
+                        "classificationPolicyId": "A",
+                        "organizePolicyId": "A",
+                    },
+                    expected_version=1,
+                    actor="operator",
+                )
+                preview = previews.create(
+                    intent.intent_id,
+                    expected_version=intent.version,
+                    actor="operator",
+                )
+                self.assertEqual(
+                    ManualPreviewStatus.PREVIEWED, preview.status, preview.items[0].error
+                )
+                item = preview.items[0]
+                self.assertEqual(ManualPreviewItemStatus.PREVIEWED, item.status)
+                self.assertIsNone(item.error)
+                self.assertIsNotNone(item.plan)
+                self.assertTrue(item.plan["zeroMutation"])
+                self.assertTrue(item.plan["destination"]["path"])
+                self.assertEqual("tmdb", item.plan["analysis"]["metadata"]["identity"]["provider"])
+                # Zero mutation still holds on the offline path.
+                self.assertEqual([], source.calls)
+                self.assertEqual([], target.calls)
+                self.assertEqual([], list(target_root.rglob("*")))
+        finally:
+            directory.cleanup()
+            target_directory.cleanup()
+
+    def test_offline_policy_still_requires_source_linked_authority(self):
+        """An offline policy must not become a way to invent a metadata identity."""
+
+        fixture = self._fixture(("One.2001.mkv",))
+        (
+            directory,
+            target_directory,
+            database,
+            source_root,
+            target_root,
+            index,
+            configuration,
+            _,
+        ) = fixture
+        try:
+            with SQLiteTaskRepository(database) as repository:
+                catalog = FileCatalogService(
+                    index, ("library",), ("source",), task_repository=repository
+                )
+                intents = ManualOrganizeIntentService(
+                    repository, catalog, configuration_resolver=manual_snapshot
+                )
+                source = MutationSpyStorage(LocalStorage("source", source_root))
+                target = MutationSpyStorage(LocalStorage("target", target_root))
+                ManualOrganizePreviewService(
+                    repository,
+                    intents,
+                    configuration=self._offline_configuration(configuration),
+                    storages={"source": source, "target": target},
+                )
+                intent = intents.create(["one"], actor="operator")
+                # No durable source authority exists for this file, so the Choice
+                # admission itself must reject the ungrounded identity.
+                with self.assertRaises(ManualIntentError) as raised:
+                    intents.update_choice(
+                        intent.intent_id,
+                        intent.items[0].item_id,
+                        {
+                            "recognitionTypeId": "A",
+                            "metadata": {
+                                "provider": "tmdb",
+                                "providerId": "129",
+                                "mediaType": "movie",
+                                "title": "One",
+                            },
+                            "namingPolicyId": "A",
+                            "classificationPolicyId": "A",
+                            "organizePolicyId": "A",
+                        },
+                        expected_version=1,
+                        actor="operator",
+                    )
+                self.assertEqual("metadata_unverified", raised.exception.code)
+                unchanged = intents.get(intent.intent_id)
+                self.assertEqual(1, unchanged.version)
+                self.assertIsNone(unchanged.items[0].choice.metadata)
+                self.assertEqual([], source.calls)
+                self.assertEqual([], target.calls)
         finally:
             directory.cleanup()
             target_directory.cleanup()
