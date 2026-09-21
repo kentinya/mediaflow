@@ -54,6 +54,14 @@ prior Closure Packets and A Final Reviews remain immutable historical facts; thi
 adds Task 37.9 and requires a fresh A review over the original Slice Base through the corrected
 head.
 
+The same reactivation also records a RO-11 quality-gate correction discovered in GitHub Actions
+quality run `#115` on 2026-09-21. The accepted Local directory replacement risk uses the provider's
+stable directory identity (the inode segment), while the two host-filesystem tests were branching
+on the full `inode:...:ctime:...` token and could demand a refusal in the already-accepted
+inode-reuse/ctime-change case. Task 37.9 must align those tests with the accepted contract without
+changing production fencing, adding skips, or claiming the race is fixed. The release-quality Task
+command inventory must also remain present in the active `TASK.md`.
+
 ## Current A-owned Scope Revision — Remove Direct Files Upload/Download
 
 On 2026-09-20, A explicitly revised the current Slice boundary after confirming that the operator
