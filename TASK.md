@@ -15,12 +15,12 @@ Planner / Reviewer: B
 
 ## Goal
 
-Restore a truthful Files refresh journey for live ResourceLibrary browsing and make the existing
-quality gate reflect the accepted Local directory replacement residual risk. When an operator
+Restore a truthful Files refresh journey for live ResourceLibrary browsing. When an operator
 deletes or moves a directory outside the Web page, then clicks `刷新`, the refreshed Files view
 must stop presenting that directory as a current directory-tree entry or as a selected stale
-target; the quality tests must not demand a refusal in the already-accepted inode-reuse/ctime-change
-case. This advances Slice 37 Required Outcomes RO-3, RO-5, RO-9 and RO-11.
+target. This advances Slice 37 Required Outcomes RO-3, RO-5, RO-9 and RO-11. The related CI/test
+quality correction is already complete and is a required green baseline for this remaining Web
+implementation.
 
 ## Why This Task Exists
 
@@ -31,12 +31,24 @@ tree builder merges those old paths back into the refreshed model, so a path suc
 `source/电影/SSH` can remain visible after it no longer exists in Storage.
 
 This is a P1 user-visible state and recovery defect: the operator is told that the page reflects
-current source state, but a visible navigation target can lead to a path that is gone. The largest
-reasonable unit is one focused Web-state correction, the directly related quality-test contract
-correction and focused regression coverage. GitHub quality run `#115` also exposed that the two
-accepted Local directory replacement tests branch on the full fingerprint instead of the stable
-directory identity used by production. No backend authority, Storage behavior or production
-fencing needs to change.
+current source state, but a visible navigation target can lead to a path that is gone. The quality
+test contract and Python matrix timeout correction were completed before the Web implementation
+checkpoint: GitHub quality run `#118` passed on commit
+`320d8437a8872f7a08ee84295a0f900a39f84a7d`, including Python 3.11/3.12/3.13 and wheel smoke.
+The remaining implementation unit is therefore one focused Web-state correction plus focused Web
+regression coverage. No backend authority, Storage behavior or production fencing needs to change.
+
+## Current Developer Baseline
+
+The following CI work is already complete and must be preserved, not repeated or redesigned:
+
+- The two Local directory replacement tests branch on stable directory identity and preserve the
+  accepted residual-risk semantics without skips.
+- `.github/workflows/quality.yml` keeps Python 3.11, 3.12 and 3.13, retains `fail-fast: false`,
+  and uses a 30-minute timeout only for the Python test matrix; the wheel job remains 10 minutes.
+- GitHub quality run `#118` is green on `320d8437a8872f7a08ee84295a0f900a39f84a7d`.
+- The active-Task release-quality command inventory is present and the release-security policy test
+  passes.
 
 ## User Journey
 
@@ -84,18 +96,6 @@ Recovery:
   `web/tests/e2e/library-files.spec.ts` when the fake-server fixture can express the external
   removal. The browser assertion must cover the visible directory-tree outcome, not only a query
   invocation.
-- Align the two Local directory replacement tests in
-  `tests/test_direct_file_operations.py` with the accepted residual-risk contract by branching on
-  stable directory identity rather than the full Local fingerprint. Preserve the non-reused-identity
-  fail-closed assertions and the reused-identity truthful-outcome assertions; do not add skips,
-  weaken production checks or claim the race is fixed.
-- Raise the `.github/workflows/quality.yml` Python test-matrix timeout from 15 to 30 minutes so the
-  complete Python 3.12 quality run can finish. Keep all three Python versions, the `fail-fast:
-  false` matrix behavior and the wheel job's independent timeout unchanged.
-- Keep the release-quality command inventory required by `tests/test_release_security.py` in this
-  Task document, including the Docker release-security smoke command and the `.venv` Ruff/Python
-  commands. These are documentation requirements for the active Task; they do not authorize
-  unrelated implementation work.
 - Keep the change limited to the Files Web state/reconciliation and its tests. Do not alter the
   Python Storage browser, FileIndex repository, API routes, mutation services, OrganizerExecutor
   production code or configuration authority.
@@ -119,13 +119,13 @@ Recovery:
 - [ ] Existing Files navigation, pagination, search, direct file commands, Organize continuation,
       ResourceLibrary activation and non-Files routes remain behaviorally unchanged.
 - [ ] The assigned T2 tests and quality checks pass with actual evidence.
-- [ ] The two accepted Local directory replacement tests pass on the stable-identity branch
+- [x] The two accepted Local directory replacement tests pass on the stable-identity branch
       semantics, with non-reused identity still failing closed and reused identity reported
       truthfully without a skip.
-- [ ] The GitHub quality workflow completes Python 3.11, 3.12 and 3.13 without timeout
-      cancellation, and the dependent wheel job is eligible to run.
-- [ ] `TASK.md` contains the repository-required release-quality command inventory so the release
-      security policy test passes for an active Task.
+- [x] The GitHub quality workflow completes Python 3.11, 3.12 and 3.13 without timeout
+      cancellation, and the dependent wheel job is eligible to run; quality run `#118` is green.
+- [x] `TASK.md` contains the repository-required release-quality command inventory and the release
+      security policy test passes for the active Task.
 - [ ] The implementation checkpoint contains only Task 37.9 work; the pre-existing
       `docs/pics/文件页.png` change remains untouched and uncommitted.
 
