@@ -1,6 +1,25 @@
 import { expect, test, type Page } from "@playwright/test";
 
+/**
+ * Files browse/context built-artifact browser proof for the library workspace.
+ *
+ * The legacy FileIndex catalog/detail routes (`/ui-v2/library/file-index*`)
+ * are retired: the router has no such routes, the Library landing offers no
+ * FileIndex catalog entry, and the Files workspace derives every physical
+ * listing and every Files-originated continuation from live Storage. These
+ * tests prove the current supported Files journey — browse, bounded context
+ * restoration, read-only zero-mutation behavior, bounded not-found/401/403
+ * states and narrow-viewport usability — plus the truthful not-found state a
+ * retired FileIndex URL now renders.
+ *
+ * Runs against the built V2 artifact plus the local fake API with throwaway
+ * non-secret tokens; no production service, media or credential is involved
+ * and no endpoint is intercepted with `page.route`.
+ */
+
+const BASE_URL = "http://127.0.0.1:4173";
 const VIEWER_TOKEN = "e2e-viewer-token";
+const LIMITED_TOKEN = "e2e-limited-token";
 
 function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
   const seen: Array<{ url: string; method: string }> = [];
@@ -17,343 +36,194 @@ async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
   await page.getByRole("button", { name: "Connect" }).click();
 }
 
-test("catalog detail preserves query context and exposes bounded evidence", async ({
+async function resetResourceLibrary(page: Page): Promise<void> {
+  const reset = await page.request.post(
+    `${BASE_URL}/__test__/reset-resource-library`,
+  );
+  expect(reset.status()).toBe(200);
+}
+
+async function openFiles(page: Page, search = ""): Promise<void> {
+  await page.goto("/ui-v2/library/files" + search);
+  await connectAs(page);
+  await expect(
+    page.getByRole("heading", { name: "文件", exact: true }),
+  ).toBeVisible();
+}
+
+test("Files listing is live-Storage bounded evidence with a safe directory context", async ({
   page,
 }) => {
   const requests = apiRequestsOf(page);
-  await page.goto(
-    "/ui-v2/library/file-index?query=Example&processingDisposition=organized",
-  );
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  await connectAs(page);
+  await resetResourceLibrary(page);
+  await openFiles(page, "?resourceLibraryId=resources&path=Movies");
 
-  await page.getByRole("link", { name: "Example.mkv" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/library\/file-index\/file-index-example\?q_query=Example&q_processingDisposition=organized/,
-  );
+  // The current context is the exact ResourceLibrary-relative directory: the
+  // deep link mounts Files inside the requested library and its Movies
+  // directory, served from live Storage.
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByText("路径: /", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
+    page.getByRole("cell", { name: "Avatar (2009)" }).first(),
   ).toBeVisible();
-  for (const heading of [
-    "Source and library",
-    "Discovery and stability",
-    "Current occurrence",
-    "Processing state",
-    "Identity and policy evidence",
-    "Task items",
-    "Related reviews",
-    "Organize evidence",
-    "Reprocess eligibility",
-    "Manual operations",
+  await expect(
+    page.getByRole("navigation", { name: "资源库面包屑" }),
+  ).toBeVisible();
+  for (const column of [
+    "名称",
+    "类型",
+    "大小",
+    "修改时间",
+    "识别结果",
+    "整理状态",
+    "操作",
   ]) {
-    await expect(page.getByRole("heading", { name: heading })).toBeVisible();
+    await expect(
+      page.getByRole("columnheader", { name: column, exact: true }),
+    ).toBeVisible();
   }
-  await expect(
-    page.getByText(
-      "only the algorithm name is displayed; fingerprint values are never exposed to this page.",
-    ),
-  ).toBeVisible();
-  await expect(page.getByText("Reprocess this record")).toBeVisible();
-  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
-  await expect(page.url()).not.toContain("fingerprint");
-  await expect(page.url()).not.toContain("token");
 
-  await page.getByRole("link", { name: "Back to FileIndex catalog" }).click();
-  await expect(page).toHaveURL(
-    /\/ui-v2\/library\/file-index\?query=Example&processingDisposition=organized/,
-  );
-  await expect(page.getByText("Example.mkv", { exact: true })).toBeVisible();
+  // The bearer token never reaches a URL, the rendered page or the evidence.
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+  expect(page.url()).not.toContain(VIEWER_TOKEN);
+  expect(page.url()).not.toContain("fingerprint");
+  expect(page.url()).not.toContain("token");
+
+  // Browsing is read-only: every API request was a GET and the retired
+  // FileIndex authority surfaces were never consulted.
+  expect(requests.length).toBeGreaterThan(0);
   expect(requests.every((request) => request.method === "GET")).toBe(true);
   expect(requests.every((request) => !request.url.includes(VIEWER_TOKEN))).toBe(
     true,
   );
-});
-
-test("detail distinguishes current historical legacy missing and truncated facts", async ({
-  page,
-}) => {
-  await page.goto("/ui-v2/library/file-index/file-index-example");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
-  ).toBeVisible();
-  for (const label of [
-    "Title Candidate",
-    "Recognition Type ID",
-    "Provider ID",
-    "Directory",
-    "Relative Destination",
-    "Target",
-    "Checkpoint stage",
-  ]) {
-    await expect(page.getByText(label, { exact: true }).first()).toBeVisible();
-  }
-  await expect(
-    page.getByText("The parser used bounded filename facts."),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/historical different occurrence/i),
-  ).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-legacy");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
-  ).toBeVisible();
-  await expect(page.getByText("Legacy", { exact: true })).toBeVisible();
-  await expect(
-    page.getByText(/Only historical Results are available/),
-  ).toBeVisible();
-  await expect(
-    page.getByText(/Legacy evidence was not captured/).first(),
-  ).toBeVisible();
-  await expect(page.getByText(/checkpoint not available/)).toBeVisible();
-  await expect(page.getByText("Open physical location")).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-missing-evidence");
-  await connectAs(page);
-  await expect(
-    page.getByText(
-      "Evidence is unavailable for this record. This page does not re-collect evidence.",
-    ),
-  ).toBeVisible();
-  await expect(
-    page.getByText("No organize Result records are attached to this entry."),
-  ).toBeVisible();
-  await expect(
-    page.getByText("No bounded task-item records reference this entry."),
-  ).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-truncated");
-  await connectAs(page);
-  for (const label of [
-    "occurrenceHistory",
-    "review",
-    "evidence",
-    "items",
-    "results",
-  ]) {
-    await expect(
-      page.getByText(new RegExp("More " + label + " records exist")),
-    ).toBeVisible();
-  }
-  await expect(
-    page
-      .getByText(
-        "More bounded facts exist for this section; they were not loaded.",
-      )
-      .first(),
-  ).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-mismatched");
-  await connectAs(page);
-  await expect(
-    page.getByText(
-      /Storage and ResourceLibrary are not a matching enabled pair/,
-    ),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Open physical location" }),
-  ).toHaveCount(0);
-});
-
-test("direct detail entry and refresh retain memory-only auth continuation", async ({
-  page,
-}) => {
-  await page.goto(
-    "/ui-v2/library/file-index/file-index-example?q_query=Example&q_storage=local-media",
-  );
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
-  await connectAs(page);
-  await expect(page).toHaveURL(
-    /file-index-example\?q_query=Example&q_storage=local-media/,
-  );
-  await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
-  ).toBeVisible();
-
-  await page.reload();
-  await expect(page).toHaveURL(/\/ui-v2\/$/);
-  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
-  const storage = await page.evaluate(() => ({
-    local: window.localStorage.length,
-    session: window.sessionStorage.length,
-    cookie: document.cookie,
-  }));
-  expect(storage).toEqual({ local: 0, session: 0, cookie: "" });
-  await connectAs(page);
-  await expect(page).toHaveURL(
-    /file-index-example\?q_query=Example&q_storage=local-media/,
-  );
-});
-
-test("physical membership uses one explicit resolver GET and returns to safe context", async ({
-  page,
-}) => {
-  const requests = apiRequestsOf(page);
-  await page.goto("/ui-v2/library/files?storage=local-media");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "Local media" }),
-  ).toBeVisible();
+  expect(
+    requests.filter((request) => request.url.includes("/api/v1/file-index")),
+  ).toHaveLength(0);
   expect(
     requests.filter((request) =>
       request.url.includes("/api/v1/files/by-source"),
     ),
   ).toHaveLength(0);
+});
 
-  const row = page
-    .getByRole("listitem")
-    .filter({ hasText: "show.mkv" })
-    .first();
-  await row.getByRole("button", { name: "Check indexed link" }).click();
-  await expect(
-    page.getByText(/A unique current FileIndex record was confirmed/),
-  ).toBeVisible();
-  await expect(
-    row.getByRole("link", { name: "Open indexed record" }),
-  ).toBeVisible();
-  await expect
-    .poll(
-      () =>
-        requests.filter((request) =>
-          request.url.includes("/api/v1/files/by-source"),
-        ).length,
-    )
-    .toBe(1);
-  const resolverRequest = requests.find((request) =>
-    request.url.includes("/api/v1/files/by-source"),
+test("direct Files deep link and refresh retain memory-only auth continuation", async ({
+  page,
+}) => {
+  await resetResourceLibrary(page);
+  const target = "/ui-v2/library/files?resourceLibraryId=resources&path=Movies";
+  await page.goto(target);
+  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await connectAs(page);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/library\/files\?resourceLibraryId=resources&path=Movies/,
   );
-  expect(resolverRequest?.url).toContain("resourceLibrary=resources");
-  expect(resolverRequest?.method).toBe("GET");
-
-  await row.getByRole("link", { name: "Open indexed record" }).click();
   await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
+    page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "Open physical location" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/library\/files\?/);
-  await expect(page).toHaveURL(/storage=local-media/);
-  await expect(page).toHaveURL(/resourceLibrary=resources/);
-  await expect(page).toHaveURL(/path=Movies/);
+  await expect(page.getByRole("table")).toBeVisible();
+
+  await page.reload();
+  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  // Memory-only authority: no Web storage and no bearer token ever lands in
+  // a cookie. The fake's own evidence-session cookie is the only value a
+  // browser test can observe, and it never carries the token.
+  const storage = await page.evaluate(() => ({
+    local: window.localStorage.length,
+    session: window.sessionStorage.length,
+    cookie: document.cookie,
+  }));
+  expect(storage.local).toBe(0);
+  expect(storage.session).toBe(0);
+  expect(storage.cookie).not.toContain(VIEWER_TOKEN);
+  await connectAs(page);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/library\/files\?resourceLibraryId=resources&path=Movies/,
+  );
+  await expect(page.getByRole("table")).toBeVisible();
+});
+
+test("an empty ResourceLibrary shows the bounded empty state with no mutation", async ({
+  page,
+}) => {
+  const requests = apiRequestsOf(page);
+  const reset = await page.request.post(
+    `${BASE_URL}/__test__/reset-resource-library?empty=1`,
+  );
+  expect(reset.status()).toBe(200);
+
+  await openFiles(page);
   await expect(
-    page.getByRole("heading", { name: "Local media" }),
+    page.getByText("尚未添加资源库。添加后即可在这里浏览和整理文件。"),
   ).toBeVisible();
   expect(requests.every((request) => request.method === "GET")).toBe(true);
 });
 
-test("missing, ambiguous, malformed and unavailable resolver states never select a record", async ({
-  page,
-}) => {
-  await page.goto("/ui-v2/library/files?storage=local-media");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "Local media" }),
-  ).toBeVisible();
+test("Files failure, 401 and 403 states remain bounded", async ({ page }) => {
+  await resetResourceLibrary(page);
 
-  const ambiguous = page
-    .getByRole("listitem")
-    .filter({ hasText: "ambiguous.mkv" })
-    .first();
-  await ambiguous.getByRole("button", { name: "Check indexed link" }).click();
-  await expect(page.getByText(/multiple FileIndex matches/)).toBeVisible();
-  await expect(
-    ambiguous.getByRole("link", { name: "Open indexed record" }),
-  ).toHaveCount(0);
-
-  const missing = page
-    .getByRole("listitem")
-    .filter({ hasText: "missing-link.mkv" })
-    .first();
-  await missing.getByRole("button", { name: "Check indexed link" }).click();
-  await expect(
-    page.getByText(/No current FileIndex record matches/),
-  ).toBeVisible();
-  await expect(
-    missing.getByRole("link", { name: "Open indexed record" }),
-  ).toHaveCount(0);
-
-  const unavailable = page
-    .getByRole("listitem")
-    .filter({ hasText: "unavailable.mkv" })
-    .first();
-  await unavailable.getByRole("button", { name: "Check indexed link" }).click();
-  await expect(
-    page.getByText(/indexed link could not be checked/),
-  ).toBeVisible();
-  await expect(
-    unavailable.getByRole("link", { name: "Open indexed record" }),
-  ).toHaveCount(0);
-
-  const malformed = page
-    .getByRole("listitem")
-    .filter({ hasText: "malformed.mkv" })
-    .first();
-  await malformed.getByRole("button", { name: "Check indexed link" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Indexed link unavailable" }),
-  ).toBeVisible();
-  await expect(
-    malformed.getByRole("link", { name: "Open indexed record" }),
-  ).toHaveCount(0);
-});
-
-test("detail not-found, unavailable, 401 and 403 states remain bounded", async ({
-  page,
-}) => {
-  await page.goto("/ui-v2/library/file-index/does-not-exist");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "FileIndex record not found" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Back to FileIndex catalog" }),
-  ).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-malformed");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "FileIndex detail unavailable" }),
-  ).toBeVisible();
-  await expect(page.getByText(/expected read-only contract/)).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-unavailable");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "FileIndex detail unavailable" }),
-  ).toBeVisible();
-
-  await page.goto("/ui-v2/library/file-index/file-index-unauthorized");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "Not authorized" }),
-  ).toBeVisible();
-  await expect(page).toHaveURL(/file-index-unauthorized/);
-
-  await page.goto("/ui-v2/library/file-index/file-index-forbidden");
-  await connectAs(page);
+  // A limited principal is refused by the backend authority, not by a hidden
+  // control, and the token is never rendered.
+  await page.goto("/ui-v2/library/files");
+  await page.getByLabel("API token").fill(LIMITED_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
-  await expect(page).toHaveURL(/file-index-forbidden/);
+  await expect(page.getByText(LIMITED_TOKEN)).toHaveCount(0);
+
+  // An unknown token restarts at the memory-only entry without an API read.
+  const apiRequests = apiRequestsOf(page);
+  await page.goto("/ui-v2/library/files?resourceLibraryId=resources");
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await expect(
+    apiRequests.filter((request) => request.url.includes("/api/v1/")),
+  ).toHaveLength(0);
 });
 
-test("detail remains keyboard-usable at a narrow viewport and offers no V2 work control", async ({
+test("retired FileIndex catalog and detail routes render the bounded not-found state", async ({
+  page,
+}) => {
+  // The route is retired, not hidden: a deep link receives the shared shell's
+  // bounded not-found state with a recovery path, and offers no fabricated
+  // FileIndex surface, no credential input and no leaked authority value.
+  await page.goto("/ui-v2/library/file-index/file-index-example");
+  await expect(
+    page.getByRole("heading", { name: "Route not found" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "Return to Overview" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "FileIndex record" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "Open physical location" }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+  expect(page.url()).not.toContain("fingerprint");
+  expect(page.url()).not.toContain("token");
+});
+
+test("Files remains keyboard-usable at a narrow viewport with no horizontal action loss", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto("/ui-v2/library/file-index/file-index-example");
-  await connectAs(page);
-  await expect(
-    page.getByRole("heading", { name: "FileIndex record" }),
-  ).toBeVisible();
-  await page.getByRole("link", { name: "Back to FileIndex catalog" }).focus();
-  await expect(
-    page.getByRole("link", { name: "Back to FileIndex catalog" }),
-  ).toBeFocused();
-  await expect(page.getByRole("button", { name: /reprocess/i })).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: /scan|organize|preview/i }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "Open current Web UI" }),
-  ).toBeVisible();
+  await resetResourceLibrary(page);
+  await openFiles(page);
+
+  const menu = page.getByRole("button", { name: "Open menu" });
+  await expect(menu).toBeVisible();
+  await menu.focus();
+  await expect(menu).toBeFocused();
+  await menu.click();
+  await expect(page.getByRole("link", { name: "Files" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+  await expect(page.getByRole("table")).toBeVisible();
 });

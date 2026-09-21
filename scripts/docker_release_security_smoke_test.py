@@ -928,7 +928,10 @@ with (
             "expectedVersion": intent["version"],
             "expectedItemVersion": intent_item["version"],
             "recognitionTypeId": "A",
-            "metadataIdentity": {
+            # The current supported Choice contract names the bounded metadata
+            # identity `metadata`; the superseded `metadataIdentity` request
+            # shape is rejected with HTTP 400 by the current API.
+            "metadata": {
                 "provider": "tmdb",
                 "providerId": "603",
                 "mediaType": "movie",
@@ -961,7 +964,17 @@ with (
     if preview_item is None:
         raise RuntimeError("manual Organize Preview omitted the selected item")
     if preview_item.get("status") != "previewed":
-        raise RuntimeError(f"manual Organize Preview item is not executable: {preview_item}")
+        # This isolated harness has no Metadata Provider and no network, so an
+        # explicit metadata identity cannot be resolved offline here: the
+        # current Preview contract resolves the bounded identity through the
+        # pinned provider (the retired offline `metadata_identity` plan path was
+        # removed in 42381bd, before this Task). Report the exact bounded
+        # blocker instead of hiding it; the focused WSGI and browser Organize
+        # journeys prove the same Preview/Execute contract with a provider stub.
+        raise RuntimeError(
+            "manual Organize Preview item is not executable in this provider-free "
+            f"harness: {preview_item}"
+        )
     status, execution = json_request(
         base,
         f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",

@@ -199,40 +199,6 @@ def _collection_scope(status: str | None, command: str | None) -> str:
     return f"status={status or 'all'};command={command or 'all'}"
 
 
-class _ItemPayloadStream:
-    """One admitted Upload item's exact payload read off the request body.
-
-    The browser posts the item's declared bytes as the request body and sets
-    the Content-Length itself.  Reads are served straight from ``wsgi.input``
-    in bounded chunks (never a whole media file); when the server supplies a
-    Content-Length that disagrees with the item's declared size, the mismatch
-    is surfaced so the executor records a truthful truncation or refusal
-    instead of fabricating a complete write.
-    """
-
-    def __init__(self, input_stream, declared_length: int | None) -> None:
-        self._input = input_stream
-        self._declared_length = declared_length
-        self._remaining: int | None = declared_length
-
-    def read(self, size: int = -1) -> bytes:
-        if self._remaining is not None and self._remaining <= 0:
-            return b""
-        wanted = size if size and size > 0 else 64 * 1024
-        if self._remaining is not None:
-            wanted = min(wanted, self._remaining)
-        chunk = self._input.read(wanted)
-        if self._remaining is not None:
-            self._remaining -= len(chunk)
-        return chunk
-
-    @property
-    def content_length_mismatch(self) -> bool:
-        """Whether the body ended before the server-declared length."""
-
-        return self._remaining is not None and self._remaining > 0
-
-
 class ApiPermissionDenied(RuntimeError):
     pass
 
