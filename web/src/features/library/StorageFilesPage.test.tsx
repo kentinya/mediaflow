@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import admissionContract from "../../../tests/fixtures/files-transfer-admission.json";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { type ReactElement, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithProviders } from "../../../tests/utils";
 import type { SystemStorage } from "../../entities/library/system-status";
 import { authStore } from "../../shared/api/auth-store";
@@ -30,17 +37,64 @@ const storages: readonly SystemStorage[] = [
   },
 ];
 
+/**
+ * Files-owned route state (`?resourceLibraryId=`) is written to the real jsdom
+ * URL by the page, so it survives between tests in this file. Every test must
+ * therefore start from the same clean, URL-free entry state instead of
+ * inheriting whichever library the previous test happened to select.
+ */
+beforeEach(() => {
+  window.history.replaceState(null, "", "/");
+});
+
 afterEach(() => {
   cleanup();
   authStore.clearToken();
   vi.unstubAllGlobals();
 });
 
+/**
+ * The AddResourceLibraryDrawer is a presentational form: it resolves no route,
+ * query or router context of its own. Rendering it under the shared query
+ * provider alone keeps its journey deterministic and independent of the route
+ * tree, so the drawer assertions cannot be perturbed by unrelated shell/router
+ * state.
+ */
+function newQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+      },
+    },
+  });
+}
+
+function renderDrawer(element: ReactElement): void {
+  render(
+    <QueryClientProvider client={newQueryClient()}>
+      {element}
+    </QueryClientProvider>,
+  );
+}
+
+/**
+ * Seed the Files deep-link entry state the page reads at mount. The selected
+ * ResourceLibrary is genuinely part of the product's route state, so a test
+ * whose expectations depend on which card is promoted states that entry state
+ * itself instead of inheriting it from an earlier test in this file.
+ */
+function setFilesRouteState(libraryId: string): void {
+  window.history.replaceState(null, "", `/?resourceLibraryId=${libraryId}`);
+}
+
 describe("AddResourceLibraryDrawer", () => {
   it("keeps step validation ordered and submits the bounded candidate once", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn<(candidate: SaveResourceLibraryOptions) => void>();
-    renderWithProviders(
+    renderDrawer(
       <AddResourceLibraryDrawer
         open
         storages={storages}
@@ -244,7 +298,7 @@ describe("AddResourceLibraryDrawer", () => {
   it("keeps entered values and the current step visible on a recoverable failure", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn<(candidate: SaveResourceLibraryOptions) => void>();
-    renderWithProviders(
+    renderDrawer(
       <AddResourceLibraryDrawer
         open
         storages={storages}
@@ -290,7 +344,7 @@ describe("AddResourceLibraryDrawer", () => {
         />
       );
     }
-    renderWithProviders(<Harness />);
+    renderDrawer(<Harness />);
 
     await user.type(await screen.findByLabelText("名称 *"), "Pending Library");
     await user.type(
@@ -747,6 +801,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     const user = userEvent.setup();
     // Thirteen enabled libraries: two visible cards plus eleven overflow
     // entries — every one of them must remain reachable without pagination.
+    // The promoted card is the selected library, so this journey enters Files
+    // with an overflow library selected, exactly as a Files deep link does.
+    setFilesRouteState("lib-d");
     const libraries = [
       "a",
       "b",
