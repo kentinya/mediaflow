@@ -91,6 +91,16 @@ def _loaded_evidence(service: DirectFileCommandService, resource_library_id: str
     return service.read_text(resource_library_id=resource_library_id, path=path).evidence.document()
 
 
+def _directory_identity(fingerprint: str | None) -> str | None:
+    """Return the stable directory identity used by the production delete fence."""
+
+    if fingerprint is None:
+        return None
+    if fingerprint.startswith("inode:"):
+        return fingerprint.split(":ctime:", 1)[0]
+    return fingerprint
+
+
 def _unreference_source(document: dict[str, object]) -> None:
     """Point every recognition rule at a different library ID."""
 
@@ -1433,7 +1443,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             storage.delete("victim")
             (root / "source" / "victim").mkdir()
             replaced = storage.stat("victim")
-            if replaced.fingerprint == observed.fingerprint:
+            if _directory_identity(replaced.fingerprint) == _directory_identity(
+                observed.fingerprint
+            ):
                 # Accepted residual risk (A, 2026-09-21): the filesystem reused
                 # the previous inode and ctime, so the replacement is
                 # indistinguishable from the confirmed directory and the
@@ -1533,7 +1545,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "parent").mkdir()
             (root / "source" / "parent" / "new.txt").write_text("new", encoding="utf-8")
             replaced = storage.stat("parent")
-            if replaced.fingerprint == observed.fingerprint:
+            if _directory_identity(replaced.fingerprint) == _directory_identity(
+                observed.fingerprint
+            ):
                 # Accepted residual risk (A, 2026-09-21): the reused inode
                 # identity makes the replacement indistinguishable, so the
                 # confirmed delete may proceed. Assert only the truthful

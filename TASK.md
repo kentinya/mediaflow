@@ -8,17 +8,19 @@ Task ID: 37.9
 Parent Slice: 37
 Status: PLANNED
 Task Base: 65d2a5c641b5f0d61983b21b5f1286cc5254c6bc
-Difficulty: Low
+Difficulty: Medium
 Test Level: T2
 Planner / Reviewer: B
 ```
 
 ## Goal
 
-Restore a truthful Files refresh journey for live ResourceLibrary browsing. When an operator
+Restore a truthful Files refresh journey for live ResourceLibrary browsing and make the existing
+quality gate reflect the accepted Local directory replacement residual risk. When an operator
 deletes or moves a directory outside the Web page, then clicks `刷新`, the refreshed Files view
 must stop presenting that directory as a current directory-tree entry or as a selected stale
-target. This advances Slice 37 Required Outcomes RO-3, RO-5, RO-9 and RO-11.
+target; the quality tests must not demand a refusal in the already-accepted inode-reuse/ctime-change
+case. This advances Slice 37 Required Outcomes RO-3, RO-5, RO-9 and RO-11.
 
 ## Why This Task Exists
 
@@ -30,8 +32,11 @@ tree builder merges those old paths back into the refreshed model, so a path suc
 
 This is a P1 user-visible state and recovery defect: the operator is told that the page reflects
 current source state, but a visible navigation target can lead to a path that is gone. The largest
-reasonable unit is one focused Web-state correction plus focused regression coverage. No backend
-authority or Storage behavior needs to change.
+reasonable unit is one focused Web-state correction, the directly related quality-test contract
+correction and focused regression coverage. GitHub quality run `#115` also exposed that the two
+accepted Local directory replacement tests branch on the full fingerprint instead of the stable
+directory identity used by production. No backend authority, Storage behavior or production
+fencing needs to change.
 
 ## User Journey
 
@@ -79,9 +84,18 @@ Recovery:
   `web/tests/e2e/library-files.spec.ts` when the fake-server fixture can express the external
   removal. The browser assertion must cover the visible directory-tree outcome, not only a query
   invocation.
+- Align the two Local directory replacement tests in
+  `tests/test_direct_file_operations.py` with the accepted residual-risk contract by branching on
+  stable directory identity rather than the full Local fingerprint. Preserve the non-reused-identity
+  fail-closed assertions and the reused-identity truthful-outcome assertions; do not add skips,
+  weaken production checks or claim the race is fixed.
+- Keep the release-quality command inventory required by `tests/test_release_security.py` in this
+  Task document, including the Docker release-security smoke command and the `.venv` Ruff/Python
+  commands. These are documentation requirements for the active Task; they do not authorize
+  unrelated implementation work.
 - Keep the change limited to the Files Web state/reconciliation and its tests. Do not alter the
-  Python Storage browser, FileIndex repository, API routes, mutation services or configuration
-  authority.
+  Python Storage browser, FileIndex repository, API routes, mutation services, OrganizerExecutor
+  production code or configuration authority.
 
 ## Acceptance Criteria
 
@@ -102,6 +116,11 @@ Recovery:
 - [ ] Existing Files navigation, pagination, search, direct file commands, Organize continuation,
       ResourceLibrary activation and non-Files routes remain behaviorally unchanged.
 - [ ] The assigned T2 tests and quality checks pass with actual evidence.
+- [ ] The two accepted Local directory replacement tests pass on the stable-identity branch
+      semantics, with non-reused identity still failing closed and reused identity reported
+      truthfully without a skip.
+- [ ] `TASK.md` contains the repository-required release-quality command inventory so the release
+      security policy test passes for an active Task.
 - [ ] The implementation checkpoint contains only Task 37.9 work; the pre-existing
       `docs/pics/文件页.png` change remains untouched and uncommitted.
 
@@ -117,12 +136,24 @@ Run from the repository root unless noted otherwise:
 6. `cd web && npm run format:check`
 7. `git diff --check`
 
+The repository's active-Task release-quality policy also requires this exact command inventory to
+remain documented in this file:
+
+```text
+python3 scripts/check_governance.py
+scripts/docker_release_security_smoke_test.py
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m compileall -q mediaflow tests scripts
+```
+
 The Developer must report actual pass/fail counts and any unavailable browser/runtime prerequisite.
 No production Storage, FileIndex, TMDB, SMB, OpenList, S3 or R2 service is required.
 
 ## Non-goals
 
-- Any Python/API/Storage/FileIndex implementation change.
+- Any Python/API/Storage/FileIndex/OrganizerExecutor production implementation change.
 - A new scan, index synchronization job, cache layer, polling loop or refresh endpoint.
 - ResourceLibrary configuration, Active snapshot, RBAC, authentication or route redesign.
 - New direct file commands, OrganizerExecutor behavior, conflict policy or mutation capability.
