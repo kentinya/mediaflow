@@ -1,33 +1,171 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 37.12 — RecognitionType-driven Organize policy binding
 
-The last completed Task was Task 37.11 — Files Save Choice managed runtime resolver.
-Its implementation checkpoint was `2950a3ceb319396a7899ceca2973740c54eaded4`.
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [`SLICE.md`](SLICE.md).
+
+```text
+Task ID: 37.12
+Parent Slice: 37
+Status: PLANNED
+Task Base: 970ac756222daaf21215c6f2b64446e44a83a108
+Difficulty: Medium
+Test Level: T3
+Planner / Reviewer: B
+```
+
+## Goal
+
+Make the V2 manual Organize Web editor treat `RecognitionType` as the single operator-facing
+choice source: selecting a RecognitionType automatically brings out its exact configured
+`NamingPolicy`, `ClassificationPolicy` and `OrganizePolicy`, so the normal journey cannot submit
+an `incompatible_choice`.
+
+This advances Slice 37 Required Outcomes RO-8 Organize workflow continuity, RO-9 actionable
+recovery and RO-11 test reconciliation. RecognitionType identity must remain independent from
+downstream policy reuse, including the required RecognitionType C → A policy mapping case.
+
+## Why This Task Exists
+
+The backend already validates that the selected RecognitionType's downstream policy IDs exactly
+match the immutable pinned configuration snapshot. The current Web editor exposes every enabled
+Naming, Classification and Organize policy as independently selectable controls and keeps the old
+policy values when RecognitionType changes. A normal operator can therefore submit a combination
+that the UI presents as selectable but the backend correctly rejects with `incompatible_choice`.
+
+This is the largest reasonable next unit because it completes the affected Web choice journey
+without changing the already-correct backend safety boundary. It belongs inside Slice 37 because
+the defect is in the existing Files-originated Organize continuation and does not add a new
+business capability.
+
+## Implementation Scope
+
+```text
+Web choice editor → API request projection → focused component/contract/E2E tests
+```
+
+- Use the current intent's pinned `options.recognitionTypes[]` mapping as the sole source for the
+  three downstream policy IDs.
+- On initial render and whenever RecognitionType changes, project the exact mapped
+  `namingPolicyId`, `classificationPolicyId` and `organizePolicyId` into the submitted choice.
+- Make the three downstream policy controls visibly show the mapped values but non-editable in the
+  normal Web journey. Do not offer arbitrary policy combinations.
+- Preserve RecognitionType C as C while showing/submitting whatever policies its pinned mapping
+  specifies, including A policies.
+- If the selected RecognitionType is missing, disabled, or has an incomplete/invalid downstream
+  mapping, fail closed with a bounded actionable reload/recovery state and do not submit a guessed
+  choice.
+- Keep the existing optimistic `expectedVersion` and `expectedItemVersion` request fields and
+  existing API route/request shape. The backend compatibility validation remains authoritative.
+- Update the focused Web fixtures/tests and the manual Organize browser journey to prove automatic
+  binding, request contents, non-editable controls and no incompatible submission.
+
+Frozen for this Task:
+
+- `ManualChoice` schema and the Save Choice API route/request contract.
+- Backend `_validate_choice()` compatibility checks and all snapshot/source validation.
+- Configuration object schema, RecognitionType policy mappings and Active snapshot lifecycle.
+- Metadata identity, Preview/Execute behavior, Storage authority and OrganizerExecutor mutation
+  boundaries.
+- Files browsing/mutation surfaces, shared shell presentation and all non-Organize business routes.
+
+## Acceptance Criteria
+
+- [ ] The normal Web Organize editor has no independently editable Naming, Classification or
+      Organize policy choice after RecognitionType is selected; those controls display the exact
+      pinned mapping.
+- [ ] Selecting a RecognitionType immediately updates all three downstream policy values from its
+      `options.recognitionTypes[]` mapping and the Save Choice request submits those exact IDs.
+- [ ] Initial render normalizes the existing choice to the selected RecognitionType's exact mapping
+      before a save can be submitted; no stale downstream combination is sent.
+- [ ] RecognitionType C remains C while its configured downstream A policies are displayed and
+      submitted unchanged where the pinned snapshot maps C to A.
+- [ ] Missing, disabled or incomplete RecognitionType mapping produces a bounded actionable
+      fail-closed state and sends no Save Choice request.
+- [ ] Existing optimistic version fencing, backend error handling, Preview invalidation and
+      zero-mutation semantics remain unchanged.
+- [ ] Focused component, API-request contract and browser journey tests cover success, mapping
+      change, C→A policy reuse, missing mapping and no-request failure behavior.
+- [ ] The assigned T3 validation passes with actual evidence, and the checkpoint contains only
+      Task 37.12 work.
+
+## Required Tests
+
+- Focused component/router tests for `OrganizeIntentPage`:
+
+  ```text
+  cd web && npm run test -- --run src/features/operations/OrganizeRouter.test.tsx
+  ```
+
+- Focused entity/API request normalization tests as needed for the changed projection:
+
+  ```text
+  cd web && npm run test -- --run src/entities/operations/organize.test.ts
+  ```
+
+- Manual Organize browser journey:
+
+  ```text
+  cd web && npx playwright test tests/e2e/manual-organize.spec.ts
+  ```
+
+- Related backend compatibility and manual intent regressions, without changing backend behavior:
+
+  ```text
+  .venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview
+  ```
+
+- Static and quality gates:
+
+  ```text
+  python3 scripts/check_governance.py
+  cd web && npm run typecheck
+  cd web && npm run lint
+  cd web && npm run format:check
+  git diff --check
+  ```
+
+- Do not use production credentials, Storage, media or external providers.
+
+## Non-goals
+
+- Work outside the parent Slice Contract.
+- Changing backend compatibility validation, API schema, configuration mappings or snapshot
+  lifecycle.
+- Adding independent policy selection, policy editing, metadata correction or a new Organize flow.
+- Changing Preview, Execute, Storage mutation, FileIndex reconciliation or OrganizerExecutor logic.
+- Reworking the shared V2 shell, Files page or unrelated V2 routes.
+- Full Slice closure, Roadmap changes or A Final Review.
+
+## Developer Completion Report
+
+### Changed Files
+
+### Implemented
+
+### Tests and Results
+
+### Decisions
+
+### Remaining In-Slice Work
+
+### Risks / Deviations
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: [full SHA]
+```
 
 ## B Review Result
 
 ```text
-Reviewed: bf9354dcadc2467e3b411576faf43bd70dec3b62..2950a3ceb319396a7899ceca2973740c54eaded4
-Decision: PASS
-Slice Required Outcomes all satisfied: YES
-Next: SLICE READY FOR A REVIEW
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
-Review evidence:
-
-- The default `MediaFlowApi` composition now uses the effective managed pinned-runtime resolver
-  for Files-originated Save Choice validation, while explicit resolver injection remains supported.
-- The source is validated against the intent-pinned snapshot and live ResourceLibrary/Storage
-  authority without requiring a FileIndex row; choice persistence remains version-fenced and
-  zero-Storage-mutation.
-- Unavailable pinned runtime/source evidence fails closed without changing the choice, versions,
-  audit trail or Storage; FileIndex-originated validation and stale-version rejection remain intact.
-- The shared V2 shell no longer renders fabricated `系统存储`, `12.4 TB / 20 TB` or `62%` state,
-  and the synchronized visual specification and AppShell tests preserve the shell boundary.
-- Focused Python tests passed: `53`; full Python regression passed: `1721`, with `7` skips.
-- Ruff format/lint, compileall, governance and diff checks passed.
-- AppShell test passed: `3`; full Vitest passed: `465`; typecheck, lint and Prettier passed.
-- Production Web build passed with the existing non-blocking generated-chunk size warning.
-- Full Playwright passed: `122`; Docker release-security smoke passed.
-
-The Slice Closure Packet is recorded in `SLICE.md`. No further implementation Task is planned
-because all current Slice Required Outcomes are satisfied.
+If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
+finds a genuinely independent business goal. This result does not close the Slice or update
+Roadmap.
