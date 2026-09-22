@@ -40,4 +40,21 @@ describe("AppShell", () => {
     );
     expect(screen.getByRole("link", { name: /Overview/ })).toBeVisible();
   });
+
+  it("does not render the unsupported system-storage capacity block", async () => {
+    authStore.setToken("shell-test-token");
+    renderApp("/ui-v2/library");
+
+    // The shared shell and navigation remain operable.
+    expect(
+      await screen.findByRole("navigation", { name: "Primary" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Library" })).toBeVisible();
+
+    // No fabricated system-capacity/usage state is presented anywhere in the shell.
+    expect(screen.queryByLabelText("系统存储")).toBeNull();
+    expect(screen.queryByText("系统存储")).toBeNull();
+    expect(screen.queryByText("12.4 TB / 20 TB")).toBeNull();
+    expect(screen.queryByText("62%")).toBeNull();
+  });
 });

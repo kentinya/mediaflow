@@ -118,16 +118,6 @@ export function AppShell({ children }: AppShellProps) {
             );
           })}
         </nav>
-        <div className="mf-storage-status" aria-label="系统存储">
-          <strong>系统存储</strong>
-          <div className="mf-storage-meter" aria-hidden="true">
-            <span />
-          </div>
-          <div className="mf-storage-status-meta">
-            <span>12.4 TB / 20 TB</span>
-            <span>62%</span>
-          </div>
-        </div>
       </aside>
       <div className="mf-shell-content">
         <header className="mf-shell-topbar">
