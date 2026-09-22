@@ -95,9 +95,6 @@ interface FilesRowVm {
   readonly typeLabel: string;
   readonly sizeLabel: string;
   readonly modifiedLabel: string;
-  readonly recognitionLabel: string;
-  readonly organizeStatusLabel: string;
-  readonly organizeStatusKind: "pending" | "skipped" | "unknown";
   readonly organizeAction: "整理" | "查看" | "打开";
   readonly checked: boolean;
 }
@@ -126,7 +123,7 @@ const DIRECTORY_PRESENTATION_ORDER = [
 ];
 
 const FILES_BANNER =
-  "当前显示的是资源库中的文件，这些文件将根据识别结果整理到对应的媒体库（如 Movies、TV Shows）。";
+  "当前显示的是资源库中的文件，可从条目操作直接整理到对应的媒体库（如 Movies、TV Shows）。";
 
 function isSafeRelativePath(value: string): boolean {
   if (value === "") return true;
@@ -488,16 +485,6 @@ function entryTypeLabel(entry: StorageFilesEntry): string {
   return mediaTypeLabel(entry.name);
 }
 
-function displayStatus(value: string | null): {
-  readonly label: string;
-  readonly kind: "pending" | "skipped" | "unknown";
-} {
-  if (value === null) return { label: "-", kind: "unknown" };
-  if (value === "pending") return { label: "待整理", kind: "pending" };
-  if (value === "skipped") return { label: "跳过", kind: "skipped" };
-  return { label: value, kind: "unknown" };
-}
-
 function buildRows(
   model: StorageFilesModel,
   selected: ReadonlySet<string>,
@@ -509,7 +496,6 @@ function buildRows(
       (entry) => needle === "" || entry.name.toLowerCase().includes(needle),
     )
     .map((entry) => {
-      const status = displayStatus(entry.businessStatus);
       const organizeEligible = entry.organizeEligible === true;
       return {
         name: entry.name,
@@ -526,9 +512,6 @@ function buildRows(
         typeLabel: entryTypeLabel(entry),
         sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
         modifiedLabel: formatModified(entry.modifiedAt),
-        recognitionLabel: entry.recognitionResult ?? "-",
-        organizeStatusLabel: status.label,
-        organizeStatusKind: status.kind,
         organizeAction: entry.isDirectory
           ? "打开"
           : organizeEligible
@@ -1169,8 +1152,6 @@ function FileBrowseView({
                       </span>
                     </th>
                     <th scope="col">修改时间</th>
-                    <th scope="col">识别结果</th>
-                    <th scope="col">整理状态</th>
                     <th scope="col">操作</th>
                   </tr>
                 </thead>
@@ -1206,20 +1187,6 @@ function FileBrowseView({
                       <td>{row.typeLabel}</td>
                       <td>{row.sizeLabel}</td>
                       <td>{row.modifiedLabel}</td>
-                      <td>{row.recognitionLabel}</td>
-                      <td>
-                        <span
-                          className={
-                            row.organizeStatusKind === "pending"
-                              ? "mf-pill mf-pill-pending"
-                              : row.organizeStatusKind === "skipped"
-                                ? "mf-pill mf-pill-muted"
-                                : "mf-cell-muted"
-                          }
-                        >
-                          {row.organizeStatusLabel}
-                        </span>
-                      </td>
                       <td>
                         {row.organizeAction === "整理" ? (
                           <button
@@ -1876,6 +1843,38 @@ export function StorageFilesPage() {
     setCursorHistory([]);
     setQuery("");
   };
+
+  // The refresh boundary.  `knownDirectoryPaths` and `visitedDirectories` are
+  // page-local memory of directories that older reads happened to show; they
+  // are not Storage authority.  If they survived a refresh, a directory removed
+  // outside MediaFlow would keep re-rendering as a current directory-tree
+  // target even though the refreshed live listing no longer contains it.  A
+  // refresh therefore drops that local tree memory and any selection that
+  // referred to it, then repeats only the bounded live read: the refreshed read
+  // is the sole authority, and the still-live directories are re-discovered
+  // from it.  The selected ResourceLibrary and current directory path are
+  // deliberately preserved, so a still-valid context stays where the operator
+  // was.
+  const refreshBrowse = (refetch: () => void) => {
+    setKnownDirectoryPaths([]);
+    setVisitedDirectories([]);
+    setSelectedFiles(new Set());
+    refetch();
+  };
+
+  // Directory discovery is part of that same boundary: it must stay a stable
+  // identity so it records directories only when the live read actually
+  // changes, instead of re-running on every page render and resurrecting
+  // pre-refresh paths that the refresh just dropped.
+  const discoverLiveDirectories = useCallback((paths: readonly string[]) => {
+    setKnownDirectoryPaths((current) => {
+      const next = new Set(current);
+      for (const discoveredPath of paths) {
+        next.add(discoveredPath);
+      }
+      return next.size === current.length ? current : Array.from(next);
+    });
+  }, []);
 
   // A requested selection that no longer resolves is explained and
   // deterministically re-pointed at a current eligible library entirely by
@@ -2552,7 +2551,7 @@ export function StorageFilesPage() {
                           title={filesRead.failure.title}
                           onRetry={() => {
                             refreshStatus();
-                            refresh();
+                            refreshBrowse(refresh);
                           }}
                           onRoot={
                             effectivePath === ""
@@ -2629,17 +2628,7 @@ export function StorageFilesPage() {
                           setAdmittedTransferId(null);
                           setDialog({ kind: "transfer", operation, paths });
                         }}
-                        onDiscoverDirectories={(paths) => {
-                          setKnownDirectoryPaths((current) => {
-                            const next = new Set(current);
-                            for (const discoveredPath of paths) {
-                              next.add(discoveredPath);
-                            }
-                            return next.size === current.length
-                              ? current
-                              : Array.from(next);
-                          });
-                        }}
+                        onDiscoverDirectories={discoverLiveDirectories}
                         onToggle={(entryPath) => {
                           setSelectedFiles((current) => {
                             const next = new Set(current);
@@ -2680,7 +2669,7 @@ export function StorageFilesPage() {
                           })
                         }
                         onClearSelection={() => setSelectedFiles(new Set())}
-                        onRefresh={refresh}
+                        onRefresh={() => refreshBrowse(refresh)}
                         onOpenPath={openPath}
                         onNextPage={() => {
                           if (model.nextCursor !== null) {

@@ -705,6 +705,63 @@ describe("Files entry state and ResourceLibrary strip", () => {
     });
   }
 
+  it("presents the six physical columns without recognition or organize-status feedback", async () => {
+    // The Files page presents physical file facts and explicit actions only:
+    // 识别结果 and 整理状态 are not page concepts, while the 整理 action and its
+    // server-authoritative continuation remain available.
+    vi.stubGlobal(
+      "fetch",
+      stripFetchMock({
+        status: activeStatus([libraryItem("lib-a", "local-1")]),
+        onFiles: () => {
+          const payload = filesPayload("lib-a", null);
+          return jsonResponse({
+            ...payload,
+            entries: [
+              {
+                name: "movie.mkv",
+                path: "movie.mkv",
+                type: "file",
+                size: 1024,
+                modifiedAt: "2026-08-23T11:15:00Z",
+                isDirectory: false,
+                isSymlink: false,
+                traversable: false,
+                selectable: true,
+                organizeEligible: true,
+                recognitionResult: "Movie (2026)",
+                businessStatus: "pending",
+              },
+            ],
+          });
+        },
+      }),
+    );
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("movie.mkv")).toBeVisible();
+    // The first column is the select-all control; the remaining five are the
+    // physical/action columns.
+    expect(
+      screen.getByRole("columnheader", { name: "选择全部" }),
+    ).toBeVisible();
+    for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
+      expect(
+        screen.getByRole("columnheader", { name: new RegExp(column) }),
+      ).toBeVisible();
+    }
+    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    // The removed business concepts appear neither as headers nor as row
+    // cells, even though the projection still carries those bounded fields.
+    expect(screen.queryByText("识别结果")).toBeNull();
+    expect(screen.queryByText("整理状态")).toBeNull();
+    expect(screen.queryByText("待整理")).toBeNull();
+    expect(screen.queryByText("Movie (2026)")).toBeNull();
+    // The explicit 整理 action remains available for the eligible entry.
+    expect(screen.getByRole("button", { name: "整理" })).toBeEnabled();
+  });
+
   it("keeps the Add ResourceLibrary drawer closed on normal entry and opens only on explicit activation", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
@@ -1369,6 +1426,187 @@ describe("Files entry state and ResourceLibrary strip", () => {
         directoryTree().queryByRole("button", { name: "Season" }),
       ).toBeNull(),
     );
+  });
+
+  it("drops an externally removed directory from the tree on refresh", async () => {
+    const user = userEvent.setup();
+    // The directory is discovered by a live read, then removed outside
+    // MediaFlow. After 刷新 the refreshed live listing is the sole authority:
+    // the removed path must not survive as a directory-tree target, and the
+    // refresh stays a bounded GET-only read.
+    let removed = false;
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () =>
+        jsonResponse(filesPayload("lib-a", removed ? null : "Season")),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    expect(
+      directoryTree().getByRole("button", { name: "Season" }),
+    ).toBeVisible();
+
+    // External deletion: the next live read no longer contains the directory.
+    removed = true;
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    await waitFor(() =>
+      expect(
+        directoryTree().queryByRole("button", { name: "Season" }),
+      ).toBeNull(),
+    );
+    expect(screen.queryByRole("checkbox", { name: "选择 Season" })).toBeNull();
+    // The still-live entries from the refreshed read are still presented.
+    expect(screen.getByText("notes.txt")).toBeVisible();
+    const refreshCalls = fetchMock.mock.calls.filter(([url]) =>
+      /\/resource-libraries\/[^/]+\/files(\?|$)/.test(String(url)),
+    );
+    expect(refreshCalls.length).toBeGreaterThan(1);
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(String(url)).not.toContain("/file-index");
+      const method = (init as RequestInit | undefined)?.method;
+      expect(method === undefined || method === "GET").toBe(true);
+    }
+  });
+
+  it("clears a stale selection that the refreshed listing no longer contains", async () => {
+    const user = userEvent.setup();
+    // A visited, selected directory disappears externally.  The refresh must
+    // not leave a selection or tree node referring to an entry the refreshed
+    // listing no longer contains.
+    let removed = false;
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () =>
+        jsonResponse(filesPayload("lib-a", removed ? null : "Season")),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(screen.getByRole("checkbox", { name: "选择 Season" }));
+    expect(screen.getByText(/已选择 1 个文件夹/)).toBeVisible();
+
+    removed = true;
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    await waitFor(() =>
+      expect(screen.queryByText(/已选择 1 个文件夹/)).toBeNull(),
+    );
+    expect(screen.getByText("已选择 0 个文件", { exact: true })).toBeVisible();
+    expect(
+      directoryTree().queryByRole("button", { name: "Season" }),
+    ).toBeNull();
+  });
+
+  it("keeps the ResourceLibrary and directory context for a still-valid refresh", async () => {
+    const user = userEvent.setup();
+    // A refresh of a directory that still exists must not silently switch
+    // libraries, fabricate a navigation, or route through FileIndex.
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("path=Season"),
+        ),
+      ).toBe(true),
+    );
+
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    // The current directory context is preserved: the same library/path read
+    // is repeated and the resolved library identity never changes.
+    await waitFor(() => {
+      const seasonReads = fetchMock.mock.calls.filter(([url]) =>
+        String(url).includes("path=Season"),
+      );
+      expect(seasonReads.length).toBeGreaterThan(1);
+    });
+    expect(
+      screen.getAllByRole("button", { name: "资源库A" }).length,
+    ).toBeGreaterThan(0);
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(String(url)).not.toContain("/file-index");
+      const method = (init as RequestInit | undefined)?.method;
+      expect(method === undefined || method === "GET").toBe(true);
+    }
+  });
+
+  it("keeps the bounded failure state truthful when the refreshed read fails", async () => {
+    const user = userEvent.setup();
+    // The current directory disappears between reads.  The refresh presents
+    // the existing bounded read failure with its recovery affordances, and
+    // fabricates no directory-tree row for the removed path.
+    let removed = false;
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () =>
+        removed
+          ? jsonResponse(
+              {
+                error: {
+                  code: "storage_browser_not_found",
+                  message: "Storage directory was not found",
+                  details: {
+                    category: "not_found",
+                    durableState: "active_runtime_preserved",
+                    sideEffects: "none",
+                    retrySafe: true,
+                    nextAction: "make the configured directory available",
+                  },
+                },
+              },
+              404,
+            )
+          : jsonResponse(filesPayload("lib-a", "Season")),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    expect(await screen.findByText("notes.txt")).toBeVisible();
+    // Enter the directory so the refresh has a real current-directory context.
+    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).includes("path=Season"),
+        ),
+      ).toBe(true),
+    );
+
+    removed = true;
+    await user.click(screen.getByRole("button", { name: "刷新" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Directory not found" }),
+    ).toBeVisible();
+    // Both bounded recovery affordances remain for a non-root context: retry
+    // repeats only the read, and the root action restores a valid directory.
+    expect(screen.getByRole("button", { name: "重试" })).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "返回资源库根目录" }),
+    ).toBeVisible();
+    // The failed read fabricates no directory-tree entry and no table row.
+    expect(screen.queryByLabelText("目录")).toBeNull();
+    expect(screen.queryByRole("table")).toBeNull();
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(String(url)).not.toContain("/file-index");
+      const method = (init as RequestInit | undefined)?.method;
+      expect(method === undefined || method === "GET").toBe(true);
+    }
   });
 
   it("remaps a visited directory in the tree after it is renamed", async () => {
