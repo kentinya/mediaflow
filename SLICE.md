@@ -9,9 +9,9 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 651ed735f8c41048af4cbd296afe8488c6d084b0
+Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
 Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
 ```
 
@@ -577,7 +577,7 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
 - [x] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
       result synchronizes independently without mutation replay.
-- [ ] The manual Organize Web editor treats RecognitionType as the source of truth for NamingPolicy,
+- [x] The manual Organize Web editor treats RecognitionType as the source of truth for NamingPolicy,
       ClassificationPolicy and OrganizePolicy: selecting a RecognitionType automatically brings
       out its exact configured policies, prevents arbitrary incompatible policy combinations and
       exposes an actionable fail-closed state when the pinned mapping is unavailable.
@@ -633,15 +633,16 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: 651ed735f8c41048af4cbd296afe8488c6d084b0
+Slice Status: READY FOR A REVIEW
+Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
 Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
 Task 37.8 state: PASS
 Task 37.9 state: PASS
 Task 37.10 state: PASS
 Task 37.11 state: PASS
+Task 37.12 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: B PLANS TASK 37.12
+Next Action: A FINAL REVIEW
 ```
 
 ## Post-closure Correction Closure Packet — Task 37.11
@@ -750,6 +751,135 @@ Documentation Reconciliation Needed:
   `b507edba167f5af3af8c53bfcf1417ba4fefddf4..3fb4d1a091676727dcfd8e69007d530cd7dd3ef9`.
 - Preserve the pre-existing dirty `docs/pics/文件页.png` outside the reviewed implementation
   range; no image reconciliation is requested.
+
+Decision: SLICE READY FOR A REVIEW
+```
+
+## Post-reactivation Closure Packet — Task 37.12
+
+```text
+Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Head SHA: aa54854c442d117c7eb23ae9800045c423db1368
+
+Required Outcomes:
+- RO-1 Reference-aligned visual fidelity — COMPLETE
+- RO-2 Shared V2 shell replacement — COMPLETE
+- RO-3 Exact Files composition — COMPLETE
+- RO-4 ResourceLibrary drawer and activation — COMPLETE
+- RO-5 Storage-authoritative Files data — COMPLETE
+- RO-6 Bounded common file management — COMPLETE
+- RO-7 Low-friction direct-operation safety — COMPLETE
+- RO-8 Organize workflow continuity — COMPLETE
+- RO-8C Formal classification path parity correction — COMPLETE
+- RO-9 Actionable recovery — COMPLETE
+- RO-10 Non-Files behavior continuity — COMPLETE
+- RO-11 Test reconciliation — COMPLETE; RecognitionType-driven policy binding is covered by
+  focused Web, API-request and browser journey evidence, and the active-Task release-quality
+  documentation gate passes
+- RO-12 Security model continuity — COMPLETE
+
+Required Surfaces:
+- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
+- V2 Files at `/ui-v2/library/files` — COMPLETE
+- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
+- ResourceLibrary browsing, selection and Organize continuation — COMPLETE
+- Bounded Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit — COMPLETE
+- Shared formal `library/path` destination composition — COMPLETE
+- Backend/application behavior for direct file commands, ResourceLibrary activation and
+  post-mutation FileIndex synchronization — COMPLETE
+- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
+
+Implemented:
+- Completed Task 37.12: RecognitionType is the single editable source in the V2 manual Organize
+  Web editor; NamingPolicy, ClassificationPolicy and OrganizePolicy are projected from the exact
+  pinned `options.recognitionTypes[]` mapping.
+- Initial stale downstream choices are normalized before Save Choice, RecognitionType C remains C
+  when its pinned downstream policies reuse A, and downstream controls are visibly read-only.
+- Missing, disabled or incomplete mappings fail closed with a bounded reload action and no Save
+  Choice request.
+- Preserved optimistic version fencing, backend compatibility validation, Preview invalidation,
+  zero-mutation analysis and OrganizerExecutor-only Storage mutation.
+- Reconciled the active Task's release-quality command inventory and verified the full release
+  quality gate.
+
+Tasks completed:
+- 37.1 — Files reference browse, shared shell and selection authority
+- 37.2 — ResourceLibrary atomic activation
+- 37.3 — Bounded Files maintenance and ResourceLibrary removal
+- 37.4 — Bounded Files Copy and Move transfers
+- 37.5 — Bounded Files Upload and Download
+- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
+- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
+  validation and Copy/Move control-plane bounds
+- 37.8 — Files safety and quality gate reconciliation
+- 37.9 — Files refresh truthful state and focused presentation
+- 37.10 — Files exact path identity and whitespace presentation
+- 37.11 — Files Save Choice managed runtime resolver
+- 37.12 — RecognitionType-driven Organize policy binding
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/ruff format --check .` — PASS; 309 files already formatted.
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS; no broken requirements.
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview`
+  — 53 passed.
+- `.venv/bin/python -m unittest tests.test_release_security` — 6 passed.
+- `.venv/bin/python -m unittest discover -s tests` — 1721 passed, 7 skipped, 0 failures, `OK`.
+- `cd web && npm run test -- --run src/features/operations/OrganizeRouter.test.tsx src/entities/operations/organize.test.ts`
+  — 30 passed.
+- `cd web && npm run test -- --run` — 33 files, 469 passed.
+- `cd web && npm run typecheck`, `npm run lint`, `npm run format:check` — PASS.
+- `cd web && npm run build` — PASS; existing generated-chunk size warning remains non-blocking.
+- `cd web && npx playwright test tests/e2e/manual-organize.spec.ts` — 11 passed.
+- `cd web && npm run test:e2e` — 122 passed, 0 failures, 0 skips.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` —
+  PASS; isolated four-service release-security acceptance passed.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py` —
+  PASS; aggregate 22548578304 bytes was admitted as impact evidence while bounded control-plane
+  limits failed closed without mutation.
+- `git diff --check` and reviewed-scope/private-file inspection — PASS; `config/alist.json` is
+  absent and the pre-existing dirty `docs/pics/文件页.png` plus untracked user image remain
+  outside the reviewed implementation checkpoint.
+
+Safety Evidence:
+- RecognitionType selection cannot submit arbitrary downstream policy combinations; all submitted
+  policy IDs are projected from the pinned snapshot and backend compatibility validation remains
+  authoritative.
+- Missing or invalid mappings fail closed without a Save Choice request; stale choices preserve
+  optimistic version fencing and do not replay uncertain effects.
+- Save Choice, Preview and other analysis stages remain zero-mutation; only OrganizerExecutor may
+  mutate Storage.
+- Files authority remains live ResourceLibrary/Storage authority, FileIndex remains display and
+  reconciliation state, and no frontend Storage authority or credential entered the checkpoint.
+- The transfer-impact smoke proved large aggregate media bytes remain display evidence while
+  selection, entry and depth limits reject before mutation.
+- No credentials, production media, private configuration or `config/alist.json` entered the
+  reviewed range.
+
+Known Non-blocking Issues:
+- P2: the production Web build retains the existing generated JavaScript chunk-size warning.
+- P2: full Python tests emit existing unclosed-SQLite `ResourceWarning` messages while passing.
+- P2: the accepted narrow Local directory replacement/inode-reuse race remains documented
+  residual risk and is not claimed fixed.
+
+Explicitly Deferred:
+- Direct browser Upload/Download remains removed from the current scope.
+- Arbitrary binary/video/media editing and stream inspection.
+- Unbounded recursive or batch operations, arbitrary host-filesystem access, host extraction
+  outside authenticated Download and implicit cross-Storage fallback.
+- General Configuration/Settings redesign beyond truthful navigation in the shared shell.
+- Dashboard, Operations, Review/Recovery, Automation and Notification business-journey redesign.
+- V1 `/ui` retirement, new providers or Storage capabilities, identity/security-system redesign,
+  automatic uncertain-mutation replay, universal rollback and FFmpeg/FFprobe.
+
+Documentation Reconciliation Needed:
+- A should perform the final review over
+  `b507edba167f5af3af8c53bfcf1417ba4fefddf4..aa54854c442d117c7eb23ae9800045c423db1368`
+  and reconcile historical Closure Packets/A reviews while preserving the original Slice Base and
+  all Contract text. No Required Outcome, Required Surface or Safety Invariant change is requested.
 
 Decision: SLICE READY FOR A REVIEW
 ```
