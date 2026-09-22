@@ -83,9 +83,26 @@ test.describe("manual organize journey", () => {
       page.getByRole("button", { name: "Create exact Preview" }),
     ).toBeEnabled();
 
+    // The downstream policy controls only display the RecognitionType's pinned
+    // mapping; they are never independently editable in the normal journey.
+    await expect(
+      page.getByLabel("Naming policy organize-item-e2e-001"),
+    ).toBeDisabled();
+    await expect(
+      page.getByLabel("Classification policy organize-item-e2e-001"),
+    ).toBeDisabled();
+    await expect(
+      page.getByLabel("Organize policy organize-item-e2e-001"),
+    ).toBeDisabled();
+
+    // Selecting the RecognitionType brings out its exact configured naming,
+    // classification and organize policies automatically.
     await page
-      .getByLabel("Organize policy organize-item-e2e-001")
+      .getByLabel("RecognitionType organize-item-e2e-001")
       .selectOption("A");
+    await expect(
+      page.getByLabel("Naming policy organize-item-e2e-001"),
+    ).toHaveValue("A");
     await page.getByRole("button", { name: "Save choice" }).click();
     await expect(
       page.getByText(/Every earlier Preview of this intent is now historical/),
@@ -100,6 +117,9 @@ test.describe("manual organize journey", () => {
       expectedItemVersion: 1,
       expectedVersion: 1,
       recognitionTypeId: "A",
+      namingPolicyId: "A",
+      classificationPolicyId: "A",
+      organizePolicyId: "A",
     });
     expect(JSON.stringify(choice)).not.toContain("Bearer");
 
