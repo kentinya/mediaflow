@@ -338,7 +338,8 @@ no-`/file-index` proof and the six-column presentation.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 19b2fa0e77b47b026c86fc50795ed70280c4f641
+(the report itself is committed as the direct child of this implementation checkpoint)
 ```
 
 ## B Review Result
