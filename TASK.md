@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.11
 Parent Slice: 37
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: bf9354dcadc2467e3b411576faf43bd70dec3b62
 Difficulty: Medium
 Test Level: T3
@@ -99,8 +99,10 @@ Frozen for this Task:
 
   ```text
   python3 scripts/check_governance.py
-  .venv/bin/ruff check mediaflow tests
+  .venv/bin/ruff format --check .
+  .venv/bin/ruff check .
   .venv/bin/python -m compileall -q mediaflow tests scripts
+  .venv/bin/python -m unittest discover -s tests
   git diff --check
   ```
 
@@ -218,7 +220,7 @@ Correction round 1 (original P1 — effective resolver):
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Head SHA: 564e7e1eaf3cd2ccbc9f0e1f71ab122873db7bc2
 (the report itself is committed as the direct child of this implementation checkpoint)
 ```
@@ -226,7 +228,7 @@ Head SHA: 564e7e1eaf3cd2ccbc9f0e1f71ab122873db7bc2
 ## B Review Result
 
 ```text
-Reviewed: bf9354dcadc2467e3b411576faf43bd70dec3b62..7de59cbe39cbbbb4ed2bcb6e6a6a2dd9fb230dbd
+Reviewed: bf9354dcadc2467e3b411576faf43bd70dec3b62..772a8a000a9258382234ab3a602f6c05777243f4
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
@@ -234,19 +236,10 @@ Next: SAME TASK FIX LOOP
 
 Blockers:
 
-- Save Choice does not consistently use the intent-pinned configuration snapshot. Reproduction:
-  the new `DefaultAssemblySaveChoiceTests` setup creates a real Files-originated intent under
-  Active revision A; an isolated production-valid check then activates a successor revision with
-  the current ResourceLibrary disabled and submits the old intent's valid choice. The reviewed
-  implementation returns `400 source_cross_authority` instead of validating against revision A and
-  saving the choice. The failure is in `ManualOrganizeIntentService._validate_storage_source()`,
-  which calls `_active_snapshot()` for the validator snapshot rather than using the current
-  intent's `snapshot_id` and `snapshot_digest`.
-  This violates the Task Acceptance Criterion requiring exact intent-pinned snapshot validation
-  and the Slice RO-8 snapshot/Organize continuity boundary. Pass the intent snapshot identity
-  through Files source validation and add a regression covering Active revision replacement after
-  intent creation; the old intent must validate against its pinned revision and persist once, or
-  fail only when that pinned revision itself is unavailable.
-
-If `FIX REQUIRED`, fixes remain in this Task. This result does not close the Slice or update
-Roadmap.
+- The checkpoint does not pass the required formatting gate. `.venv/bin/ruff format --check .`
+  fails on `tests/test_v2_manual_organize.py:2304` and `:2382`; run the repository formatter on
+  the Task changes and create a new checkpoint.
+- The complete Python regression fails because `TASK.md` does not document the exact required
+  release-quality command `.venv/bin/ruff check .`; add the exact command to the Task's Required
+  Tests/actual evidence and rerun the complete regression. The implementation behavior and focused
+  Save Choice tests are otherwise accepted; do not change the Task scope.
