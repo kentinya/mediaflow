@@ -1528,48 +1528,6 @@ button.mf-grid-button {
   color: #1268f5;
 }
 
-.mf-storage-status {
-  width: 183px;
-  min-height: 88px;
-  margin: auto 12px 15px;
-  padding: 11px 14px 10px;
-  border: 1px solid #dce5f0;
-  border-radius: 7px;
-  background: rgba(255, 255, 255, 0.42);
-  color: #18243b;
-}
-
-.mf-storage-status strong {
-  display: block;
-  font-size: 15px;
-  line-height: 22px;
-}
-
-.mf-storage-meter {
-  height: 6px;
-  margin-top: 10px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: #dce5f0;
-}
-
-.mf-storage-meter span {
-  display: block;
-  width: 62%;
-  height: 100%;
-  border-radius: inherit;
-  background: #146bff;
-}
-
-.mf-storage-status-meta {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 8px;
-  color: #536584;
-  font-size: 12px;
-  line-height: 16px;
-}
-
 .mf-shell-content {
   min-height: 100vh;
   margin-left: 208px;
@@ -2523,8 +2481,7 @@ button.mf-grid-button {
     border-bottom: 1px solid #e4eaf2;
   }
 
-  .mf-brand,
-  .mf-storage-status {
+  .mf-brand {
     display: none;
   }
 

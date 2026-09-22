@@ -2301,9 +2301,7 @@ class DefaultAssemblySaveChoiceTests(unittest.TestCase):
             )
             body = {"expectedVersion": intent["version"], "recognitionTypeId": "C"}
 
-            default_choice = value.repository.get_manual_intent(
-                intent["intentId"]
-            ).items[0].choice
+            default_choice = value.repository.get_manual_intent(intent["intentId"]).items[0].choice
 
             def unchanged():
                 persisted = value.repository.get_manual_intent(intent["intentId"])
@@ -2381,9 +2379,7 @@ class DefaultAssemblySaveChoiceTests(unittest.TestCase):
             )
             self.assertNotEqual(pinned_revision_id, successor.revision_id)
             # Revision A is now superseded but still published and intact.
-            self.assertEqual(
-                "superseded", value.service.require(pinned_revision_id).status.value
-            )
+            self.assertEqual("superseded", value.service.require(pinned_revision_id).status.value)
 
             status, updated = self.request(
                 value,
