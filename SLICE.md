@@ -9,10 +9,10 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 52383fa67c007ec814156503856fe8b7aa0219af
-Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
+Implementation Head: 3e15ab35f3ebb7e76cb278fb5004726ad5b7aebb
+Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -53,6 +53,30 @@ background scan, mutation, cache layer, provider capability, route, or new Files
 prior Closure Packets and A Final Reviews remain immutable historical facts; this reactivation
 adds Task 37.9 and requires a fresh A review over the original Slice Base through the corrected
 head.
+
+## Current Post-closure Reactivation — Files Exact Path Identity
+
+On 2026-09-22, A reactivated Slice 37 again under the post-closure P0/P1 correction loop after
+production-like Docker use found that a ResourceLibrary directory whose real Storage name is
+`SSH ` (one trailing ASCII space) is shown as `SSH` and opens as `电影/SSH`, producing a
+Storage `not_found` error even though the live directory is present.
+
+The deployed stack is running from `/opt/mediaflow` and mounts the host Storage
+`/mnt/HDD_2` at `/media`. The live Files API correctly returns the exact entry identity
+`name = "SSH "` and `path = "电影/SSH "`. The Web shared normalizer applies `trimEnd()` to
+the Files entry name/path projection, so the UI loses the identity character before rendering and
+navigation. This is a P1 user-visible path-authority and recovery break inside RO-3 exact Files
+composition, RO-5 Storage-authoritative Files data, RO-9 actionable recovery and RO-11 test
+reconciliation.
+
+This correction is intentionally limited to the Web Files projection and its tests: exact
+Storage-relative names and paths must survive normalization, navigation must request the exact
+encoded path, and invisible leading/trailing whitespace must be made unambiguous in the visible
+Files presentation. It does not change Storage providers, backend/API contracts, FileIndex,
+Docker/Compose deployment, or any media directory. The user-owned test residual directory is
+explicitly outside this Task and will not be deleted, renamed or otherwise mutated by Developer.
+This reactivation adds Task 37.10 and requires a fresh A review over the original Slice Base
+through the corrected head.
 
 The same reactivation also records a RO-11 quality-gate correction discovered in GitHub Actions
 quality run `#115` on 2026-09-21. The accepted Local directory replacement risk uses the provider's
@@ -532,13 +556,14 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
-Implementation Head: 52383fa67c007ec814156503856fe8b7aa0219af
-Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
+Slice Status: ACTIVE
+Implementation Head: 3e15ab35f3ebb7e76cb278fb5004726ad5b7aebb
+Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
 Task 37.8 state: PASS
 Task 37.9 state: PASS
+Task 37.10 state: PLANNED
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: A FINAL REVIEW
+Next Action: Developer implements Task 37.10 Files exact path identity and whitespace presentation
 ```
 
 ## Closure Packet
