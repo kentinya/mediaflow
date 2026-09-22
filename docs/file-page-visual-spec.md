@@ -1,6 +1,7 @@
 # Files Page Visual Specification
 
-Status: PASS / CLOSED — Slice 37 A Final Review 2026-09-20
+Status: ACTIVE — Slice 37 reactivated 2026-09-21 (Files refresh truthfulness and focused feedback
+presentation)
 Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
 Reference size: `1536 x 1024` pixels
 Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
@@ -9,6 +10,34 @@ This document is the visual source of truth for the Files page and the shared V2
 it. The image is an existing user asset and must not be edited, regenerated, compressed, recolored
 or replaced. The 2026-09-14 A rescope makes the reference shell the replacement for the prior dark
 horizontal V2 shell rather than a Files-only imitation inside it.
+
+## Current Presentation Boundary — 2026-09-21
+
+A's 2026-09-21 scope clarification removes the business concepts `识别结果` and `整理状态` from the
+Files page. The Files table presents physical file facts and explicit actions with exactly six
+columns:
+
+```text
+选择 | 名称 | 类型 | 大小 | 修改时间 | 操作
+```
+
+The information banner describes browsing and organizing ResourceLibrary files without presenting
+either removed concept. The explicit `整理` action, the single-item Preview path, the bounded batch
+continuation and the OrganizerExecutor authority remain available and unchanged. This is a
+presentation-boundary correction: the backend/API projections may still carry recognition and
+business-status fields for their existing authorities and result synchronization, but Files must
+not display those two concepts as business feedback.
+
+The same reactivation makes refresh truthful. When a ResourceLibrary directory is deleted or moved
+outside the Web page, `刷新` must reconcile the page-local directory-tree memory and selection with
+the refreshed live Storage read: a removed directory may no longer appear as a directory-tree
+target or as a stale selection. The selected ResourceLibrary and current directory path are
+preserved when the refreshed read remains valid, and the existing bounded read-failure state and
+its recovery actions are preserved when the current directory is gone.
+
+The earlier wording in this document that still names the removed columns or the withdrawn Upload/
+Download surfaces is historical. Where it conflicts with the current Contract, `SLICE.md` and this
+section control.
 
 ## Implementation Status — 2026-09-20
 
@@ -37,14 +66,16 @@ page:
 - The page admits bounded multi-item Organize continuation through the existing durable
   Intent -> Preview -> Execute journey and preserves independent item outcomes.
 - Slice 37 delivered the complete backend-authoritative common file command set from Files:
-  Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit, Upload and Download.
-  These remain distinct from media organization and retain the same live-Storage authority,
-  explicit intent, bounded scope and OrganizerExecutor-only mutation guarantees.
+  Create Folder/Text File, Rename, Copy, Move, Delete and bounded text Edit. Direct browser Upload
+  and Download were subsequently removed from the current product surface by A's 2026-09-20 scope
+  revision and are no longer part of the page. The remaining commands stay distinct from media
+  organization and retain the same live-Storage authority, explicit intent, bounded scope and
+  OrganizerExecutor-only mutation guarantees.
 
 The codebase still contains FileIndex-backed compatibility and legacy operation paths, including
 indexed discovery and older file-scoped APIs. Those paths are not the source or authority for the
-ResourceLibrary Files page. The page may consume bounded FileIndex business-state feedback for
-display, and completed Organize or direct file-management mutations may reconcile their known
+ResourceLibrary Files page. The page does not present FileIndex recognition/business-status
+feedback, and completed Organize or direct file-management mutations may reconcile their known
 terminal outcome back to FileIndex. FileIndex is never the source/path/execution authority and a
 reconciliation failure never replays Storage mutation.
 
@@ -63,7 +94,8 @@ Slice 37 owns the shared V2 shell presentation and one primary operator-facing w
 - the V2 **Files** page;
 - the Files page's local "Add ResourceLibrary" drawer shown in the reference image;
 - the ResourceLibrary-scoped browse, selection, Create Folder/Text File, Rename, Copy, Move, Delete,
-  bounded text Edit, Upload, Download and organize continuation journey rendered on that page.
+  bounded text Edit and organize continuation journey rendered on that page. Direct browser Upload
+  and Download are outside the current product surface.
 
 The following remain behaviorally frozen:
 
@@ -154,7 +186,7 @@ The main content shows:
 - subtitle `浏览资源库中的文件，选择需要整理的文件。`;
 - primary button `+ 添加资源库`;
 - information banner:
-  `当前显示的是资源库中的文件，这些文件将根据识别结果整理到对应的媒体库（如 Movies、TV Shows）。`;
+  `当前显示的是资源库中的文件，可从条目操作直接整理到对应的媒体库（如 Movies、TV Shows）。`;
 - summary card:
   - name `source`;
   - green state `已启用`;
@@ -191,36 +223,39 @@ The file pane shows the breadcrumb and controls:
 - grid view available but not selected.
 
 The screenshot remains authoritative for the closed, non-hover success-state composition. Row overflow and
-directory-node hover/focus/context actions provide `新建文件夹`, `新建文本文件`, `上传`, `下载`,
-`复制`, `移动` and `删除` without adding persistent pixels or shifting the reference controls while
+directory-node hover/focus/context actions provide `新建文件夹`, `新建文本文件`,
+`复制`, `移动`, `重命名` and `删除` without adding persistent pixels or shifting the reference controls while
 menus/dialogs are closed. Keyboard and touch users receive an equivalent focusable action entry;
 right-click alone is not sufficient discoverability.
 
-The table columns are exactly:
+The table columns are exactly (current presentation boundary — see above):
 
 ```text
-名称 | 类型 | 大小 | 修改时间 | 识别结果 | 整理状态 | 操作
+选择 | 名称 | 类型 | 大小 | 修改时间 | 操作
 ```
 
 The reference rows, in order, are:
 
-| Name | Type | Size | Modified | Recognition | Organize status | Action |
-|---|---|---:|---|---|---|---|
-| `Avatar.2009.1080p.mkv` | `视频` | `12.4 GB` | `2024-01-15 10:30` | `Avatar (2009)` | `待整理` | `整理` |
-| `Avatar.2009.nfo` | `其他` | `4 KB` | `2024-01-15 10:30` | `-` | `跳过` | `查看` |
-| `sample.jpg` | `图片` | `1.2 MB` | `2024-01-15 10:30` | `-` | `跳过` | `查看` |
-| `Subtitles` | `文件夹` | `-` | `2024-01-15 10:30` | `-` | `跳过` | `打开` |
-| `Behind.The.Scenes.mkv` | `视频` | `2.1 GB` | `2024-01-14 08:20` | `-` | `待整理` | `整理` |
-| `Poster.jpg` | `图片` | `856 KB` | `2024-01-14 08:20` | `-` | `跳过` | `查看` |
-| `fanart.jpg` | `图片` | `1.5 MB` | `2024-01-14 08:20` | `-` | `跳过` | `查看` |
+| Name | Type | Size | Modified | Action |
+|---|---|---:|---|---|
+| `Avatar.2009.1080p.mkv` | `视频` | `12.4 GB` | `2024-01-15 10:30` | `整理` |
+| `Avatar.2009.nfo` | `其他` | `4 KB` | `2024-01-15 10:30` | `查看` |
+| `sample.jpg` | `图片` | `1.2 MB` | `2024-01-15 10:30` | `查看` |
+| `Subtitles` | `文件夹` | `-` | `2024-01-15 10:30` | `打开` |
+| `Behind.The.Scenes.mkv` | `视频` | `2.1 GB` | `2024-01-14 08:20` | `整理` |
+| `Poster.jpg` | `图片` | `856 KB` | `2024-01-14 08:20` | `查看` |
+| `fanart.jpg` | `图片` | `1.5 MB` | `2024-01-14 08:20` | `查看` |
 
-The first row is checked. Its thumbnail, file-type icon, status pill, action button and overflow
-menu retain the reference grouping and recognizable alignment. Exact thumbnail/icon artwork and
-cell measurements may differ. Rows with `整理` use the blue action style;
-`查看` and `打开` use the neutral action style; `跳过` uses the muted status style.
+The capability reference recognitions and business statuses that produced the earlier `识别结果` and
+`整理状态` columns remain backend evidence, but the current Files presentation does not render them.
+
+The first row is checked. Its thumbnail, file-type icon, action button and overflow menu retain the
+reference grouping and recognizable alignment. Exact thumbnail/icon artwork and cell measurements
+may differ. Rows with `整理` use the blue action style; `查看` and `打开` use the neutral action
+style.
 
 The closed overflow menu is the reference screenshot state. For an authorized eligible entry, the
-menu exposes applicable `下载`, `重命名`, `复制`, `移动`, `删除` and, for an allowlisted bounded
+menu exposes applicable `重命名`, `复制`, `移动`, `删除` and, for an allowlisted bounded
 text file, `编辑` actions.
 Opening a direct-action dialog must not disturb the reference screenshot state when the menu is
 closed. Unsupported operations are omitted or disabled with a reason.
@@ -243,14 +278,10 @@ closed. Unsupported operations are omitted or disabled with a reason.
 - `编辑` supports only size-bounded, allowlisted text files. Save is the explicit overwrite
   intent for the exact loaded version; binary, oversized, invalid-encoding or stale content fails
   without writing.
-- `上传` streams bounded browser-selected files or a directory tree into the current directory with
-  safe relative paths, per-item progress/outcome and explicit conflict handling. `下载` streams an
-  authorized bounded file or directory/multi-selection archive without writing that archive back to
-  Storage.
 - These actions use a direct backend command rather than Recognition/Metadata/Naming/
   Classification/Organize Preview ceremony. They still enforce RBAC, selected Active
   ResourceLibrary confinement, Storage capability, limits, stale/conflict checks and audit. Every
-  mutation goes through `OrganizerExecutor`; Download is zero-mutation. No uncertain mutation is
+  mutation goes through `OrganizerExecutor`. No uncertain mutation is
   automatically retried and no operation silently falls back.
 
 ### Selection Footer
@@ -313,17 +344,17 @@ The page must be documented and later implemented as one vertical journey:
 | Goal | Browse and fully manage common file operations in configured ResourceLibraries, create a ResourceLibrary, or choose media to organize |
 | Entry | Select `文件` from the shell or open `/ui-v2/library/files` |
 | Visible state | The replacement shared shell, ResourceLibrary summary, directory tree, file table, common file commands/progress, selection footer and add-library drawer |
-| Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit/Upload/Download eligible content, organize selected media or complete the local add-library flow |
+| Action | Browse, select, refresh, switch view, Create Folder/Text File, Rename/Copy/Move/Delete/Edit eligible content, organize selected media or complete the local add-library flow |
 | Success | Common actions refresh from live Storage with independent outcomes, selected organize action remains clear, a saved ResourceLibrary is Active/browseable, and the page matches the reference |
 | Failure | Read, permission, capability, path, limit, stale/conflict, partial transfer, malformed-data or activation failure is shown on the affected item without fabricated success or uncertain replay |
-| Recovery | Retry safe reads/downloads, return to root, correct input/destination, reload stale text, inspect partial items, reconfirm a current delete/replace, select another library or correct and resubmit a failed ResourceLibrary save |
+| Recovery | Retry safe reads, return to root, correct input/destination, reload stale text, inspect partial items, reconfirm a current delete/replace, select another library or correct and resubmit a failed ResourceLibrary save |
 
-Viewing, refreshing, browsing, selecting and Download are read-only. Common mutation commands are
+Viewing, refreshing, browsing and selecting are read-only. Common mutation commands are
 explicit and do not start merely by viewing or selecting. Any organize action continues
-through the existing Preview, explicit intent and backend authority boundaries. The Files page may
-show bounded FileIndex-derived recognition and business-status feedback, but must never use
-FileIndex to enumerate physical entries, resolve a selected path, construct source authority,
-expose credentials or grant execution authority. After a terminal Organize result, the backend
+through the existing Preview, explicit intent and backend authority boundaries. The Files page must
+never use FileIndex to enumerate physical entries, resolve a selected path, construct source
+authority, expose credentials or grant execution authority, and it does not present
+recognition/business-status feedback. After a terminal Organize result, the backend
 automatically synchronizes that item outcome to FileIndex. A known direct file-operation result may
 also reconcile display state, but FileIndex never authorizes the operation and reconciliation
 failure never replays Storage mutation.
@@ -347,13 +378,14 @@ Slice 37 was accepted only when all of the following were true:
       states with action-oriented recovery; error states do not rewrite the reference success state.
 5. `+ 添加资源库` creates a ResourceLibrary, and final `保存` invokes backend validation and
       activation as one user action; any error rejects the save and preserves the previous Active.
-6. FileIndex may supply only bounded recognition/business-status feedback for display, and every
+6. FileIndex supplies no Files-page recognition/business-status feedback, and every
       terminal Organize item attempts an automatic FileIndex synchronization without replaying media
       mutation when synchronization fails.
-7. Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit, Upload and Download
+7. Create Folder/Text File, Rename, Copy, Move, Delete and bounded text Edit
    complete through direct, low-friction backend-authoritative commands with explicit destructive/
    overwrite intent, bounded selection/recursion, partial-outcome recovery and
-   `OrganizerExecutor`-only mutation. Download remains zero-mutation.
+   `OrganizerExecutor`-only mutation. Direct browser Upload and Download were delivered by the
+   original closure and later removed from the current product surface.
 8. Non-Files V2 business journeys and route behavior remain functional inside the intentionally
       replaced shared shell, and V1 `/ui` remains unchanged.
 9. The implementation contains no unrelated provider, Storage-adapter or identity-system change;

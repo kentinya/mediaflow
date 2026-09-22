@@ -69,19 +69,20 @@ test("Files listing is live-Storage bounded evidence with a safe directory conte
   await expect(
     page.getByRole("navigation", { name: "资源库面包屑" }),
   ).toBeVisible();
-  for (const column of [
-    "名称",
-    "类型",
-    "大小",
-    "修改时间",
-    "识别结果",
-    "整理状态",
-    "操作",
-  ]) {
+  // The first column is the select-all control; the remaining five are the
+  // physical/action columns.
+  await expect(
+    page.getByRole("columnheader", { name: "选择全部" }),
+  ).toBeVisible();
+  for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
     await expect(
       page.getByRole("columnheader", { name: column, exact: true }),
     ).toBeVisible();
   }
+  // The removed business concepts are not Files page presentation.
+  await expect(page.getByRole("columnheader")).toHaveCount(6);
+  await expect(page.getByText("识别结果")).toHaveCount(0);
+  await expect(page.getByText("整理状态")).toHaveCount(0);
 
   // The bearer token never reaches a URL, the rendered page or the evidence.
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);

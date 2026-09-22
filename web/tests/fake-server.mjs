@@ -596,6 +596,10 @@ function resourceLibraryState(session) {
       filesOrganizePaths: null,
       // A deterministic admission failure for the failure-path journey.
       filesOrganizeFailure: null,
+      // ResourceLibrary-relative directories removed outside MediaFlow in this
+      // session: `/__test__/remove-directory` appends here so a browser test
+      // can express an external delete between two live reads.
+      externallyRemovedDirectories: [],
     };
     RESOURCE_LIBRARY_STATES.set(key, value);
   }
@@ -1227,6 +1231,7 @@ function filesDocument(
   resourceLibraryId = null,
   savedCandidate = null,
   extraLibrary = null,
+  removedDirectories = [],
 ) {
   const isReferenceLibrary = resourceLibraryId === "source";
   const isSavedResourceLibrary = resourceLibraryId === "new-e2e-library";
@@ -1249,7 +1254,14 @@ function filesDocument(
   ];
   // Remote Storage keeps a tiny bounded fixture for unavailable-provider
   // browsing evidence; reference-shaped directories live on local-media.
-  const entries =
+  // `removedPaths` are directories deleted outside MediaFlow in this session:
+  // the live read stops returning them, exactly like real Storage.
+  const removedPaths = removedDirectories ?? [];
+  const isRemoved = (entryPath) =>
+    removedPaths.some(
+      (removed) => entryPath === removed || entryPath.startsWith(removed + "/"),
+    );
+  const entries = (
     storage.id === "remote-media"
       ? isRoot
         ? [
@@ -1261,7 +1273,8 @@ function filesDocument(
             ),
           ]
         : []
-      : referenceDirectoryEntries(path);
+      : referenceDirectoryEntries(path)
+  ).filter((entry) => !isRemoved(entry.path));
   const hasNext =
     storage.id !== "remote-media" && (path === "" || Boolean(cursor));
   return {
@@ -5818,6 +5831,7 @@ const server = createServer(async (req, res) => {
         resourceLibraryId,
         resourceLibraryState(session).candidate,
         extraLibrary ?? null,
+        stateForFiles.externallyRemovedDirectories,
       ),
     );
     return;
@@ -8781,12 +8795,35 @@ const server = createServer(async (req, res) => {
       filesTransfers: new Map(),
       filesOrganizePaths: null,
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
+      externallyRemovedDirectories: [],
     });
     res.setHeader(
       "Set-Cookie",
       `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
     );
     sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  // Express one directory removed outside MediaFlow between two live reads, so
+  // a browser test can prove the refreshed Files view stops presenting it. The
+  // removal is strictly scoped to the calling browser session and touches no
+  // production service or file.
+  if (url.pathname === "/__test__/remove-directory" && req.method === "POST") {
+    const target = url.searchParams.get("path") ?? "";
+    if (target === "" || target.includes("..") || target.startsWith("/")) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const state = resourceLibraryState(session);
+    if (!state.externallyRemovedDirectories.includes(target)) {
+      state.externallyRemovedDirectories.push(target);
+    }
+    sendJson(res, 200, {
+      ok: true,
+      removed: target,
+      session: session ?? null,
+    });
     return;
   }
 

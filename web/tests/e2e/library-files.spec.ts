@@ -117,20 +117,33 @@ test("Files success state presents the reference composition with live Storage r
   ).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
 
-  // Physical rows come from the live Storage read, with bounded spec columns.
-  for (const column of [
-    "名称",
-    "类型",
-    "大小",
-    "修改时间",
-    "识别结果",
-    "整理状态",
-    "操作",
-  ]) {
+  // Physical rows come from the live Storage read, with the bounded physical
+  // columns.  The Files page presents physical file facts and explicit actions:
+  // 识别结果 and 整理状态 are not Files page concepts.
+  await expect(
+    page.getByRole("columnheader", { name: "选择全部" }),
+  ).toBeVisible();
+  for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
     await expect(
       page.getByRole("columnheader", { name: new RegExp(column) }),
     ).toBeVisible();
   }
+  await expect(page.getByRole("columnheader")).toHaveCount(6);
+  await expect(
+    page.getByRole("columnheader", { name: "识别结果" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("columnheader", { name: "整理状态" }),
+  ).toHaveCount(0);
+  await expect(page.getByText("识别结果")).toHaveCount(0);
+  await expect(page.getByText("整理状态")).toHaveCount(0);
+  await expect(page.getByText("待整理")).toHaveCount(0);
+  // The explicit 整理 action for an eligible entry remains available.
+  await expect(
+    page.getByRole("row", { name: /sample\.mkv/ }).getByRole("button", {
+      name: "整理",
+    }),
+  ).toBeEnabled();
   await expect(
     directoryTree(page).getByRole("button", { name: "Movies", exact: true }),
   ).toBeVisible();
@@ -560,6 +573,54 @@ test("controlled 1536x1024 success-state evidence screenshot", async ({
     fullPage: false,
   });
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
+});
+
+test("refresh stops presenting a directory removed outside MediaFlow", async ({
+  page,
+}) => {
+  await resetFakeResourceLibraries(page);
+  const apiRequests = apiRequestsOf(page);
+  await openFiles(page);
+
+  // A live read discovers the nested directory, so it is real tree state.
+  await directoryTree(page)
+    .getByRole("button", { name: "Movies", exact: true })
+    .click();
+  await expect(
+    directoryTree(page).getByRole("button", { name: "Avatar (2009)" }),
+  ).toBeVisible();
+  await page.getByRole("checkbox", { name: "选择 Avatar (2009)" }).check();
+  await expect(page.getByText(/已选择 1 个文件夹/)).toBeVisible();
+
+  // The directory is deleted outside the Web page.
+  await page.evaluate(
+    async (target) => {
+      const response = await fetch(target, { method: "POST" });
+      if (!response.ok) throw new Error("external directory removal failed");
+    },
+    `/__test__/remove-directory?path=${encodeURIComponent("Movies/Avatar (2009)")}`,
+  );
+
+  // 刷新 re-reads live Storage: the removed directory is gone from the tree,
+  // its stale selection is cleared, and the surviving entries stay visible.
+  await page.getByRole("button", { name: /刷新/ }).click();
+  await expect(
+    directoryTree(page).getByRole("button", { name: "Avatar (2009)" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("checkbox", { name: "选择 Avatar (2009)" }),
+  ).toHaveCount(0);
+  await expect(
+    directoryTree(page).getByRole("button", { name: "Inception (2010)" }),
+  ).toBeVisible();
+  await expect(page.getByText(/已选择 0 个/)).toBeVisible();
+
+  // The refresh stayed the existing bounded GET-only read with no FileIndex
+  // authority and no mutation request.
+  expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
+  expect(
+    apiRequests.every((request) => !request.url.includes("file-index")),
+  ).toBe(true);
 });
 
 const FAKE_RESET = "/__test__/reset-resource-library";

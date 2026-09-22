@@ -832,16 +832,6 @@ body {
   color: var(--files-enabled);
 }
 
-.mf-pill-pending {
-  background: var(--files-accent-soft);
-  color: var(--files-accent);
-}
-
-.mf-pill-muted {
-  background: #eef1f5;
-  color: var(--files-muted);
-}
-
 .mf-files-workarea {
   display: flex;
   gap: 16px;
@@ -994,7 +984,9 @@ body {
 
 .mf-files-table th:nth-child(2),
 .mf-files-table td:nth-child(2) {
-  width: 28%;
+  /* The single flexible column: it absorbs the remaining width so the bounded
+     physical columns and the action column keep their size. */
+  width: auto;
 }
 
 .mf-files-table th:nth-child(3),
@@ -1014,16 +1006,6 @@ body {
 
 .mf-files-table th:nth-child(6),
 .mf-files-table td:nth-child(6) {
-  width: 15%;
-}
-
-.mf-files-table th:nth-child(7),
-.mf-files-table td:nth-child(7) {
-  width: 11%;
-}
-
-.mf-files-table th:nth-child(8),
-.mf-files-table td:nth-child(8) {
   width: 11%;
 }
 
@@ -1038,10 +1020,6 @@ body {
 
 .mf-col-check {
   width: 36px;
-}
-
-.mf-cell-muted {
-  color: var(--files-muted);
 }
 
 .mf-sort {
@@ -2131,7 +2109,9 @@ button.mf-grid-button {
 
 .mf-files-table th:nth-child(2),
 .mf-files-table td:nth-child(2) {
-  width: 150px;
+  /* The single flexible column: it absorbs the remaining pane width so the
+     bounded physical columns and the action column keep their exact size. */
+  width: auto;
 }
 
 .mf-files-table th:nth-child(3),
@@ -2149,18 +2129,10 @@ button.mf-grid-button {
   width: 81px;
 }
 
+/* The Files table presents six columns:
+   选择 | 名称 | 类型 | 大小 | 修改时间 | 操作. */
 .mf-files-table th:nth-child(6),
 .mf-files-table td:nth-child(6) {
-  width: 73px;
-}
-
-.mf-files-table th:nth-child(7),
-.mf-files-table td:nth-child(7) {
-  width: 74px;
-}
-
-.mf-files-table th:nth-child(8),
-.mf-files-table td:nth-child(8) {
   width: 90px;
   white-space: nowrap;
 }
