@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.11
 Parent Slice: 37
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: bf9354dcadc2467e3b411576faf43bd70dec3b62
 Difficulty: Medium
 Test Level: T3
@@ -207,11 +207,27 @@ Head SHA: f3c54b58ff583e354f1ba9849e48bdfbf71f6610
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: bf9354dcadc2467e3b411576faf43bd70dec3b62..7de59cbe39cbbbb4ed2bcb6e6a6a2dd9fb230dbd
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+Blockers:
+
+- Save Choice does not consistently use the intent-pinned configuration snapshot. Reproduction:
+  the new `DefaultAssemblySaveChoiceTests` setup creates a real Files-originated intent under
+  Active revision A; an isolated production-valid check then activates a successor revision with
+  the current ResourceLibrary disabled and submits the old intent's valid choice. The reviewed
+  implementation returns `400 source_cross_authority` instead of validating against revision A and
+  saving the choice. The failure is in `ManualOrganizeIntentService._validate_storage_source()`,
+  which calls `_active_snapshot()` for the validator snapshot rather than using the current
+  intent's `snapshot_id` and `snapshot_digest`.
+  This violates the Task Acceptance Criterion requiring exact intent-pinned snapshot validation
+  and the Slice RO-8 snapshot/Organize continuity boundary. Pass the intent snapshot identity
+  through Files source validation and add a regression covering Active revision replacement after
+  intent creation; the old intent must validate against its pinned revision and persist once, or
+  fail only when that pinned revision itself is unavailable.
+
+If `FIX REQUIRED`, fixes remain in this Task. This result does not close the Slice or update
+Roadmap.
