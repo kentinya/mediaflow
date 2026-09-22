@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
-Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files Save Choice runtime resolver
+Contract Revision: 2026-09-22 A SCOPE REVISION — Save Choice runtime resolver and remove fake System Storage block
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -45,6 +45,24 @@ Storage providers, OrganizerExecutor boundary, Files presentation, or any media 
 The prior Closure Packet and A Final Review remain immutable historical facts; B must plan one
 focused correction Task and the next A review must cover the original Base through the corrected
 Implementation Head.
+
+## Current A-owned Scope Revision — Remove Fake System Storage Block
+
+On 2026-09-22, A revised the current Slice correction boundary after confirming that the shared V2
+shell renders a hardcoded `系统存储` block (`12.4 TB / 20 TB`, `62%`) that is not backed by a
+current product data source and is not needed by the operator journey.
+
+This is a P1 user-visible truthfulness defect inside RO-1 reference-aligned shell presentation,
+RO-2 shared V2 shell replacement, RO-9 actionable/truthful recovery and RO-11 test reconciliation.
+The current product must not present fabricated system capacity or usage as live state.
+
+The correction is intentionally narrow: remove the fake `系统存储` block from the shared V2 shell,
+update the synchronized visual specification and shell tests, and add no replacement Storage probe,
+capacity API, background collection, provider change or new settings surface. The canonical image
+remains the visual reference for the surrounding shell hierarchy, while this explicit A-owned
+product-boundary revision overrides that one unsupported status block. This correction is added to
+Task 37.11 at A's explicit direction; the existing Save Choice backend correction remains bounded
+and must retain its snapshot, zero-mutation and authority invariants.
 
 ## Post-closure Reactivation
 
@@ -282,7 +300,7 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 | ID | Outcome | Acceptance state |
 |---|---|---|
 | RO-1 | **Reference-aligned visual fidelity.** | A controlled `1536 x 1024` Files success screenshot preserves the canonical image's shared-shell and Files hierarchy, visible fixture state, labels, control order and design intent. Pixel-diff counts are diagnostic rather than a pass/fail threshold; bounded differences in font/glyph rendering, icon or thumbnail artwork, exact dimensions/spacing, borders, shadows and color nuance are acceptable when the required composition remains complete, recognizable and operable. |
-| RO-2 | **Shared V2 shell replacement.** | The old dark horizontal shell is replaced by the reference-aligned light left rail/top bar across V2. Files has no alternate shell; existing route/auth/deep-link behavior remains shared and non-Files business journeys remain functional. |
+| RO-2 | **Shared V2 shell replacement.** | The old dark horizontal shell is replaced by the reference-aligned light left rail/top bar across V2. Files has no alternate shell; the current shell does not fabricate unsupported system-capacity/status data; existing route/auth/deep-link behavior remains shared and non-Files business journeys remain functional. |
 | RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy; the Files page does not expose `识别结果` or `整理状态` feedback, while the explicit `整理` action remains available. |
 | RO-4 | **ResourceLibrary drawer and activation.** | The three-step drawer matches the reference; final `保存` submits one complete candidate and the backend validates and atomically activates it, preserving the previous Active on every failure. |
 | RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex remains available for bounded backend reconciliation and existing result synchronization, but it does not supply Files-page recognition/status presentation, source/path authority or execution authority. |
@@ -345,8 +363,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
   `通知`, `系统设置`.
 - Navigation labels route to the existing supported V2 destination or an existing truthful migration
   landing; visual replacement does not fabricate a completed business surface.
-- The bottom `系统存储` block is bounded system-status presentation and performs no Storage access
-  merely by rendering.
+- The current product does not render a `系统存储` capacity/usage block. No hardcoded or
+  unsupported system-capacity value may appear in the shared shell; adding a real Storage probe or
+  capacity API is outside this correction.
 - The top bar contains the route-relevant search affordance, notification entry and bounded current
   principal/account control. The controlled reference fixture displays `admin`; production does not
   infer a new identity system or expose the bearer token.
@@ -584,7 +603,7 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ```text
 Slice Status: ACTIVE
 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
-Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files Save Choice runtime resolver
+Contract Revision: 2026-09-22 A SCOPE REVISION — Save Choice runtime resolver and remove fake System Storage block
 Task 37.8 state: PASS
 Task 37.9 state: PASS
 Task 37.10 state: PASS

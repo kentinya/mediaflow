@@ -41,7 +41,7 @@ snapshot, Storage-authority and zero-mutation boundaries.
 ## Implementation Scope
 
 ```text
-Application → API service composition → focused integration tests
+Application → API service composition → Web shell presentation → focused integration tests
 ```
 
 - Make `ManualOrganizeIntentService` use the effective managed pinned-runtime resolver already
@@ -55,6 +55,11 @@ Application → API service composition → focused integration tests
 - Keep FileIndex-originated choice validation unchanged.
 - Keep the existing API request/response shape, optimistic `expectedVersion` and
   `expectedItemVersion` fencing, exact snapshot pinning, and user-facing recovery semantics.
+- Remove the unsupported shared-shell `系统存储` capacity/usage block and its hardcoded values
+  (`12.4 TB / 20 TB`, `62%`). This is a presentation removal only: do not add a Storage probe,
+  capacity API, polling, provider capability or replacement status surface.
+- Synchronize the visual specification and shell/component tests so the shared rail remains
+  structurally valid without fabricated system-capacity state.
 
 Frozen for this Task:
 
@@ -62,8 +67,8 @@ Frozen for this Task:
 - Managed configuration schema and activation lifecycle.
 - Storage providers and Storage mutation capabilities.
 - Preview/Execute behavior and `OrganizerExecutor` mutation authority.
-- Files presentation, FileIndex synchronization, unrelated routes and the existing Slice 37
-  deferred scope.
+- Files presentation other than the shared shell, FileIndex synchronization, unrelated routes and
+  the existing Slice 37 deferred scope.
 
 ## Acceptance Criteria
 
@@ -81,6 +86,11 @@ Frozen for this Task:
       unchanged.
 - [ ] No choice schema, route, permission, snapshot-pinning, FileIndex-authority or
       OrganizerExecutor safety invariant is weakened.
+- [ ] The shared V2 shell does not render the fake `系统存储` block or its hardcoded capacity/usage
+      values on any supported V2 route; no replacement Storage access or capacity authority is
+      introduced.
+- [ ] The visual specification and AppShell/frontend tests record the current no-fabricated-status
+      boundary without weakening unrelated shell, route or authentication assertions.
 - [ ] The assigned T3 validation passes with actual evidence, and the checkpoint contains only
       Task 37.11 work.
 
@@ -89,6 +99,8 @@ Frozen for this Task:
 - Focused application/API regression covering automatic `MediaFlowApi` construction and the
   Files-originated Save Choice success path without an injected `runtime_resolver`.
 - Focused failure tests for unavailable pinned runtime/source and unchanged durable state.
+- Focused AppShell/component coverage proving the unsupported `系统存储` block and hardcoded
+  capacity values are absent while the shared navigation and shell remain operable.
 - Existing related manual-organize intent, preview and V2 API tests:
 
   ```text

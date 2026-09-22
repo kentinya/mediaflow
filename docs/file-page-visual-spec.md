@@ -1,6 +1,6 @@
 # Files Page Visual Specification
 
-Status: PASS / CLOSED — Slice 37 A Final Review 2026-09-22
+Status: ACTIVE — Slice 37 reactivated 2026-09-22 (Save Choice resolver and fake System Storage removal)
 Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
 Reference size: `1536 x 1024` pixels
 Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
@@ -173,13 +173,15 @@ The Files screenshot must show the replacement shared V2 shell in the following 
 2. Navigation items, in order:
    `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `操作与任务`, `通知`, `系统设置`.
 3. `文件` is the only active navigation item.
-4. A `系统存储` usage block is visible at the bottom of the left rail.
+4. No fabricated system-capacity or usage block is rendered at the bottom of the left rail.
 5. The top bar contains the search field, notification icon and `admin` account control.
 
 The shell must not acquire a second Files-only navigation model. The same shell and ordered
 navigation frame every V2 route; Files supplies its search behavior through the shared top-bar slot.
 Icons, spacing, selected-state backgrounds and alignment must remain recognizably aligned with the
-reference image. Exact glyph artwork, rasterization and CSS measurements may differ.
+reference image. Exact glyph artwork, rasterization and CSS measurements may differ. The current
+product boundary intentionally removes the reference-only `系统存储` usage block because no
+supported authoritative capacity source exists; adding one is outside Slice 37.
 
 ### Page Header and ResourceLibrary Summary
 
