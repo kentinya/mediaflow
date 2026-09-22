@@ -9,10 +9,10 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 3fb4d1a091676727dcfd8e69007d530cd7dd3ef9
-Contract Revision: 2026-09-22 A SCOPE REVISION — Save Choice runtime resolver and remove fake System Storage block
+Implementation Head: 651ed735f8c41048af4cbd296afe8488c6d084b0
+Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
@@ -63,6 +63,31 @@ remains the visual reference for the surrounding shell hierarchy, while this exp
 product-boundary revision overrides that one unsupported status block. This correction is added to
 Task 37.11 at A's explicit direction; the existing Save Choice backend correction remains bounded
 and must retain its snapshot, zero-mutation and authority invariants.
+
+## Current A-owned Scope Revision — RecognitionType-driven policy binding
+
+On 2026-09-22, A reactivated Slice 37 after confirming a P1 operator-facing mismatch in the
+manual Organize choice editor. The backend correctly requires the selected RecognitionType to use
+its exact configured NamingPolicy, ClassificationPolicy and OrganizePolicy, but the Web editor
+lists all enabled downstream policies as independently selectable controls. An operator can
+therefore submit a combination that the current pinned snapshot must reject with
+`incompatible_choice`, even though the controls present it as selectable.
+
+This correction remains inside RO-8 Organize workflow continuity, RO-9 actionable recovery and
+RO-11 test reconciliation. The RecognitionType is the authoritative choice source: selecting it
+must automatically populate the three configured downstream policy IDs and make those values
+non-editable in the normal Web journey. The backend compatibility validation, immutable snapshot
+pinning, optimistic version fencing, zero-mutation Save Choice boundary and RecognitionType
+identity semantics remain mandatory and unchanged. RecognitionType C must continue to preserve C
+while using whatever downstream policies the pinned configuration maps to it, including A where
+configured.
+
+The correction is intentionally limited to the Organize Web editor, its request projection and
+focused Web/API contract tests. It does not change the configuration model, policy mappings,
+manual choice API shape, metadata identity, Preview/Execute flow, Storage authority or any Files
+mutation surface. If a pinned RecognitionType mapping is missing or malformed, the editor must
+fail closed with an actionable reload/recovery state rather than guessing a policy or submitting
+an incompatible choice.
 
 ## Post-closure Reactivation
 
@@ -552,6 +577,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 - [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
 - [x] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
       result synchronizes independently without mutation replay.
+- [ ] The manual Organize Web editor treats RecognitionType as the source of truth for NamingPolicy,
+      ClassificationPolicy and OrganizePolicy: selecting a RecognitionType automatically brings
+      out its exact configured policies, prevents arbitrary incompatible policy combinations and
+      exposes an actionable fail-closed state when the pinned mapping is unavailable.
 - [x] Formal Organize destination composition includes the classification `library` prefix before
       the classification relative path, matching the local CLI, across Plan, Preview, precheck,
       execution and result evidence.
@@ -594,6 +623,9 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
   directory tree and stale selection state without adding a mutation or FileIndex request;
 - formal destination parity evidence for `library/path` composition, CLI/formal target agreement,
   safe-prefix rejection, MediaLibrary resolution and zero-mutation failure behavior;
+- RecognitionType-driven policy binding evidence: the Web editor automatically projects the exact
+  pinned downstream policy mapping, preserves RecognitionType identity and rejects missing mapping
+  evidence without submitting a guessed choice;
 - full Python and Web regression, production frontend build/package validation, governance and
   `git diff --check`;
 - scope/private-file inspection confirming the canonical image and `config/alist.json` are untouched.
@@ -601,15 +633,15 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
-Implementation Head: 3fb4d1a091676727dcfd8e69007d530cd7dd3ef9
-Contract Revision: 2026-09-22 A SCOPE REVISION — Save Choice runtime resolver and remove fake System Storage block
+Slice Status: ACTIVE
+Implementation Head: 651ed735f8c41048af4cbd296afe8488c6d084b0
+Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
 Task 37.8 state: PASS
 Task 37.9 state: PASS
 Task 37.10 state: PASS
 Task 37.11 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: A FINAL REVIEW
+Next Action: B PLANS TASK 37.12
 ```
 
 ## Post-closure Correction Closure Packet — Task 37.11
