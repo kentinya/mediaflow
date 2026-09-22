@@ -629,7 +629,13 @@ class ManualOrganizeIntentService:
         return self._validate_storage_source(source)
 
     def _validate_storage_source(self, source: ManualSourceIdentity) -> ManualSourceIdentity:
-        if self._source_validator is None or self._runtime_resolver is None:
+        # The effective resolver is the explicit injection when present and the
+        # managed pinned-runtime resolver otherwise, exactly the authority the
+        # default validator was built with.  Checking the raw optional
+        # constructor field here would reject every Files-originated choice
+        # made through the production MediaFlowApi composition, which supplies
+        # only configuration_service and storage_factory.
+        if self._source_validator is None or self._effective_runtime_resolver() is None:
             raise ManualIntentUnavailable(
                 "the live Storage source authority required by this intent is unavailable",
                 details={"resourceLibraryId": source.resource_library_id},
@@ -641,12 +647,19 @@ class ManualOrganizeIntentService:
         )
         return validated.source
 
+    def _effective_runtime_resolver(self):
+        if self._runtime_resolver is not None:
+            return self._runtime_resolver
+        if self._configuration_service is not None:
+            return self._managed_runtime_resolver
+        return None
+
     def _default_source_validator(self):
         """Build the live-Storage validator when this service owns the authority."""
 
         if self._storage_factory is None:
             return None
-        resolver = self._runtime_resolver or self._managed_runtime_resolver
+        resolver = self._effective_runtime_resolver()
         if resolver is None:
             return None
         return ManualSourceValidator(

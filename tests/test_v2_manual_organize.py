@@ -38,6 +38,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from mediaflow.application.automation import ProcessingWorkerService
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.file_catalog import FileCatalogService
 from mediaflow.application.manual_organize import ManualOrganizeIntentService
 from mediaflow.application.manual_organize_execution import ManualOrganizeExecutionService
@@ -68,10 +69,14 @@ from mediaflow.infrastructure.runtime_configuration import (
     StorageDefinition,
     with_managed_snapshot,
 )
+from mediaflow.infrastructure.sqlite_configuration_management import (
+    SQLiteConfigurationRepository,
+)
 from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.infrastructure.strategy_configuration import development_strategy_configuration
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_configuration_objects import example_document
 from tests.test_manual_organize_preview import manual_snapshot
 
 SNAPSHOT_ID = "active-1"
@@ -2124,6 +2129,219 @@ class FilesAdmissionJourneyTests(unittest.TestCase):
             self.assertFalse(refreshed["current"])
             self.assertEqual([], value.source.mutations)
             self.assertEqual([], value.target.mutations)
+
+
+class DefaultAssemblySaveChoiceTests(unittest.TestCase):
+    """Files Save Choice through the automatic ``MediaFlowApi`` composition.
+
+    This is the recorded P1 regression: the default API assembly supplies only
+    ``configuration_service`` and ``storage_factory`` to
+    ``ManualOrganizeIntentService`` — no explicit ``runtime_resolver`` — so the
+    service must validate a Files-originated source against the managed
+    pinned-runtime resolver it builds internally.  These tests never inject a
+    ``runtime_resolver`` and drive the real managed Active lifecycle
+    (import → validate → activate) over a real SQLite configuration
+    repository, real ``LocalStorage`` roots and a real runtime database.
+    """
+
+    OPERATOR = ResolvedApiPrincipal(
+        "operator",
+        OPERATOR_TOKEN,
+        frozenset({ApiPermission.READ, ApiPermission.MANAGE_MANUAL_ORGANIZE}),
+    )
+
+    @contextmanager
+    def journey(self):
+        with (
+            tempfile.TemporaryDirectory() as source_directory,
+            tempfile.TemporaryDirectory() as target_directory,
+            tempfile.TemporaryDirectory() as runtime_directory,
+        ):
+            root = Path(runtime_directory)
+            source_root = Path(source_directory)
+            target_root = Path(target_directory)
+            media = source_root / "Media"
+            (media / "Movies").mkdir(parents=True)
+            (media / "Movies" / "One.2001.mkv").write_bytes(b"one" * 41)
+            (target_root / "Movies").mkdir(parents=True)
+
+            configuration_path = root / "configuration.sqlite3"
+            configuration_repository = SQLiteConfigurationRepository(configuration_path)
+            service = ManagedConfigurationService(
+                configuration_repository,
+                bootstrap_database_path=str(configuration_path),
+            )
+            document = example_document()
+            document["persistence"]["databasePath"] = str(configuration_path)
+            document["storages"][0]["rootPath"] = str(source_root)
+            document["storages"][1]["rootPath"] = str(target_root)
+            draft = service.import_draft(document, actor="operator")
+            validated = service.validate(draft.revision_id, actor="operator")
+            active = service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="operator",
+            )
+
+            runtime_path = root / "runtime.sqlite3"
+            repository = SQLiteTaskRepository(runtime_path)
+            index = SQLiteFileIndexRepository(runtime_path)
+            catalog = FileCatalogService(
+                index,
+                ("source",),
+                ("source-storage",),
+                task_repository=repository,
+            )
+            api = MediaFlowApi(
+                repository,
+                None,
+                principals=(self.OPERATOR,),
+                configuration_service=service,
+                file_catalog=catalog,
+                file_index=index,
+            )
+            try:
+                yield SimpleNamespace(
+                    api=api,
+                    repository=repository,
+                    index=index,
+                    catalog=catalog,
+                    service=service,
+                    configuration_repository=configuration_repository,
+                    active=active,
+                    source_root=source_root,
+                    media=media,
+                )
+            finally:
+                index.close()
+                repository.close()
+                configuration_repository.close()
+
+    @staticmethod
+    def request(value, path, *, method="GET", body=None):
+        raw = json.dumps(body).encode() if body is not None else b""
+        statuses: list[str] = []
+        environ = {
+            "REQUEST_METHOD": method,
+            "PATH_INFO": path,
+            "QUERY_STRING": "",
+            "CONTENT_LENGTH": str(len(raw)),
+            "REMOTE_ADDR": "127.0.0.1",
+            "wsgi.input": io.BytesIO(raw),
+            "CONTENT_TYPE": "application/json",
+            "HTTP_AUTHORIZATION": f"Bearer {OPERATOR_TOKEN}",
+        }
+        response = b"".join(value.api(environ, lambda status, headers: statuses.append(status)))
+        return int(statuses[0].split()[0]), json.loads(response)
+
+    def admit(self, value, paths):
+        return self.request(
+            value,
+            "/api/v1/resource-libraries/source/files/organize",
+            method="POST",
+            body={"paths": list(paths)},
+        )
+
+    def test_default_assembly_saves_files_choice_against_managed_runtime(self) -> None:
+        """A valid Files-originated choice persists without an injected resolver."""
+
+        with self.journey() as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            stored = value.repository.get_manual_intent(intent["intentId"])
+            self.assertTrue(stored.items[0].source.is_storage_source)
+            # The Files authority is live Storage: no FileIndex row exists.
+            self.assertEqual((), value.index.list_by_resource_library("source"))
+            versions_before = (stored.version, stored.items[0].version)
+            audits_before = value.repository.list_manual_intent_audit(intent["intentId"])
+
+            status, updated = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                method="POST",
+                body={
+                    "expectedVersion": intent["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, updated)
+            choice = updated["items"][0]["choice"]
+            self.assertEqual("C", choice["recognitionTypeId"])
+            self.assertEqual("A", choice["namingPolicyId"])
+            self.assertEqual("A", choice["classificationPolicyId"])
+            self.assertEqual("A", choice["organizePolicyId"])
+
+            # The choice persisted exactly once and each version moved once.
+            persisted = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual("C", persisted.items[0].choice.recognition_type_id)
+            self.assertEqual(versions_before[0] + 1, persisted.version)
+            self.assertEqual(versions_before[1] + 1, persisted.items[0].version)
+            audits_after = value.repository.list_manual_intent_audit(intent["intentId"])
+            self.assertEqual(len(audits_before) + 1, len(audits_after))
+            self.assertEqual("choice_updated", audits_after[-1].action)
+            # Save Choice performs zero Storage mutation.
+            self.assertEqual((), value.repository.list_tasks())
+
+    def test_default_assembly_fails_closed_when_source_or_runtime_unavailable(self) -> None:
+        """Unavailable runtime/source evidence rejects without durable change."""
+
+        with self.journey() as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            choice_path = (
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice"
+            )
+            body = {"expectedVersion": intent["version"], "recognitionTypeId": "C"}
+
+            default_choice = value.repository.get_manual_intent(
+                intent["intentId"]
+            ).items[0].choice
+
+            def unchanged():
+                persisted = value.repository.get_manual_intent(intent["intentId"])
+                self.assertEqual(intent["version"], persisted.version)
+                self.assertEqual(item["version"], persisted.items[0].version)
+                self.assertEqual(default_choice, persisted.items[0].choice)
+                self.assertEqual("open", persisted.status.value)
+                self.assertEqual(
+                    1, len(value.repository.list_manual_intent_audit(intent["intentId"]))
+                )
+
+            # A source that disappeared before Save Choice fails closed.
+            (value.media / "Movies" / "One.2001.mkv").unlink()
+            status, document = self.request(value, choice_path, method="POST", body=body)
+            self.assertEqual(404, status, document)
+            self.assertEqual("source_missing", document["error"]["code"])
+            unchanged()
+
+            # A replaced source (same path, different content) is source_stale.
+            (value.media / "Movies" / "One.2001.mkv").write_bytes(b"replacement" * 40)
+            status, document = self.request(value, choice_path, method="POST", body=body)
+            self.assertEqual(409, status, document)
+            self.assertEqual("source_stale", document["error"]["code"])
+            unchanged()
+
+            # A pinned snapshot the managed authority no longer publishes fails
+            # closed instead of falling back to the current configuration.
+            value.configuration_repository._connection.execute(
+                "UPDATE managed_configuration_revisions SET status = ? WHERE revision_id = ?",
+                ("archived", value.active.revision_id),
+            )
+            status, document = self.request(value, choice_path, method="POST", body=body)
+            self.assertEqual(503, status, document)
+            self.assertEqual("configuration_unavailable", document["error"]["code"])
+            details = document["error"]["details"]
+            self.assertEqual("managed_active_unavailable", details["durableState"])
+            self.assertEqual("none", details["sideEffects"])
+            unchanged()
 
 
 if __name__ == "__main__":
