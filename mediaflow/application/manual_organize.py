@@ -626,9 +626,11 @@ class ManualOrganizeIntentService:
             record = self._resolve_file(source.file_id)
             self._assert_source_unchanged(source, record)
             return record
-        return self._validate_storage_source(source)
+        return self._validate_storage_source(source, intent)
 
-    def _validate_storage_source(self, source: ManualSourceIdentity) -> ManualSourceIdentity:
+    def _validate_storage_source(
+        self, source: ManualSourceIdentity, intent
+    ) -> ManualSourceIdentity:
         # The effective resolver is the explicit injection when present and the
         # managed pinned-runtime resolver otherwise, exactly the authority the
         # default validator was built with.  Checking the raw optional
@@ -640,10 +642,14 @@ class ManualOrganizeIntentService:
                 "the live Storage source authority required by this intent is unavailable",
                 details={"resourceLibraryId": source.resource_library_id},
             )
+        # The source is revalidated against the exact configuration snapshot the
+        # intent is pinned to, never against whatever revision happens to be
+        # Active now: activating a successor revision must not invalidate an
+        # existing intent whose pinned snapshot is still published.
         validated = self._source_validator.validate(
             source,
-            snapshot_id=self._active_snapshot().snapshot_id,
-            snapshot_digest=self._active_snapshot().digest,
+            snapshot_id=intent.snapshot_id,
+            snapshot_digest=intent.snapshot_digest,
         )
         return validated.source
 

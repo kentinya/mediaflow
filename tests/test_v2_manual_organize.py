@@ -2343,6 +2343,76 @@ class DefaultAssemblySaveChoiceTests(unittest.TestCase):
             self.assertEqual("none", details["sideEffects"])
             unchanged()
 
+    def test_save_choice_uses_intent_pinned_snapshot_after_active_replacement(self) -> None:
+        """A successor Active revision must not invalidate a pinned intent.
+
+        Regression for the reviewed FIX REQUIRED: the intent is created under
+        Active revision A; a successor revision that disables the
+        ResourceLibrary is then activated.  Save Choice must still validate the
+        source against the intent-pinned revision A (published superseded
+        snapshot, unchanged live Storage) and persist exactly once, not fail
+        with ``source_cross_authority`` from the successor revision.
+        """
+
+        with self.journey() as value:
+            status, intent = self.admit(value, ["Movies/One.2001.mkv"])
+            self.assertEqual(201, status, intent)
+            item = intent["items"][0]
+            pinned_revision_id = value.active.revision_id
+            stored = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual(pinned_revision_id, stored.snapshot_id)
+            versions_before = (stored.version, stored.items[0].version)
+            audits_before = value.repository.list_manual_intent_audit(intent["intentId"])
+
+            # Activate a successor revision that disables the ResourceLibrary.
+            successor_document = example_document()
+            successor_document["persistence"]["databasePath"] = str(
+                value.configuration_repository.database_path
+            )
+            successor_document["storages"][0]["rootPath"] = str(value.source_root)
+            successor_document["storages"][1]["rootPath"] = str(value.media.parent / "target")
+            successor_document["resourceLibraries"][0]["enabled"] = False
+            draft = value.service.import_draft(successor_document, actor="operator")
+            validated = value.service.validate(draft.revision_id, actor="operator")
+            successor = value.service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="operator",
+            )
+            self.assertNotEqual(pinned_revision_id, successor.revision_id)
+            # Revision A is now superseded but still published and intact.
+            self.assertEqual(
+                "superseded", value.service.require(pinned_revision_id).status.value
+            )
+
+            status, updated = self.request(
+                value,
+                f"/api/v1/operations/organize/intents/{intent['intentId']}"
+                f"/items/{item['itemId']}/choice",
+                method="POST",
+                body={
+                    "expectedVersion": intent["version"],
+                    "expectedItemVersion": item["version"],
+                    "recognitionTypeId": "C",
+                    "namingPolicyId": "A",
+                    "classificationPolicyId": "A",
+                    "organizePolicyId": "A",
+                },
+            )
+            self.assertEqual(200, status, updated)
+            self.assertEqual("C", updated["items"][0]["choice"]["recognitionTypeId"])
+
+            persisted = value.repository.get_manual_intent(intent["intentId"])
+            self.assertEqual("C", persisted.items[0].choice.recognition_type_id)
+            # Still pinned to revision A, persisted exactly once.
+            self.assertEqual(pinned_revision_id, persisted.snapshot_id)
+            self.assertEqual(versions_before[0] + 1, persisted.version)
+            self.assertEqual(versions_before[1] + 1, persisted.items[0].version)
+            audits_after = value.repository.list_manual_intent_audit(intent["intentId"])
+            self.assertEqual(len(audits_before) + 1, len(audits_after))
+            self.assertEqual("choice_updated", audits_after[-1].action)
+            self.assertEqual((), value.repository.list_tasks())
+
 
 if __name__ == "__main__":
     unittest.main()
