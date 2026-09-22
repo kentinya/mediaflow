@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 37.11
 Parent Slice: 37
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: bf9354dcadc2467e3b411576faf43bd70dec3b62
 Difficulty: Medium
 Test Level: T3
