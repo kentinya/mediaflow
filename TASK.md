@@ -121,21 +121,87 @@ Frozen for this Task:
 
 ### Changed Files
 
+- `mediaflow/application/manual_organize.py` — `_validate_storage_source()` now gates on the
+  effective managed pinned-runtime resolver instead of the raw optional `runtime_resolver`
+  constructor field; added `_effective_runtime_resolver()` (explicit injection wins, otherwise the
+  managed resolver backed by `configuration_service`) and reused it in `_default_source_validator()`
+  so the validator construction and the Save Choice gate can never disagree.
+- `tests/test_v2_manual_organize.py` — new `DefaultAssemblySaveChoiceTests` driving the automatic
+  `MediaFlowApi` composition (no injected `runtime_resolver`, no injected manual services) over a
+  real managed Active lifecycle (SQLite configuration repository, import → validate → activate),
+  real `LocalStorage` roots and a real runtime database.
+
 ### Implemented
+
+- Files-originated Save Choice through the default `MediaFlowApi` assembly now validates the source
+  against the exact intent-pinned managed runtime reconstructed from `configuration_service`
+  (`validate_runtime_snapshot` + `require` + `verify_integrity` + `load_managed_runtime_configuration`
+  + `with_managed_snapshot`) and the live ResourceLibrary/Storage authority, with no FileIndex row
+  required and zero Storage mutation.
+- Explicit `runtime_resolver` injection still wins for existing tests and non-managed callers;
+  FileIndex-originated choice validation is untouched.
+- Regression: valid Files-originated Save Choice succeeds through the automatic assembly, persists
+  the choice once, increments intent/item versions exactly once and appends exactly one
+  `choice_updated` audit record.
+- Fail-closed regression: missing source (`source_missing`/404), replaced source
+  (`source_stale`/409) and an unpublished pinned revision (503 `configuration_unavailable`,
+  `durableState: managed_active_unavailable`) all leave the choice, versions, audit trail and
+  Storage unchanged; no fallback to the current unpinned configuration and no replay.
 
 ### Tests and Results
 
+- `.venv/bin/python -m unittest tests.test_v2_manual_organize.DefaultAssemblySaveChoiceTests -v`
+  — PASS (2 tests). Verified both tests FAIL on the pre-fix code (stash check) and PASS with the
+  fix, so they reproduce the recorded P1.
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize
+  tests.test_manual_preview` — PASS (52 tests).
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/ruff check mediaflow tests` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `git diff --check` — PASS.
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / PRE-EXISTING / UNRELATED.
+  The stack fails at `docker compose up` before any application code runs:
+  `invalid mount config for type "bind": bind source path does not exist:
+  /tmp/mediaflow-smoke-security-*/{deployment.env,mediaflow.json}` (the harness's temporary
+  deployment files vanish between creation and container start). Reproduced identically on the
+  pre-Task HEAD `342cbbe` and with `scripts/docker_health_smoke_test.py`, so the failure is an
+  environment/harness issue independent of this Task's two-file change. The equivalent
+  production-composition regression is covered in-process by `DefaultAssemblySaveChoiceTests`,
+  which exercises the exact automatic `MediaFlowApi` assembly that failed in production.
+
 ### Decisions
+
+- Introduced `_effective_runtime_resolver()` as the single source of truth for "which resolver
+  authority does this service have" and used it in both the Save Choice gate and the default
+  validator construction, eliminating the raw-field/effective-resolver mismatch at its root.
+- The managed resolver is only offered when `configuration_service` is present; a service with
+  neither an explicit resolver nor a managed configuration service still fails closed with
+  `manual_intent_configuration_unavailable`, preserving the previous non-managed behavior.
+- The fail-closed runtime test corrupts the pinned revision status directly in the SQLite
+  configuration repository; the API surfaces the existing bounded 503 `configuration_unavailable`
+  document (`durableState: managed_active_unavailable`, `sideEffects: none`), which is the
+  top-level `RuntimeSnapshotUnavailable` mapping — no new error shape was added.
 
 ### Remaining In-Slice Work
 
+- The Docker release-security/health smoke harness bind-mount flake above is Slice-visible test
+  infrastructure debt (it blocks the container-level evidence gate for any Task), but fixing the
+  harness is outside this Task's scope.
+
 ### Risks / Deviations
+
+- Docker container-level smoke evidence is UNAVAILABLE in this environment for a pre-existing,
+  unrelated harness/environment reason (see Tests and Results); whether this gate is satisfied by
+  the in-process production-composition regression is left to B.
+- Pre-existing unrelated dirty file preserved untouched: `docs/pics/文件页.png` (modified before
+  this Task started; not staged, not committed).
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: f3c54b58ff583e354f1ba9849e48bdfbf71f6610
+(the report itself is committed as the direct child of this implementation checkpoint)
 ```
 
 ## B Review Result
