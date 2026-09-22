@@ -9,9 +9,9 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 3e15ab35f3ebb7e76cb278fb5004726ad5b7aebb
+Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
 Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
 ```
 
@@ -556,14 +556,14 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: 3e15ab35f3ebb7e76cb278fb5004726ad5b7aebb
+Slice Status: READY FOR A REVIEW
+Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
 Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
 Task 37.8 state: PASS
 Task 37.9 state: PASS
-Task 37.10 state: PLANNED
+Task 37.10 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: Developer implements Task 37.10 Files exact path identity and whitespace presentation
+Next Action: A FINAL REVIEW
 ```
 
 ## Closure Packet
@@ -830,6 +830,126 @@ Documentation Reconciliation Needed:
 - A should reconcile the historical pre-reactivation closure record with this post-reactivation
   correction packet while preserving both as dated history, and record the final review over the
   original Slice Base through this corrected Head.
+
+Decision: SLICE READY FOR A REVIEW
+```
+
+## Post-reactivation Closure Packet — Task 37.10
+
+```text
+Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Head SHA: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
+
+Required Outcomes:
+- RO-1 Reference-aligned visual fidelity — COMPLETE; the controlled 1536 x 1024 Files state
+  retains the required shell, Files hierarchy, labels, controls and operable composition
+- RO-2 Shared V2 shell replacement — COMPLETE
+- RO-3 Exact Files composition — COMPLETE; exact Storage names/paths survive the Web projection
+  and boundary whitespace is visibly and accessibly unambiguous
+- RO-4 ResourceLibrary drawer and activation — COMPLETE
+- RO-5 Storage-authoritative Files data — COMPLETE; navigation uses the exact live
+  ResourceLibrary-relative path and never substitutes a trimmed sibling or FileIndex authority
+- RO-6 Bounded common file management — COMPLETE
+- RO-7 Low-friction direct-operation safety — COMPLETE
+- RO-8 Organize workflow continuity — COMPLETE
+- RO-8C Formal classification path parity correction — COMPLETE
+- RO-9 Actionable recovery — COMPLETE; a genuinely absent path retains the bounded not-found
+  state and root/retry recovery without alternate-path replay
+- RO-10 Non-Files behavior continuity — COMPLETE
+- RO-11 Test reconciliation — COMPLETE for current supported surfaces; exact-path regression
+  coverage fails on the former trimming behavior and passes on the corrected implementation
+- RO-12 Security model continuity — COMPLETE
+
+Required Surfaces:
+- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
+- V2 Files at `/ui-v2/library/files` — COMPLETE
+- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
+- ResourceLibrary browsing, exact-path navigation, selection, truthful refresh and Organize
+  continuation — COMPLETE
+- Files toolbar/action menus and bounded Create Folder/Text File, Rename, Copy, Move, Delete and
+  supported text Edit — COMPLETE
+- Shared formal `library/path` destination composition across Plan, Preview/precheck, projections,
+  execution and result evidence — COMPLETE
+- Direct browser Upload/Download controls, routes, services, models and dedicated tests — REMOVED
+- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
+
+Implemented:
+- Added an identity-preserving bounded Web normalizer and applied it to Files entry names/paths,
+  breadcrumb names/paths and the current directory path.
+- Rendered leading/trailing identity whitespace with visible boundary markers and an assistive
+  description in the directory tree, breadcrumb, list/grid entries, selection and row actions.
+- Preserved the exact model path through the existing bounded authenticated GET; no trimmed retry,
+  FileIndex lookup, Storage mutation, backend/API contract change or user-media cleanup was added.
+- Added entity, component, fake-server and Playwright regressions proving `SSH ` opens
+  `电影/SSH ` while `电影/SSH` remains a genuine bounded not-found path.
+
+Tasks completed:
+- 37.1 — Files reference browse, shared shell and selection authority
+- 37.2 — ResourceLibrary atomic activation
+- 37.3 — Bounded Files maintenance and ResourceLibrary removal
+- 37.4 — Bounded Files Copy and Move transfers
+- 37.5 — Bounded Files Upload and Download
+- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
+- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
+  validation, Copy/Move control-plane bounds
+- 37.8 — Files safety and quality gate reconciliation
+- 37.9 — Files refresh truthful state and focused presentation
+- 37.10 — Files exact path identity and whitespace presentation
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- Task-focused Vitest — 2 files, 56/56 passed.
+- Full Vitest — 33 files, 464/464 passed.
+- Files Playwright — 34/34 passed; full Playwright — 122/122 passed.
+- Web typecheck, ESLint and Prettier — PASS.
+- Production Web build — PASS; the existing generated-chunk size warning remains non-blocking.
+- `.venv/bin/python -m unittest discover -s tests` — 1718 run, OK, 7 skipped on Python 3.13.
+- Ruff format/lint, compileall, pip check and FFmpeg/FFprobe exclusion — PASS.
+- Both committed example configurations validate successfully.
+- Wheel build and isolated installed-wheel backup/restore/verify/upgrade rehearsal — PASS,
+  schema 38.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` —
+  PASS through the isolated four-service runtime and V2 manual-Organize probe.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py` —
+  PASS; 22548578304 aggregate bytes were admitted as impact evidence while bounded control-plane
+  limits failed closed without mutation.
+- Controlled Files screenshot — PASS by RO-1 structural/reference-aligned review at 1536 x 1024.
+  Diagnostic comparison against the committed reference: 1427563/1572864 changed pixels
+  (90.7620%; mean absolute RGB 13.706/10.990/7.066); pixel count is not a Contract threshold.
+- `git diff --check`, reviewed-range manifest and private-file inspection — PASS;
+  `config/alist.json` is absent and the pre-existing dirty `docs/pics/文件页.png` is excluded.
+
+Safety Evidence:
+- Exact API-provided identity characters survive normalization and every Files navigation callback;
+  no fallback, reconstructed label path or automatic alternate-path retry exists.
+- The successful regression path performs authenticated GET reads only and issues no FileIndex or
+  mutation request; the missing sibling path retains zero-side-effect bounded recovery.
+- OrganizerExecutor-only mutation, backend authority, capability/confinement, explicit destructive
+  intent, stale checks and uncertain-effect non-replay remain unchanged.
+- No credential, production Storage, external provider, private configuration or user media entered
+  the reviewed checkpoint or validation.
+
+Known Non-blocking Issues:
+- The accepted narrow Local directory replacement/inode-reuse race remains documented residual
+  risk and is not claimed fixed.
+- The production Web build retains the existing generated-chunk size warning.
+- The full Python run emits existing unclosed-SQLite `ResourceWarning` messages but completes with
+  1718 tests passing and 7 intentional skips.
+
+Explicitly Deferred:
+- Direct browser Upload/Download remains removed from the current scope.
+- Arbitrary binary/media editing, unbounded recursive/batch operations, new providers/storage
+  capabilities, identity/security-system redesign, automatic uncertain-mutation replay,
+  universal rollback, V1 `/ui` retirement and FFmpeg/FFprobe remain deferred or out of scope as
+  stated in the Contract.
+
+Documentation Reconciliation Needed:
+- A should perform final review over
+  `b507edba167f5af3af8c53bfcf1417ba4fefddf4..3feab84a0fbbf7cebfe1f5507e548636da5ab283`
+  and preserve the earlier Closure Packets/A reviews as dated history.
+- The dirty working-tree copy of `docs/pics/文件页.png` remains pre-existing user work outside the
+  reviewed range; no reconciliation or replacement is requested by this packet.
 
 Decision: SLICE READY FOR A REVIEW
 ```
