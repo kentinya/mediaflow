@@ -15,7 +15,7 @@ Most recently closed large Slice: Slice 37 — Files Workspace, Common File Mana
 Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Slice 37 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
 Slice 37 A Final Review: PASS / CLOSED — 2026-09-22
-Active large Slice: none — A selects the next large Slice
+Active large Slice: Slice 37 — one focused post-closure P1 correction; B plans the correction Task
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable

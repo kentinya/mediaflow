@@ -9,16 +9,42 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
+Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
-Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
+Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files Save Choice runtime resolver
 ```
 
 The Slice Base is immutable. This A-owned rescope superseded the earlier
 Files-page-only/frozen-shell interpretation without changing that Base. Work produced by Task 37.1
 before this revision was implementation evidence only and was reviewed against this checkpointed
 Contract as part of the completed Slice.
+
+## Current Post-closure Reactivation — Files Save Choice Runtime Resolver
+
+On 2026-09-22, A reactivated Slice 37 under the post-closure P0/P1 correction loop after
+production-like use showed that a Files-originated manual Organize intent can be created
+successfully, but saving a valid choice is rejected with
+`manual_intent_configuration_unavailable` before the choice is persisted.
+
+The defect is a P1 user-visible Organize workflow break inside RO-8 Organize workflow continuity,
+RO-9 actionable recovery and the Files-originated Save Choice surface. The deployed Active
+configuration is healthy and the failing intent is bound to the current Active revision and digest.
+The automatic `MediaFlowApi` construction supplies `configuration_service` and `storage_factory`
+to `ManualOrganizeIntentService` but does not supply `runtime_resolver`; the Save Choice path checks
+the raw optional field instead of the internally available managed resolver, so every
+Files-originated choice edit fails closed before source revalidation or persistence. Existing tests
+miss this because their successful Files-originated path explicitly injects `runtime_resolver`.
+
+This correction is intentionally narrow: make the production service composition and source
+validation use the managed pinned-runtime resolver already available to the service, and add a
+regression through the automatic API construction path. It must preserve zero-mutation source
+validation, exact snapshot pinning, FileIndex-independent Files authority, optimistic version
+fencing and no automatic replay. It does not change the choice contract, configuration model,
+Storage providers, OrganizerExecutor boundary, Files presentation, or any media directory.
+The prior Closure Packet and A Final Review remain immutable historical facts; B must plan one
+focused correction Task and the next A review must cover the original Base through the corrected
+Implementation Head.
 
 ## Post-closure Reactivation
 
@@ -556,14 +582,14 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: PASS / CLOSED
+Slice Status: ACTIVE
 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
-Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
+Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files Save Choice runtime resolver
 Task 37.8 state: PASS
 Task 37.9 state: PASS
 Task 37.10 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: A SELECTS THE NEXT LARGE SLICE IN A SUBSEQUENT A TURN
+Next Action: B PLANS FIRST CORRECTION TASK
 ```
 
 ## Closure Packet
