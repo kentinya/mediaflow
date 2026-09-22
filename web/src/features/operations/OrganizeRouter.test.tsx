@@ -258,10 +258,26 @@ describe("V2 manual Organize journey", () => {
     await screen.findByRole("heading", { name: "Manual organize intent" });
     expect(screen.getByText(/version 2/)).toBeVisible();
 
+    // The three downstream policy controls are never independently editable:
+    // they only display the selected RecognitionType's exact pinned mapping.
+    expect(await screen.findByLabelText("Naming policy item-1")).toBeDisabled();
+    expect(
+      screen.getByLabelText("Classification policy item-1"),
+    ).toBeDisabled();
+    expect(screen.getByLabelText("Organize policy item-1")).toBeDisabled();
+
+    // Selecting a different RecognitionType brings out its exact configured
+    // naming, classification and organize policies, replacing the stale stored
+    // combination without any independent downstream edit.
     await user.selectOptions(
-      await screen.findByLabelText("Organize policy item-1"),
-      "A",
+      await screen.findByLabelText("RecognitionType item-1"),
+      "B",
     );
+    expect(screen.getByLabelText("Naming policy item-1")).toHaveValue("B");
+    expect(screen.getByLabelText("Classification policy item-1")).toHaveValue(
+      "B",
+    );
+    expect(screen.getByLabelText("Organize policy item-1")).toHaveValue("B");
     await user.click(screen.getByRole("button", { name: "Save choice" }));
 
     await waitFor(() =>
@@ -281,7 +297,10 @@ describe("V2 manual Organize journey", () => {
     expect(choice?.body).toMatchObject({
       expectedVersion: 2,
       expectedItemVersion: 2,
-      organizePolicyId: "A",
+      recognitionTypeId: "B",
+      namingPolicyId: "B",
+      classificationPolicyId: "B",
+      organizePolicyId: "B",
     });
     expect(JSON.stringify(choice?.body)).not.toMatch(
       /fingerprint|digest|token|path/i,
@@ -304,6 +323,159 @@ describe("V2 manual Organize journey", () => {
     await screen.findByRole("heading", {
       name: /Exact manual organize Preview/,
     });
+  });
+
+  it("preserves RecognitionType C while displaying and submitting its pinned A downstream policies", async () => {
+    const user = userEvent.setup();
+    const intent = intentDocument();
+    // Start from a stale stored downstream combination to prove the submitted
+    // policies come from the RecognitionType mapping, never the stored value.
+    const item = (intent["items"] as Json[])[0]!;
+    item["choice"] = {
+      classificationPolicyId: "B",
+      metadata: null,
+      namingPolicyId: "B",
+      organizePolicyId: "B",
+      recognitionTypeId: "A",
+    };
+    const { calls } = recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+        return jsonResponse(intent);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "Manual organize intent" });
+    // RecognitionType C maps to A naming/classification/organize policies in
+    // the pinned configuration; the identity stays C while the A policies show.
+    await user.selectOptions(
+      await screen.findByLabelText("RecognitionType item-1"),
+      "C",
+    );
+    expect(screen.getByLabelText("Naming policy item-1")).toHaveValue("A");
+    expect(screen.getByLabelText("Classification policy item-1")).toHaveValue(
+      "A",
+    );
+    expect(screen.getByLabelText("Organize policy item-1")).toHaveValue("A");
+
+    await user.click(screen.getByRole("button", { name: "Save choice" }));
+    await waitFor(() =>
+      expect(
+        calls.some((call) => call.url.includes("/items/item-1/choice")),
+      ).toBe(true),
+    );
+    const choice = calls.find((call) =>
+      call.url.includes("/items/item-1/choice"),
+    );
+    expect(choice?.body).toMatchObject({
+      recognitionTypeId: "C",
+      namingPolicyId: "A",
+      classificationPolicyId: "A",
+      organizePolicyId: "A",
+    });
+  });
+
+  it("normalizes a stale stored downstream combination to the RecognitionType mapping on save", async () => {
+    const user = userEvent.setup();
+    const intent = intentDocument();
+    const item = (intent["items"] as Json[])[0]!;
+    // The stored choice keeps RecognitionType A but a stale B naming policy; the
+    // initial render must submit A's exact mapping, not the stale combination.
+    item["choice"] = {
+      classificationPolicyId: "A",
+      metadata: null,
+      namingPolicyId: "B",
+      organizePolicyId: "A",
+      recognitionTypeId: "A",
+    };
+    const { calls } = recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+        return jsonResponse(intent);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "Manual organize intent" });
+    // Without touching the RecognitionType, the displayed naming policy is the
+    // pinned A mapping, not the stale stored B value.
+    expect(await screen.findByLabelText("Naming policy item-1")).toHaveValue(
+      "A",
+    );
+    await user.click(screen.getByRole("button", { name: "Save choice" }));
+
+    await waitFor(() =>
+      expect(
+        calls.some((call) => call.url.includes("/items/item-1/choice")),
+      ).toBe(true),
+    );
+    const choice = calls.find((call) =>
+      call.url.includes("/items/item-1/choice"),
+    );
+    expect(choice?.body).toMatchObject({
+      recognitionTypeId: "A",
+      namingPolicyId: "A",
+      classificationPolicyId: "A",
+      organizePolicyId: "A",
+    });
+  });
+
+  it("fails closed and submits nothing when the pinned RecognitionType mapping is incomplete", async () => {
+    const intent = intentDocument();
+    const recognitionTypes = (intent["options"] as Json)[
+      "recognitionTypes"
+    ] as Json[];
+    // The stored RecognitionType A is missing its naming policy in the pinned
+    // configuration: the editor must fail closed rather than guess a policy.
+    const typeA = recognitionTypes.find((value) => value["id"] === "A")!;
+    typeA["namingPolicyId"] = null;
+    const { calls } = recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+        return jsonResponse(intent);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "Manual organize intent" });
+    await screen.findByText(/missing a configured naming, classification/i);
+    expect(screen.getByRole("button", { name: "Save choice" })).toBeDisabled();
+    expect(
+      calls.some((call) => call.url.includes("/items/item-1/choice")),
+    ).toBe(false);
+  });
+
+  it("fails closed and submits nothing when the stored RecognitionType is not an available option", async () => {
+    const intent = intentDocument();
+    const item = (intent["items"] as Json[])[0]!;
+    // The stored RecognitionType is absent from the current pinned options
+    // (removed or disabled): the editor must fail closed with no submission.
+    item["choice"] = {
+      classificationPolicyId: "A",
+      metadata: null,
+      namingPolicyId: "A",
+      organizePolicyId: "A",
+      recognitionTypeId: "Z",
+    };
+    const { calls } = recordingFetch((call) => {
+      if (call.url.startsWith("/api/v1/operations/organize/intents/intent-1")) {
+        return jsonResponse(intent);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/intent/intent-1");
+
+    await screen.findByRole("heading", { name: "Manual organize intent" });
+    await screen.findByText(/not in the current pinned configuration options/i);
+    expect(screen.getByRole("button", { name: "Save choice" })).toBeDisabled();
+    expect(
+      calls.some((call) => call.url.includes("/items/item-1/choice")),
+    ).toBe(false);
   });
 
   it("admits exactly the selected exact items with one Execute action and no authority material", async () => {

@@ -57,6 +57,7 @@ function ChoiceEditor({
   item,
   options,
   onSaved,
+  onReload,
 }: {
   readonly intentId: string;
   readonly intentVersion: number;
@@ -71,33 +72,54 @@ function ChoiceEditor({
       readonly organizePolicyId: string | null;
       readonly enabled: boolean;
     }[];
-    readonly namingPolicies: readonly { readonly id: string }[];
-    readonly classificationPolicies: readonly { readonly id: string }[];
-    readonly organizePolicies: readonly {
-      readonly id: string;
-      readonly operation: string | null;
-    }[];
   };
   readonly onSaved: (message: string) => void;
+  readonly onReload: () => void;
 }) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const recognitionTypes = options.recognitionTypes.filter(
     (value) => value.enabled,
   );
-  const [choice, setChoice] = useState<OrganizeChoiceModel>(item.choice);
+  // RecognitionType is the single operator-facing choice source. The three
+  // downstream policies are never editable on their own; they are always the
+  // exact pinned mapping of the selected RecognitionType, so the normal journey
+  // can never submit an `incompatible_choice`.
+  const [recognitionTypeId, setRecognitionTypeId] = useState<string>(
+    item.choice.recognitionTypeId ?? "",
+  );
   const [result, setResult] = useState<string | null>(null);
 
-  const selected = recognitionTypes.find(
-    (value) => value.id === choice.recognitionTypeId,
-  );
-  // The pinned RecognitionType is the authority for which downstream policies
-  // are even offered; the operator may still choose among the enabled ones.
-  const namingPolicies = options.namingPolicies.filter((value) => value.id);
-  const classificationPolicies = options.classificationPolicies.filter(
-    (value) => value.id,
-  );
-  const organizePolicies = options.organizePolicies.filter((value) => value.id);
+  const editable = Boolean(item.nextAction) && item.status === "ready";
+  const hasSelection = recognitionTypeId !== "";
+  const selected = hasSelection
+    ? recognitionTypes.find((value) => value.id === recognitionTypeId)
+    : undefined;
+  // A selected RecognitionType that is missing from the current pinned options
+  // (disabled or removed), or whose downstream mapping is incomplete, must fail
+  // closed: the editor shows an actionable reload state and submits nothing.
+  const selectionUnavailable = hasSelection && selected === undefined;
+  const mappingComplete =
+    selected !== undefined &&
+    selected.namingPolicyId !== null &&
+    selected.classificationPolicyId !== null &&
+    selected.organizePolicyId !== null;
+  const mappingIncomplete = selected !== undefined && !mappingComplete;
+  const failClosed = selectionUnavailable || mappingIncomplete;
+
+  // The submitted choice is always projected from the pinned mapping, so an
+  // initial render with a stale stored downstream policy is normalized to the
+  // RecognitionType's exact policies before any save.
+  const projectedChoice: OrganizeChoiceModel | null =
+    selected !== undefined && mappingComplete
+      ? {
+          metadata: item.choice.metadata,
+          recognitionTypeId: selected.id,
+          namingPolicyId: selected.namingPolicyId,
+          classificationPolicyId: selected.classificationPolicyId,
+          organizePolicyId: selected.organizePolicyId,
+        }
+      : null;
 
   const mutation = useMutation({
     mutationFn: (next: OrganizeChoiceModel) =>
@@ -171,14 +193,12 @@ function ChoiceEditor({
           RecognitionType
           <select
             aria-label={`RecognitionType ${item.itemId}`}
-            value={choice.recognitionTypeId ?? ""}
-            disabled={!item.nextAction || item.status !== "ready"}
-            onChange={(event) =>
-              setChoice({
-                ...choice,
-                recognitionTypeId: event.target.value,
-              })
-            }
+            value={recognitionTypeId}
+            disabled={!editable}
+            onChange={(event) => {
+              setResult(null);
+              setRecognitionTypeId(event.target.value);
+            }}
           >
             <option value="">Choose a RecognitionType</option>
             {recognitionTypes.map((value) => (
@@ -192,75 +212,93 @@ function ChoiceEditor({
           Naming policy
           <select
             aria-label={`Naming policy ${item.itemId}`}
-            value={choice.namingPolicyId ?? ""}
-            disabled={!item.nextAction || item.status !== "ready"}
-            onChange={(event) =>
-              setChoice({ ...choice, namingPolicyId: event.target.value })
-            }
+            value={projectedChoice?.namingPolicyId ?? ""}
+            disabled
           >
-            <option value="">Choose a naming policy</option>
-            {namingPolicies.map((value) => (
-              <option key={value.id} value={value.id}>
-                {value.id}
-              </option>
-            ))}
+            <option value="">—</option>
+            {projectedChoice?.namingPolicyId !== undefined &&
+              projectedChoice?.namingPolicyId !== null && (
+                <option value={projectedChoice.namingPolicyId}>
+                  {projectedChoice.namingPolicyId}
+                </option>
+              )}
           </select>
         </label>
         <label>
           Classification policy
           <select
             aria-label={`Classification policy ${item.itemId}`}
-            value={choice.classificationPolicyId ?? ""}
-            disabled={!item.nextAction || item.status !== "ready"}
-            onChange={(event) =>
-              setChoice({
-                ...choice,
-                classificationPolicyId: event.target.value,
-              })
-            }
+            value={projectedChoice?.classificationPolicyId ?? ""}
+            disabled
           >
-            <option value="">Choose a classification policy</option>
-            {classificationPolicies.map((value) => (
-              <option key={value.id} value={value.id}>
-                {value.id}
-              </option>
-            ))}
+            <option value="">—</option>
+            {projectedChoice?.classificationPolicyId !== undefined &&
+              projectedChoice?.classificationPolicyId !== null && (
+                <option value={projectedChoice.classificationPolicyId}>
+                  {projectedChoice.classificationPolicyId}
+                </option>
+              )}
           </select>
         </label>
         <label>
           Organize policy
           <select
             aria-label={`Organize policy ${item.itemId}`}
-            value={choice.organizePolicyId ?? ""}
-            disabled={!item.nextAction || item.status !== "ready"}
-            onChange={(event) =>
-              setChoice({ ...choice, organizePolicyId: event.target.value })
-            }
+            value={projectedChoice?.organizePolicyId ?? ""}
+            disabled
           >
-            <option value="">Choose an organize policy</option>
-            {organizePolicies.map((value) => (
-              <option key={value.id} value={value.id}>
-                {value.id}
-                {value.operation ? ` (${value.operation})` : ""}
-              </option>
-            ))}
+            <option value="">—</option>
+            {projectedChoice?.organizePolicyId !== undefined &&
+              projectedChoice?.organizePolicyId !== null && (
+                <option value={projectedChoice.organizePolicyId}>
+                  {projectedChoice.organizePolicyId}
+                </option>
+              )}
           </select>
         </label>
-        {selected !== undefined && (
-          <p className="mf-dashboard-meta">
-            The pinned RecognitionType advertises metadata{" "}
-            {safeValue(selected.metadataPolicyId)}, naming{" "}
-            {safeValue(selected.namingPolicyId)}, classification{" "}
-            {safeValue(selected.classificationPolicyId)} and organize{" "}
-            {safeValue(selected.organizePolicyId)} policies.
-          </p>
-        )}
+        <p className="mf-dashboard-meta">
+          RecognitionType determines the naming, classification and organize
+          policies. Selecting a RecognitionType applies its exact pinned
+          configuration mapping; these downstream policies cannot be chosen
+          independently.
+        </p>
       </div>
+      {failClosed && (
+        <StatusBanner
+          variant="error"
+          title="RecognitionType mapping unavailable"
+        >
+          <p>
+            {selectionUnavailable
+              ? `The selected RecognitionType "${recognitionTypeId}" is not in the current pinned configuration options, so its policies cannot be applied.`
+              : `The selected RecognitionType "${recognitionTypeId}" is missing a configured naming, classification or organize policy in the current pinned configuration.`}
+          </p>
+          <p className="mf-dashboard-meta">
+            Reload the intent to load the current options and choose an
+            available RecognitionType. No choice was submitted.
+          </p>
+          <div className="mf-actions">
+            <Button type="button" variant="secondary" onClick={onReload}>
+              Reload options
+            </Button>
+          </div>
+        </StatusBanner>
+      )}
       <div className="mf-actions">
         <Button
           type="button"
-          disabled={mutation.isPending}
-          onClick={() => mutation.mutate(choice)}
+          disabled={
+            mutation.isPending ||
+            !editable ||
+            !hasSelection ||
+            failClosed ||
+            projectedChoice === null
+          }
+          onClick={() => {
+            if (projectedChoice !== null) {
+              mutation.mutate(projectedChoice);
+            }
+          }}
         >
           {mutation.isPending ? "Saving choice…" : "Save choice"}
         </Button>
@@ -373,6 +411,7 @@ export function OrganizeIntentPage() {
                 item={item}
                 options={intent.options}
                 onSaved={setNotice}
+                onReload={refresh}
               />
             ))}
             <section className="mf-count-section">

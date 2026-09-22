@@ -1997,6 +1997,9 @@ const MANUAL_REQUEST_BODY_FIELDS = [
   "previewId",
   "reason",
   "recognitionTypeId",
+  "namingPolicyId",
+  "classificationPolicyId",
+  "organizePolicyId",
   "resourceLibraryId",
   "scopeKind",
   "action",
@@ -6796,8 +6799,11 @@ const server = createServer(async (req, res) => {
     const fields = parsed.document;
     recordManualRequestForSession({
       body: {
+        classificationPolicyId: fields.classificationPolicyId,
         expectedItemVersion: fields.expectedItemVersion,
         expectedVersion: fields.expectedVersion,
+        namingPolicyId: fields.namingPolicyId,
+        organizePolicyId: fields.organizePolicyId,
         recognitionTypeId: fields.recognitionTypeId,
       },
       method: "POST",
