@@ -197,6 +197,22 @@ Frozen for this Task:
 - `cd web && npm run format:check` — PASS.
 - `git diff --check` — PASS.
 
+Full backend release-quality gate (added and rerun for the B-review fix loop):
+
+- `.venv/bin/ruff format --check .` — PASS (309 files already formatted).
+- `.venv/bin/ruff check .` — PASS (all checks passed).
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1721 tests, skipped=7,
+  0 failures; the previously failing
+  `test_release_quality_gate_commands_are_documented_for_task_execution` now
+  passes; pre-existing unclosed-SQLite `ResourceWarning` messages remain,
+  unrelated to this Task).
+- `scripts/docker_release_security_smoke_test.py` — PASS (built the candidate
+  image from a clean checkout, ran the isolated four-service stack, verified
+  non-root/mount/RBAC/redaction boundaries and V1/V2 static coexistence:
+  "Release-security smoke acceptance passed", exit 0; no production credential,
+  Storage, media or external provider was used).
+
 ### Decisions
 
 - Rendered the downstream policies as disabled single-value `<select>` controls
@@ -227,11 +243,27 @@ Frozen for this Task:
   OrganizerExecutor mutates Storage, and RecognitionType identity stays
   independent of downstream policy reuse.
 
+### Fix Loop 1 — B review (release-quality gate documentation)
+
+- B returned FIX REQUIRED for a documentation-only blocker: the active `TASK.md`
+  did not list the release-security-required release-quality command strings, so
+  the full Python gate's
+  `test_release_quality_gate_commands_are_documented_for_task_execution` failed.
+- Fix: documented the exact release-quality gate commands in this Task's Required
+  Tests and reran the whole gate. `.venv/bin/python -m unittest discover -s tests`
+  now reports `Ran 1721 tests ... OK (skipped=7)` with zero failures, and the
+  Docker release-security smoke test passes.
+- No implementation, backend behavior, API schema, configuration mapping or
+  safety invariant changed. Task ID (37.12), Task Base
+  (`970ac756222daaf21215c6f2b64446e44a83a108`), Goal and Scope are unchanged.
+
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
-Head SHA: 49a4abd16ffb454c0007338ef468b18282a5dc7a
+Status: READY FOR B RE-REVIEW (FIX LOOP 1)
+Head SHA: 618300550a0a2afa3f91954dee4f172c4eed412b
+Fix Loop 1 documentation commit (release-quality gate commands).
+Prior implementation Head SHA: 49a4abd16ffb454c0007338ef468b18282a5dc7a
 ```
 
 ## B Review Result
