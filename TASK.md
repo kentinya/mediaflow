@@ -140,21 +140,87 @@ Frozen for this Task:
 
 ### Changed Files
 
+- `web/src/features/operations/OrganizeIntentPage.tsx` — reworked the item
+  `ChoiceEditor` so RecognitionType is the single editable choice source and the
+  three downstream policies are projected, read-only and fail-closed.
+- `web/src/features/operations/OrganizeRouter.test.tsx` — updated the primary
+  journey assertion and added focused tests for mapping change, stale
+  normalization, C→A reuse and two no-request fail-closed cases.
+- `web/tests/e2e/manual-organize.spec.ts` — the browser journey now asserts the
+  downstream controls are non-editable, selects the RecognitionType, and proves
+  the mapped naming/classification/organize IDs are submitted.
+- `web/tests/fake-server.mjs` — added the three downstream policy IDs to the
+  bounded manual-request evidence allowlist so the browser test can observe the
+  submitted mapping (test-observability only; no fake behavior changed).
+
 ### Implemented
+
+- The choice editor now holds only `recognitionTypeId` as editable state and
+  derives `namingPolicyId`, `classificationPolicyId` and `organizePolicyId`
+  from the selected `options.recognitionTypes[]` entry. The submitted choice is
+  always the projected mapping, so a stale stored downstream value is normalized
+  before any save and selecting a RecognitionType immediately updates all three
+  displayed values.
+- The Naming, Classification and Organize controls are disabled selects that
+  display the exact pinned mapped value; there is no independent downstream
+  selection in the normal Web journey.
+- RecognitionType identity is preserved (C stays C) while its configured
+  downstream policies — including A where the pinned snapshot maps C→A — are
+  displayed and submitted unchanged.
+- If the selected RecognitionType is absent from the current pinned options, or
+  its downstream mapping is incomplete, the editor renders a bounded actionable
+  fail-closed banner with a Reload action, disables Save and submits nothing.
+- The existing optimistic `expectedVersion`/`expectedItemVersion` fields, the
+  Save Choice route/request shape, Preview invalidation and zero-mutation
+  semantics are unchanged; backend `_validate_choice()` remains authoritative.
 
 ### Tests and Results
 
+- `cd web && npm run test -- --run src/features/operations/OrganizeRouter.test.tsx src/entities/operations/organize.test.ts` — PASS (30 tests).
+- `cd web && npm run test -- --run` — PASS (33 files, 469 tests).
+- `cd web && npx playwright test tests/e2e/manual-organize.spec.ts` — PASS (11 tests).
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview` — PASS (53 tests; pre-existing unclosed-SQLite `ResourceWarning` messages remain, unrelated to this Task).
+- `python3 scripts/check_governance.py` — PASS.
+- `cd web && npm run typecheck` — PASS.
+- `cd web && npm run lint` — PASS.
+- `cd web && npm run format:check` — PASS.
+- `git diff --check` — PASS.
+
 ### Decisions
+
+- Rendered the downstream policies as disabled single-value `<select>` controls
+  rather than plain text so they stay recognizable as the same fields, remain
+  labelled/queryable and cannot be edited or submitted independently.
+- Kept the request projection sending all four policy IDs (recognitionType plus
+  the three mapped policies) so the frozen backend compatibility validation
+  receives the exact pinned combination unchanged.
+- Distinguished two fail-closed causes (selection not in options vs. incomplete
+  mapping) with a distinct message each, and wired the per-item Reload action to
+  the page's existing authorized refresh so recovery reloads the current options.
+- Added the three policy IDs to `MANUAL_REQUEST_BODY_FIELDS` in the fake server
+  purely so the bounded request evidence can prove the submitted mapping; the
+  fake server's responses and validation are otherwise unchanged.
 
 ### Remaining In-Slice Work
 
+- Slice-level closure evaluation (Slice Acceptance Criterion for RecognitionType
+  binding) and the A final review over the original Base through the corrected
+  Head remain outside this Task and belong to B/A.
+
 ### Risks / Deviations
+
+- The full Python `ResourceWarning` unclosed-SQLite messages and the production
+  Web build chunk-size warning remain pre-existing non-blocking debt; neither is
+  in this Task's diff.
+- No safety invariant was changed: analysis stages remain zero-mutation, only
+  OrganizerExecutor mutates Storage, and RecognitionType identity stays
+  independent of downstream policy reuse.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 49a4abd16ffb454c0007338ef468b18282a5dc7a
 ```
 
 ## B Review Result
