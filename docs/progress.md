@@ -9,12 +9,12 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 37 — **Files Workspace, Common File Management and V2 Shell** —
-is `PASS / CLOSED` after A's 2026-09-22 review of the final exact-path-identity correction.
-Implementation Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283` is the current closed Slice head;
-the earlier A reviews and correction packets remain historical facts. The current Contract is
-maintained in [`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md).
-The next legal action is for A to select the next large Slice. This pointer is not a
-closure-ledger entry.
+is `ACTIVE` after A's 2026-09-22 post-closure reactivation for the P1 Files-originated manual
+Organize Save Choice runtime-resolver regression. The prior closure, Base, Implementation Head and
+reviews remain historical facts; the current correction starts from
+`3feab84a0fbbf7cebfe1f5507e548636da5ab283`. The current Contract is maintained in
+[`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md). B plans one
+focused correction Task. This pointer is not a closure-ledger entry.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the

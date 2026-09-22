@@ -104,7 +104,9 @@ The page does not render recognition-result or organize-status feedback. Direct 
 Upload/Download was removed from the current surface; generic Storage/provider transfer primitives
 remain available.
 Non-Files business journeys remain unchanged inside the replacement shell. The previously planned
-Slice 34–36 boundaries are retired from the current Roadmap; A will select the next large Slice.
+Slice 34–36 boundaries are retired from the current Roadmap. Slice 37 is currently reactivated
+for one focused P1 correction in Files-originated manual Organize Save Choice runtime resolution;
+B plans the correction Task inside the existing Slice boundary.
 The V1 API, authentication and Storage authority remain
 available, while the shared Python `/api/v1/*` behavior remains authoritative for both UIs.
 
