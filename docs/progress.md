@@ -9,13 +9,12 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 37 — **Files Workspace, Common File Management and V2 Shell** —
-is `ACTIVE` after A's 2026-09-21 post-closure reactivation for a P1 Files refresh regression:
-an externally removed ResourceLibrary directory can remain visible in the local directory tree
-after `刷新`. The prior A Final Review, Closure Packets and Implementation Head
-`2115d1839eb0611f097913eae8a43492d00346a2` remain historical facts and are not erased. Task 37.9
-is the current B-planned correction Task. The current Contract is maintained in
-[`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md). This pointer is
-not a closure-ledger entry.
+is `PASS / CLOSED` after A's 2026-09-22 review of the final exact-path-identity correction.
+Implementation Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283` is the current closed Slice head;
+the earlier A reviews and correction packets remain historical facts. The current Contract is
+maintained in [`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md).
+The next legal action is for A to select the next large Slice. This pointer is not a
+closure-ledger entry.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
@@ -42,18 +41,20 @@ V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
 ```text
 Status: PASS / CLOSED
 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-A Final Review: PASS / CLOSED — 2026-09-21
+Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
+A Final Review: PASS / CLOSED — 2026-09-22
 ```
 
 Delivered the reference-aligned shared V2 light shell and Files workspace: live
 ResourceLibrary-scoped browsing, atomic ResourceLibrary activation, bounded Create
 Folder/Text/Rename/Copy/Move/Delete/text Edit, multi-item Organize continuation, formal
-`library/path` destination parity and exact FileIndex reconciliation without a second authority or
-mutation path. The direct browser Upload/Download vertical is outside the current surface, while
-generic Storage/provider transfer primitives remain available. Deferred scope remains arbitrary
-binary/media editing, unbounded operations, V1 cutover, general non-Files redesign, new
-providers/identity systems, universal rollback and automatic uncertain replay.
+`library/path` destination parity, truthful refresh/presentation, exact Storage path identity and
+exact FileIndex reconciliation without a second authority or mutation path. The Files page does not
+render recognition-result or organize-status feedback; exact boundary whitespace remains visibly
+unambiguous and navigable. The direct browser Upload/Download vertical is outside the current
+surface, while generic Storage/provider transfer primitives remain available. Deferred scope
+remains arbitrary binary/media editing, unbounded operations, V1 cutover, general non-Files
+redesign, new providers/identity systems, universal rollback and automatic uncertain replay.
 
 ### Slice 33 — Operations Workspace
 
@@ -266,7 +267,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
-| 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `2115d1839eb0611f097913eae8a43492d00346a2` | A Final Review PASS / CLOSED — 2026-09-21 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, multi-item Organize continuation and exact FileIndex reconciliation | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
+| 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `3feab84a0fbbf7cebfe1f5507e548636da5ab283` | A Final Review PASS / CLOSED — 2026-09-22 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, truthful refresh/presentation, exact Storage path identity and multi-item Organize continuation | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
 | 33 — Operations Workspace | PASS / CLOSED | `827c36b410687e41b1da53ba6475d8c03a47dbfd` | `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08` | A Final Review PASS / CLOSED — 2026-09-13 | Actionable Dashboard, durable Tasks/Jobs and controls, bounded Scan/Preview, Web-native exact manual Organize, Automation operation and Webhook delivery operation, typed Preview safety projection, and resident Worker pinned-source revalidation | Slices 34–36 Review/Recovery, Configuration, parity/accessibility/cutover and other Contract deferrals |
 | 32 — Library & Files Experience | PASS / CLOSED | `76de3f60e223131a8b7db97a566d0ceaadd9b2a0` | `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99` | A Final Review PASS / CLOSED — 2026-09-10 | Distinct bounded Active Storage and FileIndex journeys, stable catalog paging, strict detail/evidence and safe physical/indexed context | Slices 33–36 Operations/Review/Configuration/parity/cutover and other Contract deferrals |
 | 31 — Operator Shell & Information Architecture | PASS / CLOSED | `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` | `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b` | A Final Review PASS / CLOSED — 2026-09-09 | Typed product-area IA, responsive/accessible shell, safe deep-link auth continuation, actionable route/permission recovery and truthful V1 handoff | Slices 32–36 business migrations/parity/cutover, new identity/API systems and other Contract deferrals |
@@ -321,6 +322,17 @@ and the legacy archive. They are intentionally not duplicated here or translated
   exact copy, reference data, layout, drawer state, journey, frozen pages and pixel-level acceptance.
 - This activation changed documentation only. No code, tests, image asset or other-page behavior
   changed.
+
+## 2026-09-22 — Slice 37 Post-reactivation Closure
+
+- A reviewed the original Slice Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` through final
+  Implementation Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283` and decided `PASS / CLOSED`.
+- Delivered the final exact Storage path-identity correction: Files preserves boundary whitespace
+  through normalization, visibly distinguishes it, and navigates with the exact encoded path while
+  retaining truthful refresh, bounded not-found recovery and no FileIndex authority.
+- Deferred scope remains unchanged: direct browser Upload/Download, arbitrary binary/media editing,
+  unbounded operations, new providers/identity systems, universal rollback and automatic uncertain
+  replay remain deferred or outside this Slice.
 
 ## 2026-09-21 — Slice 37 Post-reactivation Closure
 

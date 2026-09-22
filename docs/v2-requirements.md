@@ -13,8 +13,8 @@ V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
 Most recently closed large Slice: Slice 37 — Files Workspace, Common File Management and V2 Shell — PASS / CLOSED
 Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Slice 37 Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
-Slice 37 A Final Review: PASS / CLOSED — 2026-09-21
+Slice 37 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
+Slice 37 A Final Review: PASS / CLOSED — 2026-09-22
 Active large Slice: none — A selects the next large Slice
 ```
 
@@ -88,7 +88,10 @@ boundaries are.
 - The current Slice 37 Files surface exposes Create Folder/Text File, Rename, Copy, Move, Delete and
   allowlisted bounded text Edit. Direct browser Upload/Download controls, routes, services and
   projections are outside the current delivery boundary; generic Storage/provider transfer
-  primitives remain available for supported backend workflows.
+  primitives remain available for supported backend workflows. The page does not render
+  recognition-result or organize-status feedback; its live entry names, breadcrumb paths and
+  current directory path preserve exact Storage identity, including boundary whitespace, and
+  visibly disambiguate that whitespace.
 - Direct file commands do not run the media Organize pipeline or require its Preview/execution-token
   ceremony. Conflicts default to no overwrite, Delete requires one explicit permanent-effect
   confirmation, and Replace/Edit Save are explicit overwrite intents bound to current Storage state.

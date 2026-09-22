@@ -191,20 +191,21 @@ access. Closed Slice 37 delivered Create Folder/Text File, Rename, Copy, Move, D
 bounded text Edit commands to this Files workspace, with bounded multi-selection where meaningful.
 Direct browser Upload/Download is outside the current Files surface; generic Storage/provider
 transfer primitives remain available for supported backend workflows. Live Storage remains the
-physical source and authority. Files may
-additionally show a bounded FileIndex-derived recognition/business-status projection or reconcile
-that projection after a known mutation, but FileIndex does not enumerate the physical listing and
-does not provide source or execution authority. Viewing it does not recursively scan Storage or
-create work merely by viewing it.
+physical source and authority. The current Files presentation does not render recognition-result or
+organize-status feedback; FileIndex remains available only for bounded post-mutation reconciliation
+and separate indexed routes, never as physical listing or execution authority. Exact entry names,
+breadcrumb paths and the current directory path preserve Storage identity, including boundary
+whitespace, and the UI visibly disambiguates that whitespace. Viewing it does not recursively scan
+Storage or create work merely by viewing it.
 
 ### Journey
 
 - **Goal:** inspect the real configured Storage and choose a bounded file or ResourceLibrary scope.
 - **Entry:** **Files** navigation, Dashboard or a ResourceLibrary action.
 - **Visible state:** ResourceLibrary identity, its configured Storage binding, relative
-  root/breadcrumb, bounded live entries, pagination, provider/error state and, when available,
-  bounded recognition/business-status feedback. FileIndex membership, occurrence, fingerprint and
-  other authority fields are not Files-page display state.
+  root/breadcrumb, bounded live entries, pagination and provider/error state. Recognition-result and
+  organize-status feedback, FileIndex membership, occurrence, fingerprint and other authority
+  fields are not Files-page display state.
 - **Action:** browse a directory, select a bounded file/directory scope, refresh, create a folder or
   text file, rename/copy/move/delete eligible content, edit supported bounded text, or continue to
   the shared Scan/Preview/Organize journey.
@@ -505,8 +506,9 @@ migration boundaries remain retired until A selects the next large Slice.
 - **Entry:** open `/ui-v2/library` or a supported Storage Files, FileIndex catalog or detail deep
   link through the shared memory-only authentication continuation.
 - **Visible state:** the Library landing separates fresh Storage reads from durable discovery;
-  Storage Files shows Active Storage selection, relative breadcrumbs, bounded pages and an optional
-  display-only recognition/business-status projection; FileIndex shows submitted filters, stable
+  Storage Files shows Active Storage selection, relative breadcrumbs and bounded pages; the current
+  Files page does not render recognition-result or organize-status feedback. FileIndex shows submitted
+  filters, stable
   pages, discovery versus processing state, and bounded detail/history/evidence with current,
   historical, legacy, truncated and unavailable facts kept distinct.
 - **Action:** browse, search, filter, page, inspect, refresh and follow a uniquely confirmed
@@ -570,7 +572,7 @@ migration boundaries remain retired until A selects the next large Slice.
 ## Files Journey Update — 2026-09-14
 
 The Files journey is: choose or create a ResourceLibrary, browse its directories, inspect live
-Storage entries and any bounded FileIndex recognition/business-status feedback, perform bounded
+Storage entries, perform bounded
 common Create Folder/Text File/Rename/Copy/Move/Delete/supported text Edit actions, or select one
 or more files to create a zero-mutation organize Preview, confirm the reviewed result,
 and follow progress in Operations. The
@@ -588,11 +590,22 @@ control-plane evidence remain bounded. Cross-Storage Move is explicit Copy/verif
 preservation on failed verification. Direct browser Upload/Download remains outside the current
 Files surface.
 
-FileIndex is allowed only as a display-feedback source for business status and as a post-mutation
-reconciliation target. The Files-originated organize Preview and direct file commands still derive
-authority from live Storage and do not resolve the selected path through FileIndex. Browsing,
-selection, ResourceLibrary configuration and command admission must not otherwise introduce a
-FileIndex dependency; failed reconciliation cannot silently replay a Storage mutation.
+FileIndex is retained as a separate indexed route and bounded post-mutation reconciliation target.
+The Files-originated organize Preview and direct file commands still derive authority from live
+Storage and do not resolve the selected path through FileIndex. Browsing, selection, ResourceLibrary
+configuration and command admission must not otherwise introduce a FileIndex dependency; failed
+reconciliation cannot silently replay a Storage mutation.
+
+## Files Current Delivery Update — 2026-09-22
+
+Slice 37 is `PASS / CLOSED` at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and
+Implementation Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283`. The current Files page keeps the
+live Storage and ResourceLibrary authority described above, but does not render recognition-result
+or organize-status feedback. Exact Storage entry names and relative paths, including leading or
+trailing whitespace, survive the frontend model boundary and navigation; the page makes boundary
+whitespace visible and accessible, and a genuinely absent path retains bounded not-found recovery.
+The shared shell, direct file-management commands, Organize continuation and explicit deferrals
+remain otherwise unchanged.
 
 ## Files Page Visual Fidelity Update — 2026-09-14
 
@@ -610,4 +623,4 @@ configuration-activation failures remain bounded recovery states. Other pages' b
 and backend behavior are frozen, while their shared outer chrome intentionally changed to the
 replacement shell. Slice 37 is PASS / CLOSED at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`2115d1839eb0611f097913eae8a43492d00346a2`.
+`3feab84a0fbbf7cebfe1f5507e548636da5ab283`.

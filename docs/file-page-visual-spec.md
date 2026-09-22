@@ -1,7 +1,6 @@
 # Files Page Visual Specification
 
-Status: ACTIVE — Slice 37 reactivated 2026-09-21 (Files refresh truthfulness and focused feedback
-presentation)
+Status: PASS / CLOSED — Slice 37 A Final Review 2026-09-22
 Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
 Reference size: `1536 x 1024` pixels
 Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
@@ -11,7 +10,7 @@ it. The image is an existing user asset and must not be edited, regenerated, com
 or replaced. The 2026-09-14 A rescope makes the reference shell the replacement for the prior dark
 horizontal V2 shell rather than a Files-only imitation inside it.
 
-## Current Presentation Boundary — 2026-09-21
+## Current Presentation Boundary — 2026-09-22
 
 A's 2026-09-21 scope clarification removes the business concepts `识别结果` and `整理状态` from the
 Files page. The Files table presents physical file facts and explicit actions with exactly six
@@ -26,7 +25,11 @@ either removed concept. The explicit `整理` action, the single-item Preview pa
 continuation and the OrganizerExecutor authority remain available and unchanged. This is a
 presentation-boundary correction: the backend/API projections may still carry recognition and
 business-status fields for their existing authorities and result synchronization, but Files must
-not display those two concepts as business feedback.
+not display those two concepts as business feedback. Exact Storage entry names, breadcrumb paths
+and the current directory path preserve identity characters, including leading or trailing
+whitespace, through the frontend projection and navigation. Boundary whitespace is rendered with
+visible and assistive disambiguation; a genuinely absent trimmed sibling remains a bounded
+not-found state with no alternate-path retry.
 
 The same reactivation makes refresh truthful. When a ResourceLibrary directory is deleted or moved
 outside the Web page, `刷新` must reconcile the page-local directory-tree memory and selection with
@@ -39,7 +42,7 @@ The earlier wording in this document that still names the removed columns or the
 Download surfaces is historical. Where it conflicts with the current Contract, `SLICE.md` and this
 section control.
 
-## Implementation Status — 2026-09-20
+## Implementation Status — 2026-09-22
 
 The current implementation already establishes the data and authority boundary required by this
 page:
@@ -51,9 +54,9 @@ page:
   optional `file_index` constructor argument is retained only for older composition code and is
   intentionally not consulted by the UI-V2 Files projection.
 - The typed Files model excludes FileIndex membership, `fileId`, occurrence and fingerprint
-  authority. A bounded `recognitionResult` / `businessStatus` projection may be added for display
-  feedback sourced from FileIndex, but it is not source identity, path authority or execution
-  authority. Raw FileIndex identifiers remain excluded from ordinary page display.
+  authority. The backend payload may retain bounded `recognitionResult` / `businessStatus` fields
+  for existing authorities and reconciliation, but the current Files page does not render them.
+  Raw FileIndex identifiers remain excluded from ordinary page display.
 - Files-originated organization Preview is also FileIndex-independent. The page submits
   `scopeKind: "file"`, `resourceLibraryId` and `relativePath` to
   `POST /api/v1/operations/previews`. The server maps the path through the Active

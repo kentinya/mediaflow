@@ -111,12 +111,13 @@ The V2 program preserves the current `/api/v1/*` authority, Python application/d
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
 and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
 Slice 37 is PASS / CLOSED at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation
-Head `2115d1839eb0611f097913eae8a43492d00346a2`. It replaced the former V2 shell presentation with
+Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283`. It replaced the former V2 shell presentation with
 the shared light shell in the canonical Files reference, completed Files common bounded file
-management, removed the direct browser Upload/Download vertical from the current surface and
-corrected formal `library/path` destination parity. Non-Files business-surface migrations and final
-cutover remain outside the closed Slice; existing non-Files route behavior is retained inside the
-replacement shell. A selects the next large Slice separately.
+management, removed the direct browser Upload/Download vertical from the current surface,
+corrected formal `library/path` destination parity, and repaired exact Storage path identity. The
+Files page does not render recognition-result or organize-status feedback. Non-Files business-
+surface migrations and final cutover remain outside the closed Slice; existing non-Files route
+behavior is retained inside the replacement shell. A selects the next large Slice separately.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
@@ -581,14 +582,18 @@ make FileIndex a physical-source/execution authority. Focused backend/applicatio
 ResourceLibrary save/activation, direct file commands and post-mutation index reconciliation is
 part of the confirmed Files journey; unrelated business behavior remains unchanged.
 
-## Slice 37 delivery — 2026-09-21
+## Slice 37 delivery — 2026-09-22
 
 The current implementation delivered the Slice 37 Files journey across the shared V2 shell,
 ResourceLibrary activation, live Storage browsing, bounded direct file commands, Storage-source
-Organize continuation, formal `library/path` destination parity and exact FileIndex reconciliation.
+Organize continuation, formal `library/path` destination parity, truthful refresh/presentation and
+exact Storage path identity plus exact FileIndex reconciliation.
 The direct browser Upload/Download vertical was removed from the current surface while generic
 Storage/provider transfer primitives remain available. The implementation preserves the single
 Python authority and
 OrganizerExecutor mutation boundary described above. The explicitly deferred binary/media editing,
 unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems,
-universal rollback and automatic uncertain replay remain deferred.
+universal rollback and automatic uncertain replay remain deferred. The Files page does not render
+recognition-result or organize-status feedback; exact entry names and ResourceLibrary-relative paths
+are preserved through the frontend projection, including boundary whitespace, and are never retried
+as a trimmed sibling.
