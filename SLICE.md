@@ -9,9 +9,9 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
+Implementation Head: 3fb4d1a091676727dcfd8e69007d530cd7dd3ef9
 Contract Revision: 2026-09-22 A SCOPE REVISION — Save Choice runtime resolver and remove fake System Storage block
 ```
 
@@ -601,14 +601,125 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: ACTIVE
-Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
+Slice Status: READY FOR A REVIEW
+Implementation Head: 3fb4d1a091676727dcfd8e69007d530cd7dd3ef9
 Contract Revision: 2026-09-22 A SCOPE REVISION — Save Choice runtime resolver and remove fake System Storage block
 Task 37.8 state: PASS
 Task 37.9 state: PASS
 Task 37.10 state: PASS
+Task 37.11 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: B PLANS FIRST CORRECTION TASK
+Next Action: A FINAL REVIEW
+```
+
+## Post-closure Correction Closure Packet — Task 37.11
+
+```text
+Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Head SHA: 3fb4d1a091676727dcfd8e69007d530cd7dd3ef9
+
+Required Outcomes:
+- RO-1 Reference-aligned visual fidelity — COMPLETE
+- RO-2 Shared V2 shell replacement — COMPLETE; the shared shell no longer fabricates system
+  capacity or usage state
+- RO-3 Exact Files composition — COMPLETE
+- RO-4 ResourceLibrary drawer and activation — COMPLETE
+- RO-5 Storage-authoritative Files data — COMPLETE
+- RO-6 Bounded common file management — COMPLETE
+- RO-7 Low-friction direct-operation safety — COMPLETE
+- RO-8 Organize workflow continuity — COMPLETE; Files-originated Save Choice now works through
+  the default API assembly and remains pinned to the intent snapshot
+- RO-8C Formal classification path parity correction — COMPLETE
+- RO-9 Actionable recovery — COMPLETE; unavailable runtime/source evidence remains fail-closed
+  without durable-state or Storage mutation
+- RO-10 Non-Files behavior continuity — COMPLETE
+- RO-11 Test reconciliation — COMPLETE for the current supported surfaces
+- RO-12 Security model continuity — COMPLETE
+
+Required Surfaces:
+- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
+- V2 Files at `/ui-v2/library/files` — COMPLETE
+- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
+- ResourceLibrary browsing, selection and Organize continuation — COMPLETE
+- Bounded Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit — COMPLETE
+- Shared formal `library/path` destination composition — COMPLETE
+- Direct browser Upload/Download controls and vertical — REMOVED per the Contract
+- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
+
+Implemented:
+- Corrected Files-originated Save Choice validation to use the effective managed pinned-runtime
+  resolver in the default `MediaFlowApi` composition.
+- Revalidated sources against the exact intent-pinned snapshot and live ResourceLibrary/Storage
+  authority without requiring a FileIndex row, preserving version fencing, auditability and
+  zero Storage mutation.
+- Preserved fail-closed behavior for unavailable pinned runtime/source evidence, unchanged
+  FileIndex-originated validation and explicit resolver injection.
+- Removed the fabricated shared-shell `系统存储` capacity/usage block and its dedicated CSS,
+  and synchronized the visual specification and AppShell regression.
+
+Tasks completed:
+- 37.1 — Files reference browse, shared shell and selection authority
+- 37.2 — ResourceLibrary atomic activation
+- 37.3 — Bounded Files maintenance and ResourceLibrary removal
+- 37.4 — Bounded Files Copy and Move transfers
+- 37.5 — Bounded Files Upload and Download
+- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
+- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
+  validation and Copy/Move control-plane bounds
+- 37.8 — Files safety and quality gate reconciliation
+- 37.9 — Files refresh truthful state and focused presentation
+- 37.10 — Files exact path identity and whitespace presentation
+- 37.11 — Files Save Choice managed runtime resolver
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS before closure-document updates.
+- `.venv/bin/ruff format --check .` — PASS; 309 files already formatted.
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview`
+  — 53 passed.
+- `.venv/bin/python -m unittest discover -s tests` — 1721 passed, 7 skipped, `OK`.
+- `npm run test -- --run src/shared/ui/AppShell.test.tsx` — 3 passed.
+- `npm run test -- --run` — 33 files, 465 passed.
+- `npm run typecheck`, `npm run lint`, `npm run format:check` — PASS.
+- `npm run build` — PASS; existing generated-chunk size warning remains non-blocking.
+- `npm run test:e2e` — 122 passed.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py`
+  — PASS.
+- `git diff --check` — PASS for the reviewed implementation range; `config/alist.json` is absent.
+
+Safety Evidence:
+- Save Choice source validation uses the exact intent-pinned managed snapshot and live
+  ResourceLibrary/Storage authority; it does not consult FileIndex for Files authority.
+- Failed or unavailable runtime/source validation leaves choice, versions, audit state and
+  Storage unchanged; no fallback or uncertain mutation replay was introduced.
+- Preview, Save Choice and other analysis stages remain zero-mutation, and OrganizerExecutor
+  remains the only Storage mutation boundary.
+- The shared shell removal adds no Storage probe, capacity API, provider capability or replacement
+  authority.
+- No credentials, production Storage, user media or `config/alist.json` entered the reviewed range.
+
+Known Non-blocking Issues:
+- The production Web build retains the existing generated-chunk size warning.
+- The full Python run emits existing unclosed-SQLite `ResourceWarning` messages but completes
+  successfully.
+- The accepted narrow Local directory replacement/inode-reuse race remains documented residual
+  risk and is not claimed fixed.
+
+Explicitly Deferred:
+- Preserve the Contract's existing deferrals: direct browser Upload/Download, arbitrary binary or
+  media editing, unbounded recursive/batch operations, new providers or Storage capabilities,
+  identity/security-system redesign, automatic uncertain-mutation replay, universal rollback,
+  V1 `/ui` retirement and FFmpeg/FFprobe.
+
+Documentation Reconciliation Needed:
+- A should perform final review over
+  `b507edba167f5af3af8c53bfcf1417ba4fefddf4..3fb4d1a091676727dcfd8e69007d530cd7dd3ef9`.
+- Preserve the pre-existing dirty `docs/pics/文件页.png` outside the reviewed implementation
+  range; no image reconciliation is requested.
+
+Decision: SLICE READY FOR A REVIEW
 ```
 
 ## Closure Packet
