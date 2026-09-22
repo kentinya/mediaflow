@@ -115,6 +115,18 @@ Run from the development repository `/root/mediaflow` unless noted otherwise:
 8. `cd web && npm run build`
 9. `git diff --check`
 
+The repository's active-Task release-quality policy also requires this exact command inventory to
+remain documented in this file:
+
+```text
+python3 scripts/check_governance.py
+scripts/docker_release_security_smoke_test.py
+.venv/bin/ruff format --check .
+.venv/bin/ruff check .
+.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m compileall -q mediaflow tests scripts
+```
+
 No production Storage, FileIndex, TMDB, SMB, OpenList, S3/R2 service or user media mutation is
 required. The test fixture must represent a trailing-space entry in memory/fake server data; do not
 use or rename the real `/mnt/HDD_2/Test_Source/电影/SSH ` directory.

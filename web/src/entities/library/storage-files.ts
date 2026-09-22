@@ -9,6 +9,7 @@
 import {
   normalizeBoundedCount,
   normalizeBoundedText,
+  normalizeIdentityText,
   normalizeOptionalText,
   readRecord,
 } from "../shared/normalize";
@@ -115,7 +116,7 @@ function normalizeBreadcrumbs(
     const isRoot =
       typeof record.isRoot === "boolean" ? record.isRoot : index === 0;
     return {
-      name: normalizeBoundedText(
+      name: normalizeIdentityText(
         record.name,
         `${field}[${index}].name`,
         MAX_NAME_LENGTH,
@@ -123,7 +124,7 @@ function normalizeBreadcrumbs(
       path:
         record.path === ""
           ? ""
-          : normalizeBoundedText(
+          : normalizeIdentityText(
               record.path,
               `${field}[${index}].path`,
               MAX_PATH_LENGTH,
@@ -211,12 +212,12 @@ function normalizeEntry(raw: unknown, index: number): StorageFilesEntry {
       ? record.organizeEligible
       : entryType === "file" && isSymlink !== true;
   return {
-    name: normalizeBoundedText(
+    name: normalizeIdentityText(
       record.name,
       `entries[${index}].name`,
       MAX_NAME_LENGTH,
     ),
-    path: normalizeBoundedText(
+    path: normalizeIdentityText(
       record.path,
       `entries[${index}].path`,
       MAX_PATH_LENGTH,
@@ -277,7 +278,7 @@ export function normalizeStorageFiles(payload: unknown): StorageFilesModel {
       path:
         source.path === ""
           ? ""
-          : normalizeBoundedText(source.path, "path", MAX_PATH_LENGTH),
+          : normalizeIdentityText(source.path, "path", MAX_PATH_LENGTH),
       breadcrumbs: normalizeBreadcrumbs(source.breadcrumbs, "breadcrumbs"),
       entries: (rawEntries as unknown[]).map((item, index) =>
         normalizeEntry(item, index),

@@ -626,6 +626,106 @@ test("refresh stops presenting a directory removed outside MediaFlow", async ({
 const FAKE_RESET = "/__test__/reset-resource-library";
 const FAKE_RESET_ORGANIZE = "/__test__/reset-organize";
 
+test("a live directory whose exact name ends with a space stays distinguishable and opens", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  // Live Storage in this session really contains the directory `电影/SSH `
+  // (one trailing ASCII space) and no directory named `电影/SSH`.  The Files
+  // journey must keep that exact identity through the model boundary, the
+  // presentation and the navigation: opening the entry has to request the
+  // exact encoded path and open the live directory instead of producing a
+  // false not-found.
+  await resetFakeResourceLibraries(page, "?libraries=1&whitespace=1");
+  await openFiles(page);
+
+  // The live root contains the parent directory; enter it.
+  await directoryTree(page).getByRole("button", { name: "电影" }).click();
+
+  const exactTreeButton = directoryTree(page).getByRole("button", {
+    name: /SSH\s?（名称结尾包含空格）/,
+  });
+  await expect(exactTreeButton).toBeVisible();
+  // The presentation makes the invisible boundary character explicit while
+  // rendering the server value itself unchanged.
+  await expect(exactTreeButton.locator(".mf-ws-marker")).toHaveText("␣");
+  await expect(exactTreeButton.locator(".mf-ws-value")).toHaveText("SSH ");
+
+  // The table row keeps the same exact identity and distinction.
+  const exactRow = page.getByRole("row", {
+    name: /SSH\s?（名称结尾包含空格）/,
+  });
+  await expect(exactRow.locator(".mf-ws-value")).toHaveText("SSH ");
+  await expect(
+    exactRow.getByRole("checkbox", { name: /选择 SSH\s?（名称结尾包含空格）/ }),
+  ).toBeVisible();
+
+  // The operator opens the exact live directory from the directory tree.
+  await exactTreeButton.click();
+  await expect(page.getByText(/inside\.mkv/)).toBeVisible();
+  await expect(page.getByText("路径无效")).toHaveCount(0);
+  // No bounded not-found state was fabricated for a directory that exists.
+  await expect(
+    page.getByRole("heading", { name: "Directory not found" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "文件读取不可用" }),
+  ).toHaveCount(0);
+
+  // The navigation requested the exact encoded ResourceLibrary-relative path
+  // and never a trimmed sibling path.
+  const readPaths = apiRequests
+    .map((request) => new URL(request.url).searchParams.get("path"))
+    .filter((value): value is string => value !== null);
+  expect(readPaths).toContain("电影/SSH ");
+  expect(readPaths).not.toContain("电影/SSH");
+  expect(
+    apiRequests.some((request) =>
+      request.url.includes(
+        "path=" +
+          new URLSearchParams({ path: "电影/SSH " }).toString().slice(5),
+      ),
+    ),
+  ).toBe(true);
+
+  // The breadcrumb for the exact directory keeps the same identity.
+  const exactCrumb = page
+    .getByRole("navigation", { name: "资源库面包屑" })
+    .getByRole("button", { name: /SSH\s?（名称结尾包含空格）/ });
+  await expect(exactCrumb).toBeVisible();
+  await expect(exactCrumb.locator(".mf-ws-value")).toHaveText("SSH ");
+
+  // Opening and browsing stayed the existing bounded GET-only read: no
+  // FileIndex authority, no mutation and no automatic alternate-path retry.
+  expect(apiRequests.every((request) => request.method === "GET")).toBe(true);
+  expect(
+    apiRequests.every((request) => !request.url.includes("file-index")),
+  ).toBe(true);
+});
+
+test("the trimmed sibling path is genuinely absent, keeping the real not-found state", async ({
+  page,
+}) => {
+  // Counterpart to the exact-identity test: in this live Storage the trimmed
+  // path really does not exist, so a request for it must still receive the
+  // existing bounded not-found state with its recovery affordance.  This
+  // proves the regression test cannot pass merely because the fake answers
+  // every path.
+  await resetFakeResourceLibraries(page, "?libraries=1&whitespace=1");
+  await openFiles(
+    page,
+    VIEWER_TOKEN,
+    "?resourceLibraryId=lib-a&path=" + encodeURIComponent("电影/SSH"),
+    false,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Directory not found" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "返回资源库根目录" }),
+  ).toBeVisible();
+});
+
 /**
  * Pin one deterministic manual-Organize fake session for this test: the
  * admission evidence and the admitted item paths stay isolated from every

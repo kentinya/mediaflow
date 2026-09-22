@@ -2158,6 +2158,50 @@ button.mf-grid-button {
   text-overflow: ellipsis;
 }
 
+/*
+ * Exact Storage identity presentation.  A Files name or path whose real
+ * characters begin or end with whitespace renders its server value verbatim
+ * plus one visible boundary marker per edge, so `SSH ` stays distinguishable
+ * from `SSH` without ever rewriting the value that will be requested.
+ * Ordinary names render as plain text and are visually unchanged.
+ */
+.mf-identity-label {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  overflow: hidden;
+}
+
+.mf-identity-label > .mf-ws-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* The exact value, including its boundary whitespace, is not re-collapsed. */
+  white-space: pre;
+}
+
+.mf-ws-marker {
+  flex: none;
+  padding: 0 1px;
+  color: #b54708;
+  background: #fef0c7;
+  border-radius: 2px;
+  font-size: 0.85em;
+  line-height: 1.2;
+}
+
+.mf-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  border: 0;
+  white-space: nowrap;
+}
+
 .mf-cell-name > .mf-link-button,
 .mf-cell-name > span {
   display: inline-flex;
