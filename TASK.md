@@ -114,6 +114,17 @@ Frozen for this Task:
   .venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview
   ```
 
+- Full backend release-quality gate (the active-Task release-security documentation check requires
+  these exact command strings; rerun them so the full Python gate passes with no failure):
+
+  ```text
+  .venv/bin/ruff format --check .
+  .venv/bin/ruff check .
+  .venv/bin/python -m compileall -q mediaflow tests scripts
+  .venv/bin/python -m unittest discover -s tests
+  scripts/docker_release_security_smoke_test.py
+  ```
+
 - Static and quality gates:
 
   ```text
@@ -226,12 +237,26 @@ Head SHA: 49a4abd16ffb454c0007338ef468b18282a5dc7a
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 970ac756222daaf21215c6f2b64446e44a83a108..1e81e90c795fd743a478f049e9b362f0d5150ede
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update
-Roadmap.
+Blockers:
+
+- The Slice-level full Python gate fails the active-Task release-quality documentation check:
+  `.venv/bin/python -m unittest discover -s tests` ran `1721` tests with `7` skips and `1` failure
+  in `test_release_quality_gate_commands_are_documented_for_task_execution`. The current
+  `TASK.md` contains `python3 scripts/check_governance.py`, but is missing the other required
+  release-quality command strings: `scripts/docker_release_security_smoke_test.py`,
+  `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`,
+  `.venv/bin/python -m unittest discover -s tests`, and
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`. Add the exact commands to this
+  Task's documented Required Tests/validation evidence, rerun the full gate, and submit a new
+  checkpoint. This is a current Task documentation/quality-gate failure, not a pre-existing
+  failure: the Task Base had the legal `NO ACTIVE IMPLEMENTATION TASK` state for which this
+  check intentionally does not require those commands.
+
+Fixes remain in this Task; Task ID, Task Base, Goal and Scope stay unchanged. This result does not
+close the Slice or update Roadmap.
