@@ -11,7 +11,7 @@ Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
+Implementation Head: 52383fa67c007ec814156503856fe8b7aa0219af
 Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
 ```
 
@@ -488,10 +488,10 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
       execution and result evidence.
 - [x] The `library` prefix is validated with the same bounded safe-relative-path rules as other
       destination contributions; unsafe values fail closed without Storage mutation.
-- [ ] Files `刷新` re-reads the live ResourceLibrary directory and reconciles local directory-tree
+- [x] Files `刷新` re-reads the live ResourceLibrary directory and reconciles local directory-tree
       and selection state so an externally removed path is no longer shown after refresh; the
       regression path remains read-only and does not consult FileIndex or mutate Storage.
-- [ ] Files no longer renders `识别结果` or `整理状态` in the information banner, table headers,
+- [x] Files no longer renders `识别结果` or `整理状态` in the information banner, table headers,
       row cells or status pills; the table retains `选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`,
       the explicit `整理` action remains functional, and the synchronized visual specification
       records the same presentation boundary.
@@ -533,13 +533,12 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 
 ```text
 Slice Status: ACTIVE
-Implementation Head: 2115d1839eb0611f097913eae8a43492d00346a2
+Implementation Head: 52383fa67c007ec814156503856fe8b7aa0219af
 Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
 Task 37.8 state: PASS
-Task 37.9 state: PLANNED
+Task 37.9 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: Developer implements Task 37.9 Files refresh reconciliation and the scoped Files
-presentation boundary
+Next Action: A FINAL REVIEW
 ```
 
 ## Closure Packet
@@ -881,3 +880,123 @@ Closure Reconciliation:
   from the reviewed checkpoint. `config/alist.json` is absent and no secret/private configuration
   entered the reviewed range. The next legal action is A selecting the next large Slice in a later
   turn.
+
+## Post-reactivation Closure Packet — Task 37.9
+
+```text
+Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
+Head SHA: 52383fa67c007ec814156503856fe8b7aa0219af
+
+Required Outcomes:
+- RO-1 Reference-aligned visual fidelity — COMPLETE
+- RO-2 Shared V2 shell replacement — COMPLETE
+- RO-3 Exact Files composition — COMPLETE; refresh truthfully reconciles local tree/selection
+  state and the Files page no longer presents recognition/status feedback
+- RO-4 ResourceLibrary drawer and activation — COMPLETE
+- RO-5 Storage-authoritative Files data — COMPLETE; refresh remains live Storage-authoritative and
+  does not consult FileIndex
+- RO-6 Bounded common file management — COMPLETE
+- RO-7 Low-friction direct-operation safety — COMPLETE
+- RO-8 Organize workflow continuity — COMPLETE
+- RO-8C Formal classification path parity correction — COMPLETE
+- RO-9 Actionable recovery — COMPLETE; failed refresh preserves the existing bounded retry/root
+  recovery without fabricated rows or automatic replay
+- RO-10 Non-Files behavior continuity — COMPLETE
+- RO-11 Test reconciliation — COMPLETE for current supported surfaces; accepted baseline P2 debts
+  remain recorded below
+- RO-12 Security model continuity — COMPLETE
+
+Required Surfaces:
+- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
+- V2 Files at `/ui-v2/library/files` — COMPLETE
+- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
+- ResourceLibrary browsing, selection, truthful refresh and Organize continuation — COMPLETE
+- Files toolbar/action menus and bounded Create Folder/Text File, Rename, Copy, Move, Delete and
+  supported text Edit — COMPLETE
+- Shared formal `library/path` destination composition across Plan, Preview/precheck, projections,
+  execution and result evidence — COMPLETE
+- Direct browser Upload/Download controls, routes, services, models and dedicated tests — REMOVED
+- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
+
+Implemented:
+- Task 37.9 refresh boundary clears page-local directory memory and selection before the same
+  bounded authenticated GET; stable directory discovery prevents stale paths from being
+  reintroduced after refresh.
+- Files presentation now contains exactly `选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`;
+  `识别结果` and `整理状态` are absent while the explicit `整理` action and existing
+  zero-mutation continuation remain.
+- Focused unit and browser coverage proves external-directory removal, stale-selection clearing,
+  valid-context preservation, bounded failure recovery, six-column presentation, GET-only refresh
+  and no `/file-index` request.
+- The visual specification records the current presentation boundary and refresh truthfulness.
+
+Tasks completed:
+- 37.1 — Files reference browse, shared shell and selection authority
+- 37.2 — ResourceLibrary atomic activation
+- 37.3 — Bounded Files maintenance and ResourceLibrary removal
+- 37.4 — Bounded Files Copy and Move transfers
+- 37.5 — Bounded Files Upload and Download
+- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
+- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
+  validation, Copy/Move control-plane bounds
+- 37.8 — Files safety and quality gate reconciliation
+- 37.9 — Files refresh truthful state and focused presentation
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — `1718` passed, `7` skipped, OK on the
+  local Python 3.13 run.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m pip check` — PASS; no broken requirements.
+- `.venv/bin/ruff format --check .` and `.venv/bin/ruff check .` — PASS.
+- `cd web && npm run test -- --run` — first full concurrent run `459/460`, with one unrelated
+  `OrganizeRouter.test.tsx` timing failure; isolated rerun `13/13` passed. Task-focused Web
+  suite passed `38/38`.
+- `cd web && npm run test:e2e` — `120/120` passed with no failures or skips; Task-focused Files
+  subset passed `38/38`.
+- `cd web && npm run typecheck`, `npm run lint`, `npm run format:check` — PASS.
+- `cd web && npm run build` — PASS; production artifact generated.
+- `git diff --check` and reviewed-scope/private-file inspection — PASS; `config/alist.json` is
+  absent and the canonical image change remains pre-existing and uncommitted.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` —
+  PASS.
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py` —
+  PASS; synthetic aggregate `22548578304` bytes was admitted as impact evidence while bounded
+  depth/entry/selection limits failed closed without mutation.
+- GitHub quality run `#118` remains the green Python 3.11/3.12/3.13 baseline recorded by the
+  active Task.
+
+Safety Evidence:
+- Files refresh performs only the existing bounded authenticated GET; focused tests and full
+  browser coverage found no mutation request and no `/file-index` request.
+- Removed directory paths and selections are not fabricated after a successful refresh; failed
+  reads retain bounded retry/root recovery.
+- OrganizerExecutor, backend authority, explicit delete/replace intent, stale checks and
+  non-replay behavior remain unchanged.
+- No credentials, production Storage, external provider or private configuration entered the
+  reviewed checkpoint.
+
+Known Non-blocking Issues:
+- Full Web Vitest has an intermittent unrelated scheduling failure in
+  `OrganizeRouter.test.tsx`; the exact file passes in isolation (`13/13`), and the affected
+  Organize browser journeys pass. No Task 37.9 file or behavior is implicated.
+- The accepted narrow Local directory replacement/inode-reuse race remains documented residual
+  risk and is not claimed fixed.
+- Existing build-size warning for the generated JavaScript chunk is non-blocking and outside
+  this Task.
+
+Explicitly Deferred:
+- Direct browser Upload/Download is removed from the current scope.
+- Arbitrary binary/media editing, unbounded recursive/batch operations, new providers/storage
+  capabilities, identity/security-system redesign, automatic uncertain-mutation replay,
+  universal rollback, V1 `/ui` retirement and FFmpeg/FFprobe remain deferred or out of scope as
+  stated in the Contract.
+
+Documentation Reconciliation Needed:
+- A should perform the final review over `b507edba167f5af3af8c53bfcf1417ba4fefddf4..52383fa67c007ec814156503856fe8b7aa0219af`
+  and reconcile any factual closure references across authoritative documents. No Contract,
+  Slice Base or Required Outcome change is requested.
+
+Decision: SLICE READY FOR A REVIEW
+```
