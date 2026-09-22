@@ -9,7 +9,7 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 52383fa67c007ec814156503856fe8b7aa0219af
 Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
@@ -532,7 +532,7 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: ACTIVE
+Slice Status: READY FOR A REVIEW
 Implementation Head: 52383fa67c007ec814156503856fe8b7aa0219af
 Contract Revision: 2026-09-21 A POST-CLOSURE REACTIVATION — Files refresh truthfulness and focused feedback presentation with green CI baseline
 Task 37.8 state: PASS
