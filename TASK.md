@@ -121,6 +121,18 @@ Frozen for this Task:
 
 ### Changed Files
 
+Correction round 2 (B FIX REQUIRED — intent-pinned snapshot):
+
+- `mediaflow/application/manual_organize.py` — `_validate_storage_source()` now takes the intent
+  and revalidates the Files source against the intent's pinned `snapshot_id`/`snapshot_digest`
+  instead of resolving the validator snapshot from `_active_snapshot()` (the currently Active
+  revision). `_resolve_choice_source()` passes the intent through.
+- `tests/test_v2_manual_organize.py` — added
+  `test_save_choice_uses_intent_pinned_snapshot_after_active_replacement` covering Active revision
+  replacement after intent creation.
+
+Correction round 1 (original P1 — effective resolver):
+
 - `mediaflow/application/manual_organize.py` — `_validate_storage_source()` now gates on the
   effective managed pinned-runtime resolver instead of the raw optional `runtime_resolver`
   constructor field; added `_effective_runtime_resolver()` (explicit injection wins, otherwise the
@@ -138,11 +150,17 @@ Frozen for this Task:
   (`validate_runtime_snapshot` + `require` + `verify_integrity` + `load_managed_runtime_configuration`
   + `with_managed_snapshot`) and the live ResourceLibrary/Storage authority, with no FileIndex row
   required and zero Storage mutation.
+- The validator snapshot is the intent's pinned snapshot, not the currently Active revision:
+  activating a successor revision (e.g. one that disables the ResourceLibrary) no longer invalidates
+  an existing intent whose pinned snapshot is still published (superseded revisions remain valid
+  authority). The source fails only when that pinned revision itself is unavailable.
 - Explicit `runtime_resolver` injection still wins for existing tests and non-managed callers;
   FileIndex-originated choice validation is untouched.
 - Regression: valid Files-originated Save Choice succeeds through the automatic assembly, persists
   the choice once, increments intent/item versions exactly once and appends exactly one
   `choice_updated` audit record.
+- Regression (B blocker): after activating a successor revision that disables the ResourceLibrary,
+  the old intent's valid choice validates against pinned revision A and persists exactly once.
 - Fail-closed regression: missing source (`source_missing`/404), replaced source
   (`source_stale`/409) and an unpublished pinned revision (503 `configuration_unavailable`,
   `durableState: managed_active_unavailable`) all leave the choice, versions, audit trail and
@@ -151,29 +169,30 @@ Frozen for this Task:
 ### Tests and Results
 
 - `.venv/bin/python -m unittest tests.test_v2_manual_organize.DefaultAssemblySaveChoiceTests -v`
-  — PASS (2 tests). Verified both tests FAIL on the pre-fix code (stash check) and PASS with the
-  fix, so they reproduce the recorded P1.
+  — PASS (3 tests). Verified the new pinned-snapshot test FAILS on the pre-correction code with the
+  exact reviewed `source_cross_authority`/400 (stash check) and PASSES with the fix; the original
+  two tests still FAIL on the round-1 pre-fix code and PASS now.
 - `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize
-  tests.test_manual_preview` — PASS (52 tests).
+  tests.test_manual_preview` — PASS (53 tests).
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/ruff check mediaflow tests` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `git diff --check` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / PRE-EXISTING / UNRELATED.
-  The stack fails at `docker compose up` before any application code runs:
-  `invalid mount config for type "bind": bind source path does not exist:
-  /tmp/mediaflow-smoke-security-*/{deployment.env,mediaflow.json}` (the harness's temporary
-  deployment files vanish between creation and container start). Reproduced identically on the
-  pre-Task HEAD `342cbbe` and with `scripts/docker_health_smoke_test.py`, so the failure is an
-  environment/harness issue independent of this Task's two-file change. The equivalent
+- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / PRE-EXISTING / UNRELATED
+  (unchanged from round 1; not re-run this round — same known harness/environment bind-mount flake
+  reproduced on the pre-Task HEAD, independent of this Task's change). The equivalent
   production-composition regression is covered in-process by `DefaultAssemblySaveChoiceTests`,
   which exercises the exact automatic `MediaFlowApi` assembly that failed in production.
 
 ### Decisions
 
-- Introduced `_effective_runtime_resolver()` as the single source of truth for "which resolver
-  authority does this service have" and used it in both the Save Choice gate and the default
-  validator construction, eliminating the raw-field/effective-resolver mismatch at its root.
+- Round 2: threaded the intent into `_validate_storage_source()` so the source revalidation binds
+  to the intent-pinned snapshot identity. This is the narrowest change that satisfies exact
+  intent-pinned snapshot validation; the resolver, validator construction, choice contract and
+  FileIndex path are unchanged.
+- Round 1: introduced `_effective_runtime_resolver()` as the single source of truth for "which
+  resolver authority does this service have" and used it in both the Save Choice gate and the
+  default validator construction, eliminating the raw-field/effective-resolver mismatch at its root.
 - The managed resolver is only offered when `configuration_service` is present; a service with
   neither an explicit resolver nor a managed configuration service still fails closed with
   `manual_intent_configuration_unavailable`, preserving the previous non-managed behavior.
@@ -200,7 +219,7 @@ Frozen for this Task:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: f3c54b58ff583e354f1ba9849e48bdfbf71f6610
+Head SHA: 564e7e1eaf3cd2ccbc9f0e1f71ab122873db7bc2
 (the report itself is committed as the direct child of this implementation checkpoint)
 ```
 
