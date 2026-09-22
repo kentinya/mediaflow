@@ -29,6 +29,31 @@ export function normalizeBoundedText(
   return trimmed;
 }
 
+/**
+ * A required bounded server value whose exact characters are its identity.
+ *
+ * `normalizeBoundedText` trims the end of a value, which is right for a
+ * display-only string but wrong for a name or path that later addresses the
+ * same server resource: `电影/SSH ` and `电影/SSH` are different Storage
+ * entries, so trimming here would silently retarget the request.  This variant
+ * therefore preserves the server value byte for byte while still requiring a
+ * non-empty bounded string.
+ */
+export function normalizeIdentityText(
+  value: unknown,
+  field: string,
+  maxLength: number = MAX_TEXT_LENGTH,
+): string {
+  if (typeof value !== "string") {
+    fail(field);
+  }
+  const exact = value as string;
+  if (exact.length === 0 || exact.length > maxLength) {
+    fail(field);
+  }
+  return exact;
+}
+
 export function normalizeBoundedCount(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
     fail(field);

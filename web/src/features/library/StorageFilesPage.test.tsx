@@ -1503,6 +1503,194 @@ describe("Files entry state and ResourceLibrary strip", () => {
     ).toBeNull();
   });
 
+  it("keeps a trailing-space Storage directory distinguishable and opens its exact path", async () => {
+    const user = userEvent.setup();
+    // The live ResourceLibrary really contains a directory named `电影/SSH `
+    // (one trailing ASCII space).  The model boundary, the presentation and
+    // the navigation must all keep that exact identity: opening the entry has
+    // to request `电影/SSH `, never a trimmed `电影/SSH` that Storage would
+    // answer with a false not-found.
+    const reads: string[] = [];
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () => {
+        const payload = filesPayload("lib-a", null);
+        return jsonResponse({
+          ...payload,
+          path: "",
+          breadcrumbs: [{ name: "root", path: "", isRoot: true }],
+          entries: [
+            {
+              name: "SSH ",
+              path: "电影/SSH ",
+              type: "directory",
+              size: 0,
+              modifiedAt: "2026-08-23T11:15:00Z",
+              isDirectory: true,
+              isSymlink: false,
+              traversable: true,
+              selectable: true,
+              recognitionResult: null,
+              businessStatus: null,
+            },
+            {
+              name: "SSH",
+              path: "电影/SSH",
+              type: "directory",
+              size: 0,
+              modifiedAt: "2026-08-23T11:15:00Z",
+              isDirectory: true,
+              isSymlink: false,
+              traversable: true,
+              selectable: true,
+              recognitionResult: null,
+              businessStatus: null,
+            },
+            ...payload.entries.filter((entry) => entry.name === "notes.txt"),
+          ],
+        });
+      },
+    });
+    const mock = fetchMock as unknown as ReturnType<typeof vi.fn>;
+    const original = mock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    mock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (/\/resource-libraries\/[^/]+\/files(\?|$)/.test(String(input))) {
+          reads.push(String(input));
+        }
+        return original(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    // Both directories are listed from the live read: the exact trailing-space
+    // entry survives the model boundary and is presented with an explicit
+    // whitespace marker, while the ordinary sibling keeps its plain label.
+    const exactTreeButton = await waitFor(() =>
+      directoryTree().getByRole("button", {
+        name: "SSH（名称结尾包含空格）",
+      }),
+    );
+    expect(exactTreeButton.querySelector(".mf-ws-marker")).not.toBeNull();
+    expect(exactTreeButton.querySelector(".mf-ws-value")?.textContent).toBe(
+      "SSH ",
+    );
+    const plainTreeButton = directoryTree().getByRole("button", {
+      name: "SSH",
+    });
+    expect(plainTreeButton.querySelector(".mf-ws-marker")).toBeNull();
+
+    // The table row keeps the same exact identity and distinction.
+    const exactRow = screen.getByRole("row", {
+      name: /SSH（名称结尾包含空格）/,
+    });
+    expect(exactRow.querySelector(".mf-ws-value")?.textContent).toBe("SSH ");
+    expect(
+      within(exactRow).getByRole("checkbox", {
+        name: /选择 SSH\s?（名称结尾包含空格）/,
+      }),
+    ).toBeInTheDocument();
+
+    // Opening it requests the exact encoded path and never the trimmed sibling
+    // path, so Storage cannot answer with a false not-found.
+    const exactPath = "电影/SSH ";
+    await user.click(
+      within(exactRow).getByRole("button", {
+        name: "SSH（名称结尾包含空格）",
+      }),
+    );
+    const readPaths = () =>
+      reads.map((url) => new URL(url, "http://x").searchParams.get("path"));
+    await waitFor(() => expect(readPaths()).toContain(exactPath));
+    expect(readPaths().at(-1)).toBe(exactPath);
+    // The wire form is the standard form encoding of the exact value, with the
+    // trailing space preserved (`+`), and the trimmed sibling was never read.
+    expect(reads.at(-1)).toContain(
+      "path=" + new URLSearchParams({ path: exactPath }).toString().slice(5),
+    );
+    expect(readPaths()).not.toContain("电影/SSH");
+
+    // The navigation stayed read-only: no mutation, FileIndex or organize call.
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(String(url)).not.toContain("/file-index");
+      const method = (init as RequestInit | undefined)?.method;
+      expect(method === undefined || method === "GET").toBe(true);
+    }
+  });
+
+  it("keeps a genuinely missing path on the existing bounded not-found state", async () => {
+    const user = userEvent.setup();
+    // The counterpart guarantee: an actually missing directory must still keep
+    // the bounded error and recovery affordances, with no fabricated row and
+    // no automatic retry against an alternate path.
+    const reads: string[] = [];
+    const fetchMock = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+      onFiles: () => {
+        // The root listing is truthful; only the directory the operator opens
+        // is genuinely gone.
+        return jsonResponse(filesPayload("lib-a", "Season"));
+      },
+    });
+    const mock = fetchMock as unknown as ReturnType<typeof vi.fn>;
+    const original = mock.getMockImplementation() as (
+      input: RequestInfo | URL,
+      init?: RequestInit,
+    ) => Promise<Response>;
+    mock.mockImplementation(
+      async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/resource-libraries\/[^/]+\/files(\?|$)/.test(url)) {
+          reads.push(url);
+          if (url.includes("path=" + encodeURIComponent("Season"))) {
+            return new Response(
+              JSON.stringify({
+                error: {
+                  code: "storage_browser_not_found",
+                  message: "Storage directory was not found",
+                  details: {
+                    category: "not_found",
+                    durableState: "active_runtime_preserved",
+                    sideEffects: "none",
+                    retrySafe: true,
+                    nextAction:
+                      "make the configured directory available, reload, and retry",
+                  },
+                },
+              }),
+              { status: 404, headers: { "Content-Type": "application/json" } },
+            );
+          }
+        }
+        return original(input, init);
+      },
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+    await screen.findByText("notes.txt");
+
+    await user.click(directoryTree().getByRole("button", { name: "Season" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Directory not found" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "返回资源库根目录" }),
+    ).toBeVisible();
+    // Exactly one request for the chosen path: no trimmed or alternate-path
+    // retry was attempted.
+    const seasonReads = reads.filter((url) =>
+      url.includes("path=" + encodeURIComponent("Season")),
+    );
+    expect(seasonReads).toHaveLength(1);
+  });
+
   it("keeps the ResourceLibrary and directory context for a still-valid refresh", async () => {
     const user = userEvent.setup();
     // A refresh of a directory that still exists must not silently switch

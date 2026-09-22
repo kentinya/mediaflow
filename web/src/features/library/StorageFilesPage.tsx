@@ -479,6 +479,101 @@ function mediaTypeLabel(name: string): string {
   return "其他";
 }
 
+/**
+ * Does this exact Storage-relative value carry whitespace that changes its
+ * identity?  Leading/trailing space is the invisible case the operator cannot
+ * see but the Storage provider resolves literally: `SSH ` and `SSH` are two
+ * different directories.
+ */
+function hasEdgeWhitespace(value: string): boolean {
+  return value !== value.trim();
+}
+
+/** The visible marker that makes one invisible boundary space unambiguous. */
+const EDGE_WHITESPACE_MARK = "␣";
+
+interface EdgeWhitespace {
+  readonly leading: boolean;
+  readonly trailing: boolean;
+  /** A boundary description the operator and assistive technology can read. */
+  readonly description: string;
+}
+
+/**
+ * The boundary whitespace of one exact Storage identity, or `null` for an
+ * ordinary value.  The accessible name computation collapses and trims raw
+ * whitespace, so a trailing space inside a visible label or `aria-label`
+ * cannot by itself tell an assistive-technology user which of two Storage
+ * entries is meant; this description is what makes it unambiguous.
+ */
+function readEdgeWhitespace(value: string): EdgeWhitespace | null {
+  if (!hasEdgeWhitespace(value)) return null;
+  const leading = value.length > value.trimStart().length;
+  const trailing = value.length > value.trimEnd().length;
+  const description =
+    leading && trailing
+      ? "开头和结尾包含空格"
+      : leading
+        ? "开头包含空格"
+        : "结尾包含空格";
+  return { leading, trailing, description };
+}
+
+/**
+ * An accessible name for one exact Storage identity.  An ordinary value is
+ * returned unchanged, so existing names and labels are unaffected; only a
+ * value whose real characters carry boundary whitespace gains the explicit
+ * description.
+ */
+function identityAccessibleName(value: string): string {
+  const whitespace = readEdgeWhitespace(value);
+  return whitespace === null
+    ? value
+    : `${value}（名称${whitespace.description}）`;
+}
+
+/**
+ * The exact Storage identity of one Files entry, presented unambiguously.
+ *
+ * The server value is rendered character for character, so the label still
+ * corresponds to the path that will actually be requested.  Only when it
+ * begins or ends with whitespace does the presentation add a visible boundary
+ * marker and an explicit assistive description; an ordinary name renders
+ * exactly as before.
+ */
+function IdentityLabel({ value }: { readonly value: string }) {
+  const whitespace = readEdgeWhitespace(value);
+  if (whitespace === null) return <>{value}</>;
+  return (
+    <span
+      className="mf-identity-label"
+      data-edge-whitespace={
+        whitespace.leading && whitespace.trailing
+          ? "both"
+          : whitespace.leading
+            ? "leading"
+            : "trailing"
+      }
+      title={`名称${whitespace.description}`}
+    >
+      {whitespace.leading && (
+        <span className="mf-ws-marker" aria-hidden="true">
+          {EDGE_WHITESPACE_MARK}
+        </span>
+      )}
+      <span className="mf-ws-value">{value}</span>
+      {whitespace.trailing && (
+        <span className="mf-ws-marker" aria-hidden="true">
+          {EDGE_WHITESPACE_MARK}
+        </span>
+      )}
+      <span className="mf-visually-hidden">
+        {`（名称${whitespace.description}）`}
+      </span>
+    </span>
+  );
+}
+
 function entryTypeLabel(entry: StorageFilesEntry): string {
   if (entry.isDirectory) return "文件夹";
   if (entry.isSymlink || entry.type === "symlink") return "链接";
@@ -706,7 +801,7 @@ function DirectoryTree({
               onClick={() => onOpenPath(node.path)}
               aria-current={node.path === currentPath ? "page" : undefined}
             >
-              {node.name}
+              <IdentityLabel value={node.name} />
             </button>
           </li>
         ))}
@@ -735,14 +830,18 @@ function GridView({
               <span className="mf-grid-icon" aria-hidden="true">
                 📁
               </span>
-              <span className="mf-grid-name">{row.name}</span>
+              <span className="mf-grid-name">
+                <IdentityLabel value={row.name} />
+              </span>
             </button>
           ) : (
             <span className="mf-grid-button">
               <span className="mf-grid-icon" aria-hidden="true">
                 🎞
               </span>
-              <span className="mf-grid-name">{row.name}</span>
+              <span className="mf-grid-name">
+                <IdentityLabel value={row.name} />
+              </span>
             </span>
           )}
         </li>
@@ -1055,7 +1154,7 @@ function FileBrowseView({
                       className="mf-link-button"
                       onClick={() => onOpenPath(crumb.path)}
                     >
-                      {crumb.name}
+                      <IdentityLabel value={crumb.name} />
                     </button>
                   </span>
                 ),
@@ -1164,7 +1263,9 @@ function FileBrowseView({
                       <td className="mf-col-check">
                         <input
                           type="checkbox"
-                          aria-label={"选择 " + row.name}
+                          aria-label={
+                            "选择 " + identityAccessibleName(row.name)
+                          }
                           checked={row.checked}
                           onChange={() => onToggle(row.path)}
                         />
@@ -1176,11 +1277,13 @@ function FileBrowseView({
                             className="mf-link-button"
                             onClick={() => onOpenPath(row.path)}
                           >
-                            <FileRowIcon row={row} /> {row.name}
+                            <FileRowIcon row={row} />{" "}
+                            <IdentityLabel value={row.name} />
                           </button>
                         ) : (
                           <span>
-                            <FileRowIcon row={row} /> {row.name}
+                            <FileRowIcon row={row} />{" "}
+                            <IdentityLabel value={row.name} />
                           </span>
                         )}
                       </td>
@@ -1219,7 +1322,7 @@ function FileBrowseView({
                           <button
                             type="button"
                             className="mf-row-more"
-                            aria-label={`更多操作 ${row.name}`}
+                            aria-label={`更多操作 ${identityAccessibleName(row.name)}`}
                             aria-haspopup="menu"
                             aria-expanded={rowMenuPath === row.path}
                             data-row-menu={row.path}
@@ -1234,7 +1337,7 @@ function FileBrowseView({
                           {rowMenuPath === row.path && (
                             <RowActionMenu
                               path={row.path}
-                              label={`更多操作 ${row.name}`}
+                              label={`更多操作 ${identityAccessibleName(row.name)}`}
                               onClose={() => setRowMenuPath(null)}
                             >
                               <button

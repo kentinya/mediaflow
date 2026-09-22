@@ -600,6 +600,11 @@ function resourceLibraryState(session) {
       // session: `/__test__/remove-directory` appends here so a browser test
       // can express an external delete between two live reads.
       externallyRemovedDirectories: [],
+      // When enabled for one test session, live Storage additionally contains
+      // the exact production-evidence directory `电影/SSH ` (one trailing
+      // ASCII space) whose trimmed sibling `电影/SSH` genuinely does not
+      // exist.  Every other session keeps the frozen reference fixture.
+      whitespaceDirectory: false,
     };
     RESOURCE_LIBRARY_STATES.set(key, value);
   }
@@ -1089,7 +1094,31 @@ function directoryEntry(name, path, modifiedAt) {
   };
 }
 
-function referenceDirectoryEntries(path) {
+function referenceDirectoryEntries(path, whitespaceDirectory = false) {
+  if (whitespaceDirectory) {
+    // The exact production evidence: live Storage really contains the
+    // directory `电影/SSH ` (one trailing ASCII space) and no directory named
+    // `电影/SSH`.  A client that trims the entry identity therefore asks for a
+    // path that genuinely does not exist and must receive the real not-found.
+    if (path === "电影") {
+      return [directoryEntry("SSH ", "电影/SSH ", REFERENCE_MODIFIED_LATEST)];
+    }
+    if (path === "电影/SSH ") {
+      return [
+        fileEntry(
+          "inside.mkv",
+          "电影/SSH /inside.mkv",
+          1_073_741_824,
+          REFERENCE_MODIFIED_LATEST,
+          { selectable: true, businessStatus: "pending" },
+        ),
+      ];
+    }
+    if (path === "") {
+      return [directoryEntry("电影", "电影", REFERENCE_MODIFIED_LATEST)];
+    }
+    return [];
+  }
   if (path === "") {
     return [
       directoryEntry("Movies", "Movies", REFERENCE_MODIFIED_LATEST),
@@ -1232,6 +1261,7 @@ function filesDocument(
   savedCandidate = null,
   extraLibrary = null,
   removedDirectories = [],
+  whitespaceDirectory = false,
 ) {
   const isReferenceLibrary = resourceLibraryId === "source";
   const isSavedResourceLibrary = resourceLibraryId === "new-e2e-library";
@@ -1273,7 +1303,7 @@ function filesDocument(
             ),
           ]
         : []
-      : referenceDirectoryEntries(path)
+      : referenceDirectoryEntries(path, whitespaceDirectory)
   ).filter((entry) => !isRemoved(entry.path));
   const hasNext =
     storage.id !== "remote-media" && (path === "" || Boolean(cursor));
@@ -5821,6 +5851,27 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
+    // In the whitespace-evidence session, live Storage genuinely has no
+    // directory at the trimmed path `电影/SSH`: the only neighbour of that name
+    // is the real `电影/SSH `.  A client that trimmed the entry identity
+    // therefore receives the truthful not-found instead of an empty listing.
+    if (stateForFiles.whitespaceDirectory === true && path === "电影/SSH") {
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_not_found",
+          message: "Storage directory was not found",
+          details: {
+            category: "not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "make the configured directory available, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
     sendJson(
       res,
       200,
@@ -5832,6 +5883,7 @@ const server = createServer(async (req, res) => {
         resourceLibraryState(session).candidate,
         extraLibrary ?? null,
         stateForFiles.externallyRemovedDirectories,
+        stateForFiles.whitespaceDirectory === true,
       ),
     );
     return;
@@ -8796,6 +8848,7 @@ const server = createServer(async (req, res) => {
       filesOrganizePaths: null,
       filesOrganizeFailure: url.searchParams.get("organizeFail"),
       externallyRemovedDirectories: [],
+      whitespaceDirectory: url.searchParams.get("whitespace") === "1",
     });
     res.setHeader(
       "Set-Cookie",

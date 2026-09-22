@@ -151,6 +151,103 @@ describe("normalizeStorageFiles", () => {
     expect(model.hasNext).toBe(false);
   });
 
+  it("preserves exact leading/trailing whitespace in every identity field", () => {
+    // A live ResourceLibrary directory can really be named `SSH ` (one
+    // trailing ASCII space).  Its name and Storage-relative path are the
+    // entry's identity: trimming them at the model boundary would silently
+    // retarget the next read at a different directory.
+    const payload = {
+      ...storageFilesPayload,
+      path: "电影/SSH ",
+      breadcrumbs: [
+        { name: "ResourceLibrary root", path: "", isRoot: true },
+        { name: "电影", path: "电影", isRoot: false },
+        { name: "SSH ", path: "电影/SSH ", isRoot: false },
+      ],
+      entries: [
+        {
+          ...storageFilesPayload.entries[0],
+          name: "SSH ",
+          path: "电影/SSH ",
+          isDirectory: true,
+          isSymlink: false,
+          traversable: true,
+          selectable: true,
+        },
+        {
+          ...storageFilesPayload.entries[0],
+          name: " padded.mkv",
+          path: "电影/ padded.mkv",
+          isDirectory: false,
+        },
+      ],
+    };
+    const model = normalizeStorageFiles(payload);
+    expect(model.path).toBe("电影/SSH ");
+    expect(model.breadcrumbs.map((crumb) => crumb.name)).toEqual([
+      "ResourceLibrary root",
+      "电影",
+      "SSH ",
+    ]);
+    expect(model.breadcrumbs.map((crumb) => crumb.path)).toEqual([
+      "",
+      "电影",
+      "电影/SSH ",
+    ]);
+    expect(model.entries[0]?.name).toBe("SSH ");
+    expect(model.entries[0]?.path).toBe("电影/SSH ");
+    expect(model.entries[1]?.name).toBe(" padded.mkv");
+    expect(model.entries[1]?.path).toBe("电影/ padded.mkv");
+    // The exact identity is stable across repeated normalization of the same
+    // live payload: no pass introduces or removes a boundary character.
+    expect(normalizeStorageFiles(payload)).toEqual(model);
+  });
+
+  it("still rejects an empty identity and one over the bound", () => {
+    // An empty string is not an addressable Storage entry, so it stays
+    // malformed; whitespace-only is a legal POSIX name and keeps its exact
+    // characters rather than being trimmed into something else.
+    expect(() =>
+      normalizeStorageFiles({
+        ...storageFilesPayload,
+        entries: [{ ...storageFilesPayload.entries[0], name: "" }],
+      }),
+    ).toThrow(StorageFilesNormalizationError);
+    expect(() =>
+      normalizeStorageFiles({
+        ...storageFilesPayload,
+        entries: [{ ...storageFilesPayload.entries[0], path: "" }],
+      }),
+    ).toThrow(StorageFilesNormalizationError);
+    const spaced = normalizeStorageFiles({
+      ...storageFilesPayload,
+      entries: [{ ...storageFilesPayload.entries[0], name: "   " }],
+    });
+    expect(spaced.entries[0]?.name).toBe("   ");
+    expect(() =>
+      normalizeStorageFiles({
+        ...storageFilesPayload,
+        entries: [
+          {
+            ...storageFilesPayload.entries[0],
+            name: "x".repeat(1025),
+          },
+        ],
+      }),
+    ).toThrow(StorageFilesNormalizationError);
+    expect(() =>
+      normalizeStorageFiles({
+        ...storageFilesPayload,
+        entries: [
+          {
+            ...storageFilesPayload.entries[0],
+            path: "y".repeat(4097),
+          },
+        ],
+      }),
+    ).toThrow(StorageFilesNormalizationError);
+  });
+
   it.each([
     ["non-object payload", "nope"],
     ["array payload", [storageFilesPayload]],
