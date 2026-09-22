@@ -5,7 +5,7 @@ the current [`SLICE.md`](SLICE.md).
 
 ```text
 Task ID: 37.11
-Parent Slice: 37 — Files Workspace, Common File Management and V2 Shell
+Parent Slice: 37
 Status: PLANNED
 Task Base: bf9354dcadc2467e3b411576faf43bd70dec3b62
 Difficulty: Medium
