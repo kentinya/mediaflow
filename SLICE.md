@@ -9,7 +9,7 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
 Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
@@ -556,14 +556,14 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
+Slice Status: PASS / CLOSED
 Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
 Contract Revision: 2026-09-22 A POST-CLOSURE REACTIVATION — Files exact path identity and whitespace presentation
 Task 37.8 state: PASS
 Task 37.9 state: PASS
 Task 37.10 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE IN A SUBSEQUENT A TURN
 ```
 
 ## Closure Packet
@@ -953,6 +953,47 @@ Documentation Reconciliation Needed:
 
 Decision: SLICE READY FOR A REVIEW
 ```
+
+## A Final Review — Post-reactivation Closure 2026-09-22
+
+```text
+Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..3feab84a0fbbf7cebfe1f5507e548636da5ab283
+Decision: PASS / CLOSED
+P0/P1 Blockers:
+- None.
+```
+
+Closure Reconciliation:
+
+- All twelve Required Outcomes and all Required Surfaces are complete across the shared V2 shell,
+  live ResourceLibrary Files browsing, atomic activation, bounded common file management,
+  Organize continuation, formal `library/path` destination parity, truthful refresh/presentation,
+  and exact Storage path identity.
+- The vertical journey is complete: an authorized operator enters Files, sees live
+  ResourceLibrary-scoped state, performs bounded actions, receives independent success/failure/
+  partial outcomes, and recovers through corrected input, refresh, revalidation or durable
+  Organize state. A real boundary-space path remains visibly distinguishable and navigates using
+  its exact ResourceLibrary-relative identity; the genuinely absent trimmed sibling remains a
+  bounded not-found state with no alternate-path replay.
+- The reviewed implementation preserves the architecture and safety invariants: read and analysis
+  stages remain zero-mutation, all Storage mutation crosses `OrganizerExecutor`, authority is
+  backend-resolved from Active ResourceLibrary/Storage bindings, overwrite/delete intent remains
+  explicit, and uncertain effects are never automatically replayed. RecognitionType identity
+  remains independent of downstream policy reuse.
+- Validation is truthful: governance, Ruff, compileall, pip check, FFmpeg/FFprobe exclusion and
+  `git diff --check` passed; Python regression passed `1718` with `7` skips; Web Vitest passed
+  `464/464`; Web typecheck, lint, format and production build passed; full Playwright passed
+  `122/122`; Docker release-security and transfer-impact smoke tests passed. The generated chunk
+  size warning and existing Python SQLite `ResourceWarning` messages remain non-blocking quality
+  debt. The accepted narrow Local directory replacement/inode-reuse race remains documented and
+  is not claimed fixed.
+- The canonical reference image remains outside the reviewed implementation range except for the
+  pre-existing dirty worktree modification; `config/alist.json` is absent and no secret/private
+  configuration or user media entered the reviewed range. Explicitly Deferred scope remains
+  deferred and was not silently expanded.
+
+The Slice is therefore `PASS / CLOSED` as of 2026-09-22. The next legal action is for A to select
+the next large Slice in a subsequent A turn.
 
 ## A Final Review — Post-reactivation 2026-09-21
 

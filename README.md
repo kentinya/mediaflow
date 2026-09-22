@@ -93,14 +93,16 @@ read-only Library journey across bounded Active Storage browsing, FileIndex cata
 physical/indexed context. Slice 33 delivered the Operations command center across actionable
 Dashboard entry, durable Tasks/Jobs, bounded Scan/Preview, Web-native exact manual Organize,
 scheduled Automation and Notification delivery operation, including the accepted Worker
-pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` after A's 2026-09-21
+pre-mutation revalidation correction. Slice 37 is `PASS / CLOSED` after A's 2026-09-22
 post-reactivation Final Review at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`2115d1839eb0611f097913eae8a43492d00346a2`. It delivered the replacement light shell in the
+`3feab84a0fbbf7cebfe1f5507e548636da5ab283`. It delivered the replacement light shell in the
 canonical Files reference, bounded ResourceLibrary activation, complete Files
 Create Folder/Text File, Rename/Copy/Move/Delete/text Edit and Organize continuation, plus formal
-`library/path` destination parity. Direct browser Upload/Download was removed from the current
-surface; generic Storage/provider transfer primitives remain available.
+`library/path` destination parity, truthful refresh/presentation and exact Storage path identity.
+The page does not render recognition-result or organize-status feedback. Direct browser
+Upload/Download was removed from the current surface; generic Storage/provider transfer primitives
+remain available.
 Non-Files business journeys remain unchanged inside the replacement shell. The previously planned
 Slice 34–36 boundaries are retired from the current Roadmap; A will select the next large Slice.
 The V1 API, authentication and Storage authority remain
@@ -729,7 +731,7 @@ persistent scan/preview jobs, Cron schedules, signed Webhook delivery engine, Sl
 manual-operations journey, and Slice 28 Webhook definition/test/delivery-recovery journey are
 complete. The existing delivery engine is managed through Web/API without being reimplemented. The
 current Files tab browses configured Storage through bounded ResourceLibrary-relative live Storage
-views and may show a bounded FileIndex recognition/business-status feedback projection. It does not
+views and does not render recognition/business-status feedback. It does not
 use FileIndex to enumerate physical files, validate paths or authorize Preview/Organize. Files-
 originated organize Preview submits the ResourceLibrary ID and relative path, and the server derives
 SourceIdentity from live Storage before entering the existing zero-mutation Preview path. After a
