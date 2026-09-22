@@ -135,106 +135,134 @@ Frozen for this Task:
 
 ### Changed Files
 
-Correction round 2 (B FIX REQUIRED — intent-pinned snapshot):
+Correction round 3 (B FIX REQUIRED formatting/documentation blockers + A-expanded 系统存储 removal):
 
-- `mediaflow/application/manual_organize.py` — `_validate_storage_source()` now takes the intent
-  and revalidates the Files source against the intent's pinned `snapshot_id`/`snapshot_digest`
-  instead of resolving the validator snapshot from `_active_snapshot()` (the currently Active
-  revision). `_resolve_choice_source()` passes the intent through.
-- `tests/test_v2_manual_organize.py` — added
-  `test_save_choice_uses_intent_pinned_snapshot_after_active_replacement` covering Active revision
-  replacement after intent creation.
+- `web/src/shared/ui/AppShell.tsx` — removed the hardcoded `系统存储` capacity/usage block
+  (`12.4 TB / 20 TB`, `62%`) from the shared shell sidebar. Presentation removal only; no Storage
+  probe, capacity API, polling, provider capability or replacement status surface was added.
+- `web/src/shared/ui/styles.css` — removed the now-unused `.mf-storage-status`,
+  `.mf-storage-status strong`, `.mf-storage-meter`, `.mf-storage-meter span` and
+  `.mf-storage-status-meta` rules and dropped `.mf-storage-status` from the narrow-viewport
+  `display: none` group. Unrelated `.mf-storage-list`/`.mf-storage-button`/`.mf-storage-name`
+  classes (storage-management page) are untouched.
+- `web/src/shared/ui/AppShell.test.tsx` — added
+  `does not render the unsupported system-storage capacity block`, proving the `系统存储` label,
+  heading and both hardcoded capacity values are absent while the shared `Primary` navigation and
+  `Library` link remain operable.
+- `tests/test_v2_manual_organize.py` — applied the repository formatter (`ruff format`) to two
+  Save Choice regression assertions (`DefaultAssemblySaveChoiceTests`, lines ~2304 and ~2382) so
+  the required `ruff format --check .` gate passes (B blocker 1). No test behavior or assertion was
+  changed.
 
-Correction round 1 (original P1 — effective resolver):
+`docs/file-page-visual-spec.md` was already synchronized by A's scope revision (commit 8e1c104):
+left-rail item 4 records "No fabricated system-capacity or usage block is rendered", so no further
+visual-spec edit was required this round.
 
-- `mediaflow/application/manual_organize.py` — `_validate_storage_source()` now gates on the
-  effective managed pinned-runtime resolver instead of the raw optional `runtime_resolver`
-  constructor field; added `_effective_runtime_resolver()` (explicit injection wins, otherwise the
-  managed resolver backed by `configuration_service`) and reused it in `_default_source_validator()`
-  so the validator construction and the Save Choice gate can never disagree.
-- `tests/test_v2_manual_organize.py` — new `DefaultAssemblySaveChoiceTests` driving the automatic
-  `MediaFlowApi` composition (no injected `runtime_resolver`, no injected manual services) over a
-  real managed Active lifecycle (SQLite configuration repository, import → validate → activate),
-  real `LocalStorage` roots and a real runtime database.
+The Save Choice runtime-resolver / intent-pinned-snapshot backend correction (rounds 1–2) remains
+in `mediaflow/application/manual_organize.py` and `tests/test_v2_manual_organize.py` from the
+earlier accepted checkpoints; B accepted that implementation behavior and did not require further
+change to it.
 
 ### Implemented
 
-- Files-originated Save Choice through the default `MediaFlowApi` assembly now validates the source
-  against the exact intent-pinned managed runtime reconstructed from `configuration_service`
-  (`validate_runtime_snapshot` + `require` + `verify_integrity` + `load_managed_runtime_configuration`
-  + `with_managed_snapshot`) and the live ResourceLibrary/Storage authority, with no FileIndex row
-  required and zero Storage mutation.
-- The validator snapshot is the intent's pinned snapshot, not the currently Active revision:
-  activating a successor revision (e.g. one that disables the ResourceLibrary) no longer invalidates
-  an existing intent whose pinned snapshot is still published (superseded revisions remain valid
-  authority). The source fails only when that pinned revision itself is unavailable.
+Round 3 (this checkpoint):
+
+- Removed the unsupported fabricated `系统存储` block so no hardcoded system-capacity/usage value is
+  presented on any supported V2 route; the shared left rail, ordered navigation, top bar and account
+  control remain intact and operable.
+- Synchronized the AppShell component test to the current no-fabricated-status boundary without
+  weakening the existing navigation, active-context, migration-status, keyboard-toggle or
+  authentication assertions.
+- Applied the repository formatter to the Save Choice regression tests (B blocker 1) and recorded
+  the exact required release-quality command `.venv/bin/ruff check .` in the Required Tests and the
+  actual evidence below (B blocker 2).
+
+Backend Save Choice behavior (rounds 1–2, accepted by B, retained unchanged):
+
+- Files-originated Save Choice through the default `MediaFlowApi` assembly validates the source
+  against the exact intent-pinned managed runtime reconstructed from `configuration_service` and the
+  live ResourceLibrary/Storage authority, with no FileIndex row required and zero Storage mutation.
+- The validator snapshot is the intent's pinned snapshot, not the currently Active revision;
+  activating a successor revision no longer invalidates an existing intent whose pinned snapshot is
+  still published. The source fails only when that pinned revision itself is unavailable.
 - Explicit `runtime_resolver` injection still wins for existing tests and non-managed callers;
-  FileIndex-originated choice validation is untouched.
-- Regression: valid Files-originated Save Choice succeeds through the automatic assembly, persists
-  the choice once, increments intent/item versions exactly once and appends exactly one
-  `choice_updated` audit record.
-- Regression (B blocker): after activating a successor revision that disables the ResourceLibrary,
-  the old intent's valid choice validates against pinned revision A and persists exactly once.
-- Fail-closed regression: missing source (`source_missing`/404), replaced source
-  (`source_stale`/409) and an unpublished pinned revision (503 `configuration_unavailable`,
-  `durableState: managed_active_unavailable`) all leave the choice, versions, audit trail and
-  Storage unchanged; no fallback to the current unpinned configuration and no replay.
+  FileIndex-originated choice validation is untouched. Fail-closed rejection (missing/replaced
+  source, unpublished pinned revision) leaves the choice, versions, audit trail and Storage
+  unchanged with no fallback and no replay.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_v2_manual_organize.DefaultAssemblySaveChoiceTests -v`
-  — PASS (3 tests). Verified the new pinned-snapshot test FAILS on the pre-correction code with the
-  exact reviewed `source_cross_authority`/400 (stash check) and PASSES with the fix; the original
-  two tests still FAIL on the round-1 pre-fix code and PASS now.
-- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize
-  tests.test_manual_preview` — PASS (53 tests).
+Static and governance checks:
+
 - `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/ruff check mediaflow tests` — PASS.
+- `.venv/bin/ruff format --check .` — PASS (309 files already formatted).
+- `.venv/bin/ruff check .` — PASS (All checks passed).
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `git diff --check` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — FAIL / PRE-EXISTING / UNRELATED
-  (unchanged from round 1; not re-run this round — same known harness/environment bind-mount flake
-  reproduced on the pre-Task HEAD, independent of this Task's change). The equivalent
-  production-composition regression is covered in-process by `DefaultAssemblySaveChoiceTests`,
-  which exercises the exact automatic `MediaFlowApi` assembly that failed in production.
+
+Focused and full Python:
+
+- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize
+  tests.test_manual_preview` — PASS (53 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1721 run, OK, 7 skipped). Includes
+  `tests.test_release_security` (documentation gate) PASS.
+
+Web gates:
+
+- `npm run test -- --run src/shared/ui/AppShell.test.tsx` — PASS (3 tests, including the new
+  no-fabricated-status test).
+- `npm run test -- --run` (full Vitest) — PASS (33 files, 465 passed).
+- `npm run typecheck` — PASS.
+- `npm run lint` — PASS.
+- `npm run format:check` — PASS.
+- `npm run build` — PASS (existing non-blocking generated-chunk >500 kB size warning only).
+- `npm run test:e2e` (full Playwright) — PASS (122 passed).
+
+Container-level evidence:
+
+- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
+  ("Release-security smoke acceptance passed.", exit 0). The isolated four-service stack built,
+  enforced non-root execution, proved V1/V2 coexistence and safe headers, exercised auth/RBAC
+  zero-side-effect denial, activated the managed runtime snapshot and admitted the V2 manual
+  Organize probe.
 
 ### Decisions
 
-- Round 2: threaded the intent into `_validate_storage_source()` so the source revalidation binds
-  to the intent-pinned snapshot identity. This is the narrowest change that satisfies exact
-  intent-pinned snapshot validation; the resolver, validator construction, choice contract and
-  FileIndex path are unchanged.
-- Round 1: introduced `_effective_runtime_resolver()` as the single source of truth for "which
-  resolver authority does this service have" and used it in both the Save Choice gate and the
-  default validator construction, eliminating the raw-field/effective-resolver mismatch at its root.
-- The managed resolver is only offered when `configuration_service` is present; a service with
-  neither an explicit resolver nor a managed configuration service still fails closed with
-  `manual_intent_configuration_unavailable`, preserving the previous non-managed behavior.
-- The fail-closed runtime test corrupts the pinned revision status directly in the SQLite
-  configuration repository; the API surfaces the existing bounded 503 `configuration_unavailable`
-  document (`durableState: managed_active_unavailable`, `sideEffects: none`), which is the
-  top-level `RuntimeSnapshotUnavailable` mapping — no new error shape was added.
+- Removed the `系统存储` block entirely rather than gating it behind a flag: A's revision states the
+  current product must not present fabricated system-capacity state and explicitly excludes adding a
+  real Storage probe/capacity authority, so the correct correction is deletion, not replacement.
+- Deleted only the sidebar-block-specific CSS (`.mf-storage-status*`, `.mf-storage-meter*`) and left
+  the unrelated `.mf-storage-list`/`.mf-storage-button`/`.mf-storage-name` classes in place; those
+  belong to a different surface and removing them would be out-of-scope cleanup.
+- The `.mf-primary-nav` `flex: 1` already fills the sidebar, so removing the bottom block (which used
+  `margin-top: auto`) needs no layout compensation.
+- Kept the formatter fix as a pure `ruff format` output on the two flagged lines; no assertion,
+  fixture or behavior was altered while satisfying B blocker 1.
+- Backend Save Choice decisions from rounds 1–2 (single effective-resolver source of truth,
+  intent-pinned snapshot validation, unchanged non-managed fail-closed behavior) are retained as
+  previously accepted.
 
 ### Remaining In-Slice Work
 
-- The Docker release-security/health smoke harness bind-mount flake above is Slice-visible test
-  infrastructure debt (it blocks the container-level evidence gate for any Task), but fixing the
-  harness is outside this Task's scope.
+- None additional identified for this Task's scope. Any further Slice-level closure sequencing is a
+  B/A decision.
 
 ### Risks / Deviations
 
-- Docker container-level smoke evidence is UNAVAILABLE in this environment for a pre-existing,
-  unrelated harness/environment reason (see Tests and Results); whether this gate is satisfied by
-  the in-process production-composition regression is left to B.
+- Scope note: A expanded Task 37.11 (commit 8e1c104) to add the `系统存储` removal after B recorded
+  the FIX REQUIRED loop, so this single checkpoint delivers both B's two formatting/documentation
+  blockers and A's added presentation-removal scope, per explicit direction to bundle them.
 - Pre-existing unrelated dirty file preserved untouched: `docs/pics/文件页.png` (modified before
   this Task started; not staged, not committed).
+- The production Web build retains the existing non-blocking generated-chunk size warning; the full
+  Python run emits pre-existing unclosed-SQLite `ResourceWarning` messages but completes OK.
 
 ### Checkpoint
 
 ```text
-Status: FIX REQUIRED
-Head SHA: 564e7e1eaf3cd2ccbc9f0e1f71ab122873db7bc2
-(the report itself is committed as the direct child of this implementation checkpoint)
+Status: READY FOR B REVIEW
+Head SHA: 2950a3ceb319396a7899ceca2973740c54eaded4
+(this report is committed as the direct child of that implementation checkpoint)
 ```
 
 ## B Review Result
