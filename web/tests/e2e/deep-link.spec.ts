@@ -123,7 +123,10 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   // Connecting continues to the exact route that was opened, not a default.
-  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files$/);
+  // The browsed library is recorded, so the live read is recoverable.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -132,6 +135,29 @@ test("connect from a real deep link continues to that exact allowlisted route", 
     page.getByRole("link", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
+
+  // A deep link naming a library-relative directory continues to that exact
+  // directory, and a reload plus reconnect restores the same location.
+  await page.goto(
+    "/ui-v2/medialib/files?mediaLibraryId=movies&path=" +
+      encodeURIComponent("Breaking Bad/Season 1"),
+  );
+  await expect(page).toHaveURL(/\/ui-v2\/$/);
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/path=Breaking\+Bad%2FSeason\+1$/);
+  await expect(
+    page.getByRole("row", { name: /Breaking\.Bad\.S01E01\.mkv/ }),
+  ).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/path=Breaking\+Bad%2FSeason\+1$/);
+  await expect(
+    page.getByRole("row", { name: /Breaking\.Bad\.S01E01\.mkv/ }),
+  ).toBeVisible();
 });
 
 test("a retired Library route offers bounded recovery links and starts no work", async ({

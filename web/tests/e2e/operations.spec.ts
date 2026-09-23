@@ -386,7 +386,11 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
 }) => {
   await connect(page);
   await page.getByRole("link", { name: "Library" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files$/);
+  // The entry reaches the MediaLibrary page, and its address records the
+  // enabled library actually being browsed at its root.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();

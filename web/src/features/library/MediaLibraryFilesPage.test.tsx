@@ -261,6 +261,146 @@ describe("MediaLibrary Files journey", () => {
     );
   });
 
+  it("records the exact library and relative directory in the route on navigation", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.includes("path=Breaking+Bad")) {
+        return jsonResponse(
+          filesDocument("movies", "Breaking Bad", [
+            entry("Season 1", "Breaking Bad/Season 1", { directory: true }),
+          ]),
+        );
+      }
+      return jsonResponse(
+        filesDocument("movies", "", [
+          entry("Breaking Bad", "Breaking Bad", { directory: true }),
+        ]),
+      );
+    });
+    const user = userEvent.setup();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    // Selecting an enabled library at its root is itself a recoverable
+    // location, so the address already names the library being browsed.
+    await screen.findByRole("table");
+    await waitFor(() =>
+      expect(window.location.search).toBe("?mediaLibraryId=movies"),
+    );
+
+    // Entering a directory records the exact library-relative path.
+    const tree = await screen.findByLabelText("目录", { exact: true });
+    await user.click(
+      await within(tree).findByRole("button", { name: "Breaking Bad" }),
+    );
+    await screen.findByRole("row", { name: /Season 1/ });
+    await waitFor(() =>
+      expect(new URLSearchParams(window.location.search).get("path")).toBe(
+        "Breaking Bad",
+      ),
+    );
+    expect(
+      new URLSearchParams(window.location.search).get("mediaLibraryId"),
+    ).toBe("movies");
+
+    // Returning to the root clears the directory but keeps the library, so a
+    // reload restores the root rather than a stale directory.
+    await user.click(screen.getByRole("button", { name: "返回媒体库根目录" }));
+    await waitFor(() =>
+      expect(window.location.search).toBe("?mediaLibraryId=movies"),
+    );
+  });
+
+  it("switching library replaces the previous library's directory in the route", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.includes("/media-libraries/tv/files")) {
+        return jsonResponse(
+          filesDocument("tv", "", [entry("电影", "电影", { directory: true })]),
+        );
+      }
+      return jsonResponse(
+        filesDocument("movies", "Breaking Bad", [
+          entry("Season 1", "Breaking Bad/Season 1", { directory: true }),
+        ]),
+      );
+    });
+    const user = userEvent.setup();
+    authStore.setToken(TOKEN);
+    setMediaRouteState("mediaLibraryId=movies&path=Breaking%20Bad");
+    renderApp(
+      "/ui-v2/medialib/files?mediaLibraryId=movies&path=Breaking%20Bad",
+    );
+
+    await screen.findByRole("row", { name: /Season 1/ });
+    await user.click(await screen.findByRole("button", { name: "夸克网盘" }));
+    await screen.findByRole("row", { name: /电影/ });
+
+    // The new library starts at its own root: the previous library's
+    // directory can never remain in the address.
+    await waitFor(() =>
+      expect(window.location.search).toBe("?mediaLibraryId=tv"),
+    );
+  });
+
+  it("records the library actually browsed when the requested one is unavailable", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      return jsonResponse(
+        filesDocument("movies", "", [
+          entry("Breaking Bad", "Breaking Bad", { directory: true }),
+        ]),
+      );
+    });
+    authStore.setToken(TOKEN);
+    setMediaRouteState("mediaLibraryId=disabled-library&path=Breaking%20Bad");
+    renderApp(
+      "/ui-v2/medialib/files?mediaLibraryId=disabled-library&path=Breaking%20Bad",
+    );
+
+    expect(
+      await screen.findByText(
+        /媒体库“disabled-library”不可用或已停用，已切换到“115网盘”。/,
+      ),
+    ).toBeVisible();
+    // Neither the unavailable request nor its foreign directory survives: the
+    // address describes the library actually browsed, at its root.
+    await waitFor(() =>
+      expect(window.location.search).toBe("?mediaLibraryId=movies"),
+    );
+  });
+
+  it("leaves a rejected deep-link path in the address with its root recovery", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      return jsonResponse(filesDocument("movies", "", []));
+    });
+    authStore.setToken(TOKEN);
+    setMediaRouteState("mediaLibraryId=movies&path=..%2Foutside");
+    renderApp("/ui-v2/medialib/files?mediaLibraryId=movies&path=..%2Foutside");
+
+    expect(
+      await screen.findByRole("heading", { name: "路径无效" }),
+    ).toBeVisible();
+    // The truthful invalid state must not be rewritten into a fabricated root.
+    expect(new URLSearchParams(window.location.search).get("path")).toBe(
+      "../outside",
+    );
+
+    // The explicit root recovery records that root through the same writer, so
+    // the location becomes valid again instead of staying rejected.
+    await user.click(screen.getByRole("button", { name: "返回媒体库根目录" }));
+    await waitFor(() =>
+      expect(window.location.search).toBe("?mediaLibraryId=movies"),
+    );
+    expect(screen.queryByRole("heading", { name: "路径无效" })).toBeNull();
+  });
+
   it("supports list/grid, selection summary and honest cursor paging", async () => {
     stubFetch(async (input) => {
       const url = String(input);

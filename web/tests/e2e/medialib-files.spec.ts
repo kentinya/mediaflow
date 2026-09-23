@@ -50,7 +50,11 @@ test("both new routes are distinct, sidebar-owned and reach live files", async (
   await connectAs(page);
   await page.getByRole("link", { name: "Library" }).click();
 
-  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files$/);
+  // The address records the library actually being browsed, at its root, so
+  // the live read is recoverable rather than an anonymous page.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
   await expect(
     page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
@@ -123,6 +127,97 @@ test("the reference hierarchy renders without statistics, thumbnails or organize
   await expect(page.getByRole("button", { name: /扫描/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /预览/ })).toHaveCount(0);
   await expect(page.locator("img")).toHaveCount(0);
+});
+
+test("directory navigation, return to root and library switching keep the route exact", async ({
+  page,
+}) => {
+  await openMediaLibrary(page);
+
+  // Entering a directory records the resolved library and the exact
+  // library-relative directory in the address.
+  await page
+    .getByRole("row", { name: /Breaking Bad/ })
+    .getByRole("button", { name: "打开" })
+    .click();
+  await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
+  );
+
+  // A reload followed by authentication reconnect restores that same
+  // directory. The root listing must not silently replace it.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
+  await connectAs(page);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies&path=Breaking\+Bad$/,
+  );
+  await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /^Dune \(2021\)/ })).toHaveCount(
+    0,
+  );
+
+  // Deeper navigation keeps the full exact relative path.
+  await page
+    .getByRole("row", { name: /Season 1/ })
+    .getByRole("button", { name: "打开" })
+    .click();
+  await expect(
+    page.getByRole("row", { name: /Breaking\.Bad\.S01E01\.mkv/ }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/path=Breaking\+Bad%2FSeason\+1$/);
+
+  // Returning to the library root clears the directory but keeps the library.
+  await page.getByRole("button", { name: "返回媒体库根目录" }).click();
+  await expect(page.getByRole("row", { name: /Dune \(2021\)/ })).toBeVisible();
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
+
+  // Switching library from a path-bearing address selects the new library at
+  // its own root: the previous library's directory never remains.
+  await page.goto(
+    "/ui-v2/medialib/files?mediaLibraryId=movies&path=Breaking%20Bad",
+  );
+  await connectAs(page);
+  await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
+  await page.getByRole("button", { name: "夸克网盘" }).click();
+  await expect(page.getByRole("row", { name: /电影/ })).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files\?mediaLibraryId=tv$/);
+  await expect(page).not.toHaveURL(/path=/);
+
+  // The new location survives a reload and reconnect on its own terms.
+  await page.reload();
+  await connectAs(page);
+  await expect(page.getByRole("row", { name: /电影/ })).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files\?mediaLibraryId=tv$/);
+});
+
+test("an unavailable requested library is replaced by the browsed one in the route", async ({
+  page,
+}) => {
+  await page.goto(
+    "/ui-v2/medialib/files?mediaLibraryId=disabled-lib&path=Breaking%20Bad",
+  );
+  await connectAs(page);
+
+  await expect(
+    page.getByText(/媒体库“disabled-lib”不可用或已停用/),
+  ).toBeVisible();
+  // The address records the library actually browsed, at its root, so a
+  // reload cannot replay the unavailable request with a foreign directory.
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
+
+  await page.reload();
+  await connectAs(page);
+  await expect(page).toHaveURL(
+    /\/ui-v2\/medialib\/files\?mediaLibraryId=movies$/,
+  );
+  await expect(page.getByRole("row", { name: /Breaking Bad/ })).toBeVisible();
+  await expect(page.getByText(/不可用或已停用/)).toHaveCount(0);
 });
 
 test("library selection, lazy navigation, breadcrumbs, search and refresh", async ({
