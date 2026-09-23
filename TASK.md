@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.1
 Parent Slice: 38
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 86bb69d52891755933f23763d32558668b30f9c6
 Difficulty: High
 Test Level: T4
@@ -131,7 +131,64 @@ fake/temporary Storage; no production services or user media.
 
 ## Developer Completion Report
 
+### Correction Round 1 (B FIX REQUIRED — P1 route-recoverable directory state)
+
+B's blocker: `MediaLibraryFilesPage.openPath()` only updated the component's `path`,
+`updateLibraryRouteState()` only updated `mediaLibraryId`, so entering `Breaking Bad` left the URL at
+`/ui-v2/medialib/files`; after refresh + reconnect the page showed the root `Breaking Bad` instead of
+`Season 1`, and switching library from a path-bearing deep link left the old `path` in the URL.
+
+Reproduced first against the recorded checkpoint with a temporary Playwright probe (built artifact +
+local fake server, deleted before this checkpoint):
+
+```text
+Task Base..e431580 (before the fix):
+  URL after openPath:  .../ui-v2/medialib/files
+  URL after reconnect: .../ui-v2/medialib/files
+  after reconnect Season 1 visible: false / Breaking Bad visible: true
+  URL after library switch: ...?mediaLibraryId=tv&path=Breaking+Bad
+```
+
+Changed in this correction:
+
+- `web/src/features/library/MediaLibraryFilesPage.tsx` — `updateLibraryRouteState(libraryId)` is
+  replaced by `syncLibraryRouteState(libraryId, relativePath)`, which writes the resolved library
+  **and** its exact library-relative directory together, is a no-op while the address already
+  describes that location, and preserves `window.history.state` instead of clearing the router's
+  history state. A single effect now owns the write: it records the library the live read actually
+  resolved plus the browsed directory, substituting the root whenever the address still names a
+  MediaLibrary the Active runtime does not enable (`requestedLibraryUnavailable`). A locally rejected
+  deep-link path is deliberately left in the address so the truthful invalid-path state is not
+  rewritten into a fabricated root; its explicit root recovery clears `path` and the same writer then
+  records the root. No behavioural change to reads, mutations, Tasks or metadata requests.
+- `web/src/features/library/MediaLibraryFilesPage.test.tsx` — four new focused component tests:
+  exact library + relative directory recorded on navigation and cleared-but-library-kept on return
+  to root; library switch replacing the previous library's directory; an unavailable requested
+  library replaced by the browsed one at its root; a rejected deep-link path kept in the address
+  with its root recovery.
+- `web/tests/e2e/medialib-files.spec.ts` — two new browser regressions required by B: directory
+  navigation / deeper navigation / return-to-root / library switch keep the route exact, with a
+  reload + reconnect restoring the same directory (and the root listing explicitly absent); and an
+  unavailable requested library being replaced by the browsed one in the route, including after a
+  reload. The first test's entry assertion now expects the recorded library.
+- `web/tests/e2e/deep-link.spec.ts` — the existing MediaLibrary continuation test now also proves a
+  deep link naming `Breaking Bad/Season 1` continues to that exact directory and that reload +
+  reconnect restores it; its entry assertion expects the recorded library.
+- `web/tests/e2e/operations.spec.ts` — the 媒体库 entry assertion expects the recorded library.
+
+Not committed: the user's dirty `docs/pics/文件页.png` (preserved untouched) and the ignored
+`config/alist.json`. `docs/pics/媒体库页.png` was not modified.
+
 ### Changed Files
+
+Round 1 correction (the only files this correction changes):
+- `web/src/features/library/MediaLibraryFilesPage.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.test.tsx`
+- `web/tests/e2e/medialib-files.spec.ts`
+- `web/tests/e2e/deep-link.spec.ts`
+- `web/tests/e2e/operations.spec.ts`
+
+Original Task implementation (unchanged by this correction):
 
 Backend
 - `mediaflow/application/storage_browser.py` — `RuntimeFilesBrowserService._media_libraries`,
@@ -177,6 +234,26 @@ Not committed: the user's dirty `docs/pics/文件页.png` (preserved untouched) 
 
 ### Implemented
 
+Correction Round 1 — recoverable MediaLibrary location in the route (B's P1):
+
+- **The library and its directory are one location.** `MediaLibraryFilesPage` now writes the
+  MediaLibrary it actually resolved together with the exact library-relative directory being browsed
+  through one writer, `syncLibraryRouteState(libraryId, relativePath)`. Entering a directory (and
+  deeper navigation) records `mediaLibraryId` **and** `path`; returning to the library root clears
+  `path` while keeping the library; switching library records the new library at **its own root**.
+  The three symptoms B reported — a directory that never reached the URL, a refresh/reconnect that
+  fell back to the library root, and a stale `path` surviving a library switch — all come from the
+  same absent transition and are fixed together.
+- **Only a valid location is recorded.** When the address names a MediaLibrary the Active runtime
+  does not enable, the address records the library actually browsed, at its root, instead of
+  replaying the unavailable request next to a directory belonging to another library. A path the
+  page rejects locally stays in the address so the truthful invalid-path state is not rewritten into
+  a fabricated root, and its explicit `返回媒体库根目录` recovery repairs the address through the same
+  writer. The write is skipped while the address already describes the browsed location and keeps
+  `window.history.state`, so it neither fights the operator's navigation nor churns router history.
+
+Original Task implementation:
+
 - **Route separation (RO-1).** `/ui-v2/resourcelib/files` is the ResourceLibrary Files page and
   `/ui-v2/medialib/files` is the MediaLibrary page. The sidebar entries, page titles, shell search
   ownership, authentication continuation, the Organize compatibility landing and the
@@ -209,30 +286,47 @@ Not committed: the user's dirty `docs/pics/文件页.png` (preserved untouched) 
 ### Tests and Results
 
 Task Base `86bb69d52891755933f23763d32558668b30f9c6`; all commands from the repository root unless
-`web/` is shown.
+`web/` is shown. Every command below was rerun after the Correction Round 1 changes, so all results
+belong to this correction checkpoint.
 
 | Command | Result |
 |---|---|
 | `python3 scripts/check_governance.py` | PASS |
 | `.venv/bin/python -m unittest discover -s tests -p 'test_runtime_files_browser.py'` | PASS — 7 tests |
 | `.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'` | PASS — 13 tests |
-| `.venv/bin/python -m unittest discover -s tests -p 'test_media_library_browser.py'` (new) | PASS — 5 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_media_library_browser.py'` | PASS — 5 tests |
 | `.venv/bin/python -m unittest discover -s tests` | PASS — 1726 tests, 7 skipped |
-| `npm --prefix web run test -- --run` | PASS — 37 files, 503 tests |
+| `npm --prefix web run test -- --run` | PASS — 37 files, 507 tests (4 new route-state tests) |
 | `npm --prefix web run typecheck` | PASS |
 | `npm --prefix web run lint` | PASS |
 | `npm --prefix web run format:check` | PASS |
 | `npm --prefix web run build` | PASS |
-| `web/`: `npx playwright test` (full suite) | PASS — 134 tests |
-| `web/`: required specs `library-files`, `deep-link`, `manual-operations` + new `medialib-files` | PASS |
+| `web/`: `npx playwright test` (full suite) | PASS — 136 tests (2 new) |
+| `web/`: B's reproduction — enter `Breaking Bad`, refresh + reconnect, switch library from a path-bearing deep link | PASS — URL records `?mediaLibraryId=movies&path=Breaking+Bad`, reconnect restores `Season 1`, library switch leaves `?mediaLibraryId=tv` with no `path` |
+| `web/`: required specs `library-files`, `deep-link`, `manual-operations` + `medialib-files` | PASS |
 | `.venv/bin/ruff format --check .` | PASS — 311 files formatted |
 | `.venv/bin/ruff check .` | PASS |
 | `.venv/bin/python -m compileall -q mediaflow tests scripts` | PASS |
 | `.venv/bin/python -m pip check` | PASS — no broken requirements |
 | `.venv/bin/mediaflow --config config/strategy.example.json config validate` | PASS |
 | `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` | PASS |
-| `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | PASS — no matches (`rg` absent, equivalent `grep -rn -i -E` used) |
-| `scripts/docker_release_security_smoke_test.py` | PASS with `TMPDIR` inside the workspace — see Risks |
+| `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | PASS — no matches (`rg` absent, equivalent `grep -rn -i -E` used, exit 1) |
+| `scripts/docker_release_security_smoke_test.py` | PASS with `TMPDIR` inside the workspace — see Risks; "Release-security smoke acceptance passed", exit 0 |
+
+The Correction Round 1 browser evidence, from `web/tests/e2e/medialib-files.spec.ts` against the
+rebuilt artifact and the local fake API:
+
+```text
+directory navigation, return to root and library switching keep the route exact
+  → ?mediaLibraryId=movies&path=Breaking+Bad  after opening Breaking Bad
+  → same URL and Season 1 visible              after reload + reconnect
+  → path=Breaking+Bad%2FSeason+1               after opening Season 1
+  → ?mediaLibraryId=movies (no path)           after 返回媒体库根目录
+  → ?mediaLibraryId=tv (no path)               after switching library
+an unavailable requested library is replaced by the browsed one in the route
+  → ?mediaLibraryId=movies                     from ?mediaLibraryId=disabled-lib&path=…
+  → unchanged after reload + reconnect, no stale notice
+```
 
 New focused MediaLibrary Python coverage (`tests/test_media_library_browser.py`) proves the enabled
 list and browse documents, root-relative confined paths, boundary whitespace, the disabled-library
@@ -241,6 +335,31 @@ adapter that raises on every mutation, an empty Task/Job repository afterwards, 
 cursor rejection in both directions for libraries whose ID, Storage and root are identical.
 
 ### Decisions
+
+Correction Round 1:
+
+- Wrote the library identity and the relative directory as one state transition instead of two
+  independent writers. B's three symptoms share one root cause: the address was updated on library
+  change only, so the directory was never part of the location. A single writer fed by the resolved
+  location makes "which library" and "which directory inside it" impossible to disagree, and
+  automatically covers refresh, reconnect and library switch.
+- Substituted the root — not the stale request — when the address names a MediaLibrary the Active
+  runtime does not enable. The page already explains the substitution; letting the address keep
+  `mediaLibraryId=disabled-lib&path=<foreign directory>` would have meant a reconnect replaying an
+  unavailable library together with a directory belonging to another one.
+- Kept a locally rejected deep-link path in the address and did not rewrite it. Silently replacing
+  `?path=../outside` with a clean root URL would hide that the operator's link was rejected and
+  fabricate a location they never asked for; the bounded invalid-path state plus its explicit
+  "返回媒体库根目录" recovery remains the truthful presentation, and that recovery now also repairs
+  the address.
+- Made the write a no-op when the address already describes the browsed location, and kept
+  `window.history.state`, so the correction adds no history churn and does not disturb the router's
+  own back/forward accounting.
+- Left the ResourceLibrary Files route-state writer alone. B's blocker named the MediaLibrary page;
+  changing Files' continuation contract would have expanded this correction beyond the listed
+  blocker while Files' existing deep-link behaviour is a Slice-37 accepted surface.
+
+Original Task implementation:
 
 - Kept the existing `RuntimeFilesBrowserService` as the one read authority for both library kinds
   instead of adding a second browser service; the MediaLibrary methods reuse the same
@@ -271,19 +390,29 @@ cursor rejection in both directions for libraries whose ID, Storage and root are
 
 ### Risks / Deviations
 
+- Correction Round 1 addressed only B's single P1 blocker. The ResourceLibrary Files page
+  (`StorageFilesPage.tsx`) keeps its pre-existing behaviour of recording `resourceLibraryId` but not
+  the browsed relative path; B's blocker named the MediaLibrary page, that file is unchanged by this
+  Task (identical to Task Base), and Files' own deep-link/return journey is preserved as required. It
+  is recorded here as an observed, deliberately un-expanded neighbouring behaviour for B to judge,
+  not asserted to be acceptable.
+- The route writer preserves `window.history.state` rather than clearing it. TanStack's history
+  implementation tags entries with `__TSR_key`/`__TSR_index`; clearing that state would make a
+  subsequent back/forward accounting inconsistent, so the same-entry replace keeps it.
 - `scripts/docker_release_security_smoke_test.py` needs `TMPDIR` inside the workspace
   (`TMPDIR=/root/mediaflow/.smoke-tmp`); this environment's Docker daemon cannot bind-mount the
   harness `/tmp`, and the unmodified default invocation fails with
   `bind source path does not exist: /tmp/mediaflow-smoke-security-*/deployment.env`. This is an
-  environment limitation, not a product defect; the real deployment gate was not weakened.
+  environment limitation, not a product defect; the real deployment gate was not weakened. The
+  `.smoke-tmp` scratch directory is untracked and excluded from this checkpoint.
 - `rg` is not installed, so the FFmpeg/FFprobe exclusion check was run with
   `grep -rn -i -E 'ffprobe|ffmpeg' mediaflow pyproject.toml` and has no matches.
 - One full-suite run reported `test_rename_binds_observed_source_evidence_and_refuses_swaps`
   (a Slice-37 Files direct-command test untouched by this Task) failing because the filesystem's
   coarse `ctime_ns` made two same-size writes indistinguishable in `inode:ctime` identity — a direct
   probe measured 288/300 collisions for that sequence. It passed in isolation, under CPU load, at
-  Task Base, and in the final full run. Recorded as environment-dependent pre-existing flakiness;
-  B should judge whether it needs its own follow-up.
+  Task Base, and in the final full runs before and after this correction. Recorded as
+  environment-dependent pre-existing flakiness; B should judge whether it needs its own follow-up.
 - `TASK.md` needed one addition to its Required Tests list: `scripts/docker_release_security_smoke_test.py`.
   The pre-existing `tests/test_release_security.py` gate requires every active `TASK.md` to document
   all release-quality commands, and the planned list omitted that command (the same correction B
@@ -296,15 +425,27 @@ cursor rejection in both directions for libraries whose ID, Storage and root are
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e431580f8dfde78e92a0f7e6985fec1b203a1b4b
+Head SHA: <filled by the commit that contains this report>
 ```
 
 
 ## B Review Result
 
 ```text
-Reviewed: NOT YET
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 86bb69d52891755933f23763d32558668b30f9c6..f58139885aefe5e477dece60770702c6cc8ce55f
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — MediaLibrary 子目录状态没有进入可恢复的路由。** 当前生产页面的
+  `MediaLibraryFilesPage.openPath()` 只更新组件内的 `path`，
+  `updateLibraryRouteState()` 也只更新 `mediaLibraryId`；从媒体库根页进入
+  `Breaking Bad` 后，实际浏览器显示该目录的 `Season 1`，URL 仍是
+  `/ui-v2/medialib/files`。刷新并重新连接后，页面显示根目录的
+  `Breaking Bad`，不再显示 `Season 1`（使用当前构建和本地 fake server 的
+  Playwright 复现）。从含 `path` 的深链切换库时，旧 `path` 还会留在 URL。
+  这违反 Slice RO-1 的目录深链/认证续接、Required Surfaces 的 library-relative
+  deep links，以及本 Task 的导航和恢复验收。请让目录导航、返回根目录和切换库
+  同步准确的库 ID 与相对路径到路由，并以 Web 浏览器回归证明刷新、重新连接和
+  切换库后只恢复当前有效位置。

@@ -75,19 +75,29 @@ function readInitialBrowseState(): InitialBrowseState {
 }
 
 /**
- * MediaLibrary-owned route state: the selected MediaLibrary stays in the URL so
- * an in-app revisit, deep link or reload followed by authentication recovery
- * reselects it when it remains enabled. This state is fully independent of the
- * ResourceLibrary Files route state.
+ * MediaLibrary-owned route state: the selected MediaLibrary together with its
+ * exact library-relative directory stays in the URL, so an in-app revisit, a
+ * deep link or a reload followed by authentication recovery restores only the
+ * location that is currently valid. Both values are always written together,
+ * so the route can never name a directory that belongs to another library, and
+ * a library change never leaves the previous library's directory behind.
+ * This state is fully independent of the ResourceLibrary Files route state.
+ *
+ * The write is a no-op when the URL already describes the same location, so
+ * repeated navigation to the current directory does not rewrite history.
  */
-function updateLibraryRouteState(libraryId: string): void {
+function syncLibraryRouteState(libraryId: string, relativePath: string): void {
   if (typeof window === "undefined") return;
   const search = new URLSearchParams(window.location.search);
   if (libraryId === "") search.delete("mediaLibraryId");
   else search.set("mediaLibraryId", libraryId);
+  if (relativePath === "") search.delete("path");
+  else search.set("path", relativePath);
   const query = search.toString();
+  const current = window.location.search.replace(/^\?/, "");
+  if (query === current) return;
   window.history.replaceState(
-    null,
+    window.history.state,
     "",
     window.location.pathname + (query === "" ? "" : `?${query}`),
   );
@@ -916,6 +926,17 @@ export function MediaLibraryFilesPage() {
     return `媒体库“${initialBrowse.requestedLibraryId}”不可用或已停用，已切换到“${libraries[0]?.name ?? libraries[0]?.id ?? ""}”。`;
   }, [initialBrowse.requestedLibraryId, libraries]);
 
+  /**
+   * True while the address still names a MediaLibrary that is not enabled in
+   * the Active runtime. The live read then belongs to a different library, so
+   * the address must not keep the stale request next to a foreign directory.
+   */
+  const requestedLibraryUnavailable =
+    libraries.length > 0 &&
+    selectedLibraryId !== "" &&
+    activeLibraryId !== "" &&
+    selectedLibraryId !== activeLibraryId;
+
   const openPath = (nextPath: string) => {
     if (!isSafeRelativePath(nextPath)) {
       setInvalidPath(true);
@@ -940,8 +961,39 @@ export function MediaLibraryFilesPage() {
     setVisitedDirectories([]);
     setKnownDirectoryPaths([]);
     resetBrowseState();
-    updateLibraryRouteState(id);
   };
+
+  /**
+   * One writer keeps the address equal to the location actually being browsed:
+   * the enabled MediaLibrary the live read resolved, plus the library-relative
+   * directory browsed inside that library. Writing both values from one
+   * resolved location is what makes navigation, return-to-root and library
+   * switching recoverable:
+   *
+   * - entering a directory records it, so refresh and authentication
+   *   reconnect restore that directory instead of the library root;
+   * - switching library records the new library at its own root, so the
+   *   previous library's directory can never remain in the address;
+   * - a library the Active runtime does not enable is replaced by the one
+   *   actually browsed, at the root, so no stale request and no foreign
+   *   directory survive a reload.
+   *
+   * A path this page rejected locally is deliberately left in the address: the
+   * truthful invalid-path state must not be silently rewritten into a
+   * fabricated root location; its explicit root recovery clears the path and
+   * this same writer then records the root. The write is skipped while the
+   * address already describes the browsed location, so it never fights the
+   * operator's own navigation or churns history.
+   */
+  useEffect(() => {
+    if (activeLibraryId === "" || invalidPath) {
+      return;
+    }
+    syncLibraryRouteState(
+      activeLibraryId,
+      requestedLibraryUnavailable ? "" : path,
+    );
+  }, [activeLibraryId, invalidPath, path, requestedLibraryUnavailable]);
 
   useEffect(() => {
     return subscribeToQueryChange(() => setSelectedFiles(new Set()));
