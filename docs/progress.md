@@ -8,11 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`. Slice 37 — **Files Workspace, Common File Management and V2 Shell** —
-is `PASS / CLOSED` after A's 2026-09-23 final review of the original Base through
-`aa54854c442d117c7eb23ae9800045c423db1368`. The current Contract and final review are maintained
-in [`SLICE.md`](../SLICE.md); no large Slice is active and A selects the next one separately. This
-pointer is not a closure-ledger entry.
+V2 remains active on `main`. Slice 38 — **MediaLibrary Files Workspace and Route Separation** —
+is ACTIVE under [`SLICE.md`](../SLICE.md), with no implementation Task assigned yet. Slice 37
+remains `PASS / CLOSED` after A's 2026-09-23 review through
+`aa54854c442d117c7eb23ae9800045c423db1368`; its complete Contract/final review is retained at
+`9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git. This pointer is not a closure entry or
+a claim of Slice 38 implementation.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`
@@ -24,7 +25,7 @@ A post-closure backend-governance maintenance change retires the obsolete direct
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
 CLI, Web UI and `/api/v1`, while retaining review resolution, metadata continuation and explicit
 Task retry/recovery paths. This maintenance does not reopen Slice 33 or create an active Task.
-The next legal action remains for A to select the next large Slice.
+At that historical checkpoint the next legal action was A selecting the next large Slice.
 
 A follow-up current-source execution alignment imports the `/opt/mediaflow` manual Organize
 correction while preserving the retired retry-surface cleanup on `main`: exact Previews persist the
@@ -34,7 +35,7 @@ fingerprint differs from the Preview fingerprint, execution fails closed before 
 FileIndex rescans no longer cause execution to re-resolve `file_id -> FileIndex -> path`. Conflicting
 legacy tests that asserted FileIndex-driven staleness were removed or converted to scanner-backed
 current-source fixtures. This maintenance does not reopen Slice 33 or create an active Task. The next
-legal action remains for A to select the next large Slice.
+legal action at that historical checkpoint was A selecting the next large Slice.
 
 ## Most Recently Closed Slice
 

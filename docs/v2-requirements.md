@@ -15,7 +15,7 @@ Most recently closed large Slice: Slice 37 — Files Workspace, Common File Mana
 Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Slice 37 Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
 Slice 37 A Final Review: PASS / CLOSED — 2026-09-23
-Active large Slice: none — A selects the next large Slice after Slice 37 closure
+Active large Slice: Slice 38 — MediaLibrary Files Workspace and Route Separation — ACTIVE
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
@@ -25,6 +25,8 @@ are retired from the current Roadmap; their historical references remain histori
 the stable requirements layer. The stable common-file-management target retains its broader future
 capability set; the current Slice 37 delivery boundary explicitly excludes direct browser
 Upload/Download and does not claim those surfaces as delivered.
+Slice 38 plans the MediaLibrary workspace and route separation below; these TARGET requirements
+are not a claim of implemented MediaLibrary browsing or commands.
 
 ## Stable V2 requirements
 
@@ -46,6 +48,15 @@ Upload/Download and does not claim those surfaces as delivered.
 | V2-FILES-003 | Direct file operations preserve truthful state and bounded recovery. | Known success refreshes from live Storage; invalid path/name/content, unsupported capability, conflict, stale source, root/unbounded directory scope, transfer/verification failure, denied permission or uncertain effect remains item-specific and is never silently overwritten/deleted or automatically replayed. Copy/Move source media byte totals are informational rather than admission limits; boundedness is enforced through selection, entry/depth/path and bounded control-plane evidence. |
 | V2-DEPLOY-001 | Production remains operable without a Node runtime server. | Node may build the frontend, while the existing Python/MediaFlow application serves the built static assets and API. |
 | V2-MIG-003 | Final V1 UI retirement requires explicit parity and cutover acceptance. | `/ui` is not removed merely because a V2 route or partial migration exists; parity, accessibility and migration evidence are required first. |
+
+## MediaLibrary requirements — TARGET
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-MEDIALIB-001 | MediaLibrary file management browses the real contents of an Active destination library through its configured Storage and root. | Physical membership is live Storage truth, independent of FileIndex, metadata or prior organization. Exact relative paths, bounded navigation/search/paging and truthful refresh/recovery are required; page entry starts no processing. |
+| V2-MEDIALIB-002 | MediaLibrary offers bounded common file maintenance without the media Organize journey. | Create Folder/Text, single Rename, Copy, Move, Delete and allowlisted text Edit share backend RBAC, kind-specific library confinement, capability/stale/conflict checks, explicit destructive intent, OrganizerExecutor mutation and durable per-item recovery. Equal IDs or reused evidence cannot exchange MediaLibrary and ResourceLibrary authority. |
+| V2-MEDIALIB-003 | Adding/removing MediaLibrary configuration is a complete Web/API journey using actual managed runtime authority. | Page-local Save validates and atomically activates a successor; failures preserve Active and correctable input. Disabled libraries have a Web re-enable path; reference-protected removal never deletes physical files. |
+| V2-MEDIALIB-004 | Files and MediaLibrary have distinct navigation identities while sharing suitable presentation and file-operation mechanisms. | Route changes preserve Files capabilities, Organize return context, authentication and other journeys. MediaLibrary follows its reference with type icons and without card statistics/placeholders, thumbnails or Organize actions; row sizes and bounded selection/operation summaries remain available. |
 
 ## Authority and evolution
 
@@ -120,5 +131,6 @@ boundaries are.
 - This visual contract does not move authority into the frontend or make FileIndex a source or
   execution authority. Focused backend behavior for direct file commands, ResourceLibrary
   save/activation and post-mutation reconciliation is part of the confirmed Files journey.
-- Non-Files business features and routes remain outside the current Roadmap focus, but their shared
-  shell pixels intentionally change and must remain functionally compatible.
+- Under the closed Slice 37 visual boundary, non-Files business features and routes were preserved
+  while their shared shell changed. Slice 38's explicit MediaLibrary TARGET requirements above now
+  authorize that page and its route integration while preserving the Files body.

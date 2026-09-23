@@ -470,7 +470,8 @@ old V2 shell presentation with the shared shell shown in the Files reference and
 current Files workspace defined by [`file-page-visual-spec.md`](file-page-visual-spec.md). Its
 post-closure correction also aligned formal `library/path` destination semantics with the local
 CLI and removed the direct browser Upload/Download vertical. The previously planned later
-migration boundaries remain retired until A selects the next large Slice.
+migration boundaries remain retired. The MediaLibrary journey selected for the next Slice is
+specified separately as TARGET below.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -627,3 +628,49 @@ and backend behavior are frozen, while their shared outer chrome intentionally c
 replacement shell. Slice 37 is PASS / CLOSED at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
 `aa54854c442d117c7eb23ae9800045c423db1368`.
+
+## TARGET — MediaLibrary files and separate ResourceLibrary navigation
+
+The MediaLibrary workspace is planned, not implemented. The current Library landing and Files
+route remain the implementation baseline until the new journey is delivered.
+
+- **Goal:** maintain files stored below a configured MediaLibrary root, while retaining the complete
+  ResourceLibrary Files/Organize journey.
+- **Entry:** `媒体库` opens `/ui-v2/medialib/files`; `文件` opens
+  `/ui-v2/resourcelib/files`. Both share shell/authentication and preserve valid deep-link context.
+  The old `/ui-v2/library` and `/ui-v2/library/files` retire with explicit recovery links and no
+  automatic action or compatibility redirect.
+- **Visible state:** reference-aligned library cards with name, enabled state, Storage and root;
+  selected library, directory tree, exact relative breadcrumbs, list/grid with type icons, physical
+  file facts, selection, bounded paging and meaningful capability/error state. No card counts,
+  capacity, statistics placeholder or file thumbnails are shown or collected.
+- **Action:** browse/search within the existing bounded semantics, refresh, add/remove a library
+  configuration, create folder/text, rename one entry, copy/move, delete and edit supported bounded
+  text. Copy/Move selects the current or another MediaLibrary on the same or another supported
+  Storage. No MediaLibrary Organize, Scan/Preview, browser Upload/Download or arbitrary media editing.
+- **Success:** rows reflect live Storage regardless of FileIndex or prior organization. A successful
+  enabled-library Save publishes actual Active runtime configuration and makes the library
+  immediately selectable. Commands persist independent results and refresh live truth; long work
+  remains discoverable through existing Task/Operations progress and supported lifecycle actions.
+- **Failure:** missing Active, disabled/missing library, invalid input/reference, inaccessible root,
+  denied/unsupported command, conflict, stale evidence, activation conflict and partial/uncertain
+  effects explain the affected item, durable state and safe next action.
+- **Recovery:** keep and correct form input; use existing Web setup/configuration for unavailable
+  bindings, references or re-enabling; return to root/choose another library; refresh and revalidate;
+  follow per-item durable progress and only backend-advertised safe continuation. No unknown
+  mutation is replayed on refresh/reconnect.
+
+The Add drawer is `基本信息 → 存储位置 → 确认` and opens only on explicit intent. One Save
+composes current managed validation, applicable read-only checks, atomic activation and runtime
+binding; any failure preserves prior Active. A disabled library is saved truthfully but hidden from
+normal browsing with a Web re-enable path. Configuration removal is reference-protected and never
+deletes physical files. It is distinct from explicit Delete of selected interior entries.
+
+Per-file size, selected count/known size and bounded operation impact/progress remain visible where
+useful; they are not library-card statistics. Deleting or overwriting remains explicit, and
+OrganizerExecutor still owns every mutation despite the absence of media Organize UI. Library kind,
+scope and pinned runtime are enforced on the backend. Source Files keeps its existing commands,
+Organize choices/Preview/execution, exact paths and return context at the new address.
+
+See [the MediaLibrary visual specification](media-library-page-visual-spec.md) for the picture's
+hierarchy and explicit exclusions. Shared-shell reuse does not redesign the existing Files body.

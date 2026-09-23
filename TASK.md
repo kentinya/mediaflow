@@ -1,38 +1,14 @@
 # NO ACTIVE IMPLEMENTATION TASK
 
-The last completed Task was Task 37.12 — RecognitionType-driven Organize policy binding.
-Its implementation and fix-loop checkpoint was
-`aa54854c442d117c7eb23ae9800045c423db1368`.
+Current Slice: 38 — MediaLibrary Files Workspace and Route Separation
+Slice Status: ACTIVE
+Next Action: B PLANS THE FIRST IMPLEMENTATION TASK WITHIN THE COMMITTED SLICE 38 CONTRACT
 
-Next Action: A SELECTS THE NEXT LARGE SLICE
+A activated the business-capability boundary in `SLICE.md`; no implementation Task, Difficulty or
+Test Level is assigned by this notice. B must inspect the actual repository and run
+`scripts/check_governance.py` before planning.
 
-## B Review Result
-
-```text
-Reviewed: 970ac756222daaf21215c6f2b64446e44a83a108..aa54854c442d117c7eb23ae9800045c423db1368
-Decision: PASS
-Slice Required Outcomes all satisfied: YES
-Next: SLICE PASS / CLOSED
-```
-
-Review evidence:
-
-- The V2 manual Organize editor now uses RecognitionType as the single editable choice source.
-  NamingPolicy, ClassificationPolicy and OrganizePolicy are projected from the pinned mapping,
-  including RecognitionType C preserving C while reusing A policies.
-- Stale downstream choices are normalized before save; missing, disabled or incomplete mappings
-  fail closed with an actionable reload state and no Save Choice request.
-- Focused Web tests passed: 30; full Vitest passed: 469 across 33 files.
-- Manual Organize browser coverage passed: 11; full Playwright passed: 122 with no failures or
-  skips.
-- Related Python regressions passed: 53; full Python regression passed: 1721 with 7 skips and
-  zero failures.
-- Release-security documentation regression passed: 6; Ruff, compileall, pip check, governance,
-  diff check, frontend typecheck/lint/format/build and both Docker release/transfer-impact smoke
-  gates passed.
-- No implementation, backend behavior, API schema, configuration mapping or safety invariant
-  changed during the fix loop. The pre-existing dirty reference image files remain outside the
-  reviewed checkpoint, and `config/alist.json` is absent.
-
-The Slice Closure Packet is recorded in `SLICE.md`. The Slice remains subject to A Final Review;
-B does not declare the Slice `PASS / CLOSED`.
+The last completed Task was 37.12 — RecognitionType-driven Organize policy binding, reviewed through
+`aa54854c442d117c7eb23ae9800045c423db1368`. Slice 37 was subsequently PASS / CLOSED by A.
+Its final Task record and Slice review remain in Git at
+`9e801ae4485bc95d714a8902bf45bf37896fbc2a:TASK.md` and the same commit's `SLICE.md`.
