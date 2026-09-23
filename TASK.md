@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.2
 Parent Slice: 38
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 6419ae1bb2e505c6128029bfddd32d90130f81ee
 Difficulty: High
 Test Level: T4
@@ -157,22 +157,152 @@ configuration repositories only; never use production services, credentials or u
 
 ### Changed Files
 
+Committed in `75aa8670c346c0396cdc36bb54e3210d850ae914` (Task Base `6419ae1`):
+
+```text
+mediaflow/application/configuration_objects.py       | 490 +-   Save/removal evidence + successor publish
+mediaflow/interfaces/service_api.py                  | 234 +-   /api/v1/media-libraries Save/preview/DELETE
+tests/test_media_library_activation.py               | 888 +    focused Python proof (new)
+web/src/entities/library/media-library.ts            | 339 +    strict frontend configuration models (new)
+web/src/entities/library/media-library.test.ts       | 315 +    model regression incl. split identity (new)
+web/src/features/library/MediaLibraryFilesPage.tsx   | 1015 +-  Add drawer, card menu, removal dialog
+web/src/features/library/MediaLibraryFilesPage.test.tsx | 19 +-  RO-4 regression corrections
+web/src/features/library/MediaLibraryConfigDialogs.test.tsx | 563 + drawer/dialog component proof (new)
+web/src/shared/api/api-client.ts                     | 151 +    typed MediaLibrary mutation client
+web/src/shared/api/media-library-config-api.test.ts  | 407 +    client contract proof (new)
+web/tests/fake-server.mjs                            | 555 +-   local MediaLibrary mutation endpoints
+web/tests/e2e/medialib-config.spec.ts                | 476 +    browser Add/removal journeys (new)
+web/tests/e2e/medialib-files.spec.ts                 |   8 +-   Add control regression correction
+```
+
+The pre-existing dirty `docs/pics/文件页.png` (modified 2026-09-22, before this Task existed) is
+deliberately **not** in the checkpoint and is preserved byte-identical in the worktree.
+
 ### Implemented
+
+- **Application boundary.** `ConfigurationObjectService.save_media_library` and
+  `remove_media_library` compose the candidate into the save-time Active document, run the shared
+  read-only Storage/destination admission gates, validate the complete successor and publish only
+  through the checked activation and runtime-binding boundary. Removal binds the exact previewed
+  Active revision/version/digest plus the selected library, rejects stale/mismatched/disabled/unknown
+  confirmations before successor creation, blocks referenced libraries, and changes configuration
+  only — no mutating Storage call and no root/file deletion is reachable.
+  `media_library_removal_evidence` returns bounded, secret-free preview evidence with blocking
+  references.
+- **API.** MediaLibrary-scoped `/api/v1/media-libraries`: page-local Save (POST), exact-Active
+  removal preview (GET `/{id}/removal-preview`) and confirmed removal (DELETE `/{id}`), requiring
+  both `MANAGE_CONFIGURATION` and `ACTIVATE_CONFIGURATION`; evidence reuse was generalized
+  (`is_resource_library_save` → `is_library_save`) without changing ResourceLibrary behavior.
+- **Web.** Strict frontend-owned Save/preview/removal models where a malformed or split-identity
+  success document fails closed; typed client with pre-request validation; three-step Add drawer
+  (`基本信息 → 存储位置 → 确认`) with explicit Add intent, enabled toggle, close/cancel/Escape,
+  pending state, inline validation and retained correctable input; disabled Save is truthful, hidden
+  from browse and offers the existing configuration handoff; selected-card configuration menu and a
+  confirmed removal dialog naming the library and stating that physical files are preserved.
+  Uncertain transport outcomes are never replayed automatically.
+- **Preserved.** Task 38.1 browsing, route state, bounded search/paging, exact path identity and
+  read-only behavior, and the complete ResourceLibrary Files journey.
 
 ### Tests and Results
 
+All commands from the repository root unless a `web/` prefix is shown.
+
+| Command | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | PASS |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_media_library_activation.py'` | PASS — 19 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_resource_library_activation.py'` | PASS — 14 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_configuration_destination_precheck.py'` | PASS — 26 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_media_library_browser.py'` | PASS — 5 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'` | PASS — 13 tests |
+| `.venv/bin/python -m unittest discover -s tests` | PASS — 1745 tests, 7 skipped |
+| `npm --prefix web run test -- --run` | PASS — 551 tests / 40 files |
+| `npm --prefix web run test:e2e -- tests/e2e/medialib-files.spec.ts tests/e2e/medialib-config.spec.ts` | PASS — 24 tests (12 new) |
+| From `web/`: `npx playwright test` | PASS — 148 tests |
+| `npm --prefix web run typecheck` | PASS |
+| `npm --prefix web run lint` | PASS |
+| `npm --prefix web run format:check` | PASS |
+| `npm --prefix web run build` | PASS |
+| `.venv/bin/ruff format --check .` | PASS — 312 files formatted |
+| `.venv/bin/ruff check .` | PASS |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | PASS |
+| `.venv/bin/python -m pip check` | PASS — no broken requirements |
+| `.venv/bin/mediaflow --config config/strategy.example.json config validate` | PASS |
+| `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` | PASS |
+| FFmpeg/FFprobe exclusion (`rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml`) | PASS — no matches (`rg` unavailable; verified with the grep tool and `grep -rniE`) |
+| `TMPDIR=/root/mediaflow/.smoke-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py` | PASS — release-security smoke acceptance passed |
+
+`git diff --check` clean. Commit manifest contains no image, no `config/alist.json` (absent; still
+ignored/untracked), no credentials and no unrelated files. Skips are the pre-existing suite skips
+(7), not new hidden skips; no external service gate was required — all Storage, configuration and
+browser evidence uses local fakes, temporary directories and throwaway tokens.
+
 ### Decisions
+
+- **Mirror, don't relabel.** MediaLibrary Save/removal reuse the ResourceLibrary managed-successor,
+  validation, precheck, checked activation, runtime-binding, concurrency and audit mechanisms, but
+  through MediaLibrary-specific application methods. No ResourceLibrary method is called with a
+  MediaLibrary ID, and the shared `is_library_save` evidence generalization is behavior-preserving
+  for the ResourceLibrary path (proven by its unchanged tests).
+- **Removal is a configuration successor, not a file operation.** Removal deletes one object from a
+  successor of the immutable Active document and publishes through checked activation; Storage is
+  only ever read. This is why removal can never touch the library root or files.
+- **Exact-Active confirmation binding.** The preview returns the Active revision/version/digest and
+  the confirmation must echo all four fields plus the library ID, so a preview computed against a
+  superseded Active cannot authorize a removal.
+- **Fail closed on identity inconsistency.** Both `normalizeMediaLibrarySave` and
+  `normalizeMediaLibraryRemoval` require the durable `configuration` block to agree exactly with the
+  published `active` revision; a divergent pair raises instead of rendering success.
+- **Add prerequisites come from system status** (`configurationActive` + an enabled Storage), so a
+  status hiccup only disables Add and never fabricates a candidate or bypasses the backend.
+- **Two Task-38.1 assertions were corrected rather than deleted.** The unit and browser tests that
+  forbade any Add control contradicted RO-4; they now assert the Add control exists *and* that
+  normal entry keeps its drawer closed, which is a strictly stronger statement. The 401 test now
+  asserts the exact two read URLs are each fetched once, instead of a bare call count that the new
+  status read made stale.
 
 ### Remaining In-Slice Work
 
+Knowing only from this Task's scope, still outstanding in Slice 38:
+
+- RO-5 bounded common file maintenance on the MediaLibrary surface (Create Folder/Text, Rename,
+  Copy, Move, Delete, bounded text edit) with MediaLibrary-scoped API and durable Task/Worker
+  execution.
+- RO-6 durable MediaLibrary results/progress, Operations revisit and per-item recovery for media
+  work, including cross-Storage verification semantics.
+- RO-7 remaining media-scoped surfaces and kind-aware cursor/evidence/manifest/worker
+  reconstruction.
+- RO-8 remaining MediaLibrary integration/regression coverage and the controlled Slice screenshots.
+
 ### Risks / Deviations
+
+- **Recovered uncommitted prior-session work.** At session start the working tree already contained
+  this Task's implementation (application, API, page, client, models and the Python test) uncommitted
+  from an earlier session, with `TASK.md` still `PLANNED` and an empty report. I verified it against
+  scope and acceptance, found and fixed the real defects, added the missing frontend coverage, and
+  committed it as a new coherent checkpoint. No commit was amended or rewritten, and the Task Base
+  was not moved.
+- **Frontend/browser coverage was the genuine gap.** The recovered work had no frontend unit or e2e
+  coverage for the drawer/removal journey, and the fake API had no MediaLibrary mutation endpoints.
+  Both are now implemented and passing. Two pre-existing frontend assertions that contradicted RO-4
+  were corrected as described above.
+- **`rg` is unavailable** in this environment, so the FFmpeg/FFprobe exclusion gate was verified with
+  the grep tool and `grep -rniE` instead of the literal `rg` command; the result (no matches) is the
+  same evidence.
+- **No pre-existing/unrelated failures remain.** The full Python regression, web unit suite and full
+  browser suite all pass on the committed revision; nothing is reported as
+  `FAIL / PRE-EXISTING / UNRELATED`, and no gate is `UNAVAILABLE`.
+- **Inherited residual risk unchanged.** The narrow Local directory replacement/inode-reuse race
+  documented in `SLICE.md` is untouched by this Task, and no new Storage-mutation, overwrite or
+  deletion path was introduced.
 
 ### Checkpoint
 
 ```text
-Status: IN PROGRESS
-Head SHA: NOT SET
+Status: READY FOR B REVIEW
+Head SHA: 75aa8670c346c0396cdc36bb54e3210d850ae914
 ```
+
 
 ## B Review Result
 
