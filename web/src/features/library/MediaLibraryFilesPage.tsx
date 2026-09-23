@@ -1,11 +1,13 @@
 import {
   useCallback,
   useEffect,
+  useRef,
   useMemo,
   useState,
   type ReactNode,
 } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { useFilesSearch } from "../../shared/ui/AppShell";
@@ -14,10 +16,21 @@ import type {
   MediaLibraryFilesEntry,
   MediaLibraryFilesModel,
 } from "../../entities/library/media-library-files";
+import type { MediaLibraryRemovalPreviewModel } from "../../entities/library/media-library";
+import type { SystemStorage } from "../../entities/library/system-status";
+import { ModalDialog } from "./FileCommandDialogs";
 import {
   mediaLibraryFilesQueryOptions,
   mediaLibraryListQueryOptions,
 } from "./media-library-query";
+import { systemStatusQueryOptions } from "./system-status-query";
+import {
+  fetchMediaLibraryRemovalPreview,
+  removeMediaLibrary,
+  saveMediaLibrary,
+  type AutomationMutationFailureDetails,
+  type SaveMediaLibraryOptions,
+} from "../../shared/api/api-client";
 
 type MediaView = "list" | "grid";
 
@@ -763,7 +776,709 @@ function MediaBrowseView({
   );
 }
 
-function MediaLibraryHeader() {
+/**
+ * The MediaLibrary-worded safety note: removal only drops the MediaFlow
+ * configuration entry.  No physical media file or folder in Storage is ever
+ * deleted by removing a MediaLibrary.
+ */
+const MEDIA_SAFETY_NOTE =
+  "只会移除 MediaFlow 中的媒体库配置。不会删除 Storage 中的任何媒体文件或文件夹。";
+
+interface MediaLibrarySaveFailureView {
+  readonly message: string;
+  readonly refreshAuthoritativeState: boolean;
+}
+
+/**
+ * Maps a MediaLibrary Save failure code to an action-oriented, secret-free
+ * message and whether the authoritative Active state must be re-read.  It
+ * mirrors the ResourceLibrary Save contract but names the MediaLibrary journey
+ * and its own `media_library_*` code family.
+ */
+export function mediaLibrarySaveFailure(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): MediaLibrarySaveFailureView {
+  const durableState = details?.durableState;
+  if (
+    code === "configuration_unavailable" ||
+    code === "runtime_not_configured"
+  ) {
+    if (
+      durableState === "no_active_configuration" ||
+      details?.reason === "active_missing"
+    ) {
+      return {
+        message:
+          "保存失败：当前没有可用的 Active 配置，候选媒体库未保存；请先激活有效配置后重试。",
+        refreshAuthoritativeState: true,
+      };
+    }
+    return {
+      message:
+        "保存失败：当前 Active 配置不可用，候选媒体库未保存；请先修复或替换有效配置后重试。",
+      refreshAuthoritativeState: true,
+    };
+  }
+  switch (code) {
+    case "invalid_request":
+      return {
+        message:
+          "保存失败：候选媒体库未保存，请修正名称、ID、Storage 或根路径后重试。",
+        refreshAuthoritativeState: false,
+      };
+    case "media_library_duplicate":
+      return {
+        message:
+          "保存失败：候选媒体库未保存，媒体库 ID 已存在；旧 Active 仍在使用，请更换 ID 后重试。",
+        refreshAuthoritativeState: false,
+      };
+    case "forbidden":
+      return {
+        message:
+          "保存失败：候选媒体库未保存，当前账号没有保存并激活媒体库所需权限，请切换有权限的账号。",
+        refreshAuthoritativeState: false,
+      };
+    case "configuration_conflict":
+    case "configuration_version_conflict":
+      return {
+        message:
+          durableState === "active_winner_preserved"
+            ? "保存失败：Active 已被其他变更替换，本次候选未保存；当前获胜的 Active 仍为权威。状态已刷新，请检查后重试。"
+            : "保存失败：Active 配置已变化，本次候选未保存；请刷新当前状态后重试。",
+        refreshAuthoritativeState: true,
+      };
+    case "media_library_storage_unavailable":
+    case "media_library_storage_check_failed":
+    case "media_library_strategy_test_failed":
+    case "media_library_destination_check_failed":
+    case "media_library_evidence_failed":
+      return {
+        message:
+          "保存失败：候选配置未发布，Storage 或只读检查未通过；旧 Active 仍在使用，请修正后重试。",
+        refreshAuthoritativeState: false,
+      };
+    case "media_library_runtime_failed":
+      return {
+        message:
+          "保存失败：候选配置无法绑定运行时，未发布；旧 Active 仍在使用，请修正后重试。",
+        refreshAuthoritativeState: false,
+      };
+    default:
+      return {
+        message:
+          "保存失败：候选媒体库未保存，当前 Active 未被本次操作替换；请修正问题后重试或刷新状态。",
+        refreshAuthoritativeState: code === "transport_unavailable",
+      };
+  }
+}
+
+/**
+ * Maps a MediaLibrary removal failure code to a single action-oriented,
+ * secret-free message.  The `active_winner_preserved` durable state is
+ * explained first, then the removal-specific `media_library_*` family.
+ */
+export function mediaLibraryRemovalFailureMessage(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  if (details?.durableState === "active_winner_preserved") {
+    return "Active 已被其他变更替换，本次移除未执行；当前获胜的 Active 仍为权威。状态已刷新，请检查后重试。";
+  }
+  switch (code) {
+    case "configuration_object_referenced":
+      return "该媒体库仍被整理规则或自动化任务引用，不能移除；请先处理这些引用后再移除。";
+    case "media_library_removal_stale":
+      return "移除确认已过期：Active 配置在预览后发生了变化，本次移除未执行；请重新获取预览并再次确认。";
+    case "media_library_disabled":
+      return "所选媒体库已停用，不能移除；请刷新后选择已启用的媒体库。";
+    case "media_library_not_found":
+      return "所选媒体库不在当前 Active 配置中，可能已被移除或停用；请刷新后重试。";
+    case "forbidden":
+      return "当前账号没有移除媒体库所需权限，请切换有权限的账号。";
+    case "configuration_conflict":
+    case "configuration_version_conflict":
+      return "Active 配置已被其他变更替换，本次移除未执行；请刷新后重试。";
+    case "media_library_validation_failed":
+    case "media_library_storage_check_failed":
+    case "media_library_strategy_test_failed":
+    case "media_library_destination_check_failed":
+    case "media_library_evidence_failed":
+      return "移除未发布：移除该媒体库后的配置未通过完整校验；原 Active 仍在使用，Storage 未被修改。";
+    case "media_library_runtime_failed":
+    case "media_library_persistence_failed":
+    case "configuration_unavailable":
+      return "移除未发布：配置服务暂不可用；原 Active 仍在使用，请稍后重试。";
+    default:
+      return "移除未执行，配置与 Storage 均未被修改；请刷新状态后重试。";
+  }
+}
+
+/**
+ * The selected MediaLibrary card's own `…` action menu, offering the single
+ * 移除媒体库 action.  It is an anchored popover with its own focus and event
+ * boundary: Escape or an outside pointer dismisses it and returns focus to the
+ * trigger, and opening it never changes the selected library.
+ */
+function MediaCardActionMenu({
+  libraryId,
+  libraryName,
+  onRemoveRequest,
+  disabled,
+}: {
+  readonly libraryId: string;
+  readonly libraryName: string;
+  readonly onRemoveRequest: (libraryId: string) => void;
+  readonly disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    const handlePointer = (event: PointerEvent) => {
+      const popover = popoverRef.current;
+      const target = event.target;
+      if (
+        popover !== null &&
+        target instanceof Node &&
+        !popover.contains(target) &&
+        target !== triggerRef.current
+      ) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", handleKey, true);
+    document.addEventListener("pointerdown", handlePointer, true);
+    return () => {
+      document.removeEventListener("keydown", handleKey, true);
+      document.removeEventListener("pointerdown", handlePointer, true);
+    };
+  }, [open]);
+  return (
+    <div className="mf-card-menu-anchor">
+      <button
+        ref={triggerRef}
+        type="button"
+        className="mf-card-more"
+        aria-label={`媒体库操作 ${libraryName}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        disabled={disabled}
+        onClick={() => setOpen((current) => !current)}
+      >
+        <Icon name="more" />
+      </button>
+      {open && (
+        <div
+          ref={popoverRef}
+          className="mf-card-menu"
+          role="menu"
+          aria-label={`媒体库操作 ${libraryName}`}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="mf-card-menu-item mf-card-menu-danger"
+            onClick={() => {
+              setOpen(false);
+              triggerRef.current?.focus();
+              onRemoveRequest(libraryId);
+            }}
+          >
+            <Icon name="trash" /> 移除媒体库
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The right-side three-step Add MediaLibrary drawer: 基本信息 → 存储位置 → 确认.
+ * It is an operator-invoked action surface only; the page keeps it closed on
+ * mount, re-entry, reload and authentication recovery.  Escape, the close
+ * control and 取消 all dismiss it, and inline validation keeps correctable
+ * input in place rather than discarding a rejected candidate.
+ */
+export function AddMediaLibraryDrawer({
+  open,
+  storages,
+  onClose,
+  onSave,
+  saving,
+  saveError,
+}: {
+  readonly open: boolean;
+  readonly storages: readonly SystemStorage[];
+  readonly onClose: () => void;
+  readonly onSave: (candidate: SaveMediaLibraryOptions) => void;
+  readonly saving: boolean;
+  readonly saveError: string | null;
+}) {
+  const [step, setStep] = useState(1);
+  const [name, setName] = useState("");
+  const [mediaLibraryId, setMediaLibraryId] = useState("");
+  const [storageId, setStorageId] = useState(storages[0]?.id ?? "");
+  const [rootPath, setRootPath] = useState("media");
+  const [enabled, setEnabled] = useState(true);
+  const [validationError, setValidationError] = useState<string | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
+  const selectedStorageId = storages.some((storage) => storage.id === storageId)
+    ? storageId
+    : (storages[0]?.id ?? "");
+
+  // Move keyboard focus into the drawer on open and let Escape dismiss it while
+  // no save is in flight; focus returns to the invoking control via onClose.
+  useEffect(() => {
+    if (!open) return undefined;
+    nameInputRef.current?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !saving) {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", handleKey, true);
+    return () => document.removeEventListener("keydown", handleKey, true);
+  }, [open, saving, onClose]);
+
+  if (!open) return null;
+
+  const validateBasics = (): boolean => {
+    if (name.trim() === "") {
+      setValidationError("请输入媒体库名称。");
+      return false;
+    }
+    if (
+      name.length > 120 ||
+      name.includes("\u0000") ||
+      name.includes("\r") ||
+      name.includes("\n")
+    ) {
+      setValidationError("媒体库名称不能超过 120 个字符，且不能包含控制字符。");
+      return false;
+    }
+    if (!/^[a-z0-9][a-z0-9-]{0,63}$/.test(mediaLibraryId)) {
+      setValidationError(
+        "媒体库 ID 仅支持小写字母、数字和连字符，长度为 1-64。",
+      );
+      return false;
+    }
+    setValidationError(null);
+    return true;
+  };
+
+  const validateStorage = (): boolean => {
+    if (!storages.some((storage) => storage.id === selectedStorageId)) {
+      setValidationError("请选择当前 Active 配置中的可用 Storage。");
+      return false;
+    }
+    if (!isSafeRelativePath(rootPath)) {
+      setValidationError("根路径必须是 Storage 内安全的相对路径。");
+      return false;
+    }
+    setValidationError(null);
+    return true;
+  };
+
+  const goNext = () => {
+    if (step === 1 && !validateBasics()) return;
+    if (step === 2 && !validateStorage()) return;
+    setValidationError(null);
+    setStep((current) => Math.min(3, current + 1));
+  };
+
+  const goToStep = (target: number) => {
+    if (target <= step) {
+      setValidationError(null);
+      setStep(target);
+      return;
+    }
+    goNext();
+  };
+
+  const save = () => {
+    if (!validateBasics() || !validateStorage()) return;
+    onSave({
+      mediaLibraryId: mediaLibraryId.trim(),
+      name: name.trim(),
+      enabled,
+      storageId: selectedStorageId,
+      rootPath: rootPath.trim(),
+    });
+  };
+
+  const selectedStorage = storages.find(
+    (storage) => storage.id === selectedStorageId,
+  );
+  const selectedStorageName =
+    selectedStorage?.name ??
+    (selectedStorageId === "" ? "未选择" : selectedStorageId);
+  return (
+    <aside className="mf-files-drawer" aria-label="添加媒体库">
+      <div className="mf-files-drawer-header">
+        <div>
+          <h2>添加媒体库</h2>
+        </div>
+        <button
+          type="button"
+          className="mf-files-drawer-close"
+          aria-label="关闭添加媒体库"
+          onClick={onClose}
+        >
+          ×
+        </button>
+      </div>
+      <ol className="mf-files-drawer-steps">
+        {[
+          ["1", "基本信息"],
+          ["2", "存储位置"],
+          ["3", "确认"],
+        ].map(([number, label], index) => (
+          <li
+            key={number}
+            className={step === index + 1 ? "is-active" : undefined}
+          >
+            <button type="button" onClick={() => goToStep(index + 1)}>
+              <span>{number}</span> {label}
+            </button>
+          </li>
+        ))}
+      </ol>
+      <div className="mf-files-drawer-body">
+        {validationError !== null && (
+          <p className="mf-files-drawer-error" role="alert">
+            {validationError}
+          </p>
+        )}
+        {saveError !== null && (
+          <p className="mf-files-drawer-error" role="alert">
+            {saveError}
+          </p>
+        )}
+        {step === 1 && (
+          <div className="mf-files-drawer-panel">
+            <h3>基本信息</h3>
+            <p className="mf-files-drawer-helper">设置媒体库的基本信息</p>
+            <label htmlFor="mf-media-library-name">名称 *</label>
+            <input
+              id="mf-media-library-name"
+              ref={nameInputRef}
+              placeholder="例如：电影库"
+              maxLength={120}
+              value={name}
+              onChange={(event) => {
+                setValidationError(null);
+                setName(event.target.value);
+              }}
+            />
+            <small>请输入易于识别的名称</small>
+            <label htmlFor="mf-media-library-id">媒体库 ID *</label>
+            <input
+              id="mf-media-library-id"
+              placeholder="例如：movies"
+              maxLength={64}
+              value={mediaLibraryId}
+              onChange={(event) => {
+                setValidationError(null);
+                setMediaLibraryId(event.target.value);
+              }}
+            />
+            <small>仅支持小写字母、数字、连字符，创建后不可修改</small>
+            <label
+              className="mf-files-toggle"
+              htmlFor="mf-media-library-enabled"
+            >
+              <span>状态</span>
+              <input
+                id="mf-media-library-enabled"
+                type="checkbox"
+                checked={enabled}
+                onChange={(event) => {
+                  setValidationError(null);
+                  setEnabled(event.target.checked);
+                }}
+              />
+              <span>{enabled ? "启用" : "停用"}</span>
+            </label>
+            <small>关闭后将在媒体库列表中隐藏，但不会删除数据</small>
+          </div>
+        )}
+        {step === 2 && (
+          <div className="mf-files-drawer-panel">
+            <h3>存储位置</h3>
+            <p className="mf-files-drawer-helper">
+              选择 Storage，并设置安全的相对根路径
+            </p>
+            <label htmlFor="mf-media-library-storage">Storage *</label>
+            <select
+              id="mf-media-library-storage"
+              value={selectedStorageId}
+              onChange={(event) => {
+                setValidationError(null);
+                setStorageId(event.target.value);
+              }}
+            >
+              {storages.length === 0 && (
+                <option value="">没有可用 Storage</option>
+              )}
+              {storages.map((storage) => (
+                <option key={storage.id} value={storage.id}>
+                  {storage.name}（{storage.id}）
+                </option>
+              ))}
+            </select>
+            <label htmlFor="mf-media-library-root">媒体库根路径 *</label>
+            <input
+              id="mf-media-library-root"
+              maxLength={4096}
+              value={rootPath}
+              onChange={(event) => {
+                setValidationError(null);
+                setRootPath(event.target.value);
+              }}
+            />
+            <small>
+              仅填写 Storage
+              内的相对路径，作为已整理媒体的目标根目录，不会访问任意主机路径
+            </small>
+          </div>
+        )}
+        {step === 3 && (
+          <div className="mf-files-drawer-panel">
+            <h3>确认</h3>
+            <p className="mf-files-drawer-helper">
+              确认 MediaLibrary 配置后再保存
+            </p>
+            <dl className="mf-files-drawer-summary">
+              <div>
+                <dt>名称</dt>
+                <dd>{name || "未填写"}</dd>
+              </div>
+              <div>
+                <dt>媒体库 ID</dt>
+                <dd>{mediaLibraryId || "未填写"}</dd>
+              </div>
+              <div>
+                <dt>Storage</dt>
+                <dd>{selectedStorageName}</dd>
+              </div>
+              <div>
+                <dt>根路径</dt>
+                <dd>{rootPath === "" ? "/（Storage 根目录）" : rootPath}</dd>
+              </div>
+              <div>
+                <dt>状态</dt>
+                <dd>{enabled ? "启用" : "停用"}</dd>
+              </div>
+            </dl>
+            <p className="mf-files-drawer-note">
+              保存会验证并激活这个 MediaLibrary。失败时候选配置不会发布，Storage
+              不会被修改；页面会说明当前 Active 状态和下一步操作。
+            </p>
+          </div>
+        )}
+      </div>
+      <div className="mf-files-drawer-footer">
+        <button
+          type="button"
+          className="mf-button mf-button-secondary"
+          onClick={onClose}
+        >
+          取消
+        </button>
+        {step < 3 ? (
+          <button
+            type="button"
+            className="mf-button mf-button-primary"
+            onClick={goNext}
+          >
+            下一步
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="mf-button mf-button-primary"
+            onClick={save}
+            disabled={saving}
+            aria-busy={saving}
+          >
+            {saving ? "保存中…" : "保存"}
+          </button>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+/**
+ * The explicit MediaLibrary removal confirmation, bound to the selected library
+ * and the exact previewed Active revision.  It names the library, Storage and
+ * relative root, reports managed-configuration references that block removal,
+ * and makes unmistakable that only the MediaFlow configuration is removed while
+ * every physical media file in Storage is preserved.
+ */
+export function DeleteMediaLibraryDialog({
+  preview,
+  loading,
+  error,
+  mismatched,
+  removing,
+  onCancel,
+  onConfirm,
+  onRefreshPreview,
+}: {
+  readonly preview: MediaLibraryRemovalPreviewModel | null;
+  readonly loading: boolean;
+  readonly error: string | null;
+  readonly mismatched: boolean;
+  readonly removing: boolean;
+  readonly onCancel: () => void;
+  readonly onConfirm: () => void;
+  readonly onRefreshPreview: () => void;
+}) {
+  const navigate = useNavigate();
+  const referenced = (preview?.references.total ?? 0) > 0;
+  const disabledLibrary = preview !== null && !preview.mediaLibrary.enabled;
+  const blocked =
+    loading || preview === null || referenced || mismatched || disabledLibrary;
+  const libraryName = preview?.mediaLibrary.name ?? "";
+  return (
+    <ModalDialog
+      title="移除媒体库"
+      onClose={onCancel}
+      busy={removing}
+      footer={
+        <>
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            onClick={onCancel}
+            disabled={removing}
+          >
+            取消
+          </button>
+          <button
+            type="button"
+            className="mf-button mf-button-danger"
+            onClick={onConfirm}
+            disabled={blocked || removing}
+            aria-busy={removing}
+          >
+            {removing ? "移除中…" : "移除媒体库"}
+          </button>
+        </>
+      }
+    >
+      {error !== null && (
+        <p className="mf-dialog-error" role="alert">
+          {error}
+        </p>
+      )}
+      {loading && <p className="mf-dialog-hint">正在读取媒体库信息…</p>}
+      {mismatched && (
+        <p className="mf-dialog-error" role="alert">
+          当前预览与所选媒体库不一致，已阻止移除；请重新获取预览后再确认。
+        </p>
+      )}
+      {preview !== null && (
+        <>
+          <div className="mf-removal-heading">
+            <span className="mf-removal-warning-icon" aria-hidden="true">
+              !
+            </span>
+            <h4>确定移除“{libraryName}”吗？</h4>
+          </div>
+          <dl className="mf-removal-summary">
+            <div>
+              <dt>媒体库</dt>
+              <dd>{libraryName}</dd>
+            </div>
+            <div>
+              <dt>存储</dt>
+              <dd>{preview.storage?.name ?? preview.mediaLibrary.storageId}</dd>
+            </div>
+            <div>
+              <dt>路径</dt>
+              <dd>
+                {preview.mediaLibrary.rootPath === ""
+                  ? "/"
+                  : "/" + preview.mediaLibrary.rootPath}
+              </dd>
+            </div>
+          </dl>
+          {disabledLibrary && (
+            <p className="mf-dialog-error" role="alert">
+              该媒体库当前处于停用状态，不能移除；请刷新后选择已启用的媒体库。
+            </p>
+          )}
+          {referenced ? (
+            <div className="mf-removal-references" role="alert">
+              <p>
+                该媒体库仍被 {preview.references.total}{" "}
+                个托管配置对象引用，不能移除：
+              </p>
+              <ul>
+                {preview.references.items.map((item) => (
+                  <li key={`${item.section}:${item.id}`}>
+                    {item.section} · {item.id}
+                  </li>
+                ))}
+                {preview.references.truncated && <li>… 更多引用已省略</li>}
+              </ul>
+              <button
+                type="button"
+                className="mf-link-button"
+                onClick={() => {
+                  onCancel();
+                  navigate({ to: "/review" });
+                }}
+              >
+                前往整理规则处理这些引用
+              </button>
+            </div>
+          ) : (
+            <p className="mf-removal-unreferenced" role="status">
+              <Icon name="info" /> 未发现自动化任务或整理规则引用
+            </p>
+          )}
+          <div className="mf-removal-safety" role="note">
+            {MEDIA_SAFETY_NOTE}
+          </div>
+        </>
+      )}
+      {error !== null && !removing && (
+        <p className="mf-dialog-hint">
+          <button
+            type="button"
+            className="mf-link-button"
+            onClick={onRefreshPreview}
+          >
+            重新获取预览并重审
+          </button>
+        </p>
+      )}
+    </ModalDialog>
+  );
+}
+
+function MediaLibraryHeader({
+  canAdd,
+  addDisabledReason,
+  onOpenDrawer,
+}: {
+  readonly canAdd: boolean;
+  readonly addDisabledReason: string | null;
+  readonly onOpenDrawer: () => void;
+}) {
   return (
     <header className="mf-files-header">
       <div className="mf-files-title">
@@ -771,6 +1486,18 @@ function MediaLibraryHeader() {
         <p className="mf-dashboard-meta">
           选择媒体库，浏览其中的文件。媒体库用于存放已整理的媒体文件，支持文件的常规操作。
         </p>
+      </div>
+      <div className="mf-files-header-actions">
+        <button
+          id="mf-add-media-library-button"
+          className="mf-button mf-button-primary"
+          type="button"
+          onClick={onOpenDrawer}
+          disabled={!canAdd}
+          title={addDisabledReason ?? undefined}
+        >
+          + 添加媒体库
+        </button>
       </div>
     </header>
   );
@@ -785,6 +1512,8 @@ function MediaLibraryCardStripWithSelection({
   libraries,
   selectedLibraryId,
   onLibraryChange,
+  onRemoveRequest,
+  removalBusy,
 }: {
   readonly libraries: readonly {
     readonly id: string;
@@ -794,6 +1523,8 @@ function MediaLibraryCardStripWithSelection({
   }[];
   readonly selectedLibraryId: string;
   readonly onLibraryChange: (id: string) => void;
+  readonly onRemoveRequest: (id: string) => void;
+  readonly removalBusy: boolean;
 }) {
   return (
     <div className="mf-library-strip-block">
@@ -822,6 +1553,14 @@ function MediaLibraryCardStripWithSelection({
                 </span>
                 <span className="mf-library-card-name">{library.name}</span>
               </button>
+              {selected && (
+                <MediaCardActionMenu
+                  libraryId={library.id}
+                  libraryName={library.name}
+                  onRemoveRequest={onRemoveRequest}
+                  disabled={removalBusy}
+                />
+              )}
               <div className="mf-media-card-facts">
                 <span>存储: {library.storage.name}</span>
                 <span>
@@ -839,6 +1578,7 @@ function MediaLibraryCardStripWithSelection({
 export function MediaLibraryFilesPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
   const [selectedLibraryId, setSelectedLibraryId] = useState(
@@ -858,6 +1598,31 @@ export function MediaLibraryFilesPage() {
     readonly string[]
   >([]);
   const [view, setView] = useState<MediaView>("list");
+  // Operator-invoked action state for the Add drawer and the removal dialog.
+  // Mount, re-entry, reload and authentication reconnect all start with both
+  // closed: neither survives as durable page state.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
+  const [removalDialogId, setRemovalDialogId] = useState<string | null>(null);
+  const [removalError, setRemovalError] = useState<string | null>(null);
+  // Auxiliary to the browse boundary: the Add prerequisites (an Active
+  // configuration and at least one enabled Storage) come from system status,
+  // never from the MediaLibrary list, so a status hiccup only disables Add.
+  const statusQuery = useQuery(systemStatusQueryOptions(token));
+  const status = statusQuery.data;
+  const eligibleStorages: readonly SystemStorage[] = useMemo(
+    () => status?.storages.filter((item) => item.enabled) ?? [],
+    [status?.storages],
+  );
+  const canAddMediaLibrary =
+    Boolean(status?.configurationActive) && eligibleStorages.length > 0;
+  const addDisabledReason = status?.configurationActive
+    ? eligibleStorages.length > 0
+      ? null
+      : "当前 Active 配置没有可用的已启用 Storage，请先启用 Storage"
+    : "当前没有 Active 配置，请先激活配置";
   const listQuery = useQuery(mediaLibraryListQueryOptions(token));
   const libraries = useMemo(
     () => listQuery.data?.items ?? [],
@@ -963,6 +1728,146 @@ export function MediaLibraryFilesPage() {
     resetBrowseState();
   };
 
+  // Add drawer open/close keep operator focus recoverable: the invoking control
+  // is remembered on open and refocused on close, and a fresh open never
+  // carries a prior save error or the disabled-save handoff notice forward.
+  const openDrawer = (invokerId: string) => {
+    setDrawerInvokerId(invokerId);
+    setSaveError(null);
+    setSaveNotice(null);
+    setDrawerOpen(true);
+  };
+  const closeDrawer = () => {
+    setSaveError(null);
+    setDrawerOpen(false);
+    if (drawerInvokerId !== null) {
+      document.getElementById(drawerInvokerId)?.focus();
+    }
+  };
+  const requestRemoval = (id: string) => {
+    setRemovalError(null);
+    setRemovalDialogId(id);
+  };
+
+  // Page-local Save publishes through the checked Active boundary. The result
+  // is never auto-retried: an unknown transport outcome leaves the candidate
+  // unconfirmed, and only an authoritative refresh decides the next step.
+  const saveMediaLibraryMutation = useMutation({
+    mutationFn: (candidate: SaveMediaLibraryOptions) =>
+      saveMediaLibrary(token, candidate),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        const failure = mediaLibrarySaveFailure(result.code, result.details);
+        setSaveError(failure.message);
+        if (failure.refreshAuthoritativeState) {
+          void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
+          void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        }
+        return;
+      }
+      setSaveError(null);
+      setDrawerOpen(false);
+      if (drawerInvokerId !== null) {
+        document.getElementById(drawerInvokerId)?.focus();
+      }
+      const enabled = result.model.enabled;
+      const savedId = enabled ? result.model.id : "";
+      setSelectedLibraryId(savedId);
+      setInvalidPath(false);
+      setPath("");
+      setVisitedDirectories([]);
+      setKnownDirectoryPaths([]);
+      resetBrowseState();
+      syncLibraryRouteState(savedId, "");
+      setSaveNotice(
+        enabled
+          ? null
+          : `媒体库“${result.model.name}”已保存，但当前为停用状态：不会出现在媒体库列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+    },
+    onError: () => {
+      setSaveError(
+        "保存结果未知，未自动重试；候选配置未被确认发布。请刷新 Active 状态后再决定是否重试。",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+    },
+  });
+
+  // The removal preview is read against the exact Active revision; the
+  // confirmation binds that same revision/version/digest and library id, so a
+  // stale snapshot can never authorize a removal of a different Active.
+  const removalPreviewQuery = useQuery({
+    queryKey: ["media-library-removal", removalDialogId],
+    queryFn: () => {
+      if (removalDialogId === null) throw new Error("unreachable");
+      return fetchMediaLibraryRemovalPreview(token, removalDialogId);
+    },
+    enabled: removalDialogId !== null && token !== null,
+    retry: false,
+  });
+  const removalPreview: MediaLibraryRemovalPreviewModel | null =
+    removalPreviewQuery.data !== undefined && removalPreviewQuery.data.ok
+      ? removalPreviewQuery.data.model
+      : null;
+
+  // Confirmed removal deletes only the MediaLibrary configuration, never files.
+  // An unknown transport outcome is not auto-retried; a stale/conflict result
+  // re-reads the preview so the operator confirms against the current Active.
+  const removalMutation = useMutation({
+    mutationFn: (input: {
+      readonly id: string;
+      readonly expected: {
+        readonly revisionId: string;
+        readonly version: number;
+        readonly digest: string;
+        readonly libraryId: string;
+      };
+    }) => removeMediaLibrary(token, input.id, input.expected),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setRemovalError(
+          mediaLibraryRemovalFailureMessage(result.code, result.details),
+        );
+        if (
+          result.code === "media_library_removal_stale" ||
+          result.code === "configuration_conflict" ||
+          result.code === "configuration_version_conflict"
+        ) {
+          void queryClient.invalidateQueries({
+            queryKey: ["media-library-removal", removalDialogId],
+          });
+        }
+        if (result.status >= 500 || result.code === "transport_unavailable") {
+          void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
+          void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        }
+        return;
+      }
+      setRemovalError(null);
+      setRemovalDialogId(null);
+      setSelectedLibraryId("");
+      setInvalidPath(false);
+      setPath("");
+      setVisitedDirectories([]);
+      setKnownDirectoryPaths([]);
+      resetBrowseState();
+      syncLibraryRouteState("", "");
+      void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+    },
+    onError: () => {
+      setRemovalError(
+        "移除结果未知，未自动重试；该媒体库配置可能仍然存在。请刷新 Active 状态后核查。",
+      );
+      void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
+    },
+  });
+
   /**
    * One writer keeps the address equal to the location actually being browsed:
    * the enabled MediaLibrary the live read resolved, plus the library-relative
@@ -1001,7 +1906,35 @@ export function MediaLibraryFilesPage() {
 
   return (
     <div className="mf-files-page">
-      <MediaLibraryHeader />
+      <MediaLibraryHeader
+        canAdd={canAddMediaLibrary}
+        addDisabledReason={addDisabledReason}
+        onOpenDrawer={() => openDrawer("mf-add-media-library-button")}
+      />
+      {saveNotice !== null && (
+        <div className="mf-files-banner" role="status">
+          <span className="mf-banner-icon" aria-hidden="true">
+            <Icon name="info" />
+          </span>
+          <span className="mf-banner-text">{saveNotice}</span>
+          <span className="mf-banner-actions">
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => navigate({ to: "/configuration" })}
+            >
+              前往配置启用
+            </button>
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => setSaveNotice(null)}
+            >
+              知道了
+            </button>
+          </span>
+        </div>
+      )}
       <AuthorizedReadBoundary
         query={listQuery}
         unavailableTitle="媒体库列表不可用"
@@ -1022,6 +1955,22 @@ export function MediaLibraryFilesPage() {
                     当前 Active
                     配置没有已启用的媒体库。添加后即可在这里浏览其中的文件。
                   </p>
+                  {canAddMediaLibrary ? (
+                    <button
+                      id="mf-empty-add-media-library-button"
+                      type="button"
+                      className="mf-button mf-button-primary"
+                      onClick={() =>
+                        openDrawer("mf-empty-add-media-library-button")
+                      }
+                    >
+                      + 添加媒体库
+                    </button>
+                  ) : (
+                    <p className="mf-library-empty-prerequisite">
+                      {addDisabledReason ?? ""}
+                    </p>
+                  )}
                 </section>
               </div>
             );
@@ -1049,6 +1998,8 @@ export function MediaLibraryFilesPage() {
                 libraries={libraries}
                 selectedLibraryId={activeLibraryId}
                 onLibraryChange={changeLibrary}
+                onRemoveRequest={requestRemoval}
+                removalBusy={removalMutation.isPending}
               />
               {libraryNotice !== null && (
                 <p className="mf-error" role="status">
@@ -1166,6 +2117,64 @@ export function MediaLibraryFilesPage() {
           );
         }}
       </AuthorizedReadBoundary>
+      {drawerOpen &&
+        (eligibleStorages.length > 0 ||
+          saveMediaLibraryMutation.isPending ||
+          saveError !== null) && (
+          <AddMediaLibraryDrawer
+            open={drawerOpen}
+            storages={eligibleStorages}
+            onClose={closeDrawer}
+            onSave={(candidate) => {
+              setSaveError(null);
+              saveMediaLibraryMutation.mutate(candidate);
+            }}
+            saving={saveMediaLibraryMutation.isPending}
+            saveError={saveError}
+          />
+        )}
+      {removalDialogId !== null && (
+        <DeleteMediaLibraryDialog
+          preview={removalPreview}
+          loading={removalPreviewQuery.isFetching}
+          mismatched={
+            removalPreview !== null &&
+            removalPreview.mediaLibrary.id !== removalDialogId
+          }
+          error={
+            removalError ??
+            (removalPreviewQuery.data !== undefined &&
+            !removalPreviewQuery.data.ok
+              ? mediaLibraryRemovalFailureMessage(
+                  removalPreviewQuery.data.code,
+                  removalPreviewQuery.data.details,
+                )
+              : null)
+          }
+          removing={removalMutation.isPending}
+          onCancel={() => {
+            setRemovalError(null);
+            setRemovalDialogId(null);
+          }}
+          onRefreshPreview={() => {
+            setRemovalError(null);
+            void removalPreviewQuery.refetch();
+          }}
+          onConfirm={() => {
+            setRemovalError(null);
+            if (removalPreview === null || removalDialogId === null) return;
+            removalMutation.mutate({
+              id: removalDialogId,
+              expected: {
+                revisionId: removalPreview.active.revisionId,
+                version: removalPreview.active.version,
+                digest: removalPreview.active.digest,
+                libraryId: removalDialogId,
+              },
+            });
+          }}
+        />
+      )}
     </div>
   );
 }

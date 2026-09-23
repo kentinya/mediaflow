@@ -574,6 +574,128 @@ const SYSTEM_STATUS = {
 
 const RESOURCE_LIBRARY_STATES = new Map();
 
+// --- MediaLibrary page-local configuration lifecycle (Slice 38, RO-4) ---
+//
+// Per-session state for the MediaLibrary Add drawer and configuration removal.
+// Nothing here touches production services or real files: a successful Save or
+// removal only advances the fake managed Active revision that this session's
+// list/browse handlers already read.
+const MEDIA_LIBRARY_STATES = new Map();
+
+function mediaLibraryState(session) {
+  const key = session ?? "shared";
+  let value = MEDIA_LIBRARY_STATES.get(key);
+  if (value === undefined) {
+    value = {
+      // The candidate the currently saved Active revision holds, or null.
+      saved: null,
+      // One deterministic Save admission failure for the failure journey.
+      failOnce: false,
+      failed: false,
+      // MediaLibrary IDs removed in this session.
+      removedIds: [],
+      // IDs whose removal is blocked by a managed-configuration reference,
+      // mirroring a ClassificationPolicy bound to the destination library.
+      referencedIds: [],
+      // When true the removal confirmation is rejected as stale, proving the
+      // dialog re-reads the preview instead of retrying the mutation.
+      staleRemovalOnce: false,
+      staleRemovalDone: false,
+      // Every MediaLibrary mutation this session admitted, so a browser test
+      // can prove a mutation was never replayed automatically.
+      mutationLog: [],
+    };
+    MEDIA_LIBRARY_STATES.set(key, value);
+  }
+  return value;
+}
+
+/** The Active revision identity the MediaLibrary surface currently exposes. */
+function mediaLibraryActive(state) {
+  if (state.saved !== null) {
+    return {
+      revisionId: "rev-e2e-2",
+      version: 2,
+      digest: "digest-e2e-2",
+    };
+  }
+  return { revisionId: "rev-e2e-1", version: 1, digest: "digest-e2e-1" };
+}
+
+/** Enabled MediaLibrary cards the page may browse in this session. */
+function mediaLibraryCards(state) {
+  const cards = MEDIA_LIBRARIES.filter((item) => item.enabled).map((item) => ({
+    id: item.id,
+    name: item.name,
+    enabled: true,
+    rootPath: item.rootPath,
+    storage: item.storage,
+  }));
+  if (
+    state.saved !== null &&
+    !state.removedIds.includes(state.saved.id) &&
+    state.saved.enabled &&
+    !cards.some((card) => card.id === state.saved.id)
+  ) {
+    cards.push({
+      id: state.saved.id,
+      name: state.saved.name,
+      enabled: true,
+      rootPath: state.saved.rootPath,
+      storage: MEDIA_LIBRARIES.find(
+        (item) => item.storage.id === state.saved.storageId,
+      )?.storage ?? {
+        id: state.saved.storageId,
+        name: state.saved.storageId,
+        type: "openlist",
+        read_only: false,
+        enabled: true,
+      },
+    });
+  }
+  return cards.filter((card) => !state.removedIds.includes(card.id));
+}
+
+/** Bounded, secret-free removal preview for one MediaLibrary. */
+function mediaRemovalPreviewDocument(mediaLibraryId, state) {
+  const card =
+    mediaLibraryCards(state).find((item) => item.id === mediaLibraryId) ?? null;
+  const active = mediaLibraryActive(state);
+  const referenced = state.referencedIds.includes(mediaLibraryId);
+  return {
+    mediaLibrary: {
+      id: mediaLibraryId,
+      name: card?.name ?? mediaLibraryId,
+      storageId: card?.storage.id ?? "media-cloud-1",
+      rootPath: card?.rootPath ?? "",
+      enabled: card !== null,
+    },
+    storage: card
+      ? {
+          id: card.storage.id,
+          name: card.storage.name,
+          type: card.storage.type,
+          enabled: true,
+        }
+      : null,
+    references: referenced
+      ? {
+          total: 1,
+          items: [
+            {
+              section: "classificationPolicies",
+              id: "movies-policy",
+              field: "mediaLibraryId",
+            },
+          ],
+          truncated: false,
+        }
+      : { total: 0, items: [], truncated: false },
+    active,
+    sideEffects: "none",
+  };
+}
+
 // --- MediaLibrary read-only browse fixtures (Slice 38) ---
 //
 // Deterministic, secret-free MediaLibrary cards and live entries. The cards
@@ -717,8 +839,8 @@ function mediaLibraryEntries(libraryId, path) {
   return [];
 }
 
-function mediaLibrariesDocument() {
-  const items = MEDIA_LIBRARIES.filter((item) => item.enabled).map((item) => ({
+function mediaLibrariesDocument(state = mediaLibraryState(null)) {
+  const items = mediaLibraryCards(state).map((item) => ({
     id: item.id,
     name: item.name,
     enabled: item.enabled,
@@ -730,6 +852,7 @@ function mediaLibrariesDocument() {
       readOnly: item.storage.read_only,
     },
   }));
+  const active = mediaLibraryActive(state);
   return {
     surface: "media_libraries",
     items,
@@ -737,17 +860,57 @@ function mediaLibrariesDocument() {
     sideEffects: "none",
     configuration: {
       authority: "MANAGED",
-      revisionId: "rev-e2e-1",
-      version: 1,
-      digest: "digest-e2e-1",
+      revisionId: active.revisionId,
+      version: active.version,
+      digest: active.digest,
     },
   };
 }
 
-function mediaLibraryFilesDocument(libraryId, path, cursor) {
-  const library = MEDIA_LIBRARIES.find((item) => item.id === libraryId);
+function mediaLibraryFilesDocument(libraryId, path, cursor, state) {
+  const library =
+    state === undefined
+      ? MEDIA_LIBRARIES.find((item) => item.id === libraryId)
+      : (() => {
+          const saved =
+            state.saved !== null && state.saved.id === libraryId
+              ? state.saved
+              : null;
+          if (saved === null) {
+            return MEDIA_LIBRARIES.find((item) => item.id === libraryId);
+          }
+          return {
+            id: saved.id,
+            name: saved.name,
+            enabled: saved.enabled,
+            rootPath: saved.rootPath,
+            storage: {
+              id: saved.storageId,
+              name: saved.storageId,
+              type: "openlist",
+              read_only: false,
+              enabled: true,
+            },
+          };
+        })();
   const segments = path === "" ? [] : path.split("/");
-  const all = mediaLibraryEntries(libraryId, path);
+  const savedLibraryId = state?.saved?.id ?? null;
+  const all =
+    libraryId === savedLibraryId && path === ""
+      ? [
+          directoryEntry(
+            "Saved Movie (2024)",
+            "Saved Movie (2024)",
+            REFERENCE_MODIFIED_LATEST,
+          ),
+          fileEntry(
+            "saved-poster.jpg",
+            "saved-poster.jpg",
+            4096,
+            REFERENCE_MODIFIED_OLDER,
+          ),
+        ]
+      : mediaLibraryEntries(libraryId, path);
   // Deterministic bounded paging: the movies root is one entry longer than a
   // page, so the browser proof can exercise truthful next/previous paging and
   // the selection reset that follows a page change.
@@ -763,13 +926,14 @@ function mediaLibraryFilesDocument(libraryId, path, cursor) {
     path === "cross-kind-cursor"
       ? cursor === null
       : start + pageSize < all.length;
+  const filesActive = state === undefined ? null : mediaLibraryActive(state);
   return {
-    revisionId: "rev-e2e-1",
+    revisionId: filesActive?.revisionId ?? "rev-e2e-1",
     configuration: {
       authority: "MANAGED",
-      revisionId: "rev-e2e-1",
-      version: 1,
-      digest: "digest-e2e-1",
+      revisionId: filesActive?.revisionId ?? "rev-e2e-1",
+      version: filesActive?.version ?? 1,
+      digest: filesActive?.digest ?? "digest-e2e-1",
     },
     mediaLibrary: {
       id: libraryId,
@@ -856,10 +1020,25 @@ function resourceLibraryState(session) {
 
 function resourceLibrarySystemStatus(session) {
   const state = resourceLibraryState(session);
-  if (!state.saved && state.extra.length === 0 && !state.emptied) {
+  const mediaState = mediaLibraryState(session);
+  const mediaTouched =
+    mediaState.saved !== null || mediaState.removedIds.length > 0;
+  if (
+    !state.saved &&
+    state.extra.length === 0 &&
+    !state.emptied &&
+    !mediaTouched
+  ) {
     return SYSTEM_STATUS;
   }
   const document = JSON.parse(JSON.stringify(SYSTEM_STATUS));
+  if (mediaTouched) {
+    const active = mediaLibraryActive(mediaState);
+    document.system.configuration_snapshot_id = active.revisionId;
+    document.system.configuration_snapshot_digest = active.digest;
+    document.media_libraries.total = mediaLibraryCards(mediaState).length;
+    return document;
+  }
   document.system.configuration_snapshot_id = "rev-e2e-2";
   document.system.configuration_snapshot_digest = "digest-e2e-2";
   if (state.emptied) {
@@ -5875,6 +6054,296 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  if (url.pathname === "/api/v1/media-libraries" && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      // Save requires configuration management and activation authority, the
+      // same permission pair the real backend enforces.
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message:
+            "principal lacks configuration management and activation authority",
+        },
+      });
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const fields = parsed.document;
+    const allowed = new Set([
+      "mediaLibraryId",
+      "name",
+      "enabled",
+      "storageId",
+      "rootPath",
+    ]);
+    if (
+      Object.keys(fields).some((key) => !allowed.has(key)) ||
+      allowed.size !== Object.keys(fields).length ||
+      typeof fields.mediaLibraryId !== "string" ||
+      typeof fields.name !== "string" ||
+      typeof fields.enabled !== "boolean" ||
+      typeof fields.storageId !== "string" ||
+      typeof fields.rootPath !== "string" ||
+      !/^[a-z0-9][a-z0-9-]{0,63}$/.test(fields.mediaLibraryId)
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const state = mediaLibraryState(session);
+    state.mutationLog.push({ command: "save", id: fields.mediaLibraryId });
+    if (
+      fields.mediaLibraryId === "movies" ||
+      fields.mediaLibraryId === "tv" ||
+      (state.saved !== null && state.saved.id === fields.mediaLibraryId)
+    ) {
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_duplicate",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "choose a different MediaLibrary ID, then retry",
+          },
+        },
+      });
+      return;
+    }
+    if (
+      fields.storageId === "missing-storage" ||
+      fields.storageId === "source-storage"
+    ) {
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_storage_unavailable",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "refresh Active state and choose an enabled configured Storage",
+          },
+        },
+      });
+      return;
+    }
+    if (fields.rootPath === "forbidden-root") {
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_destination_check_failed",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "read-only evidence only; Storage unchanged",
+            retrySafe: true,
+            nextAction:
+              "choose a writable Storage-relative root, then retry Save",
+          },
+        },
+      });
+      return;
+    }
+    if (state.failOnce && !state.failed) {
+      // One deterministic pre-publication failure so the browser proof can
+      // show that the candidate is not published and the input is retained.
+      state.failed = true;
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_storage_check_failed",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "read-only evidence only; Storage unchanged",
+            retrySafe: true,
+            nextAction: "correct Storage availability, then retry Save",
+          },
+        },
+      });
+      return;
+    }
+    state.saved = {
+      id: fields.mediaLibraryId,
+      name: fields.name,
+      enabled: fields.enabled,
+      storageId: fields.storageId,
+      rootPath: fields.rootPath,
+    };
+    const active = mediaLibraryActive(state);
+    sendJson(res, 200, {
+      mediaLibrary: {
+        id: state.saved.id,
+        name: state.saved.name,
+        storageId: state.saved.storageId,
+        rootPath: state.saved.rootPath,
+        enabled: state.saved.enabled,
+      },
+      active: { ...active, status: "active" },
+      configuration: {
+        authority: "MANAGED",
+        revisionId: active.revisionId,
+        version: active.version,
+        digest: active.digest,
+      },
+      sideEffects: "configuration_only",
+      nextAction: state.saved.enabled
+        ? "refresh the Active MediaLibrary list and browse the selected library"
+        : "refresh the Active MediaLibrary list; this disabled library is not browseable",
+    });
+    return;
+  }
+  const mediaRemovalPreviewMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)\/removal-preview$/,
+  );
+  if (mediaRemovalPreviewMatch && req.method === "GET") {
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    sendJson(
+      res,
+      200,
+      mediaRemovalPreviewDocument(
+        decodeURIComponent(mediaRemovalPreviewMatch[1]),
+        mediaLibraryState(session),
+      ),
+    );
+    return;
+  }
+  const mediaRemovalMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)$/,
+  );
+  if (mediaRemovalMatch && req.method === "DELETE") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message:
+            "principal lacks configuration management and activation authority",
+        },
+      });
+      return;
+    }
+    const mediaLibraryId = decodeURIComponent(mediaRemovalMatch[1]);
+    const state = mediaLibraryState(session);
+    const confirmation = await readBoundedJsonBody(req, res);
+    if (!confirmation.ok) return;
+    const active = mediaLibraryActive(state);
+    if (state.staleRemovalOnce && !state.staleRemovalDone) {
+      // The previewed revision no longer matches the current Active; the
+      // removal is refused and the operator must re-review.
+      state.staleRemovalDone = true;
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_removal_stale",
+          message:
+            "the confirmed removal was previewed against a different Active configuration",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "refresh the current Active configuration, re-open the removal preview and confirm again",
+          },
+        },
+      });
+      return;
+    }
+    if (
+      confirmation.document.expectedRevisionId !== active.revisionId ||
+      confirmation.document.expectedVersion !== active.version ||
+      confirmation.document.expectedDigest !== active.digest ||
+      confirmation.document.expectedLibraryId !== mediaLibraryId
+    ) {
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_removal_stale",
+          message:
+            "the confirmed removal was previewed against a different Active configuration",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "refresh the current Active configuration, re-open the removal preview and confirm again",
+          },
+        },
+      });
+      return;
+    }
+    if (state.referencedIds.includes(mediaLibraryId)) {
+      sendJson(res, 409, {
+        error: {
+          code: "configuration_object_referenced",
+          message: "Configuration media_library has references",
+          details: {
+            objectKind: "media_library",
+            objectId: mediaLibraryId,
+            referenceCount: 1,
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "update the references or cancel deletion",
+          },
+        },
+      });
+      return;
+    }
+    if (
+      mediaLibraryId !== "movies" &&
+      mediaLibraryId !== "tv" &&
+      (state.saved === null || state.saved.id !== mediaLibraryId)
+    ) {
+      sendJson(res, 409, {
+        error: {
+          code: "media_library_not_found",
+          details: {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "refresh the Active MediaLibrary list, then retry",
+          },
+        },
+      });
+      return;
+    }
+    state.mutationLog.push({ command: "remove", id: mediaLibraryId });
+    state.removedIds.push(mediaLibraryId);
+    if (state.saved !== null && state.saved.id === mediaLibraryId) {
+      state.saved = null;
+    }
+    const successor = {
+      revisionId: "rev-e2e-3",
+      version: 3,
+      digest: "digest-e2e-3",
+    };
+    sendJson(res, 200, {
+      removed: { id: mediaLibraryId },
+      active: { ...successor, status: "active" },
+      configuration: {
+        authority: "MANAGED",
+        revisionId: successor.revisionId,
+        version: successor.version,
+        digest: successor.digest,
+      },
+      sideEffects: "configuration_only",
+      nextAction:
+        "refresh the Active MediaLibrary list and select another enabled library",
+    });
+    return;
+  }
   if (url.pathname === "/api/v1/file-index") {
     if (req.method !== "GET") {
       res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
@@ -5916,7 +6385,7 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 200, mediaLibrariesDocument());
+    sendJson(res, 200, mediaLibrariesDocument(mediaLibraryState(session)));
     return;
   }
   const mediaLibraryFilesMatch = url.pathname.match(
@@ -5952,8 +6421,15 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    const library = MEDIA_LIBRARIES.find((item) => item.id === libraryId);
-    if (library === undefined || library.enabled !== true) {
+    const browseState = mediaLibraryState(session);
+    const library = mediaLibraryCards(browseState).find(
+      (item) => item.id === libraryId,
+    );
+    if (
+      library === undefined ||
+      library.enabled !== true ||
+      browseState.removedIds.includes(libraryId)
+    ) {
       // A disabled or unknown MediaLibrary is never browseable: the server
       // answers the truthful not-found with an actionable next step.
       sendJson(res, 404, {
@@ -6068,7 +6544,16 @@ const server = createServer(async (req, res) => {
       });
       return;
     }
-    sendJson(res, 200, mediaLibraryFilesDocument(libraryId, path, cursor));
+    sendJson(
+      res,
+      200,
+      mediaLibraryFilesDocument(
+        libraryId,
+        path,
+        cursor,
+        mediaLibraryState(session),
+      ),
+    );
     return;
   }
   if (
@@ -9275,6 +9760,42 @@ const server = createServer(async (req, res) => {
       `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
     );
     sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  // Give each MediaLibrary configuration test its own deterministic session.
+  if (
+    url.pathname === "/__test__/reset-media-library" &&
+    req.method === "POST"
+  ) {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    const references = url.searchParams.getAll("referenced");
+    MEDIA_LIBRARY_STATES.set(sessionId, {
+      saved: null,
+      failOnce: url.searchParams.get("failOnce") === "1",
+      failed: false,
+      removedIds: [],
+      referencedIds: references,
+      staleRemovalOnce: url.searchParams.get("staleRemoval") === "1",
+      staleRemovalDone: false,
+      mutationLog: [],
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  // Report the MediaLibrary mutations this session admitted, so a browser test
+  // can prove an uncertain or failed mutation was never replayed.
+  if (
+    url.pathname === "/__test__/media-library-mutations" &&
+    req.method === "GET"
+  ) {
+    sendJson(res, 200, { mutations: mediaLibraryState(session).mutationLog });
     return;
   }
 

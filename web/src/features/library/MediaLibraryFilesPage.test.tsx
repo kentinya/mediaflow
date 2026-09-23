@@ -198,11 +198,15 @@ describe("MediaLibrary Files journey", () => {
     expect(screen.getAllByRole("columnheader")).toHaveLength(6);
     expect(screen.getByRole("row", { name: /Breaking Bad/ })).toBeVisible();
     expect(screen.getByRole("row", { name: /poster\.jpg/ })).toBeVisible();
-    // No organize/scan/preview/page command exists on the read-only page.
+    // No organize/scan/preview/page command exists on the MediaLibrary page.
     expect(screen.queryByRole("button", { name: "整理" })).toBeNull();
     expect(screen.queryByRole("button", { name: "批量整理" })).toBeNull();
-    expect(screen.queryByText("添加媒体库")).toBeNull();
-    expect(screen.queryByRole("button", { name: /添加/ })).toBeNull();
+    // The Add control is required by RO-4, but normal entry keeps its drawer
+    // closed: opening it is explicit operator intent only.
+    expect(screen.getByRole("button", { name: "+ 添加媒体库" })).toBeVisible();
+    expect(
+      screen.queryByRole("complementary", { name: "添加媒体库" }),
+    ).toBeNull();
   });
 
   it("navigates lazily, keeps exact breadcrumbs and refreshes the live read", async () => {
@@ -525,7 +529,14 @@ describe("MediaLibrary Files journey", () => {
     expect(
       await screen.findByRole("heading", { name: "Not authorized" }),
     ).toBeVisible();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The page reads its own browse boundary plus the Add prerequisites from
+    // system status, and neither read is replayed after a 401.
+    const requestedUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+    expect(requestedUrls.sort()).toEqual([
+      "/api/v1/media-libraries",
+      "/api/v1/system/status",
+    ]);
+    expect(new Set(requestedUrls).size).toBe(requestedUrls.length);
   });
 });
 

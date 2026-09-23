@@ -335,6 +335,8 @@ class ConfigurationObjectService:
     _RESOURCE_LIBRARY_SAVE_FIELDS = {"id", "name", "storageId", "storagePath", "enabled"}
     _RESOURCE_LIBRARY_SAVE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
     _MEDIA_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
+    _MEDIA_LIBRARY_SAVE_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
+    _MEDIA_LIBRARY_SAVE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
     _RECOGNITION_TYPE_FIELDS = {"id", "name", "description", "enabled"}
     _RECOGNITION_RULE_FIELDS = {
         "id",
@@ -770,13 +772,16 @@ class ConfigurationObjectService:
         *,
         actor: str,
         preferred_resource_id: str | None = None,
+        code_prefix: str = "resource_library",
     ) -> None:
         """Run the shared read-only successor evidence gates.
 
         Storage checks, the recognition strategy test and the destination
         precheck are recorded against the exact validated successor version so
         ``activate_checked`` can consume current evidence for Save and for
-        ResourceLibrary removal alike.
+        ResourceLibrary or MediaLibrary removal alike.  ``code_prefix`` selects
+        the bounded, secret-free failure code family without changing the
+        read-only checks themselves.
         """
 
         try:
@@ -791,7 +796,7 @@ class ConfigurationObjectService:
                 if evidence.status is not ConfigurationStorageCheckStatus.PASSED:
                     category = self._bounded_utf8(evidence.failure_category or "unknown", 128)
                     raise ResourceLibrarySaveError(
-                        "resource_library_storage_check_failed",
+                        f"{code_prefix}_storage_check_failed",
                         "a required read-only Storage check did not pass",
                         revision_id=validated.revision_id,
                         durable_state="active_preserved",
@@ -824,7 +829,7 @@ class ConfigurationObjectService:
                 )
                 if strategy_evidence.status is not ConfigurationStrategyTestStatus.COMPLETED:
                     raise ResourceLibrarySaveError(
-                        "resource_library_strategy_test_failed",
+                        f"{code_prefix}_strategy_test_failed",
                         "the required offline Recognition Strategy Test did not pass",
                         revision_id=validated.revision_id,
                         durable_state="active_preserved",
@@ -853,7 +858,7 @@ class ConfigurationObjectService:
                     )
                 if recognition_type is None:
                     raise ResourceLibrarySaveError(
-                        "resource_library_evidence_failed",
+                        f"{code_prefix}_evidence_failed",
                         "the successor has no usable RecognitionType for destination checking",
                         revision_id=validated.revision_id,
                         durable_state="active_preserved",
@@ -878,7 +883,7 @@ class ConfigurationObjectService:
                     is not ConfigurationDestinationPrecheckStatus.COMPLETED
                 ):
                     raise ResourceLibrarySaveError(
-                        "resource_library_destination_check_failed",
+                        f"{code_prefix}_destination_check_failed",
                         "the required read-only destination check did not pass",
                         revision_id=validated.revision_id,
                         durable_state="active_preserved",
@@ -890,7 +895,7 @@ class ConfigurationObjectService:
             raise
         except Exception as error:
             raise ResourceLibrarySaveError(
-                "resource_library_evidence_failed",
+                f"{code_prefix}_evidence_failed",
                 "a required read-only configuration check could not complete; the previous "
                 "Active remains in use",
                 revision_id=validated.revision_id,
@@ -1175,6 +1180,479 @@ class ConfigurationObjectService:
                 next_action="refresh the Active ResourceLibrary list and retry",
             )
         return resource
+
+    def save_media_library(
+        self,
+        candidate: Mapping[str, object],
+        *,
+        actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Save one MediaLibrary-page candidate as a managed successor.
+
+        The command mirrors the ResourceLibrary Save boundary for the
+        MediaLibrary configuration section: it captures Active once, composes a
+        fresh successor from that immutable document, runs the shared read-only
+        admission gates, and publishes only through the checked activation
+        boundary.  It never creates workflow work, never calls a mutating
+        Storage operation, and never touches the ResourceLibrary section.
+        """
+
+        if not isinstance(candidate, Mapping):
+            raise ValueError("MediaLibrary Save candidate must be an object")
+        if set(candidate) != self._MEDIA_LIBRARY_SAVE_FIELDS:
+            raise ValueError(
+                "MediaLibrary Save accepts only id, name, storageId, rootPath, and enabled"
+            )
+        name = candidate.get("name")
+        storage_id = candidate.get("storageId")
+        root_path = candidate.get("rootPath")
+        enabled = candidate.get("enabled")
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 120
+            or any(character in name for character in "\x00\r\n")
+        ):
+            raise ValueError(
+                "MediaLibrary Save name must be bounded text without control characters"
+            )
+        if (
+            not isinstance(storage_id, str)
+            or not storage_id.strip()
+            or len(storage_id) > 64
+            or any(character in storage_id for character in "/\\\x00")
+        ):
+            raise ValueError("MediaLibrary Save storageId must be a safe bounded identifier")
+        if (
+            not isinstance(root_path, str)
+            or len(root_path) > 4096
+            or any(ord(character) < 32 or ord(character) == 127 for character in root_path)
+        ):
+            raise ValueError("MediaLibrary Save rootPath must be a safe bounded path")
+        if not isinstance(enabled, bool):
+            raise ValueError("MediaLibrary Save enabled must be boolean")
+        normalized = self._normalize(ConfigurationObjectKind.MEDIA_LIBRARY, candidate)
+        if not self._MEDIA_LIBRARY_SAVE_ID.fullmatch(str(normalized["id"])):
+            raise ValueError("MediaLibrary Save id must use lowercase letters, digits, and hyphens")
+        active = self._managed.active()
+        if active is None:
+            self._managed.create_successor_draft(actor=actor)
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; MediaLibrary Save is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+
+        storage_values = {
+            str(item.get("id")): item
+            for item in self._canonical_objects(active.document, "storages")
+        }
+        storage_id = str(normalized["storageId"])
+        storage = storage_values.get(storage_id)
+        if storage is None:
+            raise ResourceLibrarySaveError(
+                "media_library_storage_unavailable",
+                "the selected Storage is not available in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="refresh Active state and choose an enabled configured Storage",
+            )
+        if storage.get("enabled", True) is False:
+            raise ResourceLibrarySaveError(
+                "media_library_storage_unavailable",
+                "the selected Storage is disabled in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="enable the Storage in configuration, then refresh and retry",
+            )
+
+        current_libraries = self._canonical_objects(active.document, "mediaLibraries")
+        media_id = str(normalized["id"])
+        if any(item.get("id") == media_id for item in current_libraries):
+            raise ResourceLibrarySaveError(
+                "media_library_duplicate",
+                "the MediaLibrary ID already exists in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="choose a different MediaLibrary ID, then retry",
+            )
+        try:
+            draft = self._managed.create_successor_draft(
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                verified_active=active,
+            )
+        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the successor configuration could not be created; the previous Active "
+                "remains in use",
+                status=503,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+
+        try:
+            edited = self.mutate(
+                draft.revision_id,
+                ConfigurationObjectKind.MEDIA_LIBRARY,
+                object_id=None,
+                value=normalized,
+                expected_version=draft.version,
+                actor=actor,
+                audit_action="media_library_save",
+                audit_metadata={"surface": "media", "candidate": normalized},
+            )
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the MediaLibrary candidate could not be persisted; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=draft.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+        try:
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the successor configuration could not be validated; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=edited.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+        if validated.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ResourceLibrarySaveError(
+                "media_library_validation_failed",
+                "the MediaLibrary candidate failed complete configuration validation",
+                status=422,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="correct the MediaLibrary fields, then retry the Save",
+            )
+
+        self._checked_successor_evidence(
+            validated, actor=actor, preferred_resource_id=None, code_prefix="media_library"
+        )
+
+        try:
+            return self.activate_checked(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+                before_publish=before_publish,
+            )
+        except ResourceLibrarySaveError:
+            raise
+        except ConfigurationActivationConflict as error:
+            if error.current_revision_id is not None:
+                raise
+            raise ResourceLibrarySaveError(
+                "media_library_evidence_failed",
+                "checked activation admission failed; the previous Active remains in use",
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action=(
+                    error.next_action or "refresh the current Active configuration and retry Save"
+                ),
+            ) from error
+        except ConfigurationVersionConflict:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the successor could not be published; the previous Active remains in use",
+                status=503,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry Save",
+            ) from error
+
+    def media_library_removal_evidence(self, media_library_id: str) -> dict[str, object]:
+        """Bounded, secret-free MediaLibrary removal preview from Active.
+
+        The evidence identifies the selected MediaLibrary, its configured
+        Storage and relative root, and whether ClassificationPolicy rules or
+        other managed objects reference it.  It performs zero Storage and zero
+        configuration mutation and never deletes files or the library root.
+        """
+
+        active = self._managed.active()
+        if active is None:
+            self._managed.create_successor_draft(actor="system")
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; MediaLibrary removal is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        library = self._active_media_library(active, media_library_id)
+        storage_values = {
+            str(item.get("id")): item
+            for item in self._canonical_objects(active.document, "storages")
+        }
+        storage = storage_values.get(str(library.get("storageId")))
+        references = self._references_for(
+            ConfigurationObjectKind.MEDIA_LIBRARY,
+            str(library.get("id")),
+            active.document,
+        )
+        return {
+            "mediaLibrary": {
+                "id": library.get("id"),
+                "name": library.get("name"),
+                "storageId": library.get("storageId"),
+                "rootPath": library.get("rootPath", ""),
+                "enabled": library.get("enabled", True),
+            },
+            "storage": None
+            if storage is None
+            else {
+                "id": storage.get("id"),
+                "name": storage.get("name"),
+                "type": storage.get("type"),
+                "enabled": storage.get("enabled", True),
+            },
+            "references": references.document(),
+            "active": active.summary(),
+            "sideEffects": "none",
+        }
+
+    def remove_media_library(
+        self,
+        media_library_id: str,
+        *,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        expected_library_id: str | None = None,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Remove one unreferenced MediaLibrary as a managed successor.
+
+        The command never calls a mutating Storage operation and never involves
+        OrganizerExecutor: it removes only the selected MediaLibrary from a
+        successor of the immutable Active document, validates that successor
+        completely, and publishes it through the checked atomic activation
+        boundary.  Removal changes configuration only and never deletes the
+        MediaLibrary root or any Storage entry.  The confirmation is bound to
+        the exact Active revision the operator previewed: a stale, mismatched,
+        missing or disabled selection is rejected before any successor is built.
+        """
+
+        if not isinstance(media_library_id, str) or not self._MEDIA_LIBRARY_SAVE_ID.fullmatch(
+            media_library_id
+        ):
+            raise ValueError("MediaLibrary removal requires a valid MediaLibrary ID")
+        if (
+            not isinstance(expected_revision_id, str)
+            or not expected_revision_id
+            or not isinstance(expected_version, int)
+            or isinstance(expected_version, bool)
+            or not isinstance(expected_digest, str)
+            or not expected_digest
+        ):
+            raise ValueError("MediaLibrary removal requires the previewed Active revision identity")
+        active = self._managed.active()
+        if active is None:
+            self._managed.create_successor_draft(actor=actor)
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; MediaLibrary removal is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        if (
+            expected_library_id is not None and expected_library_id != media_library_id
+        ) or active.revision_id != expected_revision_id:
+            raise ResourceLibrarySaveError(
+                "media_library_removal_stale",
+                "the confirmed removal was previewed against a different Active "
+                "configuration; the current Active remains in use",
+                status=409,
+                durable_state="active_preserved",
+                next_action=(
+                    "refresh the current Active configuration, re-open the removal preview "
+                    "and confirm again"
+                ),
+            )
+        if active.version != expected_version or active.digest != expected_digest:
+            raise ResourceLibrarySaveError(
+                "media_library_removal_stale",
+                "the Active configuration changed since the removal was previewed; the "
+                "current Active remains in use",
+                status=409,
+                durable_state="active_preserved",
+                next_action=(
+                    "refresh the current Active configuration, re-open the removal preview "
+                    "and confirm again"
+                ),
+            )
+        library = self._active_media_library(active, media_library_id)
+        if library.get("enabled", True) is not True:
+            raise ResourceLibrarySaveError(
+                "media_library_disabled",
+                "a disabled MediaLibrary cannot be removed from the MediaLibrary removal journey",
+                status=409,
+                durable_state="active_preserved",
+                next_action="enable the MediaLibrary first or select an enabled library",
+            )
+
+        references = self._references_for(
+            ConfigurationObjectKind.MEDIA_LIBRARY,
+            media_library_id,
+            active.document,
+        )
+        if references.total > 0:
+            raise ConfigurationObjectReferenced(
+                ConfigurationObjectKind.MEDIA_LIBRARY,
+                media_library_id,
+                references.total,
+                evidence=references,
+            )
+        try:
+            draft = self._managed.create_successor_draft(
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                verified_active=active,
+            )
+        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the successor configuration could not be created; the previous Active "
+                "remains in use",
+                status=503,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+
+        try:
+            edited = self.mutate(
+                draft.revision_id,
+                ConfigurationObjectKind.MEDIA_LIBRARY,
+                object_id=media_library_id,
+                value=None,
+                expected_version=draft.version,
+                actor=actor,
+                delete=True,
+                audit_action="media_library_remove",
+                audit_metadata={
+                    "surface": "media",
+                    "removed": {
+                        "id": library.get("id"),
+                        "name": library.get("name"),
+                        "storageId": library.get("storageId"),
+                        "rootPath": library.get("rootPath", ""),
+                    },
+                },
+            )
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the removal could not be persisted; the previous Active remains in use",
+                status=503,
+                revision_id=draft.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+        try:
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the successor configuration could not be validated; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=edited.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+        if validated.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ResourceLibrarySaveError(
+                "media_library_validation_failed",
+                "the successor without the MediaLibrary failed complete configuration validation",
+                status=422,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="inspect the validation errors, then retry the removal",
+            )
+
+        self._checked_successor_evidence(
+            validated, actor=actor, preferred_resource_id=None, code_prefix="media_library"
+        )
+
+        try:
+            return self.activate_checked(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+                before_publish=before_publish,
+            )
+        except ResourceLibrarySaveError:
+            raise
+        except ConfigurationActivationConflict as error:
+            if error.current_revision_id is not None:
+                raise
+            raise ResourceLibrarySaveError(
+                "media_library_evidence_failed",
+                "checked activation admission failed; the previous Active remains in use",
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action=(
+                    error.next_action
+                    or "refresh the current Active configuration and retry removal"
+                ),
+            ) from error
+        except ConfigurationVersionConflict:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "media_library_persistence_failed",
+                "the successor could not be published; the previous Active remains in use",
+                status=503,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry removal",
+            ) from error
+
+    def _active_media_library(self, active: ManagedConfigurationRevision, media_library_id):
+        library = next(
+            (
+                item
+                for item in self._canonical_objects(active.document, "mediaLibraries")
+                if item.get("id") == media_library_id
+            ),
+            None,
+        )
+        if library is None:
+            raise ResourceLibrarySaveError(
+                "media_library_not_found",
+                "the selected MediaLibrary is not part of the current Active configuration",
+                status=404,
+                durable_state="active_preserved",
+                next_action="refresh the Active MediaLibrary list and retry",
+            )
+        return library
 
     def revision_detail(self, revision_id: str) -> dict[str, object]:
         revision = self._managed.require(revision_id)

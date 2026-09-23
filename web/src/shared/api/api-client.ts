@@ -31,6 +31,15 @@ import {
   type ResourceLibrarySaveModel,
 } from "../../entities/library/resource-library";
 import {
+  MEDIA_LIBRARY_ID,
+  normalizeMediaLibraryRemoval,
+  normalizeMediaLibraryRemovalPreview,
+  normalizeMediaLibrarySave,
+  type MediaLibraryRemovalModel,
+  type MediaLibraryRemovalPreviewModel,
+  type MediaLibrarySaveModel,
+} from "../../entities/library/media-library";
+import {
   normalizeDeleteImpact,
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
@@ -3115,6 +3124,148 @@ export async function removeResourceLibrary(
       expectedLibraryId: expected.libraryId,
     },
     normalizeResourceLibraryRemoval,
+    fetchImpl,
+  );
+}
+
+export interface SaveMediaLibraryOptions {
+  readonly mediaLibraryId: string;
+  readonly name: string;
+  readonly enabled: boolean;
+  readonly storageId: string;
+  readonly rootPath: string;
+}
+
+/**
+ * Saves one MediaLibrary-page candidate through the exact checked Active
+ * boundary.  Client-side validation mirrors the backend admission contract so
+ * an obviously invalid candidate never reaches the mutation, and the strict
+ * response normalizer fails a malformed or split-identity success closed.
+ */
+export async function saveMediaLibrary(
+  token: string | null,
+  options: SaveMediaLibraryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<MediaLibrarySaveModel>> {
+  if (
+    !MEDIA_LIBRARY_ID.test(options.mediaLibraryId) ||
+    options.name.trim().length === 0 ||
+    options.name.length > 120 ||
+    typeof options.enabled !== "boolean" ||
+    options.storageId.trim().length === 0 ||
+    options.storageId.length > 64 ||
+    options.storageId.includes("/") ||
+    options.storageId.includes("\\") ||
+    options.rootPath.length > 4096 ||
+    options.name.includes("\u0000") ||
+    options.rootPath.includes("\u0000")
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    "/api/v1/media-libraries",
+    {
+      mediaLibraryId: options.mediaLibraryId,
+      name: options.name,
+      enabled: options.enabled,
+      storageId: options.storageId,
+      rootPath: options.rootPath,
+    },
+    normalizeMediaLibrarySave,
+    fetchImpl,
+  );
+}
+
+export async function fetchMediaLibraryRemovalPreview(
+  token: string | null,
+  mediaLibraryId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: MediaLibraryRemovalPreviewModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (!MEDIA_LIBRARY_ID.test(mediaLibraryId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/removal-preview`,
+      { headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeMediaLibraryRemovalPreview(await response.json()),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/**
+ * Removes one unreferenced MediaLibrary from managed configuration.  The
+ * request binds the exact previewed Active revision and selected library
+ * identity; the backend rejects stale, mismatched, disabled or referenced
+ * confirmations and publishes the validated successor atomically, never
+ * deleting the MediaLibrary root or any Storage content.
+ */
+export async function removeMediaLibrary(
+  token: string | null,
+  mediaLibraryId: string,
+  expected: {
+    readonly revisionId: string;
+    readonly version: number;
+    readonly digest: string;
+    readonly libraryId: string;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<MediaLibraryRemovalModel>> {
+  if (
+    !MEDIA_LIBRARY_ID.test(mediaLibraryId) ||
+    expected.libraryId !== mediaLibraryId ||
+    expected.revisionId.trim().length === 0 ||
+    expected.revisionId.length > 128 ||
+    expected.digest.trim().length === 0 ||
+    expected.digest.length > 128 ||
+    !Number.isSafeInteger(expected.version) ||
+    expected.version < 0
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "DELETE",
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
+    {
+      expectedRevisionId: expected.revisionId,
+      expectedVersion: expected.version,
+      expectedDigest: expected.digest,
+      expectedLibraryId: expected.libraryId,
+    },
+    normalizeMediaLibraryRemoval,
     fetchImpl,
   );
 }
