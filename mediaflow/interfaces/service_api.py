@@ -821,7 +821,10 @@ class MediaFlowApi:
                 "conflict",
                 409,
             )
-            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
+            is_library_save = (
+                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
+                and method == "POST"
+            )
             details = {
                 key: value
                 for key, value in {
@@ -831,14 +834,14 @@ class MediaFlowApi:
                     "currentDigest": error.current_digest,
                     "durableState": (
                         "active_winner_preserved"
-                        if is_resource_library_save and error.current_revision_id
+                        if is_library_save and error.current_revision_id
                         else (
                             "draft_preserved_active_unchanged"
                             if error.current_revision_id
                             else "draft_preserved"
                         )
                     ),
-                    "candidateState": ("not_published" if is_resource_library_save else None),
+                    "candidateState": ("not_published" if is_library_save else None),
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": (
@@ -907,7 +910,10 @@ class MediaFlowApi:
                 "conflict",
                 409,
             )
-            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
+            is_library_save = (
+                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
+                and method == "POST"
+            )
             details = {
                 key: value
                 for key, value in {
@@ -916,10 +922,10 @@ class MediaFlowApi:
                     "currentDigest": error.current_digest,
                     "durableState": (
                         "active_winner_preserved"
-                        if is_resource_library_save and error.current_version is not None
+                        if is_library_save and error.current_version is not None
                         else error.durable_state or "draft_preserved"
                     ),
-                    "candidateState": ("not_published" if is_resource_library_save else None),
+                    "candidateState": ("not_published" if is_library_save else None),
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": error.next_action
@@ -980,7 +986,10 @@ class MediaFlowApi:
                 "denied",
                 503,
             )
-            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
+            is_library_save = (
+                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
+                and method == "POST"
+            )
             return self._error(
                 start_response,
                 503,
@@ -992,11 +1001,9 @@ class MediaFlowApi:
                     "runtimeConfigured": False,
                     "workflowAvailable": False,
                     "durableState": (
-                        "no_active_configuration"
-                        if is_resource_library_save
-                        else "no_workflow_work_created"
+                        "no_active_configuration" if is_library_save else "no_workflow_work_created"
                     ),
-                    "candidateState": "not_saved" if is_resource_library_save else None,
+                    "candidateState": "not_saved" if is_library_save else None,
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": (
@@ -1078,10 +1085,13 @@ class MediaFlowApi:
                 "error",
                 503,
             )
-            is_resource_library_save = path == "/api/v1/resource-libraries" and method == "POST"
+            is_library_save = (
+                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
+                and method == "POST"
+            )
             active_unavailable_state = (
                 "no_active_configuration"
-                if is_resource_library_save and error.reason == "active_missing"
+                if is_library_save and error.reason == "active_missing"
                 else "managed_active_unavailable"
             )
             next_action = (
@@ -1090,7 +1100,7 @@ class MediaFlowApi:
                     if error.reason == "active_missing"
                     else "repair or replace the unavailable Active configuration, then retry Save"
                 )
-                if is_resource_library_save
+                if is_library_save
                 else "inspect configuration status and stage a replacement Draft"
             )
             details = {
@@ -1101,7 +1111,7 @@ class MediaFlowApi:
                     "digest": error.digest,
                     "reason": error.reason,
                     "durableState": active_unavailable_state,
-                    "candidateState": "not_saved" if is_resource_library_save else None,
+                    "candidateState": "not_saved" if is_library_save else None,
                     "sideEffects": "none",
                     "retrySafe": True,
                     "nextAction": next_action,
@@ -4294,6 +4304,192 @@ class MediaFlowApi:
                     "sideEffects": "configuration_only",
                     "nextAction": (
                         "refresh the Active ResourceLibrary list and select another enabled library"
+                    ),
+                },
+            )
+        if parts == ["api", "v1", "media-libraries"] and method == "POST":
+            self._require_empty_query(environ, "MediaLibrary Save")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {"mediaLibraryId", "name", "enabled", "storageId", "rootPath"}
+            if set(document) != allowed:
+                raise ValueError(
+                    "MediaLibrary Save requires only mediaLibraryId, name, enabled, "
+                    "storageId, and rootPath"
+                )
+            candidate = {
+                "id": document["mediaLibraryId"],
+                "name": document["name"],
+                "enabled": document["enabled"],
+                "storageId": document["storageId"],
+                "rootPath": document["rootPath"],
+            }
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                # Pin the process to the same save-time Active before any
+                # successor work begins.  A failed Save must leave a usable
+                # old binding, while a competing winner can be refreshed
+                # explicitly below if publication loses the race.
+                self._refresh_configuration_binding_locked()
+
+                def before_publish(revision) -> None:
+                    prepared.append(self._prepare_runtime_binding_for_revision(revision))
+
+                try:
+                    revision = self._configuration_objects.save_media_library(
+                        candidate,
+                        actor=principal.principal_id,
+                        before_publish=before_publish,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "media_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        revision_id=revision.revision_id,
+                        durable_state="active_preserved",
+                        next_action="refresh the current Active configuration and retry Save",
+                    )
+                self._publish_runtime_binding(prepared[0])
+            library = next(
+                item
+                for item in self._configuration_objects._canonical_objects(
+                    revision.document, "mediaLibraries"
+                )
+                if item.get("id") == candidate["id"]
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "mediaLibrary": {
+                        "id": library["id"],
+                        "name": library["name"],
+                        "storageId": library["storageId"],
+                        "rootPath": library.get("rootPath", ""),
+                        "enabled": library["enabled"],
+                    },
+                    "active": revision.summary(),
+                    "configuration": {
+                        "authority": "MANAGED",
+                        "revisionId": revision.revision_id,
+                        "version": revision.version,
+                        "digest": revision.digest,
+                    },
+                    "sideEffects": "configuration_only",
+                    "nextAction": (
+                        "refresh the Active MediaLibrary list and browse the selected library"
+                        if library["enabled"]
+                        else "refresh the Active MediaLibrary list; this disabled library "
+                        "is not browseable"
+                    ),
+                },
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "removal-preview"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            self._require_empty_query(environ, "MediaLibrary removal preview")
+            document = self._configuration_objects.media_library_removal_evidence(parts[3])
+            return self._response(start_response, 200, document)
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"] and method == "DELETE":
+            self._require_empty_query(environ, "MediaLibrary removal")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            # The removal confirmation must carry the exact Active revision
+            # identity the operator previewed; the backend rejects stale,
+            # mismatched, missing or disabled selections before any successor
+            # work begins.
+            confirmation = self._document(environ)
+            required_confirmation = {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "expectedLibraryId",
+            }
+            if set(confirmation) != required_confirmation:
+                raise ValueError(
+                    "MediaLibrary removal requires the previewed Active revision "
+                    "evidence and the selected library identity"
+                )
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                # Pin the process to the removal-time Active before any
+                # successor work begins; a failed removal must leave a usable
+                # old binding, and a competing winner is refreshed explicitly.
+                self._refresh_configuration_binding_locked()
+
+                def before_publish(revision) -> None:
+                    prepared.append(self._prepare_runtime_binding_for_revision(revision))
+
+                try:
+                    revision = self._configuration_objects.remove_media_library(
+                        parts[3],
+                        actor=principal.principal_id,
+                        expected_revision_id=confirmation["expectedRevisionId"],
+                        expected_version=confirmation["expectedVersion"],
+                        expected_digest=confirmation["expectedDigest"],
+                        expected_library_id=confirmation["expectedLibraryId"],
+                        before_publish=before_publish,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "media_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        revision_id=revision.revision_id,
+                        durable_state="active_preserved",
+                        next_action="refresh the current Active configuration and retry removal",
+                    )
+                self._publish_runtime_binding(prepared[0])
+            return self._response(
+                start_response,
+                200,
+                {
+                    "removed": {"id": parts[3]},
+                    "active": revision.summary(),
+                    "configuration": {
+                        "authority": "MANAGED",
+                        "revisionId": revision.revision_id,
+                        "version": revision.version,
+                        "digest": revision.digest,
+                    },
+                    "sideEffects": "configuration_only",
+                    "nextAction": (
+                        "refresh the Active MediaLibrary list and select another enabled library"
                     ),
                 },
             )
@@ -7758,6 +7954,14 @@ class MediaFlowApi:
             and parts[4] == "files"
         ):
             return "/api/v1/media-libraries/{id}/files"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "removal-preview"
+        ):
+            return "/api/v1/media-libraries/{id}/removal-preview"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"]:
+            return "/api/v1/media-libraries/{id}"
         if (
             len(parts) == 5
             and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])

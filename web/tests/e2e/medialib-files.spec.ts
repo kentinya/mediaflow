@@ -123,10 +123,16 @@ test("the reference hierarchy renders without statistics, thumbnails or organize
   // No thumbnails/artwork requests and no organize/scan/preview controls.
   await expect(page.getByRole("button", { name: "整理" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "批量整理" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: /添加媒体库/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /扫描/ })).toHaveCount(0);
   await expect(page.getByRole("button", { name: /预览/ })).toHaveCount(0);
   await expect(page.locator("img")).toHaveCount(0);
+  // The RO-4 Add control exists, but normal entry never opens its drawer.
+  await expect(
+    page.getByRole("button", { name: "+ 添加媒体库" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "添加媒体库" }),
+  ).toHaveCount(0);
 });
 
 test("directory navigation, return to root and library switching keep the route exact", async ({
