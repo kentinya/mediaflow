@@ -407,29 +407,26 @@ test("Unauthenticated deep entry stays behind the connection boundary", async ({
 test("Read-only principal sees no manual action and the backend reason", async ({
   page,
 }) => {
-  await page.goto("/ui-v2/library");
+  // The Operations workspace owns the manual ResourceLibrary action matrix now
+  // that the retired Library landing no longer exists.
+  await page.goto("/ui-v2/operations");
   await connect(page, READ_ONLY_TOKEN);
   await expect(
-    page.getByRole("heading", { name: "Library", exact: true }),
+    page.getByRole("heading", { name: "Manual operations" }),
   ).toBeVisible();
 
-  await page
-    .getByRole("button", { name: "Show ResourceLibrary actions" })
-    .click();
-  // Scope the explanation assertions to one rendered ResourceLibrary block:
-  // each enabled library renders the same backend reason once, so the
-  // route-owned container (not a unique-text assumption) proves the content.
-  const resourcesBlock = page
-    .getByRole("heading", { name: "Resources" })
-    .locator("..");
+  await page.getByLabel("ResourceLibrary scope").selectOption("resources");
+  // A read-only principal is never offered an actionable control; the backend
+  // reason explains why instead of rendering a dead button.
   await expect(
-    resourcesBlock.getByRole("link", { name: "Start bounded Scan" }),
+    page.getByRole("link", { name: "Start bounded Scan" }),
   ).toHaveCount(0);
   await expect(
-    resourcesBlock.getByRole("link", { name: "Run zero-mutation Preview" }),
+    page.getByRole("link", { name: "Run zero-mutation Preview" }),
   ).toHaveCount(0);
-  await expect(resourcesBlock.getByText(/^Scan unavailable:/)).toBeVisible();
-  await expect(resourcesBlock.getByText(/^Preview unavailable:/)).toBeVisible();
+  await expect(
+    page.getByText(/No manual action is available for this scope:/),
+  ).toBeVisible();
 });
 
 test("Unknown Scan record renders the bounded not-found state inside the shell", async ({
@@ -515,7 +512,7 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   const reset = await page.request.post(`${BASE_URL}/__test__/reset-organize`);
   expect(reset.status()).toBe(200);
 
-  await page.goto("/ui-v2/library/files");
+  await page.goto("/ui-v2/resourcelib/files");
   await connect(page, VIEWER_TOKEN);
   await expect(page.getByRole("table")).toBeVisible();
 

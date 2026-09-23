@@ -4,13 +4,14 @@ import { expect, test, type Page } from "@playwright/test";
  * Files browse/context built-artifact browser proof for the library workspace.
  *
  * The legacy FileIndex catalog/detail routes (`/ui-v2/library/file-index*`)
- * are retired: the router has no such routes, the Library landing offers no
+ * are retired: the router has no such routes, no supported page offers a
  * FileIndex catalog entry, and the Files workspace derives every physical
  * listing and every Files-originated continuation from live Storage. These
- * tests prove the current supported Files journey — browse, bounded context
- * restoration, read-only zero-mutation behavior, bounded not-found/401/403
- * states and narrow-viewport usability — plus the truthful not-found state a
- * retired FileIndex URL now renders.
+ * tests prove the current supported Files journey at
+ * `/ui-v2/resourcelib/files` — browse, bounded context restoration, read-only
+ * zero-mutation behavior, bounded not-found/401/403 states and narrow-viewport
+ * usability — plus the truthful not-found state a retired FileIndex URL now
+ * renders.
  *
  * Runs against the built V2 artifact plus the local fake API with throwaway
  * non-secret tokens; no production service, media or credential is involved
@@ -44,7 +45,7 @@ async function resetResourceLibrary(page: Page): Promise<void> {
 }
 
 async function openFiles(page: Page, search = ""): Promise<void> {
-  await page.goto("/ui-v2/library/files" + search);
+  await page.goto("/ui-v2/resourcelib/files" + search);
   await connectAs(page);
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
@@ -111,12 +112,13 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   page,
 }) => {
   await resetResourceLibrary(page);
-  const target = "/ui-v2/library/files?resourceLibraryId=resources&path=Movies";
+  const target =
+    "/ui-v2/resourcelib/files?resourceLibraryId=resources&path=Movies";
   await page.goto(target);
   await expect(page).toHaveURL(/\/ui-v2\/$/);
   await connectAs(page);
   await expect(page).toHaveURL(
-    /\/ui-v2\/library\/files\?resourceLibraryId=resources&path=Movies/,
+    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
   );
   await expect(
     page.getByRole("heading", { name: "文件", exact: true }),
@@ -139,7 +141,7 @@ test("direct Files deep link and refresh retain memory-only auth continuation", 
   expect(storage.cookie).not.toContain(VIEWER_TOKEN);
   await connectAs(page);
   await expect(page).toHaveURL(
-    /\/ui-v2\/library\/files\?resourceLibraryId=resources&path=Movies/,
+    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources&path=Movies/,
   );
   await expect(page.getByRole("table")).toBeVisible();
 });
@@ -165,7 +167,7 @@ test("Files failure, 401 and 403 states remain bounded", async ({ page }) => {
 
   // A limited principal is refused by the backend authority, not by a hidden
   // control, and the token is never rendered.
-  await page.goto("/ui-v2/library/files");
+  await page.goto("/ui-v2/resourcelib/files");
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
@@ -173,7 +175,7 @@ test("Files failure, 401 and 403 states remain bounded", async ({ page }) => {
 
   // An unknown token restarts at the memory-only entry without an API read.
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/library/files?resourceLibraryId=resources");
+  await page.goto("/ui-v2/resourcelib/files?resourceLibraryId=resources");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await expect(
     apiRequests.filter((request) => request.url.includes("/api/v1/")),

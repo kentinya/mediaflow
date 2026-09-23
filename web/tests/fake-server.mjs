@@ -574,6 +574,249 @@ const SYSTEM_STATUS = {
 
 const RESOURCE_LIBRARY_STATES = new Map();
 
+// --- MediaLibrary read-only browse fixtures (Slice 38) ---
+//
+// Deterministic, secret-free MediaLibrary cards and live entries. The cards
+// deliberately carry no statistics/capacity: the MediaLibrary page must never
+// collect or render file counts, `未统计` placeholders or thumbnails. Roots stay
+// Storage-relative and each library keeps its own Storage binding.
+const MEDIA_LIBRARIES = [
+  {
+    id: "movies",
+    name: "115网盘",
+    enabled: true,
+    rootPath: "Movies",
+    storage: {
+      id: "media-cloud-1",
+      name: "115 Storage",
+      type: "openlist",
+      read_only: false,
+      enabled: true,
+    },
+  },
+  {
+    id: "tv",
+    name: "夸克网盘",
+    enabled: true,
+    rootPath: "TV Shows",
+    storage: {
+      id: "media-cloud-2",
+      name: "Quark Storage",
+      type: "openlist",
+      read_only: false,
+      enabled: true,
+    },
+  },
+  {
+    id: "disabled-lib",
+    name: "已停用媒体库",
+    enabled: false,
+    rootPath: "Disabled",
+    storage: {
+      id: "media-cloud-1",
+      name: "115 Storage",
+      type: "openlist",
+      read_only: false,
+      enabled: true,
+    },
+  },
+];
+
+/** One MediaLibrary-relative directory listing, keyed by library and path. */
+function mediaLibraryEntries(libraryId, path) {
+  if (libraryId === "movies") {
+    if (path === "") {
+      return [
+        directoryEntry(
+          "Breaking Bad",
+          "Breaking Bad",
+          REFERENCE_MODIFIED_LATEST,
+        ),
+        directoryEntry("Dune (2021)", "Dune (2021)", REFERENCE_MODIFIED_LATEST),
+        fileEntry(
+          "poster.jpg",
+          "poster.jpg",
+          876_544,
+          REFERENCE_MODIFIED_OLDER,
+        ),
+        fileEntry(
+          "fanart.jpg",
+          "fanart.jpg",
+          1_572_864,
+          REFERENCE_MODIFIED_OLDER,
+        ),
+      ];
+    }
+    if (path === "Breaking Bad") {
+      return [
+        directoryEntry(
+          "Season 1",
+          "Breaking Bad/Season 1",
+          REFERENCE_MODIFIED_LATEST,
+        ),
+        directoryEntry(
+          "Season 2",
+          "Breaking Bad/Season 2",
+          REFERENCE_MODIFIED_LATEST,
+        ),
+        directoryEntry(
+          "Season 3",
+          "Breaking Bad/Season 3",
+          REFERENCE_MODIFIED_LATEST,
+        ),
+        fileEntry(
+          "logo.png",
+          "Breaking Bad/logo.png",
+          262_144,
+          REFERENCE_MODIFIED_LATEST,
+        ),
+      ];
+    }
+    if (path === "Breaking Bad/Season 1") {
+      return [
+        fileEntry(
+          "Breaking.Bad.S01E01.mkv",
+          "Breaking Bad/Season 1/Breaking.Bad.S01E01.mkv",
+          1_073_741_824,
+          REFERENCE_MODIFIED_LATEST,
+        ),
+        fileEntry(
+          "Breaking.Bad.S01E02.mkv",
+          "Breaking Bad/Season 1/Breaking.Bad.S01E02.mkv",
+          1_073_742_848,
+          REFERENCE_MODIFIED_LATEST,
+        ),
+      ];
+    }
+    return [];
+  }
+  if (libraryId === "tv") {
+    if (path === "") {
+      return [
+        // The exact production boundary-whitespace evidence: the real
+        // directory is `电影/SSH ` (one trailing space); the trimmed sibling
+        // genuinely does not exist.
+        directoryEntry("电影", "电影", REFERENCE_MODIFIED_LATEST),
+      ];
+    }
+    if (path === "电影") {
+      return [directoryEntry("SSH ", "电影/SSH ", REFERENCE_MODIFIED_LATEST)];
+    }
+    if (path === "电影/SSH ") {
+      return [
+        fileEntry(
+          "inside.mkv",
+          "电影/SSH /inside.mkv",
+          1_073_741_824,
+          REFERENCE_MODIFIED_LATEST,
+        ),
+      ];
+    }
+    return [];
+  }
+  return [];
+}
+
+function mediaLibrariesDocument() {
+  const items = MEDIA_LIBRARIES.filter((item) => item.enabled).map((item) => ({
+    id: item.id,
+    name: item.name,
+    enabled: item.enabled,
+    rootPath: item.rootPath,
+    storage: {
+      id: item.storage.id,
+      name: item.storage.name,
+      type: item.storage.type,
+      readOnly: item.storage.read_only,
+    },
+  }));
+  return {
+    surface: "media_libraries",
+    items,
+    total: items.length,
+    sideEffects: "none",
+    configuration: {
+      authority: "MANAGED",
+      revisionId: "rev-e2e-1",
+      version: 1,
+      digest: "digest-e2e-1",
+    },
+  };
+}
+
+function mediaLibraryFilesDocument(libraryId, path, cursor) {
+  const library = MEDIA_LIBRARIES.find((item) => item.id === libraryId);
+  const segments = path === "" ? [] : path.split("/");
+  const all = mediaLibraryEntries(libraryId, path);
+  // Deterministic bounded paging: the movies root is one entry longer than a
+  // page, so the browser proof can exercise truthful next/previous paging and
+  // the selection reset that follows a page change.
+  const pageSize = libraryId === "movies" && path === "" ? 3 : all.length;
+  const start = cursor === null ? 0 : pageSize;
+  const pageEntries =
+    path === "cross-kind-cursor"
+      ? [fileEntry("cursor.mkv", "cursor.mkv", 1024, REFERENCE_MODIFIED_LATEST)]
+      : all.slice(start, start + pageSize);
+  // A cross-kind continuation: the next page's cursor belongs to the
+  // ResourceLibrary authority and must be rejected by the media endpoint.
+  const hasNext =
+    path === "cross-kind-cursor"
+      ? cursor === null
+      : start + pageSize < all.length;
+  return {
+    revisionId: "rev-e2e-1",
+    configuration: {
+      authority: "MANAGED",
+      revisionId: "rev-e2e-1",
+      version: 1,
+      digest: "digest-e2e-1",
+    },
+    mediaLibrary: {
+      id: libraryId,
+      name: library?.name ?? libraryId,
+      enabled: library?.enabled ?? true,
+      rootPath: library?.rootPath ?? "",
+      storage: {
+        id: library?.storage.id,
+        name: library?.storage.name,
+        type: library?.storage.type,
+        readOnly: library?.storage.read_only ?? false,
+      },
+    },
+    storageId: library?.storage.id,
+    storageName: library?.storage.name,
+    storageType: library?.storage.type,
+    pathScope: "media_library_relative",
+    path,
+    breadcrumbs: [
+      { name: "MediaLibrary root", path: "", isRoot: true },
+      ...segments.map((segment, index) => ({
+        name: segment,
+        path: segments.slice(0, index + 1).join("/"),
+        isRoot: false,
+      })),
+    ],
+    entries: pageEntries,
+    limit: 50,
+    nextCursor: hasNext
+      ? path === "cross-kind-cursor"
+        ? "resource-library-cursor"
+        : "media-cursor-page-2"
+      : null,
+    hasNext,
+    exhausted: !hasNext,
+    continuation: {
+      hasNext,
+      exhausted: !hasNext,
+      cursorBoundTo: "libraryKind/revision/storage/root/path/limit",
+    },
+    sideEffects: "none",
+    retrySafe: true,
+    nextAction:
+      "open a MediaLibrary directory or use Next to load the next bounded page",
+  };
+}
+
 function resourceLibraryState(session) {
   const key = session ?? "shared";
   let value = RESOURCE_LIBRARY_STATES.get(key);
@@ -5655,6 +5898,177 @@ const server = createServer(async (req, res) => {
     }
     const document = fileIndexDocument(url);
     sendJson(res, document.status, document.payload);
+    return;
+  }
+  if (url.pathname === "/api/v1/media-libraries" && req.method === "GET") {
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    sendJson(res, 200, mediaLibrariesDocument());
+    return;
+  }
+  const mediaLibraryFilesMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)\/files$/,
+  );
+  if (mediaLibraryFilesMatch) {
+    if (req.method !== "GET") {
+      res.writeHead(405, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("GET required");
+      return;
+    }
+    if (LIMITED_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    let libraryId;
+    try {
+      libraryId = decodeURIComponent(mediaLibraryFilesMatch[1]);
+    } catch {
+      sendJson(res, 400, {
+        error: { code: "invalid_request", message: "library ID encoding" },
+      });
+      return;
+    }
+    const library = MEDIA_LIBRARIES.find((item) => item.id === libraryId);
+    if (library === undefined || library.enabled !== true) {
+      // A disabled or unknown MediaLibrary is never browseable: the server
+      // answers the truthful not-found with an actionable next step.
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_media_library_not_found",
+          message:
+            "the requested MediaLibrary is not available in the Active runtime",
+          details: {
+            category: "media_library_not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "reload the current Active runtime and choose an enabled MediaLibrary",
+          },
+        },
+      });
+      return;
+    }
+    const path = url.searchParams.get("path") ?? "";
+    const cursor = url.searchParams.get("cursor");
+    if (path.includes("..") || path.startsWith("/") || path.includes("\\")) {
+      sendJson(res, 400, {
+        error: {
+          code: "storage_browser_invalid_path",
+          message: "MediaLibrary-relative path is invalid",
+          details: {
+            category: "invalid_path",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "use the displayed MediaLibrary breadcrumb or enter a safe relative path",
+          },
+        },
+      });
+      return;
+    }
+    if (cursor === "resource-library-cursor") {
+      // Cursor authority is namespaced by library kind: a ResourceLibrary
+      // cursor can never be replayed on the MediaLibrary surface.
+      sendJson(res, 400, {
+        error: {
+          code: "storage_browser_cursor_invalid",
+          message:
+            "MediaLibrary browser continuation is invalid or no longer matches this library",
+          details: {
+            category: "cursor_invalid",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "reload the current revision and restart browsing from the MediaLibrary root",
+          },
+        },
+      });
+      return;
+    }
+    if (path === "missing") {
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_not_found",
+          message: "Storage directory was not found",
+          details: {
+            category: "not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "make the configured directory available, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
+    if (path === "unavailable") {
+      sendJson(res, 503, {
+        error: {
+          code: "storage_browser_connection_failed",
+          message: "Storage could not be reached",
+          details: {
+            category: "connection_failed",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "check the endpoint, network and service availability, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
+    if (path === "malformed") {
+      sendJson(res, 200, { malformed: true });
+      return;
+    }
+    if (path === "电影/SSH") {
+      // The trimmed sibling of the real `电影/SSH ` directory does not exist.
+      sendJson(res, 404, {
+        error: {
+          code: "storage_browser_not_found",
+          message: "Storage directory was not found",
+          details: {
+            category: "not_found",
+            durableState: "active_runtime_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "make the configured directory available, reload, and retry",
+          },
+        },
+      });
+      return;
+    }
+    sendJson(res, 200, mediaLibraryFilesDocument(libraryId, path, cursor));
     return;
   }
   if (

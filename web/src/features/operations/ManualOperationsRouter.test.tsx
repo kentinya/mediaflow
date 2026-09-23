@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -43,27 +43,6 @@ function previewDocument(name: string, previewId: string): Json {
   }
   return value;
 }
-
-const SYSTEM_STATUS = {
-  system: {
-    configuration_valid: true,
-    configuration_authority: "MANAGED",
-    configuration_snapshot_id: "snap-1",
-  },
-  storages: { total: 1, truncated: false, items: [] },
-  resource_libraries: {
-    total: 1,
-    truncated: false,
-    items: [
-      {
-        id: "library",
-        storage_id: "source",
-        name: "Library",
-        enabled: true,
-      },
-    ],
-  },
-};
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {
@@ -579,24 +558,33 @@ describe("Operations manual Scan/Preview journeys", () => {
     });
   });
 
-  it("renders Library ResourceLibrary actions only when the backend advertises them", async () => {
+  it("renders ResourceLibrary actions only when the backend advertises them", async () => {
     const { calls } = recordingFetch((call) => {
-      if (call.url === "/api/v1/system/status") {
-        return jsonResponse(SYSTEM_STATUS);
+      if (call.url === "/api/v1/operations/workers/readiness") {
+        return jsonResponse({
+          ready: true,
+          condition: "ready",
+          category: null,
+          durableState: "a Worker is registered",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: null,
+          activeWorkersCount: 1,
+          activeSnapshotId: "snap-1",
+        });
       }
       if (call.url.includes("/api/v1/operations/manual-actions")) {
         return jsonResponse(document("actionMatrix"));
       }
       return undefined;
     });
-    const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/library");
-
-    await screen.findByRole("heading", { name: "Library" });
-    await user.click(
-      screen.getByRole("button", { name: "Show ResourceLibrary actions" }),
+    renderApp(
+      "/ui-v2/operations?scopeKind=resourceLibrary&resourceLibraryId=library",
     );
+
+    // The Operations workspace owns the manual ResourceLibrary actions now
+    // that the retired Library landing no longer exists.
     expect(
       await screen.findByRole("link", { name: "Start bounded Scan" }),
     ).toBeVisible();
@@ -612,7 +600,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     ).toBe(true);
   });
 
-  it("shows the backend reason instead of an unadvertised Library action", async () => {
+  it("shows the backend reason instead of an unadvertised ResourceLibrary action", async () => {
     const unavailable = document("actionMatrix");
     const actions = unavailable["actions"] as Json;
     (actions["scan"] as Json)["available"] = false;
@@ -622,39 +610,45 @@ describe("Operations manual Scan/Preview journeys", () => {
     (actions["preview"] as Json)["reason"] =
       "the FileIndex source is not a verified ready current occurrence";
     recordingFetch((call) => {
-      if (call.url === "/api/v1/system/status") {
-        return jsonResponse(SYSTEM_STATUS);
+      if (call.url === "/api/v1/operations/workers/readiness") {
+        return jsonResponse({
+          ready: true,
+          condition: "ready",
+          category: null,
+          durableState: "a Worker is registered",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: null,
+          activeWorkersCount: 1,
+          activeSnapshotId: "snap-1",
+        });
       }
       if (call.url.includes("/api/v1/operations/manual-actions")) {
         return jsonResponse(unavailable);
       }
       return undefined;
     });
-    const user = userEvent.setup();
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/library");
+    const user = userEvent.setup();
+    renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "Library" });
-    await user.click(
-      screen.getByRole("button", { name: "Show ResourceLibrary actions" }),
+    await screen.findByRole("heading", { name: "Manual operations" });
+    await user.selectOptions(
+      await screen.findByLabelText("ResourceLibrary scope"),
+      "library",
     );
-    const section = (
-      await screen.findByRole("heading", { name: "ResourceLibrary actions" })
-    ).closest("section");
-    expect(section).not.toBeNull();
-    const scope = within(section as HTMLElement);
-    await waitFor(() =>
-      expect(
-        scope.queryByRole("link", { name: "Start bounded Scan" }),
-      ).toBeNull(),
-    );
+    // The backend reason replaces the unadvertised control instead of a dead
+    // button, and no Scan/Preview action is offered for this exact scope.
     expect(
-      scope.getByText(
-        /Scan unavailable: the FileIndex source is not a verified/,
+      await screen.findByText(
+        /No manual action is available for this scope: the FileIndex source is not a verified/,
       ),
     ).toBeVisible();
     expect(
-      scope.queryByRole("link", { name: "Run zero-mutation Preview" }),
+      screen.queryByRole("link", { name: "Start bounded Scan" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("link", { name: "Run zero-mutation Preview" }),
     ).toBeNull();
   });
 

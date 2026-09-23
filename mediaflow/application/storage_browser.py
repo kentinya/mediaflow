@@ -763,6 +763,11 @@ class StorageBrowserService:
                 400,
                 "choose a ResourceLibrary bound to the selected configured Storage",
             ),
+            "media_library_not_found": (
+                "the requested MediaLibrary is not available in the Active runtime",
+                404,
+                "reload the current Active runtime and choose an enabled MediaLibrary",
+            ),
         }
         message, status, next_action = messages.get(category, messages["unknown"])
         return StorageBrowserError(
@@ -817,6 +822,16 @@ class RuntimeFilesBrowserService:
                 (
                     library
                     for library in getattr(runtime_configuration, "resource_libraries", ())
+                    if getattr(library, "enabled", True) is True
+                ),
+                key=lambda library: library.library_id,
+            )
+        )
+        self._media_libraries = tuple(
+            sorted(
+                (
+                    library
+                    for library in getattr(runtime_configuration, "media_libraries", ())
                     if getattr(library, "enabled", True) is True
                 ),
                 key=lambda library: library.library_id,
@@ -982,6 +997,127 @@ class RuntimeFilesBrowserService:
             )
         return library
 
+    def _media_library(self, media_library_id: str):
+        if not isinstance(media_library_id, str) or not media_library_id.strip():
+            raise self._runtime_error(
+                StorageBrowserService._browser_failure("media_library_not_found", None, "")
+            )
+        library = next(
+            (item for item in self._media_libraries if item.library_id == media_library_id),
+            None,
+        )
+        if library is None:
+            raise self._runtime_error(
+                StorageBrowserService._browser_failure("media_library_not_found", None, "")
+            )
+        return library
+
+    def list_media_libraries(self) -> dict[str, object]:
+        """Return enabled MediaLibraries available to the MediaLibrary page.
+
+        Disabled or missing-Storage libraries stay out of the browseable set,
+        mirroring the ResourceLibrary Files list.  No per-library statistics,
+        FileIndex facts or capacity data are collected or published here.
+        """
+
+        storages = {
+            item.storage_id: item
+            for item in getattr(self._runtime_configuration, "storage_definitions", ())
+        }
+        items = []
+        for library in self._media_libraries:
+            storage = storages.get(library.storage_id)
+            if storage is None or getattr(storage, "enabled", True) is False:
+                continue
+            items.append(
+                {
+                    "id": library.library_id,
+                    "name": library.name,
+                    "enabled": library.enabled,
+                    "rootPath": library.root_path,
+                    "storage": {
+                        "id": library.storage_id,
+                        "name": getattr(storage, "name", library.storage_id),
+                        "type": getattr(storage, "storage_type", "unknown"),
+                        "readOnly": bool(getattr(storage, "read_only", False)),
+                    },
+                }
+            )
+        return {
+            "surface": "media_libraries",
+            "items": items,
+            "total": len(items),
+            "sideEffects": "none",
+            "configuration": {
+                "authority": "MANAGED",
+                "revisionId": self._revision.revision_id,
+                "version": self._revision.version,
+                "digest": self._revision.digest,
+            },
+        }
+
+    def browse_media_library(
+        self,
+        *,
+        media_library_id: str,
+        path: str = "",
+        limit: int = _DEFAULT_PAGE_SIZE,
+        cursor: str | None = None,
+    ) -> dict[str, object]:
+        """Browse live Storage entries confined to one MediaLibrary root.
+
+        The Active runtime selects the configured MediaLibrary and its Storage;
+        the client supplies only the media-library identity and a
+        MediaLibrary-relative path.  Cursor authority is namespaced by library
+        kind so a ResourceLibrary cursor can never be replayed here and vice
+        versa, even when both libraries share the same ID, Storage and root.
+        """
+
+        library = self._media_library(media_library_id)
+        try:
+            relative_path = _normalize_storage_relative_path(path)
+            storage_path = _join_resource_library_path(library.root_path, relative_path)
+            document = self._browser.browse_revision(
+                self._revision,
+                storage_id=library.storage_id,
+                path=storage_path,
+                limit=limit,
+                cursor=cursor,
+                cursor_scope=f"media_library:{library.library_id}",
+            )
+        except StorageBrowserError as error:
+            raise self._runtime_error(error) from error
+        entries = []
+        for raw_entry in document["entries"]:
+            entry = dict(raw_entry)
+            # Preserve exact live identity, including boundary whitespace, by
+            # stripping only the configured library root prefix.
+            entry["path"] = _strip_resource_library_path(entry["path"], library.root_path)
+            entries.append(entry)
+        document["mediaLibrary"] = {
+            "id": library.library_id,
+            "name": library.name,
+            "enabled": library.enabled,
+            "rootPath": library.root_path,
+            "storage": _storage_summary(self._runtime_configuration, library.storage_id),
+        }
+        document["storageId"] = library.storage_id
+        document["path"] = relative_path
+        document["breadcrumbs"] = _media_library_breadcrumbs(relative_path)
+        document["entries"] = entries
+        document["surface"] = "media_library_files"
+        document["surfaceLabel"] = "MediaLibrary Files"
+        document["configuration"] = {
+            "authority": "MANAGED",
+            "revisionId": self._revision.revision_id,
+            "version": self._revision.version,
+            "digest": self._revision.digest,
+        }
+        document["nextAction"] = (
+            "open a MediaLibrary directory or use Next to load the next bounded page"
+        )
+        return document
+
     def _libraries_for(
         self, storage_id: str, resource_library_id: str | None
     ) -> tuple[object, ...]:
@@ -1111,6 +1247,16 @@ def _strip_resource_library_path(path: str, root: str) -> str:
 
 def _resource_library_breadcrumbs(path: str) -> list[dict[str, object]]:
     crumbs: list[dict[str, object]] = [{"name": "ResourceLibrary root", "path": "", "isRoot": True}]
+    if not path:
+        return crumbs
+    parts = path.split("/")
+    for index, name in enumerate(parts):
+        crumbs.append({"name": name, "path": "/".join(parts[: index + 1]), "isRoot": False})
+    return crumbs
+
+
+def _media_library_breadcrumbs(path: str) -> list[dict[str, object]]:
+    crumbs: list[dict[str, object]] = [{"name": "MediaLibrary root", "path": "", "isRoot": True}]
     if not path:
         return crumbs
     parts = path.split("/")

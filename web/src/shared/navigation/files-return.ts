@@ -76,5 +76,5 @@ export function filesReturnHref(context: FilesReturnContext): string {
   const params = new URLSearchParams();
   params.set("resourceLibraryId", context.resourceLibraryId);
   if (context.path !== "") params.set("path", context.path);
-  return `/library/files?${params.toString()}`;
+  return `/resourcelib/files?${params.toString()}`;
 }

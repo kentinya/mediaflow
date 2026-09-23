@@ -381,13 +381,20 @@ test("Dashboard counts and recent failures link to exact Operations state", asyn
   ).toBeVisible();
 });
 
-test("the Library landing offers a bounded Operations cross-link", async ({
+test("the 媒体库 entry and Operations workspace cross-link without a retired route", async ({
   page,
 }) => {
   await connect(page);
   await page.getByRole("link", { name: "Library" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/library$/);
-  await page.getByRole("link", { name: "Open Operations Tasks" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files$/);
+  await expect(
+    page.getByRole("heading", { name: "媒体库", exact: true }),
+  ).toBeVisible();
+
+  // The shared shell keeps the Operations workspace reachable from any page.
+  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await page.getByRole("link", { name: "Tasks", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
 });
 

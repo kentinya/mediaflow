@@ -25,7 +25,7 @@ async function openFiles(
   search = "",
   expectTable = true,
 ): Promise<void> {
-  await page.goto("/ui-v2/library/files" + search);
+  await page.goto("/ui-v2/resourcelib/files" + search);
   await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -39,21 +39,19 @@ function directoryTree(page: Page): ReturnType<Page["getByLabel"]> {
   return page.getByLabel("目录", { exact: true });
 }
 
-test("Library landing exposes Files without FileIndex catalog", async ({
+test("the shell 文件 entry opens ResourceLibrary Files at its new address", async ({
   page,
 }) => {
   await connectAs(page, VIEWER_TOKEN);
-  await page.getByRole("link", { name: "Library" }).click();
-  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await page.getByRole("link", { name: "Files" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files$/);
   await expect(
-    page.getByRole("heading", { name: "Library", exact: true }),
+    page.getByRole("heading", { name: "文件", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Files" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "FileIndex" })).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Open Files" })).toHaveAttribute(
-    "href",
-    "/ui-v2/library/files",
-  );
+  await expect(
+    page.getByRole("link", { name: "Files", exact: true }),
+  ).toHaveAttribute("aria-current", "page");
   await expect(
     page.getByRole("link", { name: "Open FileIndex catalog" }),
   ).toHaveCount(0);
@@ -83,7 +81,7 @@ test("Files route rejects limited principals without leaking the token", async (
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/library/files");
+  await page.goto("/ui-v2/resourcelib/files");
   await page.getByLabel("API token").fill(LIMITED_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Forbidden" })).toBeVisible();
@@ -284,7 +282,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   // The return context restores the originating ResourceLibrary and directory.
   await page.getByRole("link", { name: "返回文件" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/library\/files\?resourceLibraryId=resources/,
+    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources/,
   );
   await expect(page.getByRole("table")).toBeVisible();
 });
@@ -321,7 +319,7 @@ test("the row Organize action admits the existing durable intent for one eligibl
   // The bounded return action restores the originating Files context.
   await page.getByRole("link", { name: "返回文件" }).click();
   await expect(page).toHaveURL(
-    /\/ui-v2\/library\/files\?resourceLibraryId=resources/,
+    /\/ui-v2\/resourcelib\/files\?resourceLibraryId=resources/,
   );
   await expect(page.getByRole("table")).toBeVisible();
 });
@@ -385,7 +383,7 @@ test("a rejected Organize admission keeps Files context, selection and a safe re
   // The failure is explained on the Files item, the ResourceLibrary and
   // directory context survive and the selection is not silently replaced.
   await expect(page.getByText(/所选文件已不存在/)).toBeVisible();
-  await expect(page).toHaveURL(/\/ui-v2\/library\/files/);
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
   await expect(sampleRow.getByRole("checkbox")).toBeChecked();
   await expect(page.getByText(/已选择 1 个文件/)).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
@@ -453,7 +451,7 @@ test("unavailable and malformed reads keep page context and safe retry", async (
     page.getByRole("heading", { name: "Storage read failed" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "重试" })).toBeVisible();
-  await page.goto("/ui-v2/library/files?path=malformed");
+  await page.goto("/ui-v2/resourcelib/files?path=malformed");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
@@ -756,7 +754,7 @@ test("normal entry keeps the Add ResourceLibrary drawer closed", async ({
   page,
 }) => {
   const apiRequests = apiRequestsOf(page);
-  await page.goto("/ui-v2/library/files");
+  await page.goto("/ui-v2/resourcelib/files");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(

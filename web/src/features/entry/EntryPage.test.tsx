@@ -8,7 +8,7 @@ import { dashboardPayload } from "../../../tests/fixtures";
 const TOKEN = "entry-test-token";
 
 function stubFetch(
-  implementation: () => Promise<Response>,
+  implementation: (input: RequestInfo | URL) => Promise<Response>,
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(implementation);
   vi.stubGlobal("fetch", fetchMock);
@@ -51,13 +51,25 @@ describe("EntryPage", () => {
 
   it("continues to the intended path the AuthBoundary recorded", async () => {
     const user = userEvent.setup();
-    stubFetch(
-      async () =>
-        new Response(JSON.stringify(dashboardPayload), { status: 200 }),
-    );
-    // AuthBoundary records /library when an unauthenticated operator opens
-    // it directly; the EntryPage just consumes the captured intention.
-    authStore.setIntendedPath("/library");
+    stubFetch(async (input: RequestInfo | URL) => {
+      // The MediaLibrary Files continuation reads only its own bounded list
+      // contract; every other read in this test keeps the Dashboard payload.
+      if (String(input) === "/api/v1/media-libraries") {
+        return new Response(
+          JSON.stringify({
+            surface: "media_libraries",
+            items: [],
+            total: 0,
+            sideEffects: "none",
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify(dashboardPayload), { status: 200 });
+    });
+    // AuthBoundary records /medialib/files when an unauthenticated operator
+    // opens it directly; the EntryPage just consumes the captured intention.
+    authStore.setIntendedPath("/medialib/files");
     renderApp("/ui-v2/");
     const input = await screen.findByLabelText("API token");
     await user.type(input, TOKEN);
@@ -65,8 +77,12 @@ describe("EntryPage", () => {
     await waitFor(() => expect(authStore.getToken()).toBe(TOKEN));
     // Intended path was consumed and cleared, and navigation lands there.
     expect(authStore.getIntendedPath()).toBeNull();
-    await screen.findByRole("heading", { name: "Library" });
-    expect(screen.getByRole("link", { name: "Open Files" })).toBeVisible();
+    await screen.findByRole("heading", { name: "媒体库" });
+    expect(
+      screen.getByRole("heading", {
+        name: "尚未添加媒体库",
+      }),
+    ).toBeVisible();
   });
 
   it("never displays the token after the entry interaction", async () => {
@@ -85,7 +101,7 @@ describe("EntryPage", () => {
 
   it("connected state reports memory-only auth and disconnect clears memory, intent and cache", async () => {
     authStore.setToken(TOKEN);
-    authStore.setIntendedPath("/library");
+    authStore.setIntendedPath("/medialib/files");
     const { queryClient } = renderApp("/ui-v2/");
     queryClient.setQueryData(["dashboard", 10], { kept: true });
     await screen.findByText("Connected");

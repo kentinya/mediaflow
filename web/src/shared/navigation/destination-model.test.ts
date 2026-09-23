@@ -52,8 +52,10 @@ describe("destination model", () => {
 
   it("resolves paths without duplicating route metadata", () => {
     expect(destinationForPath("/dashboard")?.id).toBe("overview");
-    expect(destinationForPath("/library")?.availability).toBe("implemented");
-    expect(destinationForPath("/library/files")?.id).toBe("library-files");
+    expect(destinationForPath("/medialib/files")?.id).toBe("library");
+    expect(destinationForPath("/resourcelib/files")?.id).toBe("library-files");
+    expect(destinationForPath("/library")).toBeUndefined();
+    expect(destinationForPath("/library/files")).toBeUndefined();
     expect(destinationForPath("/library/file-index")).toBeUndefined();
     expect(destinationForPath("/unknown")).toBeUndefined();
   });
@@ -73,12 +75,16 @@ describe("destination model", () => {
   it("derives a unique path allowlist from the destinations contract", () => {
     expect(destinationPaths).toEqual(destinations.map((item) => item.path));
     expect(new Set(destinationPaths).size).toBe(destinations.length);
-    expect(allDestinationPaths).toContain("/library/files");
+    expect(allDestinationPaths).toContain("/resourcelib/files");
+    expect(allDestinationPaths).toContain("/medialib/files");
     expect(allDestinationPaths).not.toContain("/library/file-index");
     for (const path of destinationPaths) {
       expect(isDestinationPath(path)).toBe(true);
     }
-    expect(isDestinationPath("/library/files")).toBe(true);
+    expect(isDestinationPath("/resourcelib/files")).toBe(true);
+    expect(isDestinationPath("/medialib/files")).toBe(true);
+    expect(isDestinationPath("/library/files")).toBe(false);
+    expect(isDestinationPath("/library")).toBe(false);
     expect(isDestinationPath("/")).toBe(false);
     expect(isDestinationPath("/dashboard/")).toBe(false);
     expect(isDestinationPath("/unknown")).toBe(false);
@@ -88,15 +94,31 @@ describe("destination model", () => {
   describe("allowlistedDestinationSearch", () => {
     it("returns allowed ResourceLibrary/path/cursor keys for library/files", () => {
       const search = allowlistedDestinationSearch(
-        "/library/files",
+        "/resourcelib/files",
         "resourceLibraryId=resources&path=movies&cursor=abc",
       );
       expect(search).toBe("resourceLibraryId=resources&path=movies&cursor=abc");
     });
 
+    it("keeps only the media-library identity, path and cursor on medialib/files", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/medialib/files",
+          "mediaLibraryId=movies&path=Breaking+Bad&cursor=abc",
+        ),
+      ).toBe("mediaLibraryId=movies&path=Breaking+Bad&cursor=abc");
+      // A ResourceLibrary identity never crosses the kind boundary.
+      expect(
+        allowlistedDestinationSearch(
+          "/medialib/files",
+          "resourceLibraryId=resources&mediaLibraryId=movies",
+        ),
+      ).toBe("mediaLibraryId=movies");
+    });
+
     it("drops unknown and credential-like query keys", () => {
       const search = allowlistedDestinationSearch(
-        "/library/files",
+        "/resourcelib/files",
         "resourceLibraryId=resources&token=secret&authorization=Bearer x&unknown=x",
       );
       expect(search).toBe("resourceLibraryId=resources");
@@ -112,7 +134,7 @@ describe("destination model", () => {
     it("returns null when no allowed keys are present", () => {
       expect(
         allowlistedDestinationSearch(
-          "/library/files",
+          "/resourcelib/files",
           "token=secret&unknown=x",
         ),
       ).toBeNull();
@@ -120,7 +142,7 @@ describe("destination model", () => {
 
     it("preserves safe URL encoding", () => {
       const search = allowlistedDestinationSearch(
-        "/library/files",
+        "/resourcelib/files",
         "resourceLibraryId=resources&path=movies%2FNew%20%26%20Old&cursor=a+b/c",
       );
       // URLSearchParams normalizes %20 to + for spaces and %2F to / for slashes

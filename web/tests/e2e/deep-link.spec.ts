@@ -117,38 +117,81 @@ test("connect from a real deep link continues to that exact allowlisted route", 
   page,
 }) => {
   // Opening the deep route unauthenticated redirects to the entry boundary.
-  await page.goto("/ui-v2/library");
+  await page.goto("/ui-v2/medialib/files");
   await expect(page).toHaveURL(/\/ui-v2\/$/);
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
   // Connecting continues to the exact route that was opened, not a default.
-  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(page).toHaveURL(/\/ui-v2\/medialib\/files$/);
   await expect(
-    page.getByRole("heading", { name: "Library", exact: true }),
+    page.getByRole("heading", { name: "媒体库", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: "Open Files" })).toHaveAttribute(
-    "href",
-    "/ui-v2/library/files",
-  );
-  await expect(page).toHaveTitle("Library | MediaFlow");
+  await expect(page).toHaveTitle("MediaLibrary Files | MediaFlow");
   await expect(
     page.getByRole("link", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
   await expect(page.getByText(VIEWER_TOKEN)).toHaveCount(0);
 });
 
+test("a retired Library route offers bounded recovery links and starts no work", async ({
+  page,
+}) => {
+  const apiRequests = apiRequestsOf(page);
+  // A retired route is not an allowlisted destination, so it renders its own
+  // bounded recovery state without an authentication continuation or any
+  // redirect to the two supported pages.
+  await page.goto("/ui-v2/library");
+
+  // The retired route renders one bounded recovery state with explicit links
+  // to both supported pages; nothing is redirected or auto-submitted.
+  await expect(
+    page.getByRole("heading", { name: "此页面已迁移" }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/library$/);
+  await expect(
+    page.getByRole("link", { name: "打开资源库文件页" }),
+  ).toHaveAttribute("href", "/ui-v2/resourcelib/files");
+  await expect(
+    page.getByRole("link", { name: "打开媒体库文件页" }),
+  ).toHaveAttribute("href", "/ui-v2/medialib/files");
+  // A retired route starts no read, admission or mutation of any kind.
+  expect(apiRequests).toHaveLength(0);
+});
+
+test("no supported page emits a retired Library address into the DOM", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+
+  // The Organize compatibility landing links to the supported Files address.
+  // Memory-only authority is re-established after the direct navigation.
+  await page.goto("/ui-v2/operations/organize/new");
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page.getByRole("link", { name: "Open Files" })).toHaveAttribute(
+    "href",
+    "/ui-v2/resourcelib/files",
+  );
+  const retiredLinks = await page.locator('a[href^="/ui-v2/library"]').count();
+  expect(retiredLinks).toBe(0);
+});
+
 test("an explicit route choice at the boundary replaces an earlier intention", async ({
   page,
 }) => {
-  // Deep entry to Library records /library as the initial intention.
-  await page.goto("/ui-v2/library");
+  // Deep entry to the MediaLibrary Files page records that route as the
+  // initial intention.
+  await page.goto("/ui-v2/medialib/files");
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
 
   // Before connecting, the operator explicitly chooses Review & Recovery (a
   // route still owned by a later Slice) from the shell navigation. The
   // boundary must update continuation to the newest supported route instead of
-  // keeping the stale /library intention.
+  // keeping the stale MediaLibrary Files intention.
   await page.getByRole("link", { name: "Review & Recovery" }).click();
   await expect(page.getByRole("heading", { name: "V2 entry" })).toBeVisible();
   await page.getByLabel("API token").fill(VIEWER_TOKEN);

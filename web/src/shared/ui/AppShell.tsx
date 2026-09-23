@@ -56,7 +56,8 @@ export function AppShell({ children }: AppShellProps) {
   const pageTitle =
     destination?.title ??
     (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
-  const searchIsFiles = pathname === "/library/files";
+  const searchIsFiles =
+    pathname === "/resourcelib/files" || pathname === "/medialib/files";
   const searchContext = useMemo(
     () => ({
       query: filesSearch,
