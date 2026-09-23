@@ -22,7 +22,7 @@ only in [the development workflow](development-workflow.md).
 | 31 — Operator Shell & Information Architecture | Deliver the authenticated V2 application shell, navigation, route ownership and shared operator information architecture | PASS / CLOSED | 30 |
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PASS / CLOSED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
-| 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit, organize continuation and post-mutation reconciliation without introducing a second authority; remove the direct browser Upload/Download vertical; correct formal classification `library/path` destination parity with CLI; repair stale ResourceLibrary directory-tree state after Files refresh; make the manual Organize editor derive downstream policies from RecognitionType | ACTIVE | 33 and existing Files foundation |
+| 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit, organize continuation and post-mutation reconciliation without introducing a second authority; remove the direct browser Upload/Download vertical; correct formal classification `library/path` destination parity with CLI; repair stale ResourceLibrary directory-tree state after Files refresh; make the manual Organize editor derive downstream policies from RecognitionType | PASS / CLOSED | 33 and existing Files foundation |
 
 ## Current boundary
 
@@ -49,18 +49,19 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 ## V2 program boundary
 
-V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 are
+V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 and
+37 are
 closed historical capabilities. The previously planned Slice 34, Slice 35 and Slice 36 boundaries
 were retired from the current Roadmap on 2026-09-14; their historical references remain in Git and
-are not current work commitments. Slice 37's post-reactivation closure on 2026-09-22 delivered the replacement
+are not current work commitments. Slice 37's post-reactivation closure, finalized by A on 2026-09-23,
+delivered the replacement
 shared V2 shell presentation and the current Files workspace defined by
 [`file-page-visual-spec.md`](file-page-visual-spec.md), including truthful refresh/presentation and
-exact Storage path identity. The two post-closure correction loops remained within the original
-Slice boundary and preserved the existing live Storage authority and non-Files business
-boundaries. Slice 37 is reactivated as ACTIVE for one focused P1 correction: the manual Organize
-Web editor must derive and lock NamingPolicy, ClassificationPolicy and OrganizePolicy from the
-selected RecognitionType under the pinned snapshot. B plans the correction Task inside the
-existing Slice boundary.
+exact Storage path identity. The final 2026-09-23 correction review also confirms that the manual
+Organize Web editor derives and locks NamingPolicy, ClassificationPolicy and OrganizePolicy from
+the selected RecognitionType under the pinned snapshot. Both post-closure correction loops remained
+within the original Slice boundary and preserved the existing live Storage authority and non-Files
+business boundaries. No large Slice is active; A selects the next large Slice separately.
 User experience remains the primary product-design and acceptance criterion, while correctness,
 RBAC, audit, data integrity, ResourceLibrary confinement and OrganizerExecutor-only mutation remain
 mandatory. Slice 30 is `PASS / CLOSED` at Base

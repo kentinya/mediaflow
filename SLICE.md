@@ -9,7 +9,7 @@ Slice 34, Slice 35 and Slice 36 boundaries remain retired.
 Slice ID: 37
 Name: Files Workspace, Common File Management and V2 Shell
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
 Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
 Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
@@ -633,7 +633,7 @@ Failed or uncertain mutations refresh truth and are never automatically repeated
 ## Review State
 
 ```text
-Slice Status: READY FOR A REVIEW
+Slice Status: PASS / CLOSED
 Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
 Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
 Task 37.8 state: PASS
@@ -642,7 +642,7 @@ Task 37.10 state: PASS
 Task 37.11 state: PASS
 Task 37.12 state: PASS
 Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Post-closure Correction Closure Packet — Task 37.11
@@ -754,6 +754,42 @@ Documentation Reconciliation Needed:
 
 Decision: SLICE READY FOR A REVIEW
 ```
+
+## A Final Review — 2026-09-23
+
+```text
+Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..aa54854c442d117c7eb23ae9800045c423db1368
+Decision: PASS / CLOSED
+P0/P1 Blockers:
+- None.
+```
+
+Closure Reconciliation:
+
+- All Required Outcomes and Required Surfaces are complete. The operator can enter the shared V2
+  shell, browse live ResourceLibrary-scoped Storage state, perform bounded file management, create
+  and activate a ResourceLibrary, continue Files-originated Organize through Preview and execution,
+  and recover from failures without CLI-only completion or hidden implementation ceremony.
+- The final RecognitionType correction is complete: the Web Organize editor treats RecognitionType
+  as the operator-facing source of truth, projects exact pinned Naming/Classification/Organize
+  policies, preserves RecognitionType identity including C→A reuse, and fails closed without a
+  Save Choice request when the mapping is unavailable.
+- The architecture remains truthful across the reviewed range. Scanner, Parser, Recognition,
+  Metadata, Naming, Classification, Planner, Files reads and Preview remain zero-mutation;
+  Storage mutation remains confined to `OrganizerExecutor`; FileIndex remains display/reconciliation
+  state rather than Files physical-listing, source-identity or execution authority.
+- No silent overwrite/delete, implicit transfer fallback or uncertain-mutation replay was introduced.
+  Direct browser Upload/Download, arbitrary media editing, unbounded operations, new providers or
+  identity systems, universal rollback and FFmpeg/FFprobe remain deferred or outside this Slice.
+- Final validation is credible: Python `1721` passed with `7` skips; Web Vitest `469` passed across
+  `33` files; full Playwright `122` passed; frontend typecheck/lint/format/build, Ruff, compileall,
+  pip check, governance, diff check, Docker release-security and transfer-impact smoke gates passed.
+- The accepted Local inode-reuse replacement race, existing SQLite `ResourceWarning` output and
+  generated frontend chunk-size warning remain non-blocking known issues. No credential,
+  `config/alist.json`, production media or private configuration entered the reviewed range.
+- Current factual status is reconciled in Roadmap, Progress, V2 requirements, Product Experience,
+  Architecture and the canonical requirements metadata. The Slice Base remains immutable and the
+  next large Slice is intentionally left for a later A action.
 
 ## Post-reactivation Closure Packet — Task 37.12
 
