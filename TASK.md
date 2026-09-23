@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.1
 Parent Slice: 38
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 86bb69d52891755933f23763d32558668b30f9c6
 Difficulty: High
 Test Level: T4
@@ -432,20 +432,8 @@ Head SHA: 47d158d2958c526e4aaf5ab89c0002b079e5e67d
 ## B Review Result
 
 ```text
-Reviewed: 86bb69d52891755933f23763d32558668b30f9c6..f58139885aefe5e477dece60770702c6cc8ce55f
-Decision: FIX REQUIRED
+Reviewed: 86bb69d52891755933f23763d32558668b30f9c6..47d158d2958c526e4aaf5ab89c0002b079e5e67d
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
-
-- **P1 — MediaLibrary 子目录状态没有进入可恢复的路由。** 当前生产页面的
-  `MediaLibraryFilesPage.openPath()` 只更新组件内的 `path`，
-  `updateLibraryRouteState()` 也只更新 `mediaLibraryId`；从媒体库根页进入
-  `Breaking Bad` 后，实际浏览器显示该目录的 `Season 1`，URL 仍是
-  `/ui-v2/medialib/files`。刷新并重新连接后，页面显示根目录的
-  `Breaking Bad`，不再显示 `Season 1`（使用当前构建和本地 fake server 的
-  Playwright 复现）。从含 `path` 的深链切换库时，旧 `path` 还会留在 URL。
-  这违反 Slice RO-1 的目录深链/认证续接、Required Surfaces 的 library-relative
-  deep links，以及本 Task 的导航和恢复验收。请让目录导航、返回根目录和切换库
-  同步准确的库 ID 与相对路径到路由，并以 Web 浏览器回归证明刷新、重新连接和
-  切换库后只恢复当前有效位置。
