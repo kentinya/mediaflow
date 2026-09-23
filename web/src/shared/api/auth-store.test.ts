@@ -17,7 +17,7 @@ describe("authStore", () => {
   });
 
   it("tracks safe intended search view state with a supported destination", () => {
-    authStore.setIntendedPath("/library/files");
+    authStore.setIntendedPath("/resourcelib/files");
     authStore.setIntendedSearch("storage=local-1&path=Movies");
     expect(authStore.getIntendedSearch()).toBe("storage=local-1&path=Movies");
     authStore.clearIntendedPath();
@@ -69,11 +69,11 @@ describe("authStore", () => {
 
   it("clears rejected authority without losing the intended path", () => {
     authStore.setToken("principal-token");
-    authStore.setIntendedPath("/library");
+    authStore.setIntendedPath("/medialib/files");
     authStore.clearRejectedAuthority();
     expect(authStore.getToken()).toBeNull();
     expect(authStore.isRejected()).toBe(true);
-    expect(authStore.getIntendedPath()).toBe("/library");
+    expect(authStore.getIntendedPath()).toBe("/medialib/files");
   });
 
   it("resets the rejected boundary when a fresh principal is entered", () => {
@@ -97,7 +97,7 @@ describe("authStore", () => {
 
   it("clears both token and intended path together", () => {
     authStore.setToken("t");
-    authStore.setIntendedPath("/library");
+    authStore.setIntendedPath("/medialib/files");
     authStore.clearToken();
     expect(authStore.getToken()).toBeNull();
     expect(authStore.getIntendedPath()).toBeNull();

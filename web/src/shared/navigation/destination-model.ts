@@ -20,11 +20,11 @@ const destinationData = [
   {
     id: "library",
     label: "Library",
-    path: "/library",
-    title: "Library | MediaFlow",
+    path: "/medialib/files",
+    title: "MediaLibrary Files | MediaFlow",
     availability: "implemented" as const,
     description:
-      "Browse live Storage files through enabled ResourceLibrary boundaries in V2.",
+      "Browse live Storage files inside enabled MediaLibrary boundaries in V2.",
   },
   {
     id: "operations",
@@ -68,7 +68,7 @@ const childDestinationData = [
   {
     id: "library-files",
     label: "Files",
-    path: "/library/files",
+    path: "/resourcelib/files",
     title: "Files | MediaFlow",
     availability: "implemented" as const,
     description: "Browse live Storage through ResourceLibrary boundaries.",
@@ -358,17 +358,17 @@ export const shellDestinations: readonly ShellDestination[] = [
     id: "files",
     label: "文件",
     ariaLabel: "Files",
-    path: "/library/files",
+    path: "/resourcelib/files",
     icon: "folder",
-    isActive: (pathname) => pathname === "/library/files",
+    isActive: (pathname) => pathname === "/resourcelib/files",
   },
   {
     id: "library",
     label: "媒体库",
     ariaLabel: "Library",
-    path: "/library",
+    path: "/medialib/files",
     icon: "library",
-    isActive: (pathname) => pathname === "/library",
+    isActive: (pathname) => pathname === "/medialib/files",
   },
   {
     id: "storage",
@@ -534,10 +534,22 @@ export function allowlistedDestinationSearch(
       target.set(key, value);
     }
   };
-  if (path === "/library/files") {
+  if (path === "/resourcelib/files") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     for (const key of ["resourceLibraryId", "path", "cursor"] as const) {
+      const value = current.get(key);
+      setSafe(allowed, key, value);
+    }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/medialib/files") {
+    // MediaLibrary browse state is independent of ResourceLibrary Files: only
+    // its own bounded media-library identity, relative path and cursor travel
+    // through authentication continuation.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    for (const key of ["mediaLibraryId", "path", "cursor"] as const) {
       const value = current.get(key);
       setSafe(allowed, key, value);
     }

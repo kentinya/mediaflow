@@ -109,6 +109,18 @@ export class StorageFilesApiError extends ApiReadError {
   }
 }
 
+/**
+ * Typed boundary error for the MediaLibrary read-only Files read. Provider
+ * read failures stay bounded results at the feature edge; only API-principal
+ * authentication/RBAC outcomes use this error class.
+ */
+export class MediaLibraryFilesApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category, LIBRARY_CATEGORY_MESSAGES[category]);
+    this.name = "MediaLibraryFilesApiError";
+  }
+}
+
 export class FileIndexApiError extends ApiReadError {
   constructor(category: ApiReadErrorCategory) {
     super(category, LIBRARY_CATEGORY_MESSAGES[category]);

@@ -30,13 +30,22 @@ afterEach(() => {
 
 describe("AuthBoundary", () => {
   it("redirects an unauthenticated deep route to entry and preserves the intended path", async () => {
-    renderApp("/ui-v2/library");
-    // AuthBoundary redirects to / and stores /library as the intended route.
+    renderApp("/ui-v2/medialib/files");
+    // AuthBoundary redirects to / and stores the supported MediaLibrary Files
+    // route as the intended continuation target.
     expect(await screen.findByLabelText("API token")).toBeVisible();
-    expect(authStore.getIntendedPath()).toBe("/library");
+    expect(authStore.getIntendedPath()).toBe("/medialib/files");
     expect(
       await screen.findByRole("heading", { name: "V2 entry" }),
     ).toBeVisible();
+  });
+
+  it("records no intention for a retired Library route", async () => {
+    renderApp("/ui-v2/library/files");
+    expect(
+      await screen.findByRole("heading", { name: "此页面已迁移" }),
+    ).toBeVisible();
+    expect(authStore.getIntendedPath()).toBeNull();
   });
 
   it("redirects an unauthenticated Dashboard deep entry and preserves /dashboard", async () => {
@@ -64,24 +73,23 @@ describe("AuthBoundary", () => {
 
   it("keeps a still-authenticated operator on the deep route", async () => {
     authStore.setToken("boundary-token");
-    renderApp("/ui-v2/library");
+    renderApp("/ui-v2/medialib/files");
     expect(authStore.getIntendedPath()).toBeNull();
     expect(
-      await screen.findByRole("heading", { name: "Library" }),
+      await screen.findByRole("heading", { name: "尚未添加媒体库" }),
     ).toBeVisible();
-    expect(screen.getByRole("link", { name: "Open Files" })).toBeVisible();
   });
 
   it("replaces an earlier intention with the operator's newest route choice", async () => {
     const user = userEvent.setup();
     const fetchMock = stubFetch(async () => jsonResponse({}, 503));
-    renderApp("/ui-v2/library");
+    renderApp("/ui-v2/medialib/files");
     expect(await screen.findByLabelText("API token")).toBeVisible();
-    expect(authStore.getIntendedPath()).toBe("/library");
+    expect(authStore.getIntendedPath()).toBe("/medialib/files");
 
     // While still unauthenticated the operator explicitly picks Operations
     // from the shell navigation. The boundary records the newest supported
-    // route instead of keeping the stale /library intention, and returns to
+    // route instead of keeping the stale MediaLibrary intention, and returns to
     // the connection boundary.
     await user.click(screen.getByRole("link", { name: "Operations" }));
     expect(await screen.findByLabelText("API token")).toBeVisible();
@@ -130,12 +138,12 @@ describe("AuthBoundary", () => {
     const fetchMock = stubFetch(async () => jsonResponse({}, 401));
     authStore.setToken("expired-token");
     renderApp(
-      "/ui-v2/library/files?resourceLibraryId=resources&path=movies&cursor=page-2&access_token=cando-not&unknown=x",
+      "/ui-v2/resourcelib/files?resourceLibraryId=resources&path=movies&cursor=page-2&access_token=cando-not&unknown=x",
     );
     // The bounded unauthorized state appears after the 401 effect runs.
     await screen.findByRole("heading", { name: "Not authorized" });
     // The 401 effect sanitizes the search string to only allowlisted keys.
-    expect(authStore.getIntendedPath()).toBe("/library/files");
+    expect(authStore.getIntendedPath()).toBe("/resourcelib/files");
     expect(authStore.getIntendedSearch()).toBe(
       "resourceLibraryId=resources&path=movies&cursor=page-2",
     );

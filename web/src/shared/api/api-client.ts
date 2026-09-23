@@ -21,6 +21,12 @@ import {
   type StorageFilesModel,
 } from "../../entities/library/storage-files";
 import {
+  normalizeMediaLibraryFiles,
+  normalizeMediaLibraryList,
+  type MediaLibraryFilesModel,
+  type MediaLibraryListModel,
+} from "../../entities/library/media-library-files";
+import {
   normalizeResourceLibrarySave,
   type ResourceLibrarySaveModel,
 } from "../../entities/library/resource-library";
@@ -48,6 +54,7 @@ import {
 } from "../../entities/library/direct-files";
 import {
   DashboardApiError,
+  MediaLibraryFilesApiError,
   StorageFilesApiError,
   SystemStatusApiError,
 } from "./api-errors";
@@ -403,6 +410,232 @@ export async function fetchStorageFiles(
     return { ok: true, model: normalizeStorageFiles(payload) };
   } catch {
     throw new StorageFilesApiError("malformed");
+  }
+}
+
+// ---------------------------------------------------------------------------
+// MediaLibrary read-only browse API (Slice 38)
+// ---------------------------------------------------------------------------
+
+export type MediaLibraryFilesFailureKind =
+  | "storage_unavailable"
+  | "configuration_unavailable"
+  | "storage_not_found"
+  | "storage_disabled"
+  | "invalid_path"
+  | "not_found"
+  | "not_directory"
+  | "invalid_cursor"
+  | "media_library_not_found"
+  | "rejected";
+
+export interface MediaLibraryFilesFailure {
+  readonly kind: MediaLibraryFilesFailureKind;
+  readonly title: string;
+  readonly nextAction: string;
+}
+
+export type MediaLibraryFilesRead =
+  | { readonly ok: true; readonly model: MediaLibraryFilesModel }
+  | { readonly ok: false; readonly failure: MediaLibraryFilesFailure };
+
+const MEDIA_LIBRARY_FILES_FAILURE_TITLES: Readonly<
+  Record<MediaLibraryFilesFailureKind, string>
+> = {
+  storage_unavailable: "Storage read failed",
+  configuration_unavailable: "No Active runtime",
+  storage_not_found: "Storage not found",
+  storage_disabled: "Storage disabled",
+  invalid_path: "Invalid MediaLibrary-relative path",
+  not_found: "Directory not found",
+  not_directory: "Not a directory",
+  invalid_cursor: "Page continuation no longer valid",
+  media_library_not_found: "MediaLibrary not available",
+  rejected: "Request rejected",
+};
+
+const DEFAULT_MEDIA_NEXT_ACTION =
+  "Reload the current Active runtime and retry the same browse.";
+
+function mediaFailureFromErrorEnvelope(
+  code: string | undefined,
+  details: unknown,
+): MediaLibraryFilesFailure {
+  const record =
+    details !== null && typeof details === "object"
+      ? (details as Record<string, unknown>)
+      : {};
+  const category =
+    typeof record.category === "string" ? record.category : undefined;
+  const nextAction =
+    typeof record.nextAction === "string" && record.nextAction.length > 0
+      ? record.nextAction
+      : DEFAULT_MEDIA_NEXT_ACTION;
+  let kind: MediaLibraryFilesFailureKind = "rejected";
+  if (category !== undefined) {
+    if (PROVIDER_FAILURE_CATEGORIES.includes(category)) {
+      kind = "storage_unavailable";
+    } else if (category === "storage_not_found") {
+      kind = "storage_not_found";
+    } else if (category === "disabled") {
+      kind = "storage_disabled";
+    } else if (category === "invalid_path") {
+      kind = "invalid_path";
+    } else if (category === "not_found") {
+      kind = "not_found";
+    } else if (category === "not_directory") {
+      kind = "not_directory";
+    } else if (category === "cursor_invalid" || category === "cursor_expired") {
+      kind = "invalid_cursor";
+    } else if (category === "media_library_not_found") {
+      kind = "media_library_not_found";
+    }
+  } else if (code === "configuration_unavailable") {
+    kind = "configuration_unavailable";
+  }
+  return {
+    kind,
+    title: MEDIA_LIBRARY_FILES_FAILURE_TITLES[kind],
+    nextAction,
+  };
+}
+
+export type MediaLibraryFilesQueryOptions = {
+  readonly mediaLibraryId: string;
+  readonly path?: string;
+  readonly cursor?: string | null;
+};
+
+export function mediaLibraryFilesUrl(
+  options: MediaLibraryFilesQueryOptions,
+): string {
+  const params = new URLSearchParams();
+  if (options.path !== undefined && options.path !== "") {
+    params.set("path", options.path);
+  }
+  if (options.cursor !== undefined && options.cursor !== null) {
+    params.set("cursor", options.cursor);
+  }
+  const qs = params.toString();
+  return `/api/v1/media-libraries/${encodeURIComponent(options.mediaLibraryId)}/files${qs ? `?${qs}` : ""}`;
+}
+
+export async function fetchMediaLibraryFiles(
+  token: string | null,
+  options: MediaLibraryFilesQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<MediaLibraryFilesRead> {
+  if (!isSafeScopedIdentifier(options.mediaLibraryId)) {
+    return {
+      ok: false,
+      failure: mediaFailureFromErrorEnvelope(
+        "storage_browser_media_library_not_found",
+        {
+          category: "media_library_not_found",
+        },
+      ),
+    };
+  }
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(mediaLibraryFilesUrl(options), {
+      method: "GET",
+      headers,
+    });
+  } catch {
+    throw new MediaLibraryFilesApiError("unavailable");
+  }
+  // Authentication rejection is owned by the shared authorized-read boundary,
+  // which clears the rejected authority and cache exactly once.
+  if (response.status === 401) {
+    throw new MediaLibraryFilesApiError("unauthorized");
+  }
+  // A 403 is either an API-principal RBAC denial (stable code "forbidden") or
+  // a Storage-provider permission failure; only the former may clear a valid
+  // authority.
+  if (response.status === 403) {
+    const envelope = await readErrorEnvelope(response);
+    if (envelope.code === "forbidden") {
+      throw new MediaLibraryFilesApiError("forbidden");
+    }
+    return {
+      ok: false,
+      failure: mediaFailureFromErrorEnvelope(envelope.code, envelope.details),
+    };
+  }
+  if (response.status >= 500) {
+    const envelope = await readErrorEnvelope(response);
+    if (envelopeHasKnownStorageFailure(envelope)) {
+      return {
+        ok: false,
+        failure: mediaFailureFromErrorEnvelope(envelope.code, envelope.details),
+      };
+    }
+    throw new MediaLibraryFilesApiError("unavailable");
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      failure: mediaFailureFromErrorEnvelope(envelope.code, envelope.details),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new MediaLibraryFilesApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeMediaLibraryFiles(payload) };
+  } catch {
+    throw new MediaLibraryFilesApiError("malformed");
+  }
+}
+
+export async function fetchMediaLibraryList(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<MediaLibraryListModel> {
+  const headers: Record<string, string> = { Accept: "application/json" };
+  if (token !== null) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/media-libraries", {
+      method: "GET",
+      headers,
+    });
+  } catch {
+    throw new MediaLibraryFilesApiError("unavailable");
+  }
+  if (response.status === 401) {
+    throw new MediaLibraryFilesApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new MediaLibraryFilesApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    throw new MediaLibraryFilesApiError("unavailable");
+  }
+  if (!response.ok) {
+    throw new MediaLibraryFilesApiError("rejected");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new MediaLibraryFilesApiError("malformed");
+  }
+  try {
+    return normalizeMediaLibraryList(payload);
+  } catch {
+    throw new MediaLibraryFilesApiError("malformed");
   }
 }
 

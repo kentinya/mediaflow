@@ -12,7 +12,7 @@ afterEach(() => {
 describe("AppShell", () => {
   it("renders semantic navigation, active context and migration status", async () => {
     authStore.setToken("shell-test-token");
-    renderApp("/ui-v2/library");
+    renderApp("/ui-v2/medialib/files");
 
     expect(
       await screen.findByRole("navigation", { name: "Primary" }),
@@ -21,12 +21,23 @@ describe("AppShell", () => {
       "aria-current",
       "page",
     );
-    expect(screen.getByRole("heading", { name: "Library" })).toBeVisible();
-    expect(screen.getByRole("link", { name: "Open Files" })).toBeVisible();
-    expect(document.title).toBe("Library | MediaFlow");
+    expect(screen.getByRole("heading", { name: "媒体库" })).toBeVisible();
+    expect(document.title).toBe("MediaLibrary Files | MediaFlow");
     expect(
       screen.getByRole("link", { name: "Skip to main content" }),
     ).toHaveAttribute("href", "#main-content");
+  });
+
+  it("marks the ResourceLibrary Files destination active at its new address", async () => {
+    authStore.setToken("shell-test-token");
+    renderApp("/ui-v2/resourcelib/files");
+
+    expect(await screen.findByRole("link", { name: "Files" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(document.title).toBe("Files | MediaFlow");
+    expect(screen.getByRole("heading", { name: "文件" })).toBeVisible();
   });
 
   it("exposes a keyboard-operable narrow navigation control", async () => {
@@ -43,7 +54,7 @@ describe("AppShell", () => {
 
   it("does not render the unsupported system-storage capacity block", async () => {
     authStore.setToken("shell-test-token");
-    renderApp("/ui-v2/library");
+    renderApp("/ui-v2/medialib/files");
 
     // The shared shell and navigation remain operable.
     expect(

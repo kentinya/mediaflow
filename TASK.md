@@ -1,14 +1,310 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 38.1 — 分离库路由并完成 MediaLibrary 实时只读浏览
 
-Current Slice: 38 — MediaLibrary Files Workspace and Route Separation
-Slice Status: ACTIVE
-Next Action: B PLANS THE FIRST IMPLEMENTATION TASK WITHIN THE COMMITTED SLICE 38 CONTRACT
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [Slice Contract](SLICE.md).
 
-A activated the business-capability boundary in `SLICE.md`; no implementation Task, Difficulty or
-Test Level is assigned by this notice. B must inspect the actual repository and run
-`scripts/check_governance.py` before planning.
+```text
+Task ID: 38.1
+Parent Slice: 38
+Status: PLANNED
+Task Base: 86bb69d52891755933f23763d32558668b30f9c6
+Difficulty: High
+Test Level: T4
+Planner / Reviewer: B
+```
 
-The last completed Task was 37.12 — RecognitionType-driven Organize policy binding, reviewed through
-`aa54854c442d117c7eb23ae9800045c423db1368`. Slice 37 was subsequently PASS / CLOSED by A.
-Its final Task record and Slice review remain in Git at
-`9e801ae4485bc95d714a8902bf45bf37896fbc2a:TASK.md` and the same commit's `SLICE.md`.
+## Goal
+
+An authorized operator can enter separate ResourceLibrary Files and MediaLibrary pages, then select
+an enabled MediaLibrary and browse its actual Storage entries safely through API or Web. This
+completes Slice 38 RO-1 and the read-only MediaLibrary journey in RO-3, and establishes the kind
+separation required by RO-7. Configuration creation/removal and MediaLibrary commands remain later
+in-Slice work.
+
+## Why This Task Exists
+
+At Task Base, `/ui-v2/library` is a ResourceLibrary landing and `/ui-v2/library/files` is the
+ResourceLibrary Files page. The runtime browser, its cursor scope, the Web read model and shell
+search are ResourceLibrary-only; passing a MediaLibrary ID through them would confuse two different
+roots and authorities. A useful first unit is the complete read path and route migration together:
+operators can reach and browse a real destination library, while the existing source Files and
+Organize journey continues at its new address. This gives later Add and command Tasks a tested,
+kind-specific authority boundary instead of a relabelled source page.
+
+## Implementation Scope
+
+- Replace the old Library landing route with `/ui-v2/medialib/files` and move the existing Files
+  page to `/ui-v2/resourcelib/files`. Retire `/ui-v2/library` and `/ui-v2/library/files` with a
+  bounded unavailable-route state linking explicitly to both supported pages, without redirect or
+  work admission. Update sidebar state/title, shell search ownership, Dashboard/Operations and all
+  other internal Files links, authentication continuation and Files-originated Organize return
+  context, including previously created durable intent/preview/execution links. Preserve the exact
+  ResourceLibrary ID and relative directory. Keep the existing Files body and API behavior intact.
+- Add read-only MediaLibrary list and browse API under `/api/v1/media-libraries/...`, backed by the
+  exact Active runtime and Storage interfaces. The server selects the configured MediaLibrary and
+  enabled Storage and joins its configured root with a safe library-relative path; no client-sent
+  Storage ID or root is trusted. Preserve live entry identity, including boundary whitespace.
+  Return bounded cards/entry facts without FileIndex, Result, metadata, thumbnails or full-library
+  statistics. Disabled/unavailable libraries have truthful, actionable state and cannot be browsed.
+- Namespace MediaLibrary cursor authority by library kind, ID, snapshot, Storage, root, path and
+  page limit as appropriate. A ResourceLibrary cursor, even for the same ID/root, must fail on the
+  media endpoint and vice versa. Retain deterministic cursor paging and the existing bounded search
+  semantics; do not add recursive search or fabricated totals. Preserve existing ResourceLibrary
+  cursors/API compatibility.
+- Build the initial MediaLibrary read journey in the shared V2 shell: title/subtitle, enabled
+  library cards with Storage/root, selected card, lazy directory tree, exact breadcrumbs, refresh,
+  list/grid entries with type icons, six-column table structure, and honest previous/next paging.
+  Per-entry size and modified time are allowed; card totals/capacity/placeholders, thumbnails,
+  recognition/status and Organize/Scan/Preview controls are excluded. No dead Add or file-command
+  controls: those become available only when their later Tasks implement the corresponding journey.
+  Keep MediaLibrary page state, cache keys and shell search independent of ResourceLibrary Files.
+- Cover missing Active/binding/library/path, stale cursor, denied/unavailable Storage, malformed
+  responses, empty directories and externally removed directories with scoped error messages and
+  explicit root/refresh/configuration recovery. Refresh must drop stale directory and selection
+  memory while retaining a still-valid location. Reads, navigation, search and refresh perform zero
+  Storage mutation and start no processing Task or metadata request.
+- Update affected automated API, component and browser tests for the new addresses and the new
+  read journey. Preserve existing Files/Organize tests and the user's dirty
+  `docs/pics/文件页.png`; do not alter the supplied `docs/pics/媒体库页.png`.
+
+## Acceptance Criteria
+
+- [ ] Direct, sidebar and authenticated continuation reach both new routes with correct active
+      navigation and page/search ownership. The two retired routes show bounded recovery links and
+      start no work; no supported internal link emits a retired address.
+- [ ] Files at `/ui-v2/resourcelib/files` retains add/remove, browsing, search, refresh, direct
+      commands, single/batch Organize, policy binding and exact Organize return context. Existing
+      ResourceLibrary API and durable work remain compatible; unrelated V2/V1 journeys still work.
+- [ ] API and Web list and browse enabled MediaLibraries from the same Active snapshot and live
+      Storage. Equal MediaLibrary/ResourceLibrary IDs, overlapping roots and cross-kind cursors never
+      exchange authority. Client paths are library-relative, confined and exact. Reading is
+      side-effect free and does not depend on FileIndex or results.
+- [ ] The MediaLibrary page supports library selection, lazy navigation, bounded search, refresh,
+      list/grid and honest cursor paging, including empty and multi-page directories and names with
+      boundary whitespace. Missing/external deletion, 401/403, unavailable Storage and malformed
+      data identify the affected scope and offer a concrete safe next action.
+- [ ] The read-only page follows the specified hierarchy to the extent this Task's actions exist,
+      uses type icons, and shows no card statistics/capacity/placeholder, thumbnails, recognition
+      or organize status, or MediaLibrary Organize/Scan/Preview control. Keyboard/focus and narrow
+      layout remain usable. The Files body and shared shell are changed only as required by route,
+      search and navigation integration.
+- [ ] Focused and T4 regression/quality gates pass with actual counts, skips and unavailable gates
+      reported. The checkpoint includes only in-scope files and no credentials, `config/alist.json`,
+      unrelated image changes, deleted tests, weakened assertions or hidden skips.
+
+## Required Tests
+
+Run from the repository root unless a `web/` prefix is shown. Use the existing `.venv` and local
+fake/temporary Storage; no production services or user media.
+
+- `python3 scripts/check_governance.py`
+- `.venv/bin/python -m unittest discover -s tests -p 'test_runtime_files_browser.py'`
+- `.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'`
+- Add and run focused Python tests for MediaLibrary list/browse API, exact path/cursor/kind isolation,
+  invalid/denied/missing states and zero-mutation reads.
+- `.venv/bin/python -m unittest discover -s tests`
+- `npm --prefix web run test -- --run` (including new MediaLibrary page/model/API tests, Files,
+  shell, route and Organize return tests).
+- From `web/`: `npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/deep-link.spec.ts
+  tests/e2e/manual-operations.spec.ts` plus new MediaLibrary browse and retired-route browser tests.
+- `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`;
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`;
+  `.venv/bin/python -m pip check`; `scripts/docker_release_security_smoke_test.py`.
+- `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`.
+- Confirm `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` has no matches.
+- `npm --prefix web run typecheck`; `npm --prefix web run lint`;
+  `npm --prefix web run format:check`; `npm --prefix web run build`.
+- Inspect `git diff --check`, the Task Base..Head manifest, private files and the two reference
+  images. If a gate is unavailable, report the command, reason and remaining risk rather than
+  claiming a pass.
+
+## Non-goals
+
+- MediaLibrary Add drawer, checked activation, configuration removal or editing.
+- MediaLibrary direct file commands, text editing, Copy/Move, durable command Task/Worker or
+  recovery changes. These remain required later in Slice 38.
+- Card statistics/capacity/placeholders, thumbnails, MediaLibrary Organize/Scan/Preview,
+  FileIndex-derived physical rows, global search, arbitrary paging or new providers.
+- ResourceLibrary Files body redesign, V1 route removal, general shell redesign or changes to the
+  A-owned Slice Contract/Roadmap/requirements/architecture boundary.
+
+## Developer Completion Report
+
+### Changed Files
+
+Backend
+- `mediaflow/application/storage_browser.py` — `RuntimeFilesBrowserService._media_libraries`,
+  `list_media_libraries()`, `browse_media_library()`, `_media_library()`,
+  `_media_library_breadcrumbs()`, and the `media_library_not_found` failure category. The
+  MediaLibrary read path reuses the existing `ReadOnlyStorageGuard`/Storage interfaces and adds no
+  new mutation surface.
+- `mediaflow/interfaces/service_api.py` — `GET /api/v1/media-libraries`,
+  `GET /api/v1/media-libraries/{id}/files`, `_media_library_files_query`, the read-only audit
+  suppression entries for both routes and the error-projection route shapes.
+- `tests/test_media_library_browser.py` (new) — focused MediaLibrary API proof.
+
+Web
+- `web/src/entities/library/media-library-files.ts` (new) + `.test.ts` (new) — bounded
+  MediaLibrary list/browse frontend models and their normalizers.
+- `web/src/shared/api/api-client.ts`, `web/src/shared/api/api-errors.ts` +
+  `web/src/shared/api/media-library-api.test.ts` (new) — `fetchMediaLibraryList`,
+  `fetchMediaLibraryFiles`, `mediaLibraryFilesUrl`, `MediaLibraryFilesApiError` and the bounded
+  MediaLibrary failure mapping.
+- `web/src/features/library/media-library-query.ts` (new) — independent MediaLibrary query keys.
+- `web/src/features/library/MediaLibraryFilesPage.tsx` (new) + `.test.tsx` (new) — the read-only
+  MediaLibrary journey.
+- `web/src/features/library/LibraryLanding.tsx` (deleted) — the retired Library landing body.
+- `web/src/routes/router.tsx` + `web/src/routes/router.test.tsx` (new) — both new routes, the two
+  bounded retired-route registrations and the route-separation regressions.
+- `web/src/shared/navigation/destination-model.ts` + `.test.ts` — new paths, active state and the
+  `/medialib/files` continuation allowlist; `files-return.ts` now returns to
+  `/resourcelib/files`.
+- `web/src/shared/ui/AppShell.tsx` + `.test.tsx` — shell search ownership covers both Files pages.
+- `web/src/features/operations/OperationsLanding.tsx`, `OrganizeNewPage.tsx`,
+  `ManualOperationsRouter.test.tsx` — the manual ResourceLibrary action journey now lives on the
+  Operations workspace and the Organize compatibility landing links to the supported Files address.
+- `web/tests/fake-server.mjs` — deterministic MediaLibrary cards/entries, paging, cross-kind cursor
+  and failure fixtures.
+- `web/tests/e2e/medialib-files.spec.ts` (new) and updates to `deep-link.spec.ts`,
+  `library-files.spec.ts`, `library-file-detail.spec.ts`, `manual-operations.spec.ts`,
+  `operations.spec.ts` for the new addresses and the retired-route state.
+- `web/src/features/entry/EntryPage.test.tsx`, `web/src/shared/api/auth-store.test.ts`,
+  `web/src/shared/auth/AuthBoundary.test.tsx` — continuation/ownership tests at the new addresses.
+
+Not committed: the user's dirty `docs/pics/文件页.png` (preserved untouched) and the ignored
+`config/alist.json`. `docs/pics/媒体库页.png` was not modified.
+
+### Implemented
+
+- **Route separation (RO-1).** `/ui-v2/resourcelib/files` is the ResourceLibrary Files page and
+  `/ui-v2/medialib/files` is the MediaLibrary page. The sidebar entries, page titles, shell search
+  ownership, authentication continuation, the Organize compatibility landing and the
+  Files-originated Organize return context all use the new addresses; the exact ResourceLibrary ID
+  and relative directory are preserved. `/ui-v2/library` and `/ui-v2/library/files` are registered
+  as one bounded recovery state that links explicitly to both supported pages and performs no read,
+  admission or redirect. The retired Library landing body is removed.
+- **MediaLibrary read API (RO-3/RO-7).** `GET /api/v1/media-libraries` returns enabled libraries
+  with their Storage and configured root; `GET /api/v1/media-libraries/{id}/files` resolves the
+  library from the exact Active snapshot, verifies its Storage binding and joins the configured
+  root with a confined library-relative path, so no client-sent Storage ID or root is trusted.
+  Entries come from live Storage only — no FileIndex, Result, metadata, thumbnail or full-library
+  statistic is read or published, and boundary whitespace identity survives projection.
+- **Kind-namespaced cursor authority.** MediaLibrary cursors are issued under the
+  `media_library:<id>` scope with the existing revision/storage/path/limit context, so a
+  ResourceLibrary cursor fails on the media endpoint and vice versa — including the same-ID,
+  same-Storage, same-root case. Existing ResourceLibrary cursors and API behavior are unchanged;
+  paging stays deterministic with no recursive search or fabricated totals.
+- **MediaLibrary read journey.** The page shows the title/subtitle, enabled library cards with
+  Storage and root (selected card, no statistics/capacity/`未统计` placeholders), a lazy directory
+  tree, exact breadcrumbs, refresh, list/grid entries with type icons, the six-column table
+  structure, bounded search through the shell top bar, selection count/known size and honest
+  previous/next paging. Missing Active/Storage/path, stale or cross-kind cursors, denied or
+  unavailable Storage, malformed responses, empty and externally removed directories produce scoped
+  messages with an explicit retry or return-to-root recovery. Reads, navigation, search and refresh
+  perform zero Storage mutation and start no Task or metadata request.
+- **Independence.** MediaLibrary page state, cache keys and shell search are separate from
+  ResourceLibrary Files; a media route never requests the resource namespace and vice versa.
+
+### Tests and Results
+
+Task Base `86bb69d52891755933f23763d32558668b30f9c6`; all commands from the repository root unless
+`web/` is shown.
+
+| Command | Result |
+|---|---|
+| `python3 scripts/check_governance.py` | PASS |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_runtime_files_browser.py'` | PASS — 7 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_api_security.py'` | PASS — 13 tests |
+| `.venv/bin/python -m unittest discover -s tests -p 'test_media_library_browser.py'` (new) | PASS — 5 tests |
+| `.venv/bin/python -m unittest discover -s tests` | PASS — 1726 tests, 7 skipped |
+| `npm --prefix web run test -- --run` | PASS — 37 files, 503 tests |
+| `npm --prefix web run typecheck` | PASS |
+| `npm --prefix web run lint` | PASS |
+| `npm --prefix web run format:check` | PASS |
+| `npm --prefix web run build` | PASS |
+| `web/`: `npx playwright test` (full suite) | PASS — 134 tests |
+| `web/`: required specs `library-files`, `deep-link`, `manual-operations` + new `medialib-files` | PASS |
+| `.venv/bin/ruff format --check .` | PASS — 311 files formatted |
+| `.venv/bin/ruff check .` | PASS |
+| `.venv/bin/python -m compileall -q mediaflow tests scripts` | PASS |
+| `.venv/bin/python -m pip check` | PASS — no broken requirements |
+| `.venv/bin/mediaflow --config config/strategy.example.json config validate` | PASS |
+| `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate` | PASS |
+| `rg -n -i 'ffprobe\|ffmpeg' mediaflow pyproject.toml` | PASS — no matches (`rg` absent, equivalent `grep -rn -i -E` used) |
+| `scripts/docker_release_security_smoke_test.py` | PASS with `TMPDIR` inside the workspace — see Risks |
+
+New focused MediaLibrary Python coverage (`tests/test_media_library_browser.py`) proves the enabled
+list and browse documents, root-relative confined paths, boundary whitespace, the disabled-library
+404, invalid path/query/limit rejection, 401/503 fail-closed states, zero-mutation reads through an
+adapter that raises on every mutation, an empty Task/Job repository afterwards, and cross-kind
+cursor rejection in both directions for libraries whose ID, Storage and root are identical.
+
+### Decisions
+
+- Kept the existing `RuntimeFilesBrowserService` as the one read authority for both library kinds
+  instead of adding a second browser service; the MediaLibrary methods reuse the same
+  `ReadOnlyStorageGuard`, cursor codec and `_document` projection, so the kind difference is an
+  explicit scope value rather than a parallel implementation.
+- Namespaced the cursor by scope string `media_library:<id>` inside the existing cursor context
+  rather than changing the context schema. This keeps every previously issued ResourceLibrary cursor
+  valid while making cross-kind replay impossible.
+- Served the enabled-library list from `/api/v1/media-libraries` (mirroring
+  `/api/v1/resource-libraries/files`) instead of extending `system/status`, so the page's card data
+  and the browse authority come from the same Active snapshot in one read model.
+- Moved the manual ResourceLibrary action-matrix journey from the retired Library landing to the
+  Operations workspace (`OperationsLanding`) and made its scope selection URL-derived, so the
+  read-only-principal and backend-reason coverage survives the landing's retirement without a new
+  page.
+- Deleted nothing from the Files body: the only Files changes are its route address, the shared
+  search ownership and the return-href target.
+
+### Remaining In-Slice Work
+
+- MediaLibrary Add drawer, checked activation, configuration removal/editing (RO-4) and the
+  page-local configuration handoff for disabled libraries.
+- MediaLibrary direct file commands, text editing, Copy/Move and their durable Task/Worker
+  results/recovery (RO-5/RO-6), including the selection action bar's command controls and the
+  per-row More menu.
+- Controlled `1536 x 1024` screenshots and narrow-screen evidence for the closure packet, and the
+  Slice-final reconciliation of `docs/media-library-page-visual-spec.md` (still marked TARGET).
+
+### Risks / Deviations
+
+- `scripts/docker_release_security_smoke_test.py` needs `TMPDIR` inside the workspace
+  (`TMPDIR=/root/mediaflow/.smoke-tmp`); this environment's Docker daemon cannot bind-mount the
+  harness `/tmp`, and the unmodified default invocation fails with
+  `bind source path does not exist: /tmp/mediaflow-smoke-security-*/deployment.env`. This is an
+  environment limitation, not a product defect; the real deployment gate was not weakened.
+- `rg` is not installed, so the FFmpeg/FFprobe exclusion check was run with
+  `grep -rn -i -E 'ffprobe|ffmpeg' mediaflow pyproject.toml` and has no matches.
+- One full-suite run reported `test_rename_binds_observed_source_evidence_and_refuses_swaps`
+  (a Slice-37 Files direct-command test untouched by this Task) failing because the filesystem's
+  coarse `ctime_ns` made two same-size writes indistinguishable in `inode:ctime` identity — a direct
+  probe measured 288/300 collisions for that sequence. It passed in isolation, under CPU load, at
+  Task Base, and in the final full run. Recorded as environment-dependent pre-existing flakiness;
+  B should judge whether it needs its own follow-up.
+- `TASK.md` needed one addition to its Required Tests list: `scripts/docker_release_security_smoke_test.py`.
+  The pre-existing `tests/test_release_security.py` gate requires every active `TASK.md` to document
+  all release-quality commands, and the planned list omitted that command (the same correction B
+  made for Task 37.12, commit `6183005`). Task ID, Task Base, Goal and Scope are unchanged.
+- The MediaLibrary page's `操作` column shows only the working directory `打开` navigation; file rows
+  render `—` because this Task adds no file-command journey. Commands arrive with the later RO-5/RO-6
+  Tasks, so no dead control is presented.
+
+### Checkpoint
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: <filled by the commit that contains this report>
+```
+
+
+## B Review Result
+
+```text
+Reviewed: NOT YET
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
+```

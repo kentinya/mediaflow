@@ -10,7 +10,7 @@ import {
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
-import { LibraryLanding } from "../features/library/LibraryLanding";
+import { MediaLibraryFilesPage } from "../features/library/MediaLibraryFilesPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { OperationsLanding } from "../features/operations/OperationsLanding";
 import { TaskListPage } from "../features/operations/TaskListPage";
@@ -64,6 +64,25 @@ function NotFoundRoute() {
   );
 }
 
+/**
+ * The retired Library routes have no compatibility alias or redirect: a visit
+ * lands on one bounded recovery state that links explicitly to both supported
+ * pages and starts no work (no read, admission or mutation).
+ */
+function RetiredLibraryRoute() {
+  return (
+    <StatusBanner variant="warning" title="此页面已迁移">
+      <p>
+        旧的媒体库页面已拆分为两个独立入口：资源库文件页和媒体库文件页。此地址不再提供内容，也没有执行任何操作。
+      </p>
+      <div className="mf-actions">
+        <Link to="/resourcelib/files">打开资源库文件页</Link>
+        <Link to="/medialib/files">打开媒体库文件页</Link>
+      </div>
+    </StatusBanner>
+  );
+}
+
 const rootRoute = createRootRoute({
   component: RootRoute,
   notFoundComponent: NotFoundRoute,
@@ -81,15 +100,27 @@ const dashboardRoute = createRoute({
   component: DashboardPage,
 });
 
-const libraryRoute = createRoute({
+const retiredLibraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "library",
-  component: LibraryLanding,
+  component: RetiredLibraryRoute,
 });
 
-const libraryFilesRoute = createRoute({
+const retiredLibraryFilesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "library/files",
+  component: RetiredLibraryRoute,
+});
+
+const mediaLibraryFilesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "medialib/files",
+  component: MediaLibraryFilesPage,
+});
+
+const resourceLibraryFilesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "resourcelib/files",
   component: StorageFilesPage,
 });
 
@@ -258,8 +289,10 @@ const configurationRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   entryRoute,
   dashboardRoute,
-  libraryRoute,
-  libraryFilesRoute,
+  retiredLibraryRoute,
+  retiredLibraryFilesRoute,
+  mediaLibraryFilesRoute,
+  resourceLibraryFilesRoute,
   operationsRoute,
   taskListRoute,
   taskDetailRoute,

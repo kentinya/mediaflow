@@ -12,7 +12,6 @@
  * control.
  */
 
-import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -25,11 +24,12 @@ import type { ManualActionMatrixModel } from "../../entities/operations/manual-a
 
 function ManualOperationsSection({
   matrix,
+  selectedLibraryId,
 }: {
   readonly matrix: ManualActionMatrixModel;
+  readonly selectedLibraryId: string;
 }) {
   const navigate = useNavigate();
-  const [selected, setSelected] = useState("");
   const choices = matrix.resourceLibraries;
   const actionable =
     matrix.actions.scan.available || matrix.actions.preview.available;
@@ -55,20 +55,19 @@ function ManualOperationsSection({
           <select
             id="operations-resource-library"
             aria-label="ResourceLibrary scope"
-            value={selected}
+            value={selectedLibraryId}
             onChange={(event) => {
               const chosen = event.target.value;
-              setSelected(chosen);
-              if (chosen) {
-                void navigate({
-                  to: "/operations",
-                  search: {
-                    scopeKind: "resourceLibrary",
-                    resourceLibraryId: chosen,
-                  },
-                  replace: true,
-                });
-              }
+              void navigate({
+                to: "/operations",
+                search: chosen
+                  ? {
+                      scopeKind: "resourceLibrary",
+                      resourceLibraryId: chosen,
+                    }
+                  : { scopeKind: "resourceLibrary" },
+                replace: true,
+              });
             }}
           >
             <option value="">Choose a ResourceLibrary</option>
@@ -85,7 +84,7 @@ function ManualOperationsSection({
           </select>
         </p>
       )}
-      {selected !== "" && !actionable && (
+      {selectedLibraryId !== "" && !actionable && (
         <p className="mf-dashboard-meta">
           No manual action is available for this scope:{" "}
           {matrix.actions.scan.reason ??
@@ -214,7 +213,10 @@ export function OperationsLanding() {
               </nav>
             </section>
             {matrixQuery.data?.ok === true ? (
-              <ManualOperationsSection matrix={matrixQuery.data.model} />
+              <ManualOperationsSection
+                matrix={matrixQuery.data.model}
+                selectedLibraryId={chosenLibraryId ?? ""}
+              />
             ) : (
               <section className="mf-count-section">
                 <h3>Manual operations</h3>

@@ -25,7 +25,7 @@ export function OrganizeNewPage() {
           a ResourceLibrary, select a file, and create a zero-mutation Preview.
         </p>
         <div className="mf-actions">
-          <Link className="mf-button" to="/library/files">
+          <Link className="mf-button" to="/resourcelib/files">
             Open Files
           </Link>
           <Link className="mf-button mf-button-secondary" to="/operations">

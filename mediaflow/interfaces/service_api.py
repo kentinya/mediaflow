@@ -4593,6 +4593,27 @@ class MediaFlowApi:
             return self._response(
                 start_response, 200, binding.files_browser.list_resource_libraries()
             )
+        if parts == ["api", "v1", "media-libraries"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            if binding.files_browser is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "MediaLibrary list")
+            return self._response(start_response, 200, binding.files_browser.list_media_libraries())
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            if binding.files_browser is None:
+                return self._files_browser_unavailable(start_response)
+            query = self._media_library_files_query(environ, parts[3])
+            return self._response(
+                start_response,
+                200,
+                binding.files_browser.browse_media_library(**query),
+            )
         if (
             parts == ["api", "v1", "storage", "files"] or parts == ["api", "v1", "files", "browse"]
         ) and method == "GET":
@@ -7580,6 +7601,7 @@ class MediaFlowApi:
             ("api", "v1", "file-index"),
             ("api", "v1", "files"),
             ("api", "v1", "storage", "files"),
+            ("api", "v1", "media-libraries"),
         }
         key = tuple(parts)
         if key in exact:
@@ -7730,6 +7752,12 @@ class MediaFlowApi:
             }
         ):
             return f"/api/v1/resource-libraries/{{id}}/files/{parts[5]}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+        ):
+            return "/api/v1/media-libraries/{id}/files"
         if (
             len(parts) == 5
             and parts[:3] in (["api", "v1", "files"], ["api", "v1", "file-index"])
@@ -8787,6 +8815,24 @@ class MediaFlowApi:
         }
 
     @classmethod
+    def _media_library_files_query(cls, environ: dict, media_library_id: str) -> dict[str, object]:
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"path", "limit", "cursor"}
+        if set(query).difference(allowed) or any(len(value) != 1 for value in query.values()):
+            raise ValueError("MediaLibrary Files query contains unsupported or repeated fields")
+        if not media_library_id:
+            raise ValueError("MediaLibrary Files route requires mediaLibraryId")
+        cursor = query.get("cursor", [None])[0]
+        if cursor == "":
+            raise ValueError("MediaLibrary Files cursor must not be empty")
+        return {
+            "media_library_id": media_library_id,
+            "path": query.get("path", [""])[0],
+            "limit": cls._parse_bounded_limit(query.get("limit", ["50"])[0], "Files"),
+            "cursor": cursor,
+        }
+
+    @classmethod
     def _files_direct_text_query(cls, environ: dict) -> str:
         query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         allowed = {"path"}
@@ -9188,6 +9234,12 @@ class MediaFlowApi:
             or (
                 len(parts) == 5
                 and parts[:3] == ["api", "v1", "resource-libraries"]
+                and parts[4] == "files"
+            )
+            or parts == ["api", "v1", "media-libraries"]
+            or (
+                len(parts) == 5
+                and parts[:3] == ["api", "v1", "media-libraries"]
                 and parts[4] == "files"
             )
             or (
