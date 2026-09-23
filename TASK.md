@@ -296,7 +296,7 @@ cursor rejection in both directions for libraries whose ID, Storage and root are
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: <filled by the commit that contains this report>
+Head SHA: e431580f8dfde78e92a0f7e6985fec1b203a1b4b
 ```
 
 
