@@ -1,9 +1,16 @@
 # Files Page Visual Specification
 
-Status: ACTIVE — Slice 37 reactivated 2026-09-22 (Save Choice resolver and fake System Storage removal)
+Status: CURRENT — Slice 37 PASS / CLOSED; Slice 38 route migration is TARGET
 Canonical image: [`docs/pics/文件页.png`](pics/文件页.png)
 Reference size: `1536 x 1024` pixels
 Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
+
+Slice 38 TARGET moves this same Files journey to `/ui-v2/resourcelib/files`. Its current body,
+commands and Organize continuation remain protected. The new MediaLibrary page has a separate
+[visual specification](media-library-page-visual-spec.md); that page's explicit removal of card
+statistics and file thumbnails does not revise this Files presentation. Slice 37's final Contract
+and review are preserved at `9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git; root
+`SLICE.md` now owns the next capability.
 
 This document is the visual source of truth for the Files page and the shared V2 shell that frames
 it. The image is an existing user asset and must not be edited, regenerated, compressed, recolored
@@ -39,8 +46,9 @@ preserved when the refreshed read remains valid, and the existing bounded read-f
 its recovery actions are preserved when the current directory is gone.
 
 The earlier wording in this document that still names the removed columns or the withdrawn Upload/
-Download surfaces is historical. Where it conflicts with the current Contract, `SLICE.md` and this
-section control.
+Download surfaces is historical. Where it conflicts with the closed Slice 37 Contract, that
+historical Contract and this section control the Files baseline; the current Slice adds only its
+explicit migration requirements.
 
 ## Implementation Status — 2026-09-22
 
@@ -86,8 +94,8 @@ The Slice 37 implementation contains the replacement shared shell, live Files co
 ResourceLibrary activation, common file commands and Organize/FileIndex reconciliation. Its
 controlled screenshot is reference-aligned but not pixel-identical. Under the 2026-09-14 A
 acceptance refinement, pixel-diff counts are diagnostic evidence rather than an independent
-pass/fail gate; the final review evidence and non-blocking baseline debts are recorded in
-[`SLICE.md`](../SLICE.md).
+pass/fail gate; the final review evidence and non-blocking baseline debts remain in the historical
+Slice 37 Contract identified above, with its closure in [Progress](progress.md).
 
 ## Scope
 

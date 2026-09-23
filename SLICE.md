@@ -1,1542 +1,291 @@
-# Slice 37 — Files Workspace, Common File Management and V2 Shell
+# Slice 38 — MediaLibrary Files Workspace and Route Separation
 
-This is the A-owned Slice Contract for the Files workspace, its ResourceLibrary journey, bounded
-common file management and the shared V2 shell replacement required by the canonical visual
-reference. Slice 33 remains `PASS / CLOSED` in Git and Progress history. The previously planned
-Slice 34, Slice 35 and Slice 36 boundaries remain retired.
+This is the A-owned Contract for browsing and maintaining files in configured MediaLibraries using
+the approved reference, while preserving the closed Slice 37 ResourceLibrary Files journey.
 
 ```text
-Slice ID: 37
-Name: Files Workspace, Common File Management and V2 Shell
+Slice ID: 38
+Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
-Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
+Status: ACTIVE
+Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
+Implementation Head: NOT SET
+Contract Revision: 2026-09-23 A activation — no card statistics or file thumbnails
 ```
 
-The Slice Base is immutable. This A-owned rescope superseded the earlier
-Files-page-only/frozen-shell interpretation without changing that Base. Work produced by Task 37.1
-before this revision was implementation evidence only and was reviewed against this checkpointed
-Contract as part of the completed Slice.
+Slice 37 remains `PASS / CLOSED`. Its complete Contract, Closure Packet and A Final Review remain
+in Git at `9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md`, with its closure recorded in
+`docs/progress.md`. This Slice does not reopen that implementation or rewrite history. The Base is
+immutable. B may plan Tasks after this Contract and its ACTIVE Roadmap row are committed; no
+implementation Task has yet been assigned.
 
-## Current Post-closure Reactivation — Files Save Choice Runtime Resolver
+## User Goal
 
-On 2026-09-22, A reactivated Slice 37 under the post-closure P0/P1 correction loop after
-production-like use showed that a Files-originated manual Organize intent can be created
-successfully, but saving a valid choice is rejected with
-`manual_intent_configuration_unavailable` before the choice is persisted.
+An authorized operator selects or adds a MediaLibrary, browses actual files below its configured
+root, performs ordinary bounded file maintenance, and understands each result and safe recovery
+action. The separate Files page retains the complete ResourceLibrary journey, including Organize.
 
-The defect is a P1 user-visible Organize workflow break inside RO-8 Organize workflow continuity,
-RO-9 actionable recovery and the Files-originated Save Choice surface. The deployed Active
-configuration is healthy and the failing intent is bound to the current Active revision and digest.
-The automatic `MediaFlowApi` construction supplies `configuration_service` and `storage_factory`
-to `ManualOrganizeIntentService` but does not supply `runtime_resolver`; the Save Choice path checks
-the raw optional field instead of the internally available managed resolver, so every
-Files-originated choice edit fails closed before source revalidation or persistence. Existing tests
-miss this because their successful Files-originated path explicitly injects `runtime_resolver`.
+MediaLibrary remains the configured destination used by Classification and Organize. Its browser
+shows actual Storage entries, including externally created files, directories and sidecars, whether
+or not MediaFlow previously organized or indexed them.
 
-This correction is intentionally narrow: make the production service composition and source
-validation use the managed pinned-runtime resolver already available to the service, and add a
-regression through the automatic API construction path. It must preserve zero-mutation source
-validation, exact snapshot pinning, FileIndex-independent Files authority, optimistic version
-fencing and no automatic replay. It does not change the choice contract, configuration model,
-Storage providers, OrganizerExecutor boundary, Files presentation, or any media directory.
-The prior Closure Packet and A Final Review remain immutable historical facts; B must plan one
-focused correction Task and the next A review must cover the original Base through the corrected
-Implementation Head.
+## A Scope Decisions
 
-## Current A-owned Scope Revision — Remove Fake System Storage Block
+- Replace the current V2 Library landing content with the MediaLibrary file-management journey.
+- Files moves to `/ui-v2/resourcelib/files`; MediaLibrary uses `/ui-v2/medialib/files`.
+- Retire `/ui-v2/library/files` and `/ui-v2/library` as supported routes. No compatibility aliases
+  or automatic redirects are part of this Contract. Visits reach bounded unavailable-route recovery
+  with explicit links to the two supported pages and start no work.
+- The visual reference is [媒体库页.png](docs/pics/媒体库页.png), interpreted by
+  [the MediaLibrary visual specification](docs/media-library-page-visual-spec.md).
+- The user's explicit correction overrides the picture: the new MediaLibrary page has **no card
+  file-count/capacity statistics and no file thumbnails**. Do not show `未统计` or other statistics
+  placeholders, collect full-library totals, or fetch/generate thumbnails. List/grid entries use
+  type icons. Per-entry size, selected-item count/known size and bounded command impact/progress
+  remain in scope as file-operation facts.
+- MediaLibrary offers the currently delivered Slice 37 common file commands without media Organize
+  entry points or requests. Browser Upload/Download remains excluded.
+- The presentation exclusions apply to the new MediaLibrary page; they do not authorize unrelated
+  changes to the existing ResourceLibrary Files body or shared shell.
 
-On 2026-09-22, A revised the current Slice correction boundary after confirming that the shared V2
-shell renders a hardcoded `系统存储` block (`12.4 TB / 20 TB`, `62%`) that is not backed by a
-current product data source and is not needed by the operator journey.
+## Baseline and Requirements
 
-This is a P1 user-visible truthfulness defect inside RO-1 reference-aligned shell presentation,
-RO-2 shared V2 shell replacement, RO-9 actionable/truthful recovery and RO-11 test reconciliation.
-The current product must not present fabricated system capacity or usage as live state.
+At Base, the V2 Library landing links to ResourceLibrary Files, Scan and Preview; it is not a
+MediaLibrary browser. The browser, direct commands, transfer evidence and durable execution currently
+resolve ResourceLibrary authority. MediaLibrary configuration and Storage adapters already exist.
+Relabelling the page or passing a media ID as a resource ID cannot deliver this Slice.
 
-The correction is intentionally narrow: remove the fake `系统存储` block from the shared V2 shell,
-update the synchronized visual specification and shell tests, and add no replacement Storage probe,
-capacity API, background collection, provider change or new settings surface. The canonical image
-remains the visual reference for the surrounding shell hierarchy, while this explicit A-owned
-product-boundary revision overrides that one unsupported status block. This correction is added to
-Task 37.11 at A's explicit direction; the existing Save Choice backend correction remains bounded
-and must retain its snapshot, zero-mutation and authority invariants.
+Applicable requirements include `REQ-LIB-002/003`, `REQ-STO-*`, `REQ-CONFIG-*`, `REQ-SAFE-*`,
+`UX-001/002/003/004/007/009/010`, `V2-UX-*`, `V2-AUTH-*`, `V2-SAFE-001`,
+`V2-FILES-002/003` for retained Files behavior and `V2-MEDIALIB-001/002/003/004`.
+The canonical MediaLibrary definition and final destination composition remain unchanged. TARGET
+sections in product and architecture documents describe planned work, not delivery.
 
-## Current A-owned Scope Revision — RecognitionType-driven policy binding
+## Operator Journey and UX Constraints
 
-On 2026-09-22, A reactivated Slice 37 after confirming a P1 operator-facing mismatch in the
-manual Organize choice editor. The backend correctly requires the selected RecognitionType to use
-its exact configured NamingPolicy, ClassificationPolicy and OrganizePolicy, but the Web editor
-lists all enabled downstream policies as independently selectable controls. An operator can
-therefore submit a combination that the current pinned snapshot must reject with
-`incompatible_choice`, even though the controls present it as selectable.
+| Stage | Required experience |
+|---|---|
+| Entry | Shared sidebar `媒体库` or MediaLibrary deep link; `文件` selects the separate ResourceLibrary route. Authentication continuation preserves a valid page and bounded directory context. |
+| Visible state | Active MediaLibrary cards with name, enabled state, Storage and root; selected library; lazy directory tree; exact relative breadcrumbs; live rows; list/grid; selection; bounded paging; permissions and read failures. |
+| Action | Select a library, navigate, search within the existing bounded browser semantics, refresh, select entries, add/remove a library configuration, create folder/text, rename, copy, move, delete or edit supported text. |
+| Success | A saved enabled library is actually Active and browseable; known file-command success is recorded per item and reflected in a fresh live listing. Long work has durable Task progress and supported lifecycle actions in Web. |
+| Failure | Missing Active, missing/disabled library, invalid path/name, denied permission, unavailable Storage, unsupported capability, stale evidence, conflict, invalid configuration and partial/uncertain mutation identify the affected scope and known effects. |
+| Recovery | Follow existing setup/configuration; retain and correct form input; select another library/destination; return to root; refresh/revalidate; inspect durable per-item outcomes and use only backend-advertised safe continuation. |
 
-This correction remains inside RO-8 Organize workflow continuity, RO-9 actionable recovery and
-RO-11 test reconciliation. The RecognitionType is the authoritative choice source: selecting it
-must automatically populate the three configured downstream policy IDs and make those values
-non-editable in the normal Web journey. The backend compatibility validation, immutable snapshot
-pinning, optimistic version fencing, zero-mutation Save Choice boundary and RecognitionType
-identity semantics remain mandatory and unchanged. RecognitionType C must continue to preserve C
-while using whatever downstream policies the pinned configuration maps to it, including A where
-configured.
-
-The correction is intentionally limited to the Organize Web editor, its request projection and
-focused Web/API contract tests. It does not change the configuration model, policy mappings,
-manual choice API shape, metadata identity, Preview/Execute flow, Storage authority or any Files
-mutation surface. If a pinned RecognitionType mapping is missing or malformed, the editor must
-fail closed with an actionable reload/recovery state rather than guessing a policy or submitting
-an incompatible choice.
-
-## Post-closure Reactivation
-
-On 2026-09-20, A reactivated Slice 37 under the post-closure P0/P1 correction loop. The
-newly discovered P1 defect is a user-visible target-path semantic mismatch: the local CLI
-previews `ClassificationRule.result.library` as the first target-path prefix, while the
-formal Organize flow omits it and starts with `result.path`. The same configured rule can
-therefore preview and organize to different destinations.
-
-This correction remains inside RO-8 Organize workflow continuity and the existing final-target
-composition invariant. It does not add a new provider, classification condition, Storage
-capability, mutation path, Files surface or non-Files business journey. The prior Closure Packet
-and A Final Review remain historical facts; this reactivation adds one focused correction Task
-and requires a fresh A review over the original Base through the corrected head.
-
-## Current Post-closure Reactivation — Files Refresh Truthfulness
-
-On 2026-09-21, A reactivated Slice 37 again under the post-closure P0/P1 correction loop after
-production-like use showed that an externally deleted ResourceLibrary directory such as
-`source/电影/SSH` can remain visible in the Files directory tree after the operator clicks
-`刷新`.
-
-The defect is a P1 user-visible state/recovery break inside RO-3 exact Files composition,
-RO-5 Storage-authoritative Files data, RO-9 actionable recovery and RO-11 test reconciliation.
-The backend Files read already re-reads live Storage and does not use FileIndex as its V2 Files
-authority. The Web page retains `knownDirectoryPaths` and `visitedDirectories` across a refresh,
-so the directory tree can re-render a path that the refreshed Storage listing no longer contains.
-
-This correction is intentionally narrow: refresh must reconcile the local directory-tree and
-selection presentation with the newly fetched live listing. It does not add a FileIndex sync,
-background scan, mutation, cache layer, provider capability, route, or new Files command. The
-prior Closure Packets and A Final Reviews remain immutable historical facts; this reactivation
-adds Task 37.9 and requires a fresh A review over the original Slice Base through the corrected
-head.
-
-## Current Post-closure Reactivation — Files Exact Path Identity
-
-On 2026-09-22, A reactivated Slice 37 again under the post-closure P0/P1 correction loop after
-production-like Docker use found that a ResourceLibrary directory whose real Storage name is
-`SSH ` (one trailing ASCII space) is shown as `SSH` and opens as `电影/SSH`, producing a
-Storage `not_found` error even though the live directory is present.
-
-The deployed stack is running from `/opt/mediaflow` and mounts the host Storage
-`/mnt/HDD_2` at `/media`. The live Files API correctly returns the exact entry identity
-`name = "SSH "` and `path = "电影/SSH "`. The Web shared normalizer applies `trimEnd()` to
-the Files entry name/path projection, so the UI loses the identity character before rendering and
-navigation. This is a P1 user-visible path-authority and recovery break inside RO-3 exact Files
-composition, RO-5 Storage-authoritative Files data, RO-9 actionable recovery and RO-11 test
-reconciliation.
-
-This correction is intentionally limited to the Web Files projection and its tests: exact
-Storage-relative names and paths must survive normalization, navigation must request the exact
-encoded path, and invisible leading/trailing whitespace must be made unambiguous in the visible
-Files presentation. It does not change Storage providers, backend/API contracts, FileIndex,
-Docker/Compose deployment, or any media directory. The user-owned test residual directory is
-explicitly outside this Task and will not be deleted, renamed or otherwise mutated by Developer.
-This reactivation adds Task 37.10 and requires a fresh A review over the original Slice Base
-through the corrected head.
-
-The same reactivation also records a RO-11 quality-gate correction discovered in GitHub Actions
-quality run `#115` on 2026-09-21. The accepted Local directory replacement risk uses the provider's
-stable directory identity (the inode segment), while the two host-filesystem tests were branching
-on the full `inode:...:ctime:...` token and could demand a refusal in the already-accepted
-inode-reuse/ctime-change case. Task 37.9 must align those tests with the accepted contract without
-changing production fencing, adding skips, or claiming the race is fixed. The release-quality Task
-command inventory must also remain present in the active `TASK.md`.
-
-GitHub quality run `#117` then showed that the corrected tests completed successfully on Python
-3.11 and 3.13, while the Python 3.12 matrix job was cancelled by the existing 15-minute test-job
-timeout before its full 1718-test run completed. Task 37.9 raised only the quality test job timeout
-to 30 minutes; it did not remove a Python version, weaken a test, or change the wheel job timeout.
-The resulting GitHub quality run `#118` on commit `320d8437a8872f7a08ee84295a0f900a39f84a7d`
-passed all Python 3.11/3.12/3.13 jobs and the dependent wheel build/smoke job. CI is now a green
-baseline for the remaining Files Web implementation.
-
-## Current A-owned Scope Clarification — Remove Files Recognition/Status Feedback
-
-On 2026-09-21, A authorized a focused Files presentation correction: the Files page must no
-longer present the business concepts `识别结果` or `整理状态`. This removes those concepts from
-the Files information banner, table headers/cells and row status presentation. The Files table
-continues to expose physical file facts and explicit actions, with the resulting columns:
-`选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`.
-
-This is a presentation-boundary correction, not removal of the underlying recognition, metadata,
-FileIndex or organize data model. The backend/API projections may remain available for their
-existing authorities and result synchronization, but Files must not display those two concepts as
-business feedback. The explicit `整理` operation, single-item Preview path, bounded batch path and
-OrganizerExecutor authority remain in scope and must continue to work.
-
-The current visual source of truth must be reconciled to this clarification before final review.
-The existing visual-spec wording that names the removed columns remains historical/pending
-synchronization until that follow-up is completed; it does not authorize reintroducing the
-removed page presentation.
-
-## Current A-owned Scope Revision — Remove Direct Files Upload/Download
-
-On 2026-09-20, A explicitly revised the current Slice boundary after confirming that the operator
-does not need direct browser Upload or Download from the Files workspace. The current product
-surface therefore retains Files browsing, ResourceLibrary activation, Create Folder/Text File,
-Rename, Copy, Move, Delete, bounded text Edit and Organize continuation, but no longer offers
-direct browser Upload or Download.
-
-This is a vertical product-scope removal, not a UI-only hide. The implementation must remove the
-Files Upload/Download controls, dialogs, client calls, HTTP routes, application services, direct
-Upload/Download domain projections and their dedicated tests. It must not remove Storage
-`Read`/`Write`, OpenList/S3 provider transfer primitives, Copy/Move transfer behavior or other
-OrganizerExecutor capabilities used by the remaining journeys.
-
-The previous Slice 37 Closure Packet recorded the then-delivered Upload/Download surfaces and
-remains historical evidence. This current A-owned revision supersedes those surfaces for the
-reactivated implementation boundary; it does not delete or rewrite the historical record.
-
-## Current A-owned Scope Clarification — Copy/Move Bounds
-
-On 2026-09-20, A clarified the existing bounded Copy/Move contract after production evidence showed
-that the implementation treated `20 GiB` of source media content as an admission limit. Media
-content byte size does not materially determine the in-memory manifest size and must not by itself
-reject a Copy or Move.
-
-For Copy/Move, bounded scope means:
-
-- bounded top-level selection count;
-- bounded recursively enumerated entry count and directory depth;
-- bounded safe relative paths and bounded manifest/checkpoint/operator projections;
-- metadata-only Impact/admission that does not read media bytes;
-- the existing one-Task, per-item execution, fencing, conflict and recovery behavior.
-
-The aggregate media byte count remains useful impact/progress information, but it is not a
-Copy/Move admission ceiling. This clarification does not authorize multi-batch orchestration,
-parallel child Tasks, a native-directory-Move bypass, a new Storage capability, an implicit
-fallback or automatic replay. Delete and bounded text Edit retain their own existing content/scope
-limits.
-
-## Current A-owned Residual Risk Disposition — Concurrent Local Directory Replacement
-
-On 2026-09-21, A accepted the narrow residual race in which another process deletes and recreates
-the same Local directory between the final confirmed-scope revalidation and the actual Delete, and
-the filesystem reuses the previous inode. The existing implementation already requires explicit
-Delete confirmation, re-enumerates and digests the bounded scope before mutation, performs a final
-metadata revalidation and mutates only through `OrganizerExecutor`. Those controls remain mandatory.
-
-Slice 37 does not add a cross-provider directory-generation architecture, birth-time/statx
-dependency, persistent directory handle model or new Storage capability solely to close this
-extremely narrow race. The limitation is documented in README with an operator recovery/prevention
-path: quiesce download, sync and other file-management processes for the selected directory,
-refresh Files, review the current impact and confirm again immediately.
-
-This disposition does not authorize removing the existing scope digest, stale checks, explicit
-confirmation, bounded enumeration, per-item outcomes or non-replay rules. It changes the current
-acceptance meaning by treating inode-reuse inside that final race window as a known non-blocking
-residual risk rather than a Slice P0/P1 blocker. B must reevaluate Task 37.8 against this revision;
-Developer must not implement the superseded directory-generation/fencing expansion.
-
-## Scope decision
-
-The approved [`docs/pics/文件页.png`](docs/pics/文件页.png) is the product design to implement, not
-an inspiration image and not a page card to place inside the old dark horizontal V2 shell. Slice 37
-owns a deliberate replacement of the previous V2 shell presentation with the reference's light
-left navigation rail and top bar. The same shared shell must frame all V2 routes so Files does not
-create a second navigation system. Existing non-Files business journeys, route authority and page
-behavior remain intact, but their outer shell pixels are intentionally allowed to change.
-
-Slice 37 also makes Files a practical common file-management surface. In addition to browsing and
-organizing, an authorized operator can create folders or supported text files; rename, copy, move
-and delete files/directories; and edit bounded supported text files. Direct browser Upload and
-Download are removed from the current product boundary.
-Single-item actions and bounded multi-selection actions share one Files interaction model. These are
-direct file-management commands, not media recognition/metadata/naming/classification/organize
-decisions. They do not require the full Organize Preview/policy/execution-token ceremony, but every
-mutation remains backend-authoritative, confined to explicitly selected Active ResourceLibrary
-roots, capability-checked, auditable and executable only through `OrganizerExecutor`. Delete and
-replace are never silent; conflicts, partial transfer and stale content remain explicit.
-
-Arbitrary binary/media-content editing, unbounded recursive operations, arbitrary host paths and
-implicit operation fallback remain outside this Slice.
-
-During this reactivation, Slice 37 also owns the formal destination-composition correction:
-`ClassificationRule.result.library` must be validated as a safe relative path prefix and
-composed before the classification rule's relative `path`, matching the CLI's `Movies/其他电影/...`
-behavior. `mediaLibraryId` continues to select the configured MediaLibrary, Storage and root;
-`library` does not replace that authority.
-
-The detailed visual source of truth is
-[`docs/file-page-visual-spec.md`](docs/file-page-visual-spec.md). The image is authoritative for
-visual detail; this Contract controls product scope, authority and safety.
-
-For the current reactivation, this Contract additionally controls the Files presentation boundary:
-the page does not display `识别结果` or `整理状态`, while the explicit `整理` action and its
-server-authoritative continuation remain available. The visual specification must be synchronized
-before final Slice review.
-
-## User goal and vertical journey
-
-**Goal:** an authorized operator can enter the redesigned V2 shell, open Files, understand the
-active ResourceLibrary, browse live Storage entries, perform ordinary bounded file management,
-create a ResourceLibrary and continue selected media through safe organization without interpreting
-backend implementation details.
-
-**Entry:** select `文件` in the shared reference-aligned V2 shell or open
-`/ui-v2/library/files` (router path `/library/files`) through the existing memory-only API-principal
-authentication boundary.
-
-**Visible state:** at `1536 x 1024` the route presents the canonical reference composition: shared
-light left rail, top bar, active Files navigation, search, ResourceLibrary summary, information
-banner, directory tree, breadcrumb, file table, selected row, selection footer, pagination and open
-`添加资源库` drawer. The action surfaces expose `新建文件夹`, `新建文本文件`, `重命名`,
-`复制`, `移动`, `删除` and supported `编辑`. Direct `上传` and `下载` surfaces are absent.
-The Files page does not display `识别结果` or `整理状态` feedback; the explicit `整理` action
-remains available. Unsupported actions are absent or explain why they are unavailable. Raw backend
-authority fields are not displayed.
-
-**Action:** browse or refresh a ResourceLibrary-relative directory, switch presentation, select or
-clear entries, create a folder or supported text file, rename/copy/move/delete eligible files or
-directories, edit and save bounded text, create and activate a ResourceLibrary, or open the
-existing server-authoritative organize Preview journey.
-
-**Success:** shell and Files visuals match the reference; direct file actions update the live
-listing without leaving hidden stale selection; a saved ResourceLibrary becomes part of the exact
-Active runtime; and terminal Organize results synchronize their known outcome to FileIndex.
-
-**Failure:** missing Active configuration, unavailable Storage, invalid path, stale or changed
-source, unsupported operation, name/destination conflict, edit conflict/encoding/size failure,
-bounded-recursion or transfer-limit failure, partial copy/move, denied permission, malformed
-response, activation failure, Organize failure or FileIndex synchronization failure is shown on
-the affected item with no fabricated success, implicit overwrite/delete or uncertain replay.
-
-**Recovery:** return to the ResourceLibrary root, correct a name, destination or edit conflict,
-reload changed text, inspect independently completed/failed Copy/Move items, explicitly confirm a
-still-current bounded deletion, select another ResourceLibrary, correct and resubmit a failed
-ResourceLibrary save, inspect the durable Organize result or repair bounded index synchronization.
-Failed or uncertain mutations refresh truth and are never automatically repeated.
+Ordinary operations do not require raw tokens, revision IDs, Task IDs or evidence copying. The Add
+drawer opens only on explicit intent and retains correctable input after failure. Navigation or
+closing a dialog never implies cancellation/rollback of admitted work. Keyboard use, focus return,
+accessible names and usable narrow-screen layouts are required.
 
 ## Required Outcomes
 
-| ID | Outcome | Acceptance state |
-|---|---|---|
-| RO-1 | **Reference-aligned visual fidelity.** | A controlled `1536 x 1024` Files success screenshot preserves the canonical image's shared-shell and Files hierarchy, visible fixture state, labels, control order and design intent. Pixel-diff counts are diagnostic rather than a pass/fail threshold; bounded differences in font/glyph rendering, icon or thumbnail artwork, exact dimensions/spacing, borders, shadows and color nuance are acceptable when the required composition remains complete, recognizable and operable. |
-| RO-2 | **Shared V2 shell replacement.** | The old dark horizontal shell is replaced by the reference-aligned light left rail/top bar across V2. Files has no alternate shell; the current shell does not fabricate unsupported system-capacity/status data; existing route/auth/deep-link behavior remains shared and non-Files business journeys remain functional. |
-| RO-3 | **Exact Files composition.** | Header, banner, ResourceLibrary summary, directory tree, breadcrumb, toolbar, table, row values/actions, selection footer, pagination and drawer appear in the exact reference order and hierarchy; the Files page does not expose `识别结果` or `整理状态` feedback, while the explicit `整理` action remains available. |
-| RO-4 | **ResourceLibrary drawer and activation.** | The three-step drawer matches the reference; final `保存` submits one complete candidate and the backend validates and atomically activates it, preserving the previous Active on every failure. |
-| RO-5 | **Storage-authoritative Files data.** | Physical entries and paths come from live ResourceLibrary-scoped Storage. FileIndex remains available for bounded backend reconciliation and existing result synchronization, but it does not supply Files-page recognition/status presentation, source/path authority or execution authority. |
-| RO-6 | **Bounded common file management.** | Files provides Create Folder/Text File, Rename, Copy, Move, Delete and supported bounded text Edit for eligible files/directories, including bounded multi-selection where meaningful; success refreshes live state and partial/failure outcomes remain independent and recoverable. Copy/Move are bounded by selection, entry/depth/path and control-plane evidence, not by aggregate source media bytes. Direct browser Upload and Download are outside the current product surface. |
-| RO-7 | **Low-friction direct-operation safety.** | Direct file actions do not run the Organize recognition/planning pipeline or require organize execution-token ceremony. Backend RBAC, explicit mutation intent, Storage capability/confinement, stale/conflict checks, audit, no silent overwrite/delete and `OrganizerExecutor`-only mutation remain mandatory. |
-| RO-8 | **Organize workflow continuity.** | Files-originated Preview remains ResourceLibrary-scoped and Storage-relative, derives SourceIdentity from live Storage, continues through existing Preview/intent/OrganizerExecutor authority and synchronizes each terminal result independently to FileIndex. Formal destination composition uses the same `library/path` prefix semantics as the CLI. |
-| RO-8C | **Formal classification path parity correction.** | For a classified rule with `library = "Movies"` and `path = ["其他电影"]`, every formal Plan, Preview, precheck, execution and result projection composes `Movies/其他电影/...`; the configured `mediaLibraryId` still resolves the actual destination MediaLibrary and Storage root. |
-| RO-9 | **Actionable recovery.** | Read, direct-operation, activation, Organize and index-sync failures preserve Files context, explain durable/known state and provide a safe next action without fabricated rows or automatic uncertain replay. |
-| RO-10 | **Non-Files behavior continuity.** | Dashboard, Operations, Review, Configuration, Notifications and Settings retain their existing routes, application behavior, permissions and recovery while adopting the new shared shell chrome; V1 `/ui` remains unchanged. |
-| RO-11 | **Test reconciliation.** | Conflicting legacy shell/Files assertions are removed and replaced by Contract-aligned visual, interaction, mutation, failure and frozen-behavior tests; no safety assertion is weakened or skipped. |
-| RO-12 | **Security model continuity.** | The Slice reuses existing API-principal authentication, RBAC, audit and backend authority; it introduces no username/password, cookie session, OIDC or frontend Storage authority. |
+### RO-1 — Separate navigation and complete Files continuity
+
+Both new routes, sidebar state, titles, shell search ownership, Dashboard/Operations entry links,
+safe authentication continuation and deep links agree on page identity. Internal links stop emitting
+retired addresses. Files-originated Organize and return links preserve the ResourceLibrary and exact
+relative directory at the new address, including pre-existing durable intent/preview/execution
+context where applicable.
+
+Retire the old Library landing body and dedicated navigation/tests as appropriate while retaining
+shared Scan, Preview, Operations, configuration and FileIndex application capabilities. No other V2
+journey or V1 `/ui` is retired. Existing ResourceLibrary API semantics remain compatible.
+
+### RO-2 — Reference-aligned MediaLibrary presentation
+
+Deliver the image's hierarchy inside the existing shared shell: title/subtitle/Add button, library
+cards, directory pane, breadcrumb/refresh/view toolbar, selection action bar above the file list,
+six-column table, paging and right-side three-step drawer. Columns are
+`选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`. List/grid use type icons. Card statistics, capacity,
+statistics placeholders, thumbnails, recognition results and organize-status presentation are absent.
+No `整理` or `批量整理` page command appears.
+
+The existing shared sidebar `整理规则` remains. Removing the Organize UI does not remove
+OrganizerExecutor from direct file management.
+
+### RO-3 — Live MediaLibrary-scoped browsing
+
+The server resolves an enabled MediaLibrary from the exact Active snapshot, verifies its enabled
+Storage binding and confines reads to its root. Requests carry a media-library ID and relative path;
+browser-supplied Storage/root paths are not authority. Rows come from live Storage without FileIndex
+membership, Result history, recognition or metadata dependencies.
+
+Library selection, lazy navigation, bounded search, deterministic paging and refresh work. Retain
+existing bounded search/cursor semantics; do not invent recursive global search, exact full totals
+or unsupported arbitrary-page navigation. Exact path identity, including boundary whitespace,
+survives projection and navigation. Refresh reconciles stale directory memory and selection while
+preserving a still-valid location. Missing paths offer root/read recovery without trimmed-path retry.
+
+### RO-4 — Add and remove MediaLibrary configuration
+
+The page-local drawer offers `基本信息 → 存储位置 → 确认`: name, immutable-on-creation ID,
+enabled state, existing Storage and safe Storage-relative root. API and Web enforce the image's
+lowercase-letter/digit/hyphen ID rule. Existing MediaLibrary root validation remains authoritative;
+the form does not accept arbitrary host paths or silently create a missing root.
+
+Save composes the candidate into the save-time Active document and performs full configuration/
+reference validation, applicable read-only Storage/destination checks, checked activation and runtime
+binding. Only complete success publishes an immutable successor. Invalid/duplicate input, missing
+root/Storage, concurrent activation, reference and runtime-load failures preserve prior Active
+authority and correctable input. New enabled libraries are immediately selectable; disabled libraries
+are saved truthfully but hidden from browsing, with an explicit existing Web configuration handoff
+for re-enabling them.
+
+The selected card's configuration-removal action confirms intent, reports blocking references and
+uses the same managed authority. Removing configuration never deletes the library root or files.
+Referenced libraries cannot be disabled/removed by bypassing graph validation. Full configuration
+editing/migration and new automatic-directory-creation policy semantics are outside this Slice.
+
+### RO-5 — Bounded common file maintenance
+
+Offer Create Folder, Create supported Text File, single-item Rename, bounded supported text
+Open/Edit/Save, Delete, Copy and Move. File/directory selection and bounded batch/recursive actions
+apply where already meaningful in Slice 37. Multi-selection does not imply batch Rename or arbitrary
+media editing. Text type/size and provider capability limits remain honest in Web and API.
+
+Copy/Move destinations are the current or another enabled MediaLibrary, including different supported
+Storages. Resolve and confine both endpoints independently. Files keeps its existing ResourceLibrary
+destination semantics; ordinary cross-kind transfers are deferred. Detect physical self/ancestor
+overlap through different library aliases using resolved Storage identity and paths, not just IDs.
+
+Conflicts default to no overwrite. Retain actually supported per-command choices, including transfer
+fail/skip/keep-both; no new transfer Replace mode. Delete, supported text Save and any already-supported
+explicit replacement retain their distinct intent and current-state validation. Protect library
+roots; maintain only selected interior files/directories.
+
+### RO-6 — Durable results and recovery
+
+Long/batch work uses the existing Task/Worker lifecycle with independent item progress, known effects,
+results and recovery. Operators can follow progress, revisit work through Operations and use
+pause/resume/cancel only when advertised by the backend. Refresh/reconnect never resubmits a mutation.
+Same-Storage capability semantics and explicit cross-Storage Copy/verify/Delete-source remain intact;
+failed verification preserves source data, and partial/uncertain effects are visible without replay.
+
+Task reconstruction, evidence, scopes, permissions and audit retain library kind and pinned snapshot.
+Old ResourceLibrary tasks/results and Organize records remain readable and safely resumable under
+their existing rules. Media work cannot be reconstructed as resource work because IDs match. Existing
+bounded FileIndex reconciliation may remain after known outcomes but never authorizes/replays a
+Storage command.
+
+### RO-7 — Shared mechanisms with independent library authority
+
+Reuse the shell, suitable browse/action presentation, Storage, managed configuration, direct-command
+safety and OrganizerExecutor/Task mechanisms. Each page owns its library selection, cache/navigation
+state, form and allowed actions. Shared changes cannot leak MediaLibrary restrictions into Files.
+
+Backend lookup, cursors/evidence, manifests, execution/recovery and permission checks distinguish
+library kind. Browser cache and continuation distinguish kind, library and path. Equal IDs or
+overlapping roots do not make library types interchangeable. Add media-scoped
+`/api/v1/media-libraries/...` surfaces using the same application behavior as Web; preserve
+resource-scoped API contracts. Only narrowly necessary persistence evolution is in scope, with
+migration and recovery evidence when required.
+
+### RO-8 — Demonstrated integration and regression protection
+
+Application/API/Web/browser coverage proves the complete MediaLibrary vertical and migrated Files
+journey. Reference screenshots prove the hierarchy with the authorized omissions. Tests cover
+failures/recovery and zero-side-effect reads, not just controls or isolated services. Closure
+documents truthfully distinguish delivery, deferrals and inherited residual risks.
 
 ## Required Surfaces
 
-- the shared V2 shell chrome for every `/ui-v2/*` route, including responsive behavior;
-- V2 Files at `/ui-v2/library/files`;
-- the Files-local `添加资源库` drawer and its backend Save/activation command;
-- bounded ResourceLibrary browsing, selection and organize continuation; the Files page does not
-  present recognition/status feedback;
-- Files toolbar/action menus, destination picker and transfer progress for Create Folder/Text File,
-  Rename, Copy, Move, Delete and supported text Edit;
-- backend/application behavior strictly necessary for direct file commands, ResourceLibrary
-  Save/activation and post-mutation FileIndex synchronization;
-- the shared formal destination composition used by Organize Plan, destination Preview/precheck,
-  manual/automation projections and execution result evidence;
-- existing non-Files V2 page bodies only as needed to keep them functional inside the replaced
-  shared shell; their business features are not redesigned by this Slice.
+- `/ui-v2/medialib/files`, library-relative deep links, common command dialogs and Add drawer.
+- `/ui-v2/resourcelib/files` with complete Slice 37 functionality and Organize return context.
+- Shared navigation/search/auth continuation and bounded retired-route recovery.
+- MediaLibrary list/browse, page-local configuration save/removal and scoped common-command API.
+- Existing Task/Operations progress, item outcomes and supported lifecycle/recovery for media work.
+- Existing configuration handoff for setup, unavailable bindings, disabled libraries and references.
+- Automated tests and controlled screenshots; no new CLI journey is required.
 
-## Product Experience / UX Constraints
+## Safety and Correctness Invariants
 
-- The reference is the intended product, so retaining the old V2 chrome is not a compatibility
-  objective. Files must feel like the reference workspace rather than a redesign nested in a legacy
-  frame.
-- The ordinary path is direct: choose entries and a common command, supply only the required name,
-  destination or supported text, then see progress/result in the same Files context.
-- Create, Rename, Copy and Move do not add redundant confirmation after valid input unless
-  the operator explicitly chooses Replace. Text Save is the write intent; Delete uses one clear
-  permanent-effect confirmation. No direct command exposes organize Preview, policy selection or
-  execution tokens.
-- Unsupported actions must be absent or explained. Disabled controls, generic errors and raw
-  protocol/exception details are not substitutes for an actionable reason and recovery.
-- Selection, expanded directories and current ResourceLibrary context must stay truthful after a
-  mutation; deleted or renamed entries cannot remain as hidden stale selection.
-- Files presentation must remain focused on live Storage facts and explicit actions: it must not
-  show `识别结果` or `整理状态` business feedback, but it must retain the explicit `整理` action
-  and its existing safe continuation.
-- Existing non-Files routes keep their information and recovery semantics inside the new shell.
-  Shell replacement must not fabricate product areas that have not been migrated.
-- Desktop reference fidelity is structural and reference-aligned rather than pixel-identical.
-  Exact raster output, typography metrics, icon/thumbnail artwork and CSS measurements may differ
-  without blocking acceptance when the complete reference hierarchy, fixture state, labels and
-  controls remain recognizable and operable. Narrower layouts remain bounded, operable and free of
-  horizontal action loss.
+1. Browse, selection, refresh, drawer inspection, configuration checks and operation impact perform
+   zero Storage mutation. Reads create no processing work and invoke no metadata Provider.
+2. All Storage access uses its interfaces; only OrganizerExecutor mutates, including direct writes.
+3. Backend RBAC, memory-only browser authentication, redaction, exact Active authority and immutable
+   pinning remain mandatory. New activation cannot silently rebind admitted work.
+4. Resolve/confine both endpoints on the server. Protect library/Storage roots, reject escapes,
+   unsupported symlinks and aliased self/descendant transfers under existing provider rules.
+5. Revalidate capabilities, scope and current evidence; retain concurrency fencing and conflict
+   protection. Never silently overwrite/delete, fall back to another operation or mutate a root.
+6. Copy/Move bounds are selection/entry count, depth, safe paths and bounded control-plane evidence;
+   aggregate media bytes remain impact/progress facts, not admission ceilings. Delete/text retain
+   their existing separate bounds.
+7. Failed cross-Storage verification preserves the source. Completed siblings/uncertain effects
+   are never automatically replayed; durable state and safe next actions remain per item.
+8. MediaLibrary maintenance does not run Scanner, Parser, Recognition, Metadata, Naming,
+   Classification or media Organize Preview. Existing source Organize retains RecognitionType C
+   identity when reusing A policies and exact final destination composition.
+9. No stream decoding, FFmpeg/FFprobe, thumbnails or full-library statistics are introduced.
+   Per-file metadata reads and bounded command impact remain allowed.
 
-## Shared shell contract
+The accepted narrow Local directory replacement/inode-reuse race remains inherited residual risk,
+with existing prevention/recovery guidance. This Slice does not claim to fix it or weaken checks.
 
-- The reference left rail and top bar replace the old dark horizontal `Operator workspace` shell.
-- The left rail uses the reference brand, subtitle, recognizable icon/spacing treatment, active
-  state and ordered labels: `首页`, `文件`, `媒体库`, `存储管理`, `整理规则`, `自动化`, `操作与任务`,
-  `通知`, `系统设置`.
-- Navigation labels route to the existing supported V2 destination or an existing truthful migration
-  landing; visual replacement does not fabricate a completed business surface.
-- The current product does not render a `系统存储` capacity/usage block. No hardcoded or
-  unsupported system-capacity value may appear in the shared shell; adding a real Storage probe or
-  capacity API is outside this correction.
-- The top bar contains the route-relevant search affordance, notification entry and bounded current
-  principal/account control. The controlled reference fixture displays `admin`; production does not
-  infer a new identity system or expose the bearer token.
-- All V2 routes use this one shell component and one navigation model. Files-specific search behavior
-  may be injected into the shared top-bar slot without creating a second shell.
-- V1 `/ui`, backend routing and authentication semantics do not change.
+## Explicitly Deferred / Excluded
 
-## Common file-management contract
-
-### Create Folder and Text File
-
-- Create one directory in the currently selected ResourceLibrary-relative destination using a valid
-  basename. Existing-target conflict fails without replacing anything.
-- Create Text File creates one empty or initial bounded allowlisted text file and then uses the same
-  stale-safe Edit/Save behavior. It cannot create arbitrary binary/media content.
-- Creating multiple nested path segments, a ResourceLibrary root or an absolute host path through a
-  name field is rejected.
-
-### Rename
-
-- Rename applies to one exact ResourceLibrary-relative file or directory at a time and keeps it
-  within the same ResourceLibrary and Storage.
-- The operator edits only the basename. Separators, dot segments, absolute paths, reserved/invalid
-  names and root rename are rejected locally and by the backend.
-- Existing-target conflict never overwrites silently. The operator corrects the name or uses a
-  separately supported explicit conflict action; this Slice does not add rename-overwrite.
-
-### Copy and Move
-
-- Copy and Move accept one item or a bounded selection of files/directories plus an explicitly
-  selected destination inside an enabled Active ResourceLibrary root. Source and destination paths
-  are resolved by the backend; the browser never supplies host paths or credentials.
-- Copy/Move Impact may enumerate bounded metadata and calculate aggregate media bytes for display,
-  but aggregate source content size is not an admission limit. Manifest/checkpoint/projection memory
-  remains bounded through top-level selection, entry count, directory depth, safe path length and
-  bounded output rules.
-- Same-Storage operations use the provider's advertised native capability. The system never silently
-  substitutes Copy for Move, Move for Copy, or another organize policy.
-- Cross-Storage Copy is allowed only through an explicitly advertised backend transfer path.
-  Cross-Storage Move is an explicit compound `Copy -> verify -> Delete source` operation, shown as
-  such before submission and recorded per item. A failed verification never deletes the source; a
-  failure after verified copy leaves a visible partial result and safe cleanup/continuation action.
-- Destination conflicts default to no overwrite. `跳过`, `保留两者/重命名` and `替换` may be
-  offered only as explicit supported choices; Replace requires a separate permanent-effect
-  confirmation and exact destination revalidation.
-
-### Delete
-
-- Delete applies to one item or a bounded selection of files/directories. ResourceLibrary roots are
-  never deletable. A non-empty directory is enumerated within configured item/depth/size limits;
-  unbounded or changed scope fails before deletion.
-- The UI identifies the exact selection and, for directories, a lightweight item/size impact
-  summary, then requires one explicit permanent-effect confirmation. This is not an Organize
-  Preview and requires no raw execution token.
-- Capability/permission denial, changed source and uncertain effect remain visible and are not
-  automatically retried.
-
-### Edit
-
-- Edit is limited to allowlisted bounded text sidecars such as NFO and subtitle/text files. It is
-  not a video/audio/image editor and does not inspect media streams or add FFmpeg/FFprobe.
-- Read and Save are size bounded. Invalid encoding, binary content and oversized content fail with
-  an explanation and no write.
-- Save is the operator's explicit overwrite intent for the exact loaded Storage version. A changed
-  source fails stale rather than silently replacing newer content.
-
-### Direct browser Upload and Download
-
-- Direct browser Upload and Download are intentionally removed from the current Files product
-  surface.
-- This removal does not change Storage `Read`/`Write` contracts or provider primitives needed by
-  OrganizerExecutor, Copy/Move, text Edit or other supported backend workflows.
-
-### Shared direct-operation behavior
-
-- The browser submits only ResourceLibrary identity, relative path, requested bounded operation and
-  the minimal stale/conflict evidence required by the backend. It never supplies absolute host paths
-  or Storage credentials.
-- Python application behavior resolves every current Active source/destination ResourceLibrary and
-  Storage binding, enforces RBAC, validates capability/path/source state, records a bounded audit and
-  invokes every mutation only through `OrganizerExecutor`.
-- A direct operation is not reclassified as media organization and does not call Parser,
-  Recognition, Metadata, Naming, Classification or the organize Planner.
-- Single quick operations may complete synchronously; any long, recursive or batch mutation uses the
-  existing Task system with independent per-item outcomes and progress.
-- After known success, Files refreshes from live Storage. Any bounded FileIndex reconciliation is
-  display bookkeeping only; failure is recorded without replaying the Storage effect.
-
-## Safety and Authority Invariants
-
-- Scanner, Parser, Recognition, Metadata, Naming, Classification and Planner remain zero-mutation.
-- Files reads, refreshes, navigation, search, selection and view switching remain zero-mutation.
-- All reads and direct actions are confined to explicitly selected enabled ResourceLibraries and
-  their Active configured Storage roots; arbitrary host paths and unselected destinations are
-  rejected. Cross-Storage transfer is admitted only as the explicit bounded Copy/Move contract
-  above, never as an implicit fallback.
-- Only `OrganizerExecutor` may call mutating Storage operations, including CreateDirectory, Copy,
-  Move, Delete and Write initiated by Files. Download/read streaming remains zero-mutation.
-- Direct file management uses a smaller admission path than Organize but never bypasses RBAC,
-  capability checks, explicit mutation intent, conflict/stale checks, audit or path confinement.
-- Delete and overwrite/Replace remain explicit. No create, rename, copy, move, text Save or deletion
-  silently replaces/removes user data.
-- Local directory Delete retains bounded impact, explicit confirmation and final stale revalidation.
-  The accepted concurrent delete/recreate plus inode-reuse residual race is documented in README;
-  operators must quiesce other writers and refresh/reconfirm when the selected path may be changing.
-- No automatic retry follows an uncertain mutation. Recovery begins by refreshing live Storage and
-  showing the known effect state.
-- Files-originated Organize Preview/continuation still derives authority from live Storage and never
-  from FileIndex. The browser submits only ResourceLibrary identity and relative path.
-- FileIndex remains display/reconciliation state, never physical listing, path validation, Preview
-  source identity or execution authority.
-- The final ResourceLibrary `保存` remains backend-atomic and preserves the prior Active on failure.
-- No new authentication/identity/session system, FFprobe/FFmpeg dependency, provider switch, schema
-  rewrite or silent operation fallback is introduced.
-
-## Test and Compatibility Policy
-
-- Every supported common file action covers success, invalid input, permission/capability denial,
-  path escape, stale source, target conflict, limits, partial transfer, Storage failure, uncertain
-  effect and safe recovery as applicable.
-- Tests prove Create Folder/Text File, Rename, Copy, Move, Delete and Edit cannot bypass
-  `OrganizerExecutor`, cannot touch an unselected ResourceLibrary/Storage root and cannot silently
-  overwrite/delete. Removal tests prove direct Files Upload/Download controls, routes, services and
-  client projections are absent while required Storage/provider primitives remain available.
-- Cross-Storage tests prove Copy verification precedes Move source deletion, a failed verification
-  preserves the source, partial outcomes are durable and no operation silently falls back.
-- Bounded Copy/Move tests prove independent per-item state and that selection count, entry count,
-  directory depth, path and control-plane evidence limits stop unbounded work before destructive
-  effects; aggregate source media bytes are display evidence, not admission authority. Delete and
-  text Edit retain their applicable content/scope size limits.
-- Tests prove read-only Files interactions remain zero-side-effect and do not create Tasks, call
-  Providers or invoke any mutation path.
-- Tests prove ResourceLibrary Save rejects invalid/conflicting candidates and preserves prior Active.
-- Tests prove Files listing remains Storage-authoritative and FileIndex reconciliation failure does
-  not replay completed/uncertain mutation.
-- Controlled screenshots prove the reference composition, fixture state and new shared shell across
-  Files. Pixel-diff metrics remain useful diagnostic evidence but are not a zero-difference gate;
-  responsive and route smoke evidence proves non-Files journeys still work.
-- Existing tests that freeze the old dark shell or contradict this Contract must be replaced, not
-  retained to force obsolete behavior. Security/authority tests must not be deleted or weakened.
-- Fakes, mocks, temporary roots and local services only; no production credentials or media.
-
-## Explicitly Deferred
-
-- Direct browser Upload and Download are removed from the current product scope, not deferred for a
-  later Files implementation.
-- Arbitrary binary/video/audio/image content editing and media-stream inspection.
-- Unbounded recursive/batch operations, arbitrary host-filesystem access, Storage-to-host extraction
-  and implicit cross-Storage fallback.
-- General Configuration/Settings redesign beyond truthful navigation inside the new shared shell.
-- Dashboard, Operations, Review/Recovery, Automation and Notification business-journey redesign;
-  their shared shell chrome changes, but their existing page behavior remains.
-- V1 `/ui` cutover/retirement and broad parity/accessibility closure beyond the changed shell/Files
-  surfaces.
-- New providers, Storage adapters/capabilities, identity/security systems, automatic uncertain
-  mutation replay, universal rollback and FFmpeg/FFprobe.
+- Card statistics/capacity/placeholders; thumbnail/cover/preview fetching or generation; video
+  frame extraction. These are explicitly removed from this product scope, not hidden follow-up
+  Tasks or required future enhancements.
+- MediaLibrary Scan/Preview/Organize, recognition/status columns, metadata catalog/poster wall,
+  playback, stream inspection and FileIndex-driven physical membership.
+- Browser Upload/Download, arbitrary binary/image/video editing, batch Rename, unbounded
+  recursion/global search and new transfer overwrite/Replace.
+- Ordinary ResourceLibrary↔MediaLibrary transfers; existing policy-driven source Organize to
+  MediaLibrary remains supported.
+- New providers/capabilities or identity system, broad configuration migration, new automatic
+  directory-creation policy behavior, V1 cutover, generic workflow/persistence redesign, universal
+  rollback and automatic uncertain replay.
+- Changes to the user's dirty `docs/pics/文件页.png`, Files presentation beyond required
+  route/navigation integration or unrelated shell/product redesign.
 
 ## Slice Acceptance Criteria
 
-- [x] At `1536 x 1024`, the Files screenshot preserves the reference shared-shell and Files
-      hierarchy, visible fixture state, labels and control order. The comparison records material
-      differences, but nonzero pixel counts and bounded rendering/layout variations do not fail the
-      Slice when the composition remains complete, recognizable and operable; the reference asset
-      is not rewritten merely to manufacture a passing comparison.
-- [x] The old dark horizontal V2 shell is fully replaced by the reference light rail/top bar, using
-      one shared shell across V2 and retaining auth/deep-link/route recovery.
-- [x] Required labels, values, row order, selection states, drawer steps and controls from the visual
-      spec are present. Recognizable implementation-owned icons/thumbnails and bounded table
-      truncation are acceptable when the complete value remains available to assistive technology
-      and the action/state remains unambiguous.
-- [x] Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit complete from
-      Files with low-friction success/failure/recovery and bounded multi-selection where useful.
-- [x] Direct Files Upload and Download controls, routes, services, models and dedicated tests are
-      removed; Storage/provider primitives needed by remaining workflows remain intact.
-- [x] Delete and Replace/text overwrite require explicit operator intent, never silently affect
-      another path/version and never automatically replay an uncertain result.
-- [x] Same- and cross-Storage Copy/Move expose capability and compound-operation truth; verification
-      failure preserves the source and partial results remain independently recoverable.
-- [x] Copy/Move no longer rejects a file or bounded directory solely because aggregate source media
-      bytes exceed 20 GiB; Impact remains metadata-only and manifest/checkpoint/projection state
-      remains bounded by selection, entry/depth/path and output limits.
-- [x] `+ 添加资源库` saves, validates and atomically activates a complete candidate; any failure keeps
-      the previous Active.
-- [x] Physical listing remains live Storage-authoritative; FileIndex is display/reconciliation only.
-- [x] Files-originated Organize remains live-Storage/ResourceLibrary-authoritative and each terminal
-      result synchronizes independently without mutation replay.
-- [x] The manual Organize Web editor treats RecognitionType as the source of truth for NamingPolicy,
-      ClassificationPolicy and OrganizePolicy: selecting a RecognitionType automatically brings
-      out its exact configured policies, prevents arbitrary incompatible policy combinations and
-      exposes an actionable fail-closed state when the pinned mapping is unavailable.
-- [x] Formal Organize destination composition includes the classification `library` prefix before
-      the classification relative path, matching the local CLI, across Plan, Preview, precheck,
-      execution and result evidence.
-- [x] The `library` prefix is validated with the same bounded safe-relative-path rules as other
-      destination contributions; unsafe values fail closed without Storage mutation.
-- [x] Files `刷新` re-reads the live ResourceLibrary directory and reconciles local directory-tree
-      and selection state so an externally removed path is no longer shown after refresh; the
-      regression path remains read-only and does not consult FileIndex or mutate Storage.
-- [x] Files no longer renders `识别结果` or `整理状态` in the information banner, table headers,
-      row cells or status pills; the table retains `选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`,
-      the explicit `整理` action remains functional, and the synchronized visual specification
-      records the same presentation boundary.
-- [x] Non-Files V2 business routes remain functional inside the new shell; V1 `/ui`, API/RBAC and
-      backend mutation authority remain intact.
-- [x] Conflicting old visual tests are replaced and all required T4/full Slice gates pass without
-      hidden skips or private configuration.
-- [x] The implementation checkpoint contains only Slice 37 work and necessary evidence.
+| ID | Acceptance |
+|---|---|
+| AC-1 | Both new routes support direct/sidebar/auth continuation; retired routes offer bounded recovery, and internal links no longer emit them. |
+| AC-2 | Reference hierarchy and drawer work without card statistics/placeholders or thumbnails; normal entry keeps the drawer closed. |
+| AC-3 | Live browse covers empty/multi-page libraries, exact whitespace paths, missing current directory and refresh of externally removed directories without fabricated rows or FileIndex dependency. |
+| AC-4 | Add succeeds only after actual activation; invalid/duplicate input, Storage/root/reference and concurrent activation failures preserve Active with recovery. Disabled-save and safe configuration removal are explicit. |
+| AC-5 | Each common command completes in Web/API with matching permissions/results, covering single/multi-item, directories, conflicts, stale, denied, read-only and unsupported-provider cases. |
+| AC-6 | Media transfers work within/between libraries, including cross-Storage verification, independent partial results, durable revisit and supported lifecycle continuation without replay. |
+| AC-7 | Same-ID libraries, overlapping roots, cursor/evidence reuse, snapshot changes and Worker reconstruction cannot cross authority; pre-existing ResourceLibrary durable work remains compatible. |
+| AC-8 | Files retains add/remove, browse/search/refresh, direct commands, single/batch Organize, policy binding and return context; other V2/V1 journeys remain functional. |
+| AC-9 | Safety invariants hold; final evidence and CURRENT documentation cover all vertical outcomes without claiming excluded capabilities. |
 
 ## Final Validation Expectations
 
-- deterministic `1536 x 1024` screenshot and pixel-diff report against the canonical image after
-  fonts/assets load, evaluated under RO-1's structural/reference-aligned acceptance rather than a
-  zero-difference threshold;
-- shared-shell route/deep-link/auth/401/403/responsive smoke across every V2 product area;
-- Files browse/search/navigation/selection/pagination/drawer interaction evidence;
-- Create Folder/Text File, Rename/Copy/Move/Delete/Edit success and failure evidence against
-  temporary Storage, including conflict, stale source, control-plane transfer limits, large media
-  byte totals, partial outcome, capability denial, confinement, audit and uncertain-effect
-  non-replay;
-- Direct Upload/Download removal evidence: no Files controls, client calls, HTTP routes, application
-  services or dedicated projections/tests remain, while Storage `Read`/`Write`, provider transfer
-  primitives and Copy/Move behavior remain available;
-- bounded batch/recursive and cross-Storage transfer evidence, including verify-before-delete and
-  source preservation on failure;
-- ResourceLibrary Save/activation success, validation failure, concurrent/stale failure and prior
-  Active preservation;
-- exact request/mutation evidence for zero-side-effect reads, live-Storage Preview authority,
-  OrganizerExecutor-only direct/organize mutation and non-replaying FileIndex synchronization;
-- Files refresh truthfulness evidence showing an externally removed directory disappears from the
-  directory tree and stale selection state without adding a mutation or FileIndex request;
-- formal destination parity evidence for `library/path` composition, CLI/formal target agreement,
-  safe-prefix rejection, MediaLibrary resolution and zero-mutation failure behavior;
-- RecognitionType-driven policy binding evidence: the Web editor automatically projects the exact
-  pinned downstream policy mapping, preserves RecognitionType identity and rejects missing mapping
-  evidence without submitting a guessed choice;
-- full Python and Web regression, production frontend build/package validation, governance and
-  `git diff --check`;
-- scope/private-file inspection confirming the canonical image and `config/alist.json` are untouched.
+B assigns Task Difficulty/Test Level from actual risk. Active configuration, RBAC, mutation,
+persisted scope and Worker changes require T4 where the workflow specifies it; this activation does
+not assign implementation Tasks or classify their work as T0.
 
-## Review State
+Before a Closure Packet, run Slice-final Python regression, Web unit/component regression,
+typecheck/lint/format/build and full browser journeys, including migrated Files and MediaLibrary
+success/failure/recovery. Complete normal Python quality/dependency/FFmpeg-exclusion and governance
+checks. Run packaging and installed-artifact/Docker release-security and transfer smoke gates
+material to API composition, immutable bindings and resident Worker execution; include upgrade/
+recovery rehearsal if persisted schemas change. Use fake/local services and temporary media, never
+production credentials/services or user media. Record actual totals/skips/unavailable gates.
 
-```text
-Slice Status: PASS / CLOSED
-Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
-Contract Revision: 2026-09-22 A SCOPE REVISION — RecognitionType-driven policy binding in Organize editor
-Task 37.8 state: PASS
-Task 37.9 state: PASS
-Task 37.10 state: PASS
-Task 37.11 state: PASS
-Task 37.12 state: PASS
-Current Quality Baseline: GitHub quality run #118 PASS on 320d8437a8872f7a08ee84295a0f900a39f84a7d
-Next Action: A SELECTS THE NEXT LARGE SLICE
-```
+Capture controlled `1536 x 1024` screenshots with Add step 1 open and closed, plus usable
+narrow-screen evidence. The exclusions deliberately differ from the image; structural alignment and
+functioning controls determine acceptance, not zero pixel differences. Files regression covers the
+new address without redesigning its body.
 
-## Post-closure Correction Closure Packet — Task 37.11
+Inspect the full commit manifest/private files and `git diff --check`. Preserve the pre-existing
+dirty Files image. Include the supplied MediaLibrary image unchanged as the canonical reference.
 
-```text
-Slice: 37 — Files Workspace, Common File Management and V2 Shell
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Head SHA: 3fb4d1a091676727dcfd8e69007d530cd7dd3ef9
+## Delegated Factual Updates and Stop Rule
 
-Required Outcomes:
-- RO-1 Reference-aligned visual fidelity — COMPLETE
-- RO-2 Shared V2 shell replacement — COMPLETE; the shared shell no longer fabricates system
-  capacity or usage state
-- RO-3 Exact Files composition — COMPLETE
-- RO-4 ResourceLibrary drawer and activation — COMPLETE
-- RO-5 Storage-authoritative Files data — COMPLETE
-- RO-6 Bounded common file management — COMPLETE
-- RO-7 Low-friction direct-operation safety — COMPLETE
-- RO-8 Organize workflow continuity — COMPLETE; Files-originated Save Choice now works through
-  the default API assembly and remains pinned to the intent snapshot
-- RO-8C Formal classification path parity correction — COMPLETE
-- RO-9 Actionable recovery — COMPLETE; unavailable runtime/source evidence remains fail-closed
-  without durable-state or Storage mutation
-- RO-10 Non-Files behavior continuity — COMPLETE
-- RO-11 Test reconciliation — COMPLETE for the current supported surfaces
-- RO-12 Security model continuity — COMPLETE
-
-Required Surfaces:
-- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
-- V2 Files at `/ui-v2/library/files` — COMPLETE
-- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
-- ResourceLibrary browsing, selection and Organize continuation — COMPLETE
-- Bounded Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit — COMPLETE
-- Shared formal `library/path` destination composition — COMPLETE
-- Direct browser Upload/Download controls and vertical — REMOVED per the Contract
-- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
-
-Implemented:
-- Corrected Files-originated Save Choice validation to use the effective managed pinned-runtime
-  resolver in the default `MediaFlowApi` composition.
-- Revalidated sources against the exact intent-pinned snapshot and live ResourceLibrary/Storage
-  authority without requiring a FileIndex row, preserving version fencing, auditability and
-  zero Storage mutation.
-- Preserved fail-closed behavior for unavailable pinned runtime/source evidence, unchanged
-  FileIndex-originated validation and explicit resolver injection.
-- Removed the fabricated shared-shell `系统存储` capacity/usage block and its dedicated CSS,
-  and synchronized the visual specification and AppShell regression.
-
-Tasks completed:
-- 37.1 — Files reference browse, shared shell and selection authority
-- 37.2 — ResourceLibrary atomic activation
-- 37.3 — Bounded Files maintenance and ResourceLibrary removal
-- 37.4 — Bounded Files Copy and Move transfers
-- 37.5 — Bounded Files Upload and Download
-- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
-- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
-  validation and Copy/Move control-plane bounds
-- 37.8 — Files safety and quality gate reconciliation
-- 37.9 — Files refresh truthful state and focused presentation
-- 37.10 — Files exact path identity and whitespace presentation
-- 37.11 — Files Save Choice managed runtime resolver
-
-Final Tests:
-- `python3 scripts/check_governance.py` — PASS before closure-document updates.
-- `.venv/bin/ruff format --check .` — PASS; 309 files already formatted.
-- `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview`
-  — 53 passed.
-- `.venv/bin/python -m unittest discover -s tests` — 1721 passed, 7 skipped, `OK`.
-- `npm run test -- --run src/shared/ui/AppShell.test.tsx` — 3 passed.
-- `npm run test -- --run` — 33 files, 465 passed.
-- `npm run typecheck`, `npm run lint`, `npm run format:check` — PASS.
-- `npm run build` — PASS; existing generated-chunk size warning remains non-blocking.
-- `npm run test:e2e` — 122 passed.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py`
-  — PASS.
-- `git diff --check` — PASS for the reviewed implementation range; `config/alist.json` is absent.
-
-Safety Evidence:
-- Save Choice source validation uses the exact intent-pinned managed snapshot and live
-  ResourceLibrary/Storage authority; it does not consult FileIndex for Files authority.
-- Failed or unavailable runtime/source validation leaves choice, versions, audit state and
-  Storage unchanged; no fallback or uncertain mutation replay was introduced.
-- Preview, Save Choice and other analysis stages remain zero-mutation, and OrganizerExecutor
-  remains the only Storage mutation boundary.
-- The shared shell removal adds no Storage probe, capacity API, provider capability or replacement
-  authority.
-- No credentials, production Storage, user media or `config/alist.json` entered the reviewed range.
-
-Known Non-blocking Issues:
-- The production Web build retains the existing generated-chunk size warning.
-- The full Python run emits existing unclosed-SQLite `ResourceWarning` messages but completes
-  successfully.
-- The accepted narrow Local directory replacement/inode-reuse race remains documented residual
-  risk and is not claimed fixed.
-
-Explicitly Deferred:
-- Preserve the Contract's existing deferrals: direct browser Upload/Download, arbitrary binary or
-  media editing, unbounded recursive/batch operations, new providers or Storage capabilities,
-  identity/security-system redesign, automatic uncertain-mutation replay, universal rollback,
-  V1 `/ui` retirement and FFmpeg/FFprobe.
-
-Documentation Reconciliation Needed:
-- A should perform final review over
-  `b507edba167f5af3af8c53bfcf1417ba4fefddf4..3fb4d1a091676727dcfd8e69007d530cd7dd3ef9`.
-- Preserve the pre-existing dirty `docs/pics/文件页.png` outside the reviewed implementation
-  range; no image reconciliation is requested.
-
-Decision: SLICE READY FOR A REVIEW
-```
-
-## A Final Review — 2026-09-23
-
-```text
-Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..aa54854c442d117c7eb23ae9800045c423db1368
-Decision: PASS / CLOSED
-P0/P1 Blockers:
-- None.
-```
-
-Closure Reconciliation:
-
-- All Required Outcomes and Required Surfaces are complete. The operator can enter the shared V2
-  shell, browse live ResourceLibrary-scoped Storage state, perform bounded file management, create
-  and activate a ResourceLibrary, continue Files-originated Organize through Preview and execution,
-  and recover from failures without CLI-only completion or hidden implementation ceremony.
-- The final RecognitionType correction is complete: the Web Organize editor treats RecognitionType
-  as the operator-facing source of truth, projects exact pinned Naming/Classification/Organize
-  policies, preserves RecognitionType identity including C→A reuse, and fails closed without a
-  Save Choice request when the mapping is unavailable.
-- The architecture remains truthful across the reviewed range. Scanner, Parser, Recognition,
-  Metadata, Naming, Classification, Planner, Files reads and Preview remain zero-mutation;
-  Storage mutation remains confined to `OrganizerExecutor`; FileIndex remains display/reconciliation
-  state rather than Files physical-listing, source-identity or execution authority.
-- No silent overwrite/delete, implicit transfer fallback or uncertain-mutation replay was introduced.
-  Direct browser Upload/Download, arbitrary media editing, unbounded operations, new providers or
-  identity systems, universal rollback and FFmpeg/FFprobe remain deferred or outside this Slice.
-- Final validation is credible: Python `1721` passed with `7` skips; Web Vitest `469` passed across
-  `33` files; full Playwright `122` passed; frontend typecheck/lint/format/build, Ruff, compileall,
-  pip check, governance, diff check, Docker release-security and transfer-impact smoke gates passed.
-- The accepted Local inode-reuse replacement race, existing SQLite `ResourceWarning` output and
-  generated frontend chunk-size warning remain non-blocking known issues. No credential,
-  `config/alist.json`, production media or private configuration entered the reviewed range.
-- Current factual status is reconciled in Roadmap, Progress, V2 requirements, Product Experience,
-  Architecture and the canonical requirements metadata. The Slice Base remains immutable and the
-  next large Slice is intentionally left for a later A action.
-
-## Post-reactivation Closure Packet — Task 37.12
-
-```text
-Slice: 37 — Files Workspace, Common File Management and V2 Shell
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Head SHA: aa54854c442d117c7eb23ae9800045c423db1368
-
-Required Outcomes:
-- RO-1 Reference-aligned visual fidelity — COMPLETE
-- RO-2 Shared V2 shell replacement — COMPLETE
-- RO-3 Exact Files composition — COMPLETE
-- RO-4 ResourceLibrary drawer and activation — COMPLETE
-- RO-5 Storage-authoritative Files data — COMPLETE
-- RO-6 Bounded common file management — COMPLETE
-- RO-7 Low-friction direct-operation safety — COMPLETE
-- RO-8 Organize workflow continuity — COMPLETE
-- RO-8C Formal classification path parity correction — COMPLETE
-- RO-9 Actionable recovery — COMPLETE
-- RO-10 Non-Files behavior continuity — COMPLETE
-- RO-11 Test reconciliation — COMPLETE; RecognitionType-driven policy binding is covered by
-  focused Web, API-request and browser journey evidence, and the active-Task release-quality
-  documentation gate passes
-- RO-12 Security model continuity — COMPLETE
-
-Required Surfaces:
-- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
-- V2 Files at `/ui-v2/library/files` — COMPLETE
-- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
-- ResourceLibrary browsing, selection and Organize continuation — COMPLETE
-- Bounded Create Folder/Text File, Rename, Copy, Move, Delete and supported text Edit — COMPLETE
-- Shared formal `library/path` destination composition — COMPLETE
-- Backend/application behavior for direct file commands, ResourceLibrary activation and
-  post-mutation FileIndex synchronization — COMPLETE
-- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
-
-Implemented:
-- Completed Task 37.12: RecognitionType is the single editable source in the V2 manual Organize
-  Web editor; NamingPolicy, ClassificationPolicy and OrganizePolicy are projected from the exact
-  pinned `options.recognitionTypes[]` mapping.
-- Initial stale downstream choices are normalized before Save Choice, RecognitionType C remains C
-  when its pinned downstream policies reuse A, and downstream controls are visibly read-only.
-- Missing, disabled or incomplete mappings fail closed with a bounded reload action and no Save
-  Choice request.
-- Preserved optimistic version fencing, backend compatibility validation, Preview invalidation,
-  zero-mutation analysis and OrganizerExecutor-only Storage mutation.
-- Reconciled the active Task's release-quality command inventory and verified the full release
-  quality gate.
-
-Tasks completed:
-- 37.1 — Files reference browse, shared shell and selection authority
-- 37.2 — ResourceLibrary atomic activation
-- 37.3 — Bounded Files maintenance and ResourceLibrary removal
-- 37.4 — Bounded Files Copy and Move transfers
-- 37.5 — Bounded Files Upload and Download
-- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
-- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
-  validation and Copy/Move control-plane bounds
-- 37.8 — Files safety and quality gate reconciliation
-- 37.9 — Files refresh truthful state and focused presentation
-- 37.10 — Files exact path identity and whitespace presentation
-- 37.11 — Files Save Choice managed runtime resolver
-- 37.12 — RecognitionType-driven Organize policy binding
-
-Final Tests:
-- `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/ruff format --check .` — PASS; 309 files already formatted.
-- `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS; no broken requirements.
-- `.venv/bin/python -m unittest tests.test_manual_organize_intent tests.test_v2_manual_organize tests.test_manual_preview`
-  — 53 passed.
-- `.venv/bin/python -m unittest tests.test_release_security` — 6 passed.
-- `.venv/bin/python -m unittest discover -s tests` — 1721 passed, 7 skipped, 0 failures, `OK`.
-- `cd web && npm run test -- --run src/features/operations/OrganizeRouter.test.tsx src/entities/operations/organize.test.ts`
-  — 30 passed.
-- `cd web && npm run test -- --run` — 33 files, 469 passed.
-- `cd web && npm run typecheck`, `npm run lint`, `npm run format:check` — PASS.
-- `cd web && npm run build` — PASS; existing generated-chunk size warning remains non-blocking.
-- `cd web && npx playwright test tests/e2e/manual-organize.spec.ts` — 11 passed.
-- `cd web && npm run test:e2e` — 122 passed, 0 failures, 0 skips.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` —
-  PASS; isolated four-service release-security acceptance passed.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py` —
-  PASS; aggregate 22548578304 bytes was admitted as impact evidence while bounded control-plane
-  limits failed closed without mutation.
-- `git diff --check` and reviewed-scope/private-file inspection — PASS; `config/alist.json` is
-  absent and the pre-existing dirty `docs/pics/文件页.png` plus untracked user image remain
-  outside the reviewed implementation checkpoint.
-
-Safety Evidence:
-- RecognitionType selection cannot submit arbitrary downstream policy combinations; all submitted
-  policy IDs are projected from the pinned snapshot and backend compatibility validation remains
-  authoritative.
-- Missing or invalid mappings fail closed without a Save Choice request; stale choices preserve
-  optimistic version fencing and do not replay uncertain effects.
-- Save Choice, Preview and other analysis stages remain zero-mutation; only OrganizerExecutor may
-  mutate Storage.
-- Files authority remains live ResourceLibrary/Storage authority, FileIndex remains display and
-  reconciliation state, and no frontend Storage authority or credential entered the checkpoint.
-- The transfer-impact smoke proved large aggregate media bytes remain display evidence while
-  selection, entry and depth limits reject before mutation.
-- No credentials, production media, private configuration or `config/alist.json` entered the
-  reviewed range.
-
-Known Non-blocking Issues:
-- P2: the production Web build retains the existing generated JavaScript chunk-size warning.
-- P2: full Python tests emit existing unclosed-SQLite `ResourceWarning` messages while passing.
-- P2: the accepted narrow Local directory replacement/inode-reuse race remains documented
-  residual risk and is not claimed fixed.
-
-Explicitly Deferred:
-- Direct browser Upload/Download remains removed from the current scope.
-- Arbitrary binary/video/media editing and stream inspection.
-- Unbounded recursive or batch operations, arbitrary host-filesystem access, host extraction
-  outside authenticated Download and implicit cross-Storage fallback.
-- General Configuration/Settings redesign beyond truthful navigation in the shared shell.
-- Dashboard, Operations, Review/Recovery, Automation and Notification business-journey redesign.
-- V1 `/ui` retirement, new providers or Storage capabilities, identity/security-system redesign,
-  automatic uncertain-mutation replay, universal rollback and FFmpeg/FFprobe.
-
-Documentation Reconciliation Needed:
-- A should perform the final review over
-  `b507edba167f5af3af8c53bfcf1417ba4fefddf4..aa54854c442d117c7eb23ae9800045c423db1368`
-  and reconcile historical Closure Packets/A reviews while preserving the original Slice Base and
-  all Contract text. No Required Outcome, Required Surface or Safety Invariant change is requested.
-
-Decision: SLICE READY FOR A REVIEW
-```
+B may update Implementation Head and submit factual checkpoint, outcome status, test and risk
+evidence in the Closure Packet. B cannot change Base/boundaries/acceptance or close the Slice. Once
+Required Outcomes are satisfied, stop creating Tasks and submit the packet for A's
+Base..Implementation Head review under the development workflow.
 
 ## Closure Packet
 
-```text
-Slice: 37 — Files Workspace, Common File Management and V2 Shell
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Head SHA: 9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-
-Required Outcomes:
-- RO-1 Reference-aligned visual fidelity — COMPLETE
-- RO-2 Shared V2 shell replacement — COMPLETE
-- RO-3 Exact Files composition — COMPLETE
-- RO-4 ResourceLibrary drawer and activation — COMPLETE
-- RO-5 Storage-authoritative Files data — COMPLETE
-- RO-6 Complete common file management — COMPLETE
-- RO-7 Low-friction direct-operation safety — COMPLETE
-- RO-8 Organize workflow continuity — COMPLETE
-- RO-9 Actionable recovery — COMPLETE
-- RO-10 Non-Files behavior continuity — COMPLETE
-- RO-11 Test reconciliation — COMPLETE for current supported surfaces; stale baseline gates are
-  recorded below as non-blocking
-- RO-12 Security model continuity — COMPLETE
-
-Required Surfaces:
-- Shared responsive V2 shell for supported /ui-v2 routes — COMPLETE
-- V2 Files at /ui-v2/library/files — COMPLETE
-- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
-- ResourceLibrary browsing, status, selection and Organize continuation — COMPLETE
-- Create Folder/Text, Rename, Copy, Move, Delete, Edit, Upload and Download surfaces — COMPLETE
-- Backend direct-command, activation and exact FileIndex reconciliation behavior — COMPLETE
-- Supported non-Files V2 bodies inside the shared shell — COMPLETE
-
-Implemented:
-- Replaced the old V2 chrome with the reference-aligned shared light rail/top bar and delivered the
-  live-Storage Files workspace, bounded ResourceLibrary activation and reference composition.
-- Delivered backend-authoritative Create Folder/Text, Rename, Copy, Move, Delete, bounded text
-  Edit, Upload and Download with independent outcomes and explicit recovery.
-- Connected one or many eligible Files entries to the existing durable Organize
-  Intent -> Preview -> Execute journey and reconciled terminal Results only to their exact current
-  FileIndex occurrence without replaying Storage mutation.
-
-Tasks completed:
-- 37.1 — Files reference browse, shared shell and selection authority
-- 37.2 — ResourceLibrary atomic activation
-- 37.3 — Bounded Files maintenance and ResourceLibrary removal
-- 37.4 — Bounded Files Copy and Move transfers
-- 37.5 — Bounded Files Upload and Download
-- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
-
-Final Tests:
-- Governance, Ruff format/lint, compileall, pip check, FFmpeg/FFprobe exclusion and git diff check:
-  PASS.
-- Task 37.6 focused Python integration/security: 128 passed.
-- Full Python regression: 1761 run; 1751 passed, 7 skipped, 3 failed. All 3 failures reproduce
-  unchanged at Task Base and concern the pre-existing configuration-status assertion and old
-  manual-operations fixture capture.
-- Web format, TypeScript and ESLint: PASS; Vitest: 460 passed.
-- Files/manual-Organize focused Playwright: 44 passed.
-- Full Playwright: 122 run; 112 passed, 10 failed. The failures exercise already-unsupported legacy
-  FileIndex/Scan/Preview routes or a duplicate read-only explanation assertion; the affected
-  routes/tests predate Slice 37 and no supported Files or Organize test failed.
-- Production Web build: PASS (non-blocking existing chunk-size warning).
-- Controlled Files screenshot: PASS at 1536x1024; diagnostic diff 296787/1572864 pixels
-  (18.8692%, mean absolute RGB 7.452/5.621/2.984), with the required shared-shell and Files
-  hierarchy complete and operable.
-- Wheel build and installed-wheel smoke, schema 38 backup/restore/verify/migration rehearsal:
-  PASS.
-- Docker release security smoke: unavailable as a final passing gate. The candidate image, Compose
-  topology, non-root runtime, V1/V2 assets, auth/RBAC and Active activation passed before the
-  pre-existing smoke harness submitted obsolete `metadataIdentity` choice input to the current
-  `metadata` API and received the expected HTTP 400.
-
-Safety Evidence:
-- Files listing and Organize admission resolve the enabled Active ResourceLibrary and live Storage
-  server-side; browser/FileIndex identifiers never supply physical authority.
-- Reads, selection, Intent and Preview are zero-mutation; every direct or Organize Storage mutation
-  remains behind OrganizerExecutor, RBAC, capability/confinement, stale/conflict and explicit
-  destructive-intent checks.
-- Batch transfer/upload and Organize outcomes remain independent; uncertain effects are not
-  automatically replayed.
-- TaskItems and Results retain exact verified occurrence/fingerprint identity; reconciliation is
-  atomic with Result publication where supported and the explicit retry performs no Storage call.
-- No test was deleted to hide a safety failure, no skip was added, no assertion was weakened, and
-  no config/alist.json, credential, ignored artifact or dirty reference image entered the reviewed
-  implementation checkpoint.
-
-Known Non-blocking Issues:
-- P2: three pre-existing Python assertions remain red at Task Base: one configuration projection
-  test matches the legitimate `root_path` field name, and two old manual-operations fixture tests
-  expect a superseded request shape.
-- P2: ten legacy Playwright assertions still target routes removed before the Slice Base
-  (`/library/file-index`, old Scan/Preview entry) or assert a unique copy of a duplicated read-only
-  explanation. These are not reachable through the current supported V2 navigation and do not
-  block current Files/non-Files journeys, but the suite command remains nonzero.
-- P2: the Docker release smoke manual-Organize probe still sends the superseded
-  `metadataIdentity` field instead of `metadata`; focused real WSGI and browser Organize journeys
-  pass with the current contract.
-
-Explicitly Deferred:
-- Arbitrary binary/video/audio/image editing and media-stream inspection.
-- Unbounded recursive/batch operations, arbitrary host-filesystem access, host extraction outside
-  authenticated Download and implicit cross-Storage fallback.
-- General Configuration/Settings redesign and non-Files business-journey redesign beyond shared
-  shell integration.
-- V1 /ui retirement, broad parity/accessibility closure, new providers/adapters/identity systems,
-  universal rollback, automatic uncertain replay and FFmpeg/FFprobe.
-
-Documentation Reconciliation Needed:
-- Completed by the A Final Review closure checkpoint below. The three baseline test/harness debts
-  remain non-blocking follow-up facts and do not reopen this closed Slice.
-
-Decision: PASS / CLOSED
-```
+Not submitted. No implementation is claimed by this activation checkpoint.
 
 ## A Final Review
 
-```text
-Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..9e105d88c624e2ec8cfcc6fc71bef50cb929e99f
-Decision: PASS / CLOSED
-P0/P1 Blockers:
-- None.
-```
-
-Closure Reconciliation:
-
-- All twelve Required Outcomes and all Required Surfaces are complete across the shared V2 shell,
-  Files browse/selection, ResourceLibrary activation, direct file management, Upload/Download,
-  Organize continuation and FileIndex reconciliation.
-- The vertical journey is complete: the operator can enter Files, see live ResourceLibrary-scoped
-  state, act on bounded selections, receive independent success/failure/partial outcomes, and
-  recover through refresh, corrected input, explicit re-confirmation or durable task state.
-- The reviewed implementation preserves the architecture and safety invariants: read/analysis
-  stages remain zero-mutation, all Storage mutation crosses OrganizerExecutor, authority is
-  backend-resolved from Active ResourceLibrary/Storage bindings, overwrite/delete are explicit,
-  and uncertain effects are never automatically replayed. RecognitionType identity remains
-  independent of downstream policy reuse.
-- Validation is truthful: focused direct-Files/activation/Organize Python coverage passed
-  (`256 passed`, `13 subtests passed`); the full Python suite passed `1751`, skipped `7` and
-  failed `3` pre-existing P2 assertions; Web format, typecheck, lint, Vitest (`460 passed`) and
-  production build passed; focused Files/Organize Playwright passed `56`; full Playwright passed
-  `112` and retained `10` pre-existing legacy/duplicate P2 failures. Ruff, compileall, pip check,
-  governance, FFmpeg/FFprobe runtime exclusion and diff checks passed. The Docker release smoke
-  remains unavailable only because its pre-existing probe submits the superseded `metadataIdentity`
-  field; current focused WSGI/browser Organize coverage passes.
-- The canonical reference image in the reviewed Base..Head is unchanged. The separate dirty
-  worktree image observed during review is pre-existing user work and is excluded from the reviewed
-  checkpoint. Explicitly Deferred scope remains deferred and was not silently expanded.
-
-The Slice is therefore `PASS / CLOSED` as of 2026-09-20. The next legal action is for A to select
-the next large Slice in a subsequent A turn.
-
-## Post-reactivation Closure Packet
-
-```text
-Slice: 37 — Files Workspace, Common File Management and V2 Shell
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Head SHA: 6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
-
-Required Outcomes:
-- RO-1 Reference-aligned visual fidelity — COMPLETE
-- RO-2 Shared V2 shell replacement — COMPLETE
-- RO-3 Exact Files composition — COMPLETE
-- RO-4 ResourceLibrary drawer and activation — COMPLETE
-- RO-5 Storage-authoritative Files data — COMPLETE
-- RO-6 Bounded common file management — COMPLETE; Copy/Move is bounded by control-plane scope,
-  not aggregate media bytes, and direct browser Upload/Download is outside the current surface
-- RO-7 Low-friction direct-operation safety — COMPLETE
-- RO-8 Organize workflow continuity — COMPLETE
-- RO-8C Formal classification path parity correction — COMPLETE
-- RO-9 Actionable recovery — COMPLETE
-- RO-10 Non-Files behavior continuity — COMPLETE
-- RO-11 Test reconciliation — COMPLETE for current supported surfaces; baseline P2 debts remain
-  recorded below
-- RO-12 Security model continuity — COMPLETE
-
-Required Surfaces:
-- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
-- V2 Files at `/ui-v2/library/files` — COMPLETE
-- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
-- ResourceLibrary browsing, status, selection and Organize continuation — COMPLETE
-- Files toolbar/action menus and bounded Create Folder/Text File, Rename, Copy, Move, Delete and
-  supported text Edit — COMPLETE
-- Shared formal `library/path` destination composition across Plan, Preview/precheck, projections,
-  execution and result evidence — COMPLETE
-- Direct browser Upload/Download controls, routes, services, models and dedicated tests — REMOVED
-  per the current A-owned scope revision; absence verified
-- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
-
-Implemented:
-- Corrected formal destination composition to include `ClassificationRule.result.library` as the
-  first safe relative prefix while preserving `mediaLibraryId` authority and CLI parity.
-- Removed the direct Files Upload/Download vertical while preserving generic Storage Read/Write,
-  provider transfer primitives, Copy/Move, text Edit and OrganizerExecutor behavior.
-- Repaired Files-originated Save Choice validation against live Storage without requiring a
-  FileIndex row, retained FileIndex-originated validation, and preserved zero-mutation rejection
-  and stale-source recovery semantics.
-- Removed the aggregate media-byte Copy/Move admission ceiling and added truthful bounded JSON 413
-  serialization for control-plane limit failures.
-- Made the Files drawer regression deterministic under the full Web suite without changing the
-  production component or weakening assertions.
-
-Tasks completed:
-- 37.1 — Files reference browse, shared shell and selection authority
-- 37.2 — ResourceLibrary atomic activation
-- 37.3 — Bounded Files maintenance and ResourceLibrary removal
-- 37.4 — Bounded Files Copy and Move transfers
-- 37.5 — Bounded Files Upload and Download
-- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
-- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
-  validation, Copy/Move control-plane correction and Web regression determinism
-
-Final Tests:
-- `python3 scripts/check_governance.py` — PASS.
-- Focused Python groups — `297 passed`, `91 subtests passed` across the required Task groups.
-- Full Python regression — `1703 passed`, `7 skipped`, `4 failed`, `1392 subtests passed`; all
-  four failures reproduce at Task Base and are recorded as non-blocking P2 baseline debts.
-- Ruff format/check, compileall, pip check and `git diff --check` — PASS.
-- Web format, TypeScript, ESLint and production build — PASS; build retained the existing non-blocking
-  chunk-size warning.
-- Web Vitest — `33 files`, `455 passed`, `0 failed`.
-- Focused Files Playwright — `31 passed`.
-- Direct Upload/Download absence search — zero matches for the dedicated Files vertical identifiers.
-- `config/alist.json` absent and the canonical dirty reference image unchanged from Task Base.
-- Prior Slice-level full Playwright evidence remains `112 passed`, `10` legacy/duplicate P2 failures;
-  current correction-specific Files coverage passes as above.
-- Docker release security smoke and the Docker `source2` reproduction remain unavailable because the
-  existing harness/stack uses the superseded `metadataIdentity` request shape and is not the current
-  candidate checkout.
-
-Safety Evidence:
-- Destination validation is fail-closed for unsafe `library` contributions; `mediaLibraryId`
-  remains the sole MediaLibrary/Storage root authority.
-- Preview, DryRun, Save Choice and other analysis stages remain zero-mutation; OrganizerExecutor
-  remains the only Storage mutation boundary.
-- Files-originated source validation uses pinned Active Storage authority without requiring a
-  FileIndex row; missing/stale sources preserve durable Choice and intent state.
-- Copy/Move keeps bounded selection, entry, depth, path, manifest and checkpoint controls; large
-  aggregate media bytes remain impact/progress information only.
-- No silent overwrite/delete, implicit transfer fallback or uncertain mutation replay was added;
-  generic Storage Read/Write and provider primitives remain available.
-- The reviewed diff contains no credentials, `config/alist.json`, ignored artifacts or modified
-  canonical reference image, and no tests were skipped, deleted to hide a failure, or weakened.
-
-Known Non-blocking Issues:
-- P2: four pre-existing Python failures reproduce at Task Base: one configuration projection
-  assertion rejects the legitimate `root_path` field name; two manual-operations contract tests
-  expect a superseded request/fixture shape; and one release-security test expects a different
-  task quality-gate documentation shape. None is in the Task implementation diff or current
-  Files/destination journey.
-- P2: ten legacy Playwright assertions from the prior closure target unsupported routes or a
-  duplicate read-only explanation; they are outside current supported navigation.
-- P2: Docker release smoke remains unavailable due to the obsolete `metadataIdentity` probe and
-  the unavailable `source2` Docker reproduction.
-
-Explicitly Deferred:
-- Preserve the current Contract list unchanged: arbitrary binary/video/audio/image editing and
-  stream inspection; unbounded recursive/batch operations; arbitrary host filesystem access;
-  host extraction outside authenticated Download; implicit cross-Storage fallback; general
-  Configuration/Settings redesign; V1 `/ui` retirement; new providers/adapters/identity systems;
-  universal rollback; automatic uncertain replay; and FFmpeg/FFprobe.
-
-Documentation Reconciliation Needed:
-- A should reconcile the historical pre-reactivation closure record with this post-reactivation
-  correction packet while preserving both as dated history, and record the final review over the
-  original Slice Base through this corrected Head.
-
-Decision: SLICE READY FOR A REVIEW
-```
-
-## Post-reactivation Closure Packet — Task 37.10
-
-```text
-Slice: 37 — Files Workspace, Common File Management and V2 Shell
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Head SHA: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
-
-Required Outcomes:
-- RO-1 Reference-aligned visual fidelity — COMPLETE; the controlled 1536 x 1024 Files state
-  retains the required shell, Files hierarchy, labels, controls and operable composition
-- RO-2 Shared V2 shell replacement — COMPLETE
-- RO-3 Exact Files composition — COMPLETE; exact Storage names/paths survive the Web projection
-  and boundary whitespace is visibly and accessibly unambiguous
-- RO-4 ResourceLibrary drawer and activation — COMPLETE
-- RO-5 Storage-authoritative Files data — COMPLETE; navigation uses the exact live
-  ResourceLibrary-relative path and never substitutes a trimmed sibling or FileIndex authority
-- RO-6 Bounded common file management — COMPLETE
-- RO-7 Low-friction direct-operation safety — COMPLETE
-- RO-8 Organize workflow continuity — COMPLETE
-- RO-8C Formal classification path parity correction — COMPLETE
-- RO-9 Actionable recovery — COMPLETE; a genuinely absent path retains the bounded not-found
-  state and root/retry recovery without alternate-path replay
-- RO-10 Non-Files behavior continuity — COMPLETE
-- RO-11 Test reconciliation — COMPLETE for current supported surfaces; exact-path regression
-  coverage fails on the former trimming behavior and passes on the corrected implementation
-- RO-12 Security model continuity — COMPLETE
-
-Required Surfaces:
-- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
-- V2 Files at `/ui-v2/library/files` — COMPLETE
-- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
-- ResourceLibrary browsing, exact-path navigation, selection, truthful refresh and Organize
-  continuation — COMPLETE
-- Files toolbar/action menus and bounded Create Folder/Text File, Rename, Copy, Move, Delete and
-  supported text Edit — COMPLETE
-- Shared formal `library/path` destination composition across Plan, Preview/precheck, projections,
-  execution and result evidence — COMPLETE
-- Direct browser Upload/Download controls, routes, services, models and dedicated tests — REMOVED
-- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
-
-Implemented:
-- Added an identity-preserving bounded Web normalizer and applied it to Files entry names/paths,
-  breadcrumb names/paths and the current directory path.
-- Rendered leading/trailing identity whitespace with visible boundary markers and an assistive
-  description in the directory tree, breadcrumb, list/grid entries, selection and row actions.
-- Preserved the exact model path through the existing bounded authenticated GET; no trimmed retry,
-  FileIndex lookup, Storage mutation, backend/API contract change or user-media cleanup was added.
-- Added entity, component, fake-server and Playwright regressions proving `SSH ` opens
-  `电影/SSH ` while `电影/SSH` remains a genuine bounded not-found path.
-
-Tasks completed:
-- 37.1 — Files reference browse, shared shell and selection authority
-- 37.2 — ResourceLibrary atomic activation
-- 37.3 — Bounded Files maintenance and ResourceLibrary removal
-- 37.4 — Bounded Files Copy and Move transfers
-- 37.5 — Bounded Files Upload and Download
-- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
-- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
-  validation, Copy/Move control-plane bounds
-- 37.8 — Files safety and quality gate reconciliation
-- 37.9 — Files refresh truthful state and focused presentation
-- 37.10 — Files exact path identity and whitespace presentation
-
-Final Tests:
-- `python3 scripts/check_governance.py` — PASS.
-- Task-focused Vitest — 2 files, 56/56 passed.
-- Full Vitest — 33 files, 464/464 passed.
-- Files Playwright — 34/34 passed; full Playwright — 122/122 passed.
-- Web typecheck, ESLint and Prettier — PASS.
-- Production Web build — PASS; the existing generated-chunk size warning remains non-blocking.
-- `.venv/bin/python -m unittest discover -s tests` — 1718 run, OK, 7 skipped on Python 3.13.
-- Ruff format/lint, compileall, pip check and FFmpeg/FFprobe exclusion — PASS.
-- Both committed example configurations validate successfully.
-- Wheel build and isolated installed-wheel backup/restore/verify/upgrade rehearsal — PASS,
-  schema 38.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` —
-  PASS through the isolated four-service runtime and V2 manual-Organize probe.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py` —
-  PASS; 22548578304 aggregate bytes were admitted as impact evidence while bounded control-plane
-  limits failed closed without mutation.
-- Controlled Files screenshot — PASS by RO-1 structural/reference-aligned review at 1536 x 1024.
-  Diagnostic comparison against the committed reference: 1427563/1572864 changed pixels
-  (90.7620%; mean absolute RGB 13.706/10.990/7.066); pixel count is not a Contract threshold.
-- `git diff --check`, reviewed-range manifest and private-file inspection — PASS;
-  `config/alist.json` is absent and the pre-existing dirty `docs/pics/文件页.png` is excluded.
-
-Safety Evidence:
-- Exact API-provided identity characters survive normalization and every Files navigation callback;
-  no fallback, reconstructed label path or automatic alternate-path retry exists.
-- The successful regression path performs authenticated GET reads only and issues no FileIndex or
-  mutation request; the missing sibling path retains zero-side-effect bounded recovery.
-- OrganizerExecutor-only mutation, backend authority, capability/confinement, explicit destructive
-  intent, stale checks and uncertain-effect non-replay remain unchanged.
-- No credential, production Storage, external provider, private configuration or user media entered
-  the reviewed checkpoint or validation.
-
-Known Non-blocking Issues:
-- The accepted narrow Local directory replacement/inode-reuse race remains documented residual
-  risk and is not claimed fixed.
-- The production Web build retains the existing generated-chunk size warning.
-- The full Python run emits existing unclosed-SQLite `ResourceWarning` messages but completes with
-  1718 tests passing and 7 intentional skips.
-
-Explicitly Deferred:
-- Direct browser Upload/Download remains removed from the current scope.
-- Arbitrary binary/media editing, unbounded recursive/batch operations, new providers/storage
-  capabilities, identity/security-system redesign, automatic uncertain-mutation replay,
-  universal rollback, V1 `/ui` retirement and FFmpeg/FFprobe remain deferred or out of scope as
-  stated in the Contract.
-
-Documentation Reconciliation Needed:
-- A should perform final review over
-  `b507edba167f5af3af8c53bfcf1417ba4fefddf4..3feab84a0fbbf7cebfe1f5507e548636da5ab283`
-  and preserve the earlier Closure Packets/A reviews as dated history.
-- The dirty working-tree copy of `docs/pics/文件页.png` remains pre-existing user work outside the
-  reviewed range; no reconciliation or replacement is requested by this packet.
-
-Decision: SLICE READY FOR A REVIEW
-```
-
-## A Final Review — Post-reactivation Closure 2026-09-22
-
-```text
-Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..3feab84a0fbbf7cebfe1f5507e548636da5ab283
-Decision: PASS / CLOSED
-P0/P1 Blockers:
-- None.
-```
-
-Closure Reconciliation:
-
-- All twelve Required Outcomes and all Required Surfaces are complete across the shared V2 shell,
-  live ResourceLibrary Files browsing, atomic activation, bounded common file management,
-  Organize continuation, formal `library/path` destination parity, truthful refresh/presentation,
-  and exact Storage path identity.
-- The vertical journey is complete: an authorized operator enters Files, sees live
-  ResourceLibrary-scoped state, performs bounded actions, receives independent success/failure/
-  partial outcomes, and recovers through corrected input, refresh, revalidation or durable
-  Organize state. A real boundary-space path remains visibly distinguishable and navigates using
-  its exact ResourceLibrary-relative identity; the genuinely absent trimmed sibling remains a
-  bounded not-found state with no alternate-path replay.
-- The reviewed implementation preserves the architecture and safety invariants: read and analysis
-  stages remain zero-mutation, all Storage mutation crosses `OrganizerExecutor`, authority is
-  backend-resolved from Active ResourceLibrary/Storage bindings, overwrite/delete intent remains
-  explicit, and uncertain effects are never automatically replayed. RecognitionType identity
-  remains independent of downstream policy reuse.
-- Validation is truthful: governance, Ruff, compileall, pip check, FFmpeg/FFprobe exclusion and
-  `git diff --check` passed; Python regression passed `1718` with `7` skips; Web Vitest passed
-  `464/464`; Web typecheck, lint, format and production build passed; full Playwright passed
-  `122/122`; Docker release-security and transfer-impact smoke tests passed. The generated chunk
-  size warning and existing Python SQLite `ResourceWarning` messages remain non-blocking quality
-  debt. The accepted narrow Local directory replacement/inode-reuse race remains documented and
-  is not claimed fixed.
-- The canonical reference image remains outside the reviewed implementation range except for the
-  pre-existing dirty worktree modification; `config/alist.json` is absent and no secret/private
-  configuration or user media entered the reviewed range. Explicitly Deferred scope remains
-  deferred and was not silently expanded.
-
-The Slice is therefore `PASS / CLOSED` as of 2026-09-22. The next legal action is for A to select
-the next large Slice in a subsequent A turn.
-
-## A Final Review — Post-reactivation 2026-09-21
-
-```text
-Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..6322d5364ad0fe8ab4e4bc01d6a523454b6b94d8
-Decision: FIX REQUIRED
-P0/P1 Blockers:
-- The current Upload/Download-removal acceptance is not fully satisfied. The reviewed
-  implementation still contains the Upload-specific `_ItemPayloadStream` helper in
-  `mediaflow/interfaces/service_api.py:202-233`. Its docstring and WSGI payload logic describe
-  an admitted Files Upload item, although the helper is now unreachable after the route/service
-  removal. This contradicts the A-authorized boundary requiring the direct Files Upload/Download
-  vertical, including its helpers, to be removed, and makes the Closure Packet's absence claim
-  materially incomplete. Remove this dead Upload helper, then rerun the direct-surface absence
-  inspection and the affected Python/Web regression gates.
-
-Required correction evidence:
-- rerun `python -m unittest discover -s tests` and record every matrix result, skip and remaining
-  failure truthfully;
-- rerun the direct Upload/Download absence inspection after removing `_ItemPayloadStream`.
-```
-
-Accepted Residual Risk:
-
-- GitHub Actions `quality` run `#114` on 2026-09-20 exposed two Local directory replacement tests
-  that can observe `SUCCESS` when delete/recreate reuses the inode inside the final revalidation to
-  mutation window.
-- A accepts this as a non-blocking residual risk for Slice 37 because it requires a narrow concurrent
-  replacement race and does not represent the ordinary single-operator path. Existing scope
-  confirmation and stale revalidation remain required and must not be weakened.
-- README contains the operator-facing prevention and recovery guidance. B must remove the
-  replacement-resistant generation architecture from Task 37.8 and reconcile the two host-filesystem
-  tests with this accepted contract without adding skips or representing the race as fixed.
-
-## A Final Review — Post-reactivation Closure 2026-09-21
-
-```text
-Reviewed Range: b507edba167f5af3af8c53bfcf1417ba4fefddf4..2115d1839eb0611f097913eae8a43492d00346a2
-Decision: PASS / CLOSED
-P0/P1 Blockers:
-- None.
-```
-
-Closure Reconciliation:
-
-- All current Slice 37 Required Outcomes and Required Surfaces are complete. The final supported
-  Files surface is the shared V2 shell, live ResourceLibrary browsing, ResourceLibrary activation,
-  Create Folder/Text File, Rename, Copy, Move, Delete, bounded text Edit and Organize continuation.
-  Direct browser Upload/Download was removed vertically from the current scope; generic Storage
-  Read/Write, provider transfer primitives and Copy/Move behavior remain available.
-- The user journey is complete: the operator enters Files, sees live Storage-authoritative state,
-  performs bounded actions with explicit destructive intent where required, receives independent
-  success/failure/partial outcomes, and recovers through corrected input, refresh, revalidation or
-  durable Organize state. Non-Files V2 journeys remain functional inside the shared shell.
-- The formal destination correction is complete: `ClassificationRule.result.library` is validated
-  as a safe relative prefix and composed before `result.path` consistently across Plan, Preview,
-  precheck, execution and result evidence, with CLI parity and zero-mutation rejection.
-- Safety invariants hold: analysis/read stages remain zero-mutation, only `OrganizerExecutor` mutates
-  Storage, authority is resolved from backend Active ResourceLibrary/Storage bindings, overwrite and
-  delete are explicit, cross-Storage Move verifies before deleting the source, and uncertain effects
-  are never automatically replayed. RecognitionType identity remains independent of downstream policy
-  reuse.
-- A reran the final gates on the reviewed implementation checkpoint: Python `1718` tests passed with
-  `7` skips; Web format/typecheck/lint/Vitest `455` tests and production build passed; Playwright
-  `119` tests passed with no failures or skips; governance, Ruff, compile, dependency, diff and
-  private-file checks passed; Docker release-security and transfer-impact smoke tests passed.
-  Python 3.11/3.12 were unavailable locally and are not inferred. The accepted narrow Local
-  directory replacement/inode-reuse race remains documented residual risk, not a claimed fix.
-- The dirty working-tree copy of `docs/pics/文件页.png` was pre-existing user work and is excluded
-  from the reviewed checkpoint. `config/alist.json` is absent and no secret/private configuration
-  entered the reviewed range. The next legal action is A selecting the next large Slice in a later
-  turn.
-
-## Post-reactivation Closure Packet — Task 37.9
-
-```text
-Slice: 37 — Files Workspace, Common File Management and V2 Shell
-Base SHA: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Head SHA: 52383fa67c007ec814156503856fe8b7aa0219af
-
-Required Outcomes:
-- RO-1 Reference-aligned visual fidelity — COMPLETE
-- RO-2 Shared V2 shell replacement — COMPLETE
-- RO-3 Exact Files composition — COMPLETE; refresh truthfully reconciles local tree/selection
-  state and the Files page no longer presents recognition/status feedback
-- RO-4 ResourceLibrary drawer and activation — COMPLETE
-- RO-5 Storage-authoritative Files data — COMPLETE; refresh remains live Storage-authoritative and
-  does not consult FileIndex
-- RO-6 Bounded common file management — COMPLETE
-- RO-7 Low-friction direct-operation safety — COMPLETE
-- RO-8 Organize workflow continuity — COMPLETE
-- RO-8C Formal classification path parity correction — COMPLETE
-- RO-9 Actionable recovery — COMPLETE; failed refresh preserves the existing bounded retry/root
-  recovery without fabricated rows or automatic replay
-- RO-10 Non-Files behavior continuity — COMPLETE
-- RO-11 Test reconciliation — COMPLETE for current supported surfaces; accepted baseline P2 debts
-  remain recorded below
-- RO-12 Security model continuity — COMPLETE
-
-Required Surfaces:
-- Shared responsive V2 shell for supported `/ui-v2` routes — COMPLETE
-- V2 Files at `/ui-v2/library/files` — COMPLETE
-- Files-local Add ResourceLibrary drawer and atomic activation — COMPLETE
-- ResourceLibrary browsing, selection, truthful refresh and Organize continuation — COMPLETE
-- Files toolbar/action menus and bounded Create Folder/Text File, Rename, Copy, Move, Delete and
-  supported text Edit — COMPLETE
-- Shared formal `library/path` destination composition across Plan, Preview/precheck, projections,
-  execution and result evidence — COMPLETE
-- Direct browser Upload/Download controls, routes, services, models and dedicated tests — REMOVED
-- Existing non-Files V2 page bodies inside the shared shell — COMPLETE
-
-Implemented:
-- Task 37.9 refresh boundary clears page-local directory memory and selection before the same
-  bounded authenticated GET; stable directory discovery prevents stale paths from being
-  reintroduced after refresh.
-- Files presentation now contains exactly `选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`;
-  `识别结果` and `整理状态` are absent while the explicit `整理` action and existing
-  zero-mutation continuation remain.
-- Focused unit and browser coverage proves external-directory removal, stale-selection clearing,
-  valid-context preservation, bounded failure recovery, six-column presentation, GET-only refresh
-  and no `/file-index` request.
-- The visual specification records the current presentation boundary and refresh truthfulness.
-
-Tasks completed:
-- 37.1 — Files reference browse, shared shell and selection authority
-- 37.2 — ResourceLibrary atomic activation
-- 37.3 — Bounded Files maintenance and ResourceLibrary removal
-- 37.4 — Bounded Files Copy and Move transfers
-- 37.5 — Bounded Files Upload and Download
-- 37.6 — Files multi-item Organize continuation and FileIndex reconciliation
-- 37.7 — Formal destination parity, current-scope Upload/Download removal, Save Choice source
-  validation, Copy/Move control-plane bounds
-- 37.8 — Files safety and quality gate reconciliation
-- 37.9 — Files refresh truthful state and focused presentation
-
-Final Tests:
-- `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/python -m unittest discover -s tests` — `1718` passed, `7` skipped, OK on the
-  local Python 3.13 run.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS; no broken requirements.
-- `.venv/bin/ruff format --check .` and `.venv/bin/ruff check .` — PASS.
-- `cd web && npm run test -- --run` — first full concurrent run `459/460`, with one unrelated
-  `OrganizeRouter.test.tsx` timing failure; isolated rerun `13/13` passed. Task-focused Web
-  suite passed `38/38`.
-- `cd web && npm run test:e2e` — `120/120` passed with no failures or skips; Task-focused Files
-  subset passed `38/38`.
-- `cd web && npm run typecheck`, `npm run lint`, `npm run format:check` — PASS.
-- `cd web && npm run build` — PASS; production artifact generated.
-- `git diff --check` and reviewed-scope/private-file inspection — PASS; `config/alist.json` is
-  absent and the canonical image change remains pre-existing and uncommitted.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_release_security_smoke_test.py` —
-  PASS.
-- `TMPDIR=/root/mediaflow .venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py` —
-  PASS; synthetic aggregate `22548578304` bytes was admitted as impact evidence while bounded
-  depth/entry/selection limits failed closed without mutation.
-- GitHub quality run `#118` remains the green Python 3.11/3.12/3.13 baseline recorded by the
-  active Task.
-
-Safety Evidence:
-- Files refresh performs only the existing bounded authenticated GET; focused tests and full
-  browser coverage found no mutation request and no `/file-index` request.
-- Removed directory paths and selections are not fabricated after a successful refresh; failed
-  reads retain bounded retry/root recovery.
-- OrganizerExecutor, backend authority, explicit delete/replace intent, stale checks and
-  non-replay behavior remain unchanged.
-- No credentials, production Storage, external provider or private configuration entered the
-  reviewed checkpoint.
-
-Known Non-blocking Issues:
-- Full Web Vitest has an intermittent unrelated scheduling failure in
-  `OrganizeRouter.test.tsx`; the exact file passes in isolation (`13/13`), and the affected
-  Organize browser journeys pass. No Task 37.9 file or behavior is implicated.
-- The accepted narrow Local directory replacement/inode-reuse race remains documented residual
-  risk and is not claimed fixed.
-- Existing build-size warning for the generated JavaScript chunk is non-blocking and outside
-  this Task.
-
-Explicitly Deferred:
-- Direct browser Upload/Download is removed from the current scope.
-- Arbitrary binary/media editing, unbounded recursive/batch operations, new providers/storage
-  capabilities, identity/security-system redesign, automatic uncertain-mutation replay,
-  universal rollback, V1 `/ui` retirement and FFmpeg/FFprobe remain deferred or out of scope as
-  stated in the Contract.
-
-Documentation Reconciliation Needed:
-- A should perform the final review over `b507edba167f5af3af8c53bfcf1417ba4fefddf4..52383fa67c007ec814156503856fe8b7aa0219af`
-  and reconcile any factual closure references across authoritative documents. No Contract,
-  Slice Base or Required Outcome change is requested.
-
-Decision: SLICE READY FOR A REVIEW
-```
+Not performed. Await B's completed Closure Packet and actual implementation evidence.

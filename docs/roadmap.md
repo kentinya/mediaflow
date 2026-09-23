@@ -23,6 +23,7 @@ only in [the development workflow](development-workflow.md).
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PASS / CLOSED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
 | 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit, organize continuation and post-mutation reconciliation without introducing a second authority; remove the direct browser Upload/Download vertical; correct formal classification `library/path` destination parity with CLI; repair stale ResourceLibrary directory-tree state after Files refresh; make the manual Organize editor derive downstream policies from RecognitionType | PASS / CLOSED | 33 and existing Files foundation |
+| 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library creation/removal and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving the complete Slice 37 Files journey and shared safety authority | ACTIVE | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
 
 ## Current boundary
 
@@ -61,7 +62,11 @@ exact Storage path identity. The final 2026-09-23 correction review also confirm
 Organize Web editor derives and locks NamingPolicy, ClassificationPolicy and OrganizePolicy from
 the selected RecognitionType under the pinned snapshot. Both post-closure correction loops remained
 within the original Slice boundary and preserved the existing live Storage authority and non-Files
-business boundaries. No large Slice is active; A selects the next large Slice separately.
+business boundaries. Slice 38 is now ACTIVE for MediaLibrary file management and the necessary
+route separation. Its canonical image is `docs/pics/媒体库页.png`, with card statistics and file
+thumbnails explicitly excluded. It moves Files to `/ui-v2/resourcelib/files`, adds MediaLibrary at
+`/ui-v2/medialib/files` and retires both old Library routes while retaining Files/Organize behavior.
+This is planned scope, not a claim that those routes or MediaLibrary commands are implemented.
 User experience remains the primary product-design and acceptance criterion, while correctness,
 RBAC, audit, data integrity, ResourceLibrary confinement and OrganizerExecutor-only mutation remain
 mandatory. Slice 30 is `PASS / CLOSED` at Base
@@ -89,10 +94,11 @@ the most recent large Slice; this Roadmap does not retain the retired Slice 34�
 
 - A alone creates or materially changes large Slice boundaries and ordering.
 - B plans Tasks only after a Slice becomes ACTIVE; Roadmap never pre-splits future Slices into Tasks.
-- Slice 37 owns the shared V2 shell's visual replacement, the Files page, drawer and common
-  bounded file-management commands. During its authorized post-closure correction it also owns
-  formal `library/path` destination parity with the local CLI. Other pages' business journeys and
-  route semantics remain frozen; their shared outer chrome is intentionally updated by this Slice.
+- Closed Slice 37 delivered the shared V2 shell's visual replacement, the Files page, drawer and common
+  bounded file-management commands. Its authorized post-closure correction also delivered
+  formal `library/path` destination parity with the local CLI. Its historical non-Files boundary
+  remains part of that closure. Active Slice 38 owns only the new MediaLibrary journey and required
+  route/navigation integration; existing Files behavior and other product journeys are protected.
 - Task PASS, fixes, test counts, probes, rejected SHAs and review narratives never enter this file.
 - Safety, product and architecture requirements remain authoritative even when omitted from this
   compact prioritization view.
