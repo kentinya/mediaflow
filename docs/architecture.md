@@ -111,13 +111,16 @@ The V2 program preserves the current `/api/v1/*` authority, Python application/d
 API-principal Bearer-token model, memory-only browser token handling, RBAC and all explicit execution
 and OrganizerExecutor safety gates. The existing V1 Operator UI remains available during migration.
 Slice 37 is PASS / CLOSED at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation
-Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283`. It replaced the former V2 shell presentation with
+Head `aa54854c442d117c7eb23ae9800045c423db1368`. It replaced the former V2 shell presentation with
 the shared light shell in the canonical Files reference, completed Files common bounded file
 management, removed the direct browser Upload/Download vertical from the current surface,
 corrected formal `library/path` destination parity, and repaired exact Storage path identity. The
-Files page does not render recognition-result or organize-status feedback. Non-Files business-
-surface migrations and final cutover remain outside the closed Slice; existing non-Files route
-behavior is retained inside the replacement shell. A selects the next large Slice separately.
+Files page does not render recognition-result or organize-status feedback. The manual Organize Web
+choice editor now derives NamingPolicy, ClassificationPolicy and OrganizePolicy from the selected
+RecognitionType under the pinned snapshot, while preserving type identity and failing closed on an
+unavailable mapping. Non-Files business-surface migrations and final cutover remain outside the
+closed Slice; existing non-Files route behavior is retained inside the replacement shell. A selects
+the next large Slice separately.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit

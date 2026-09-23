@@ -596,16 +596,19 @@ Storage and do not resolve the selected path through FileIndex. Browsing, select
 configuration and command admission must not otherwise introduce a FileIndex dependency; failed
 reconciliation cannot silently replay a Storage mutation.
 
-## Files Current Delivery Update — 2026-09-22
+## Files Current Delivery Update — 2026-09-23
 
 Slice 37 is `PASS / CLOSED` at Base `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and
-Implementation Head `3feab84a0fbbf7cebfe1f5507e548636da5ab283`. The current Files page keeps the
+Implementation Head `aa54854c442d117c7eb23ae9800045c423db1368`. The current Files page keeps the
 live Storage and ResourceLibrary authority described above, but does not render recognition-result
 or organize-status feedback. Exact Storage entry names and relative paths, including leading or
 trailing whitespace, survive the frontend model boundary and navigation; the page makes boundary
 whitespace visible and accessible, and a genuinely absent path retains bounded not-found recovery.
-The shared shell, direct file-management commands, Organize continuation and explicit deferrals
-remain otherwise unchanged.
+The shared shell, direct file-management commands and Organize continuation remain otherwise
+unchanged. In the manual Organize choice editor, RecognitionType is the operator-facing choice
+source: its pinned NamingPolicy, ClassificationPolicy and OrganizePolicy mapping is displayed
+read-only, preserved for RecognitionType C→A reuse, and unavailable mappings fail closed with a
+reload recovery action.
 
 ## Files Page Visual Fidelity Update — 2026-09-14
 
@@ -623,4 +626,4 @@ configuration-activation failures remain bounded recovery states. Other pages' b
 and backend behavior are frozen, while their shared outer chrome intentionally changed to the
 replacement shell. Slice 37 is PASS / CLOSED at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
-`3feab84a0fbbf7cebfe1f5507e548636da5ab283`.
+`aa54854c442d117c7eb23ae9800045c423db1368`.

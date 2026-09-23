@@ -4,13 +4,15 @@ The last completed Task was Task 37.12 — RecognitionType-driven Organize polic
 Its implementation and fix-loop checkpoint was
 `aa54854c442d117c7eb23ae9800045c423db1368`.
 
+Next Action: A SELECTS THE NEXT LARGE SLICE
+
 ## B Review Result
 
 ```text
 Reviewed: 970ac756222daaf21215c6f2b64446e44a83a108..aa54854c442d117c7eb23ae9800045c423db1368
 Decision: PASS
 Slice Required Outcomes all satisfied: YES
-Next: SLICE READY FOR A REVIEW
+Next: SLICE PASS / CLOSED
 ```
 
 Review evidence:

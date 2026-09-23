@@ -9,12 +9,16 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 37 — **Files Workspace, Common File Management and V2 Shell** —
-is `ACTIVE` after A's 2026-09-22 post-closure reactivation for the P1 Files-originated manual
-Organize Save Choice runtime-resolver regression. The prior closure, Base, Implementation Head and
-reviews remain historical facts; the current correction starts from
-`3feab84a0fbbf7cebfe1f5507e548636da5ab283`. The current Contract is maintained in
-[`SLICE.md`](../SLICE.md) and the Roadmap boundary in [`roadmap.md`](roadmap.md). B plans one
-focused correction Task. This pointer is not a closure-ledger entry.
+is `PASS / CLOSED` after A's 2026-09-23 final review of the original Base through
+`aa54854c442d117c7eb23ae9800045c423db1368`. The current Contract and final review are maintained
+in [`SLICE.md`](../SLICE.md); no large Slice is active and A selects the next one separately. This
+pointer is not a closure-ledger entry.
+
+Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
+workspace, bounded common file management, safe Organize continuation, formal `library/path`
+parity, truthful refresh and exact Storage path identity, plus RecognitionType-driven Web policy
+binding. Direct browser Upload/Download, arbitrary media editing, unbounded operations, new
+providers/identity systems, universal rollback and automatic uncertain replay remain deferred.
 
 A post-closure backend-governance maintenance change retires the obsolete direct file
 re-recognition, metadata re-match, file re-plan and recognition-review retry surfaces across the
@@ -41,15 +45,17 @@ V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
 ```text
 Status: PASS / CLOSED
 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Implementation Head: 3feab84a0fbbf7cebfe1f5507e548636da5ab283
-A Final Review: PASS / CLOSED — 2026-09-22
+Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
+A Final Review: PASS / CLOSED — 2026-09-23
 ```
 
 Delivered the reference-aligned shared V2 light shell and Files workspace: live
 ResourceLibrary-scoped browsing, atomic ResourceLibrary activation, bounded Create
 Folder/Text/Rename/Copy/Move/Delete/text Edit, multi-item Organize continuation, formal
 `library/path` destination parity, truthful refresh/presentation, exact Storage path identity and
-exact FileIndex reconciliation without a second authority or mutation path. The Files page does not
+exact FileIndex reconciliation without a second authority or mutation path. The manual Organize Web
+editor derives downstream policies from the selected RecognitionType under the pinned snapshot and
+fails closed when that mapping is unavailable. The Files page does not
 render recognition-result or organize-status feedback; exact boundary whitespace remains visibly
 unambiguous and navigable. The direct browser Upload/Download vertical is outside the current
 surface, while generic Storage/provider transfer primitives remain available. Deferred scope
@@ -267,7 +273,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
-| 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `3feab84a0fbbf7cebfe1f5507e548636da5ab283` | A Final Review PASS / CLOSED — 2026-09-22 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, truthful refresh/presentation, exact Storage path identity and multi-item Organize continuation | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
+| 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `aa54854c442d117c7eb23ae9800045c423db1368` | A Final Review PASS / CLOSED — 2026-09-23 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, truthful refresh/presentation, exact Storage path identity, multi-item Organize continuation and RecognitionType-driven Web policy binding | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
 | 33 — Operations Workspace | PASS / CLOSED | `827c36b410687e41b1da53ba6475d8c03a47dbfd` | `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08` | A Final Review PASS / CLOSED — 2026-09-13 | Actionable Dashboard, durable Tasks/Jobs and controls, bounded Scan/Preview, Web-native exact manual Organize, Automation operation and Webhook delivery operation, typed Preview safety projection, and resident Worker pinned-source revalidation | Slices 34–36 Review/Recovery, Configuration, parity/accessibility/cutover and other Contract deferrals |
 | 32 — Library & Files Experience | PASS / CLOSED | `76de3f60e223131a8b7db97a566d0ceaadd9b2a0` | `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99` | A Final Review PASS / CLOSED — 2026-09-10 | Distinct bounded Active Storage and FileIndex journeys, stable catalog paging, strict detail/evidence and safe physical/indexed context | Slices 33–36 Operations/Review/Configuration/parity/cutover and other Contract deferrals |
 | 31 — Operator Shell & Information Architecture | PASS / CLOSED | `2e7aceb50750fb54689ab26bfd1214b8e36c25f8` | `45cb1d4cdda6cf46a6d6699600bc4a4563efc06b` | A Final Review PASS / CLOSED — 2026-09-09 | Typed product-area IA, responsive/accessible shell, safe deep-link auth continuation, actionable route/permission recovery and truthful V1 handoff | Slices 32–36 business migrations/parity/cutover, new identity/API systems and other Contract deferrals |
