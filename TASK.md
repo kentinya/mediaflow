@@ -170,7 +170,7 @@ Release-quality gate command documentation required for Task execution:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [filled after correction commit]
+Head SHA: e186e0b66b389ef2d621b4b4ce3b11c6251445d1
 ```
 
 ## B Review Result
