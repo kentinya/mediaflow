@@ -21,20 +21,16 @@ async function connectAs(page: Page, token = VIEWER_TOKEN): Promise<void> {
   await page.getByRole("button", { name: "Connect" }).click();
 }
 
-/** The MediaLibrary card whose facts mention this Storage. */
-function card(page: Page, storageName: string): Locator {
-  return page.locator(".mf-library-card").filter({ hasText: storageName });
+/** The MediaLibrary card selected by its visible library identity. */
+function card(page: Page, libraryName: string): Locator {
+  return page.locator(".mf-library-card").filter({
+    has: page.getByRole("button", { name: libraryName, exact: true }),
+  });
 }
 
 /** Select a MediaLibrary card; its configuration menu follows selection. */
-async function selectLibrary(
-  page: Page,
-  name: string,
-  storageName: string,
-): Promise<void> {
-  await card(page, storageName)
-    .getByRole("button", { name, exact: true })
-    .click();
+async function selectLibrary(page: Page, name: string): Promise<void> {
+  await card(page, name).getByRole("button", { name, exact: true }).click();
 }
 
 /** Open the selected card's configuration menu and choose removal. */
@@ -160,7 +156,7 @@ test("an enabled Save becomes the exact Active library, is selected and browseab
   expect(posts).toHaveLength(1);
 
   // The saved enabled library is the selected, actually browseable library.
-  const savedCard = card(page, "remote-media");
+  const savedCard = card(page, "E2E 新媒体库");
   await expect(savedCard).toBeVisible();
   await expect(
     savedCard.getByRole("button", { name: "E2E 新媒体库", exact: true }),
@@ -196,7 +192,7 @@ test("a disabled Save is truthful, hidden from browsing and offers the handoff",
   // the existing configuration handoff instead of pretending to be browseable.
   await expect(page.getByText(/已保存，但当前为停用状态/)).toBeVisible();
   await expect(page.getByText(/可在配置页面启用后再来浏览/)).toBeVisible();
-  await expect(card(page, "remote-media")).toHaveCount(0);
+  await expect(card(page, "E2E 停用库")).toHaveCount(0);
   await expect(page).not.toHaveURL(/mediaLibraryId=e2e-disabled/);
   expect(browseReads).toHaveLength(0);
 });
@@ -266,7 +262,7 @@ test("a rejected Save preserves the prior Active and retains correctable input",
   await expect(page.getByLabel("媒体库 ID *")).toHaveValue("e2e-candidate");
   // The original Active library is still selected and browseable, and the
   // failed candidate was submitted exactly once and never replayed.
-  await expect(card(page, "115 Storage")).toBeVisible();
+  await expect(card(page, "115网盘")).toBeVisible();
   expect(posts).toHaveLength(1);
 });
 
@@ -343,7 +339,7 @@ test("removal previews the exact Active library and keeps every file", async ({
     }
   });
   await openMediaLibrary(page);
-  await selectLibrary(page, "夸克网盘", "Quark Storage");
+  await selectLibrary(page, "夸克网盘");
   await openRemovalDialog(page, "夸克网盘");
 
   // The dialog names the selected library, its Storage and relative root, and
@@ -368,7 +364,7 @@ test("removal previews the exact Active library and keeps every file", async ({
   expect(deletes).toHaveLength(1);
 
   // The removed configuration no longer appears; no Storage entry was touched.
-  await expect(card(page, "Quark Storage")).toHaveCount(0);
+  await expect(card(page, "夸克网盘")).toHaveCount(0);
   await expect(page.getByRole("table")).toBeVisible();
 });
 
@@ -394,7 +390,7 @@ test("a referenced library cannot be removed and offers the handoff", async ({
 
   // Cancelling keeps the still-referenced library configured and browseable.
   await page.getByRole("button", { name: "取消", exact: true }).click();
-  await expect(card(page, "115 Storage")).toBeVisible();
+  await expect(card(page, "115网盘")).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
 });
 
@@ -403,7 +399,7 @@ test("a stale removal confirmation keeps the dialog open for safe re-review", as
 }) => {
   await resetMediaLibrary(page, "?staleRemoval=1");
   await openMediaLibrary(page);
-  await selectLibrary(page, "夸克网盘", "Quark Storage");
+  await selectLibrary(page, "夸克网盘");
 
   const deletes: string[] = [];
   page.on("request", (request) => {
@@ -428,7 +424,7 @@ test("a stale removal confirmation keeps the dialog open for safe re-review", as
     0,
   );
   expect(deletes).toHaveLength(2);
-  await expect(card(page, "Quark Storage")).toHaveCount(0);
+  await expect(card(page, "夸克网盘")).toHaveCount(0);
 });
 
 test("a limited principal cannot save or remove a MediaLibrary", async ({

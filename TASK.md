@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.6
 Parent Slice: 38
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 3e0c8643d63489c4fbca17ea194e437faf933535
 Difficulty: Medium
 Test Level: T2
@@ -79,6 +79,14 @@ Shared Web presentation
 - `git diff --check`
 - `python3 scripts/check_governance.py`
 
+Release-quality gate command documentation required for Task execution:
+
+- `scripts/docker_release_security_smoke_test.py`
+- `.venv/bin/ruff format --check .`
+- `.venv/bin/ruff check .`
+- `.venv/bin/python -m unittest discover -s tests`
+- `.venv/bin/python -m compileall -q mediaflow tests scripts`
+
 ## Non-goals
 
 - New MediaLibrary or ResourceLibrary API behavior, Storage providers, configuration schema or
@@ -101,6 +109,8 @@ Shared Web presentation
 - `web/src/features/library/MediaLibraryFilesPage.test.tsx`
 - `web/src/shared/ui/styles.css`
 - `web/tests/e2e/medialib-files.spec.ts`
+- `web/tests/e2e/medialib-config.spec.ts`
+- `TASK.md`
 
 ### Implemented
 
@@ -110,6 +120,9 @@ Shared Web presentation
 - Preserved Storage facts in configuration/recovery surfaces, disabled-library filtering, route state,
   direct commands and the ResourceLibrary Organize continuation.
 - Reused the shared card menu with MediaLibrary-specific icon, labels and removal action.
+- Correction: updated MediaLibrary configuration/removal browser tests to identify browse cards by
+  visible library identity instead of removed Storage text.
+- Correction: documented every release-quality command required while a Task is active.
 
 ### Tests and Results
 
@@ -121,6 +134,14 @@ Shared Web presentation
 - `npm --prefix web run build` — PASS (Vite emitted the existing chunk-size warning).
 - `git diff --check` — PASS.
 - `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1791 tests, 7 skipped).
+- `npm --prefix web run test:e2e` — PASS (168/168).
+- `npm --prefix web run test:e2e -- tests/e2e/medialib-config.spec.ts` — PASS (12/12).
+- `.venv/bin/ruff format --check .` — PASS (314 files).
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `scripts/docker_release_security_smoke_test.py` — SKIP (documented Slice-final release gate; not
+  requested for this T2 correction and no Docker release behavior changed).
 
 ### Decisions
 
@@ -128,6 +149,8 @@ Shared Web presentation
   icon/menu labels are parameterized so both library kinds retain their own identity and actions.
 - The root-path context is intentionally derived from the selected library only, so switching cards
   cannot leave stale facts from another library visible.
+- Browser configuration tests now use the same visible semantic identity available to operators;
+  Storage assertions remain inside the configuration/removal surfaces where Storage is still shown.
 
 ### Remaining In-Slice Work
 
@@ -140,12 +163,14 @@ Shared Web presentation
   from this checkpoint.
 - Playwright's first invocation used a stale static build and had one presentation failure; after the
   required build refresh, the exact command passed 46/46.
+- The correction initially exposed a Prettier-only failure in the changed e2e file; it was formatted
+  and the format, typecheck, lint, focused and full browser gates were rerun successfully.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 5e2255442531a2892c7b2b76c5df071c08abb21f
+Head SHA: [filled after correction commit]
 ```
 
 ## B Review Result
