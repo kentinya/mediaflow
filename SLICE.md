@@ -87,7 +87,7 @@ sections in product and architecture documents describe planned work, not delive
 | Stage | Required experience |
 |---|---|
 | Entry | Shared sidebar `媒体库` or MediaLibrary deep link; `文件` selects the separate ResourceLibrary route. Authentication continuation preserves a valid page and bounded directory context. |
-| Visible state | Active MediaLibrary cards with name, enabled state, Storage and root; selected library; lazy directory tree; exact relative breadcrumbs; live rows; list/grid; selection; bounded paging; permissions and read failures. |
+| Visible state | Shared library cards with name and selection; selected-library context with enabled state and exact configured path (no Storage in normal browse presentation); lazy directory tree; exact relative breadcrumbs; live rows; list/grid; selection; bounded paging; permissions and read failures. |
 | Action | Select a library, navigate, search within the existing bounded browser semantics, refresh, select entries, add/remove a library configuration, create folder/text, rename, copy, move, delete or edit supported text. |
 | Success | A saved enabled library is actually Active and browseable; known file-command success is recorded per item and reflected in a fresh live listing. Long work has durable Task progress and supported lifecycle actions in Web. |
 | Failure | Missing Active, missing/disabled library, invalid path/name, denied permission, unavailable Storage, unsupported capability, stale evidence, conflict, invalid configuration and partial/uncertain mutation identify the affected scope and known effects. |
