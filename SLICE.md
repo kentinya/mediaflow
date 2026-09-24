@@ -7,9 +7,9 @@ the approved reference, while preserving the closed Slice 37 ResourceLibrary Fil
 Slice ID: 38
 Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Implementation Head: 3a4ac21fc5f9b24da1357bb2dd520314a406f308
+Implementation Head: 9168e59c2b001d2abe91ae28a312cac1d4c793f9
 Contract Revision: 2026-09-23 A activation — no card statistics or file thumbnails
 ```
 
@@ -284,17 +284,86 @@ Base..Implementation Head review under the development workflow.
 
 ## Closure Packet
 
-Submitted by Developer Task 38.5 for B review. The complete T4 evidence is recorded in
-`TASK.md` and covers Python 1791 (7 skipped), Web 601, browser 168, typecheck/lint/format/build,
-Ruff, compileall, dependency/configuration validation and manifest/safety audits. Controlled
-MediaLibrary screenshots were captured at 1536x1024 with Add closed and Step 1 open, plus 760x900
-narrow evidence; the hierarchy and authorized omissions were visually inspected. The Docker
-release-security smoke is `UNAVAILABLE` because Docker Hub returned 401 resolving
-`python:3.13-slim`; no project assertion ran in that gate. The pre-existing dirty
-`docs/pics/文件页.png` was preserved, `config/alist.json` remains ignored, and no credentials or
-build artifacts were added. RO-1 through RO-8 and all required surfaces are evidenced by the
-existing implementation and regression suite; inherited narrow Local replacement/inode-reuse
-race remains the documented residual risk. B handoff decision: `SLICE READY FOR A REVIEW`.
+Slice: 38 — MediaLibrary Files Workspace and Route Separation
+Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
+Head SHA: 9168e59c2b001d2abe91ae28a312cac1d4c793f9
+
+Required Outcomes:
+- RO-1 COMPLETE — route separation, navigation/auth continuation and ResourceLibrary Files
+  continuity are covered by the application and browser regression.
+- RO-2 COMPLETE — MediaLibrary hierarchy, six-column live table and Add drawer are present;
+  statistics, placeholders, thumbnails and Organize controls are absent.
+- RO-3 COMPLETE — live, bounded MediaLibrary browsing, exact paths, paging, refresh and
+  missing-directory recovery are covered by application and browser tests.
+- RO-4 COMPLETE — checked Active configuration save/removal, disabled truthfulness and failure
+  recovery are covered by API/Web/browser tests.
+- RO-5 COMPLETE — bounded common commands and same/cross-Storage Copy/Move preserve authority,
+  conflict and capability rules.
+- RO-6 COMPLETE — durable per-item transfer outcomes, revisit and supported continuation are
+  covered without mutation replay.
+- RO-7 COMPLETE — library kind, IDs, roots, snapshots, evidence and Worker reconstruction remain
+  authority-separated while ResourceLibrary work remains compatible.
+- RO-8 COMPLETE — vertical application/API/Web/browser and safety evidence is recorded below.
+
+Required Surfaces:
+- `/ui-v2/medialib/files`, library-relative links, command dialogs and Add drawer COMPLETE.
+- `/ui-v2/resourcelib/files` and Organize return context COMPLETE.
+- Shared navigation/search/auth and retired-route recovery COMPLETE.
+- MediaLibrary browse/configuration and scoped command APIs COMPLETE.
+- Operations progress, item outcomes and supported lifecycle/recovery COMPLETE.
+- Configuration handoff for setup, unavailable bindings, disabled libraries and references COMPLETE.
+- Automated tests and controlled screenshots COMPLETE.
+
+Implemented:
+- Tasks 38.1–38.4 delivered route separation, live browsing, configuration lifecycle, bounded
+  commands and durable MediaLibrary transfers; Task 38.5 completed Slice-level validation.
+- The pre-existing dirty `docs/pics/文件页.png` was preserved byte-for-byte; the supplied
+  `docs/pics/媒体库页.png` remains unchanged.
+
+Tasks completed:
+- 38.1 Route separation and MediaLibrary Files shell
+- 38.2 Live MediaLibrary browsing and configuration lifecycle
+- 38.3 Bounded MediaLibrary direct maintenance commands
+- 38.4 MediaLibrary Copy/Move transfer and recovery
+- 38.5 Slice integration validation and Closure Packet
+
+Final Tests:
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — PASS, 1791 tests, 7 skipped.
+- `npm --prefix web run test -- --run` — PASS, 43 files / 601 tests.
+- `npm --prefix web run test:e2e` — PASS, 168 tests.
+- Typecheck, lint, format check, build, Ruff format/check, compileall, pip check and both
+  configuration validations — PASS.
+- FFmpeg/FFprobe production exclusion audit — PASS, zero hits under `mediaflow` and
+  `pyproject.toml`.
+- `TMPDIR=/root/mediaflow/.smoke-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py`
+  — PASS, release-security smoke acceptance passed.
+- Controlled MediaLibrary screenshots — PASS: Add closed `1536x1024`, Step 1 open `1536x1024`,
+  and narrow Step 1 `760x900`; all generated with the local fake server and visually inspected.
+- `git diff --check`, Base..Head manifest, private-file/config audit and reference-image checks —
+  PASS; `config/alist.json` and browser outputs remain ignored and no credentials/build artifacts
+  are committed.
+
+Safety Evidence:
+- Tests cover zero-mutation reads, backend RBAC, exact Active snapshot authority, endpoint
+  confinement, root protection, stale/conflict handling, per-item partial outcomes and no replay.
+- OrganizerExecutor remains the only Storage mutation boundary; no metadata Provider, Scanner,
+  Parser, thumbnails, stream decoding or full-library statistics were introduced.
+
+Known Non-blocking Issues:
+- Inherited narrow Local directory replacement/inode-reuse race remains documented residual risk;
+  it is outside this Slice and does not weaken current checks.
+
+Explicitly Deferred:
+- Maintained exactly as listed in `Explicitly Deferred / Excluded` above, including thumbnails/
+  statistics, MediaLibrary Scan/Preview/Organize, Upload/Download, cross-kind transfers and
+  transfer Replace mode.
+
+Documentation Reconciliation Needed:
+- A should reconcile the accepted Slice 38 closure in authoritative CURRENT progress/Roadmap
+  records after Final Review; no Contract or implementation change is requested.
+
+Decision: SLICE READY FOR A REVIEW
 
 ## A Final Review
 
