@@ -156,13 +156,20 @@ Shared entry interaction/presentation
   retain their independent selection semantics.
 - Updated component and built-artifact browser coverage for five-column structure, direct folder
   navigation, controlled menu entry and the existing command/recovery journeys.
+- Correction: row/grid Enter handling now opens the menu only when the entry anchor itself owns the
+  key event. Enter on a nested folder button retains native button activation and enters the exact
+  folder on both ResourceLibrary and MediaLibrary pages; Context Menu and `Shift+F10` row entry are
+  unchanged.
+- Correction: added component and built-artifact regressions for both routes proving folder-button
+  Enter navigation and the absence of an unintended `条目操作` menu.
 
 ### Tests and Results
 
-- `npm --prefix web run test -- --run` — PASS (full Vitest suite).
+- `npm --prefix web run test -- --run` — PASS (43 files, 603 tests).
 - `npm --prefix web run build` — PASS (Vite emitted the existing chunk-size warning).
-- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-commands.spec.ts` — PASS.
-- `npm --prefix web run test:e2e` — PASS (168/168).
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts --grep "focused .* folder activation"` — PASS (2/2; B blocker reproduction).
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-commands.spec.ts` — PASS (60/60).
+- `npm --prefix web run test:e2e` — PASS (170/170).
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
 - `npm --prefix web run format:check` — PASS.
@@ -182,6 +189,8 @@ Shared entry interaction/presentation
   providing an explicit focus interaction and reliable focus return after dismissal.
 - Single-entry menu commands always receive the invoked row path directly; existing multi-selection
   is left untouched and is used only by the existing batch footer.
+- Nested interactive controls retain their own Enter behavior; only an Enter targeted at the
+  focusable row/grid anchor is treated as the focus-equivalent menu command.
 
 ### Remaining In-Slice Work
 
@@ -196,12 +205,16 @@ Shared entry interaction/presentation
 - The first full E2E run exposed three stale assertions/selectors for the removed action column and
   inline controls; they were updated, the focused 30-test reproduction passed, and the complete
   168-test suite then passed.
+- During the correction, the first new ResourceLibrary browser assertion incorrectly expected route
+  query state instead of the page's established live-listing/visible-breadcrumb proof. The folder
+  had entered correctly; the assertion was corrected, then the focused, specified and full E2E
+  gates passed.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: cefc76186c076d6c1919fb39ea3d1d83ea6f8dde
+Head SHA: 1ae0531212c1c5c585cc2970c03f9996c1eba949
 ```
 
 ## B Review Result
