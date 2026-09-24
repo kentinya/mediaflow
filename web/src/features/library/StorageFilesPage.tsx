@@ -27,7 +27,7 @@ import {
 } from "../../entities/library/direct-files";
 import { systemStatusQueryOptions } from "./system-status-query";
 import { storageFilesQueryOptions } from "./storage-files-query";
-import { CardActionMenu, LibraryCardStrip } from "./LibraryCardStrip";
+import { LibraryCardStrip } from "./LibraryCardStrip";
 import { DeleteResourceLibraryDialog } from "./DeleteResourceLibraryDialog";
 import {
   DeleteImpactDialog,
@@ -885,60 +885,6 @@ function FileRowIcon({ row }: { readonly row: FilesRowVm }) {
   );
 }
 
-function LibrarySummary({
-  libraryId,
-  libraryName,
-  enabled,
-  storageName,
-  rootPath,
-  fileCount,
-  totalSize,
-  onRemoveRequest,
-  removalBusy,
-}: {
-  readonly libraryId: string;
-  readonly libraryName: string;
-  readonly enabled: boolean;
-  readonly storageName: string;
-  readonly rootPath: string;
-  readonly fileCount: number | null;
-  readonly totalSize: number | null;
-  readonly onRemoveRequest?: (id: string) => void;
-  readonly removalBusy?: boolean;
-}) {
-  const summary =
-    fileCount !== null
-      ? fileCount.toLocaleString("en-US") +
-        " 个文件" +
-        (totalSize !== null ? " · " + formatBytes(totalSize) : "")
-      : null;
-  return (
-    <div className="mf-library-summary mf-card">
-      <span className="mf-summary-icon" aria-hidden="true">
-        <Icon name="folder" />
-      </span>
-      <div className="mf-summary-text">
-        <div className="mf-summary-title">
-          <strong>{libraryName}</strong>
-          {enabled && <span className="mf-pill mf-pill-enabled">已启用</span>}
-          {onRemoveRequest !== undefined && (
-            <CardActionMenu
-              libraryId={libraryId}
-              libraryName={libraryName}
-              triggerLabel={`资源库操作 ${libraryName}`}
-              onRemoveRequest={onRemoveRequest}
-              disabled={removalBusy === true}
-            />
-          )}
-        </div>
-        <span>存储: {storageName}</span>
-        <span>路径: {rootPath === "" ? "/" : "/" + rootPath}</span>
-        {summary !== null && <span>{summary}</span>}
-      </div>
-    </div>
-  );
-}
-
 function failureDetail(kind: string, path: string): string {
   const where = path === "" ? "资源库根目录" : "“" + path + "”";
   switch (kind) {
@@ -1092,7 +1038,6 @@ function FileBrowseView({
     rows.length > 0 && rows.every((row) => selected.has(row.path));
   const library = model.resourceLibrary;
   const libraryName = library?.name ?? "资源库";
-  const libraryId = library?.id ?? selectedLibraryId;
   const hasNext = model.hasNext && model.nextCursor !== null;
   const selectedPaths = model.entries
     .filter((entry) => selected.has(entry.path))
@@ -1105,28 +1050,14 @@ function FileBrowseView({
         </span>
         {FILES_BANNER}
       </div>
-      {libraries.length > 1 ? (
-        <LibraryCardStrip
-          libraries={libraries}
-          selectedLibraryId={selectedLibraryId}
-          rootPath={library?.rootPath ?? ""}
-          onLibraryChange={onLibraryChange}
-          onRemoveRequest={onRemoveLibraryRequest}
-          removalBusy={removalBusy}
-        />
-      ) : (
-        <LibrarySummary
-          libraryId={libraryId}
-          libraryName={libraryName}
-          enabled={library?.enabled === true}
-          storageName={model.storageName}
-          rootPath={library?.rootPath ?? ""}
-          fileCount={library?.fileCount ?? null}
-          totalSize={library?.totalSize ?? null}
-          onRemoveRequest={onRemoveLibraryRequest}
-          removalBusy={removalBusy}
-        />
-      )}
+      <LibraryCardStrip
+        libraries={libraries}
+        selectedLibraryId={selectedLibraryId}
+        rootPath={library?.rootPath ?? ""}
+        onLibraryChange={onLibraryChange}
+        onRemoveRequest={onRemoveLibraryRequest}
+        removalBusy={removalBusy}
+      />
       <div className="mf-files-workarea">
         <DirectoryTree
           libraryName={libraryName}
@@ -2546,33 +2477,16 @@ export function StorageFilesPage() {
             setRemovalError(null);
             setDialog({ kind: "remove_library", id });
           };
-          const renderLibraryHeader = () =>
-            currentLibraries.length > 1 ? (
-              <LibraryCardStrip
-                libraries={currentLibraries}
-                selectedLibraryId={activeLibraryId}
-                rootPath={currentLibrary.rootPath}
-                onLibraryChange={changeLibrary}
-                onRemoveRequest={requestRemoval}
-                removalBusy={removalMutation.isPending}
-              />
-            ) : (
-              <LibrarySummary
-                libraryId={currentLibrary.id}
-                libraryName={currentLibrary.name ?? currentLibrary.id}
-                enabled={currentLibrary.enabled}
-                storageName={
-                  currentStatus.storages.find(
-                    (storage) => storage.id === currentLibrary.storageId,
-                  )?.name ?? currentLibrary.storageId
-                }
-                rootPath={currentLibrary.rootPath}
-                fileCount={null}
-                totalSize={null}
-                onRemoveRequest={requestRemoval}
-                removalBusy={removalMutation.isPending}
-              />
-            );
+          const renderLibraryHeader = () => (
+            <LibraryCardStrip
+              libraries={currentLibraries}
+              selectedLibraryId={activeLibraryId}
+              rootPath={currentLibrary.rootPath}
+              onLibraryChange={changeLibrary}
+              onRemoveRequest={requestRemoval}
+              removalBusy={removalMutation.isPending}
+            />
+          );
           if (invalidPath) {
             return (
               <FilesState

@@ -180,10 +180,13 @@ describe("MediaLibrary Files journey", () => {
         "选择媒体库，浏览其中的文件。媒体库用于存放已整理的媒体文件，支持文件的常规操作。",
       ),
     ).toBeVisible();
-    // Cards carry Storage and root, and no statistics/placeholder.
-    expect(await screen.findByText("存储: 115 Storage")).toBeVisible();
+    // Cards carry identity only; the shared context carries enabled state and
+    // the exact configured root, without exposing Storage facts.
+    expect(await screen.findByText("已启用")).toBeVisible();
     expect(screen.getByText("路径: /Movies")).toBeVisible();
-    expect(screen.getByText("路径: /TV Shows")).toBeVisible();
+    expect(screen.queryByText("路径: /TV Shows")).toBeNull();
+    expect(screen.queryByText("存储: 115 Storage")).toBeNull();
+    expect(screen.queryByText("存储: Quark Storage")).toBeNull();
     expect(screen.queryByText(/个文件/)).toBeNull();
     expect(screen.queryByText("未统计")).toBeNull();
     expect(screen.queryByText(/TB/)).toBeNull();
