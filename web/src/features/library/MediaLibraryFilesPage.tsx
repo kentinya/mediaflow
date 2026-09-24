@@ -515,7 +515,7 @@ function MediaGridView({
             if (
               event.key === "ContextMenu" ||
               (event.shiftKey && event.key === "F10") ||
-              event.key === "Enter"
+              (event.key === "Enter" && event.target === event.currentTarget)
             ) {
               onOpenMenu(row, event);
             }
@@ -1074,7 +1074,8 @@ function MediaBrowseView({
                         if (
                           event.key === "ContextMenu" ||
                           (event.shiftKey && event.key === "F10") ||
-                          event.key === "Enter"
+                          (event.key === "Enter" &&
+                            event.target === event.currentTarget)
                         ) {
                           openEntryMenu(row, event);
                         }

@@ -212,6 +212,43 @@ describe("MediaLibrary Files journey", () => {
     ).toBeNull();
   });
 
+  it("lets a focused MediaLibrary folder button handle Enter without opening the row menu", async () => {
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/media-libraries") return jsonResponse(LIBRARIES);
+      if (url.includes("path=Breaking+Bad")) {
+        return jsonResponse(
+          filesDocument("movies", "Breaking Bad", [
+            entry("Season 1", "Breaking Bad/Season 1", { directory: true }),
+          ]),
+        );
+      }
+      return jsonResponse(
+        filesDocument("movies", "", [
+          entry("Breaking Bad", "Breaking Bad", { directory: true }),
+        ]),
+      );
+    });
+    const user = userEvent.setup();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/medialib/files");
+
+    const row = await screen.findByRole("row", {
+      name: "文件条目 Breaking Bad",
+    });
+    const folder = within(row).getByRole("button", { name: "Breaking Bad" });
+    folder.focus();
+    await user.keyboard("{Enter}");
+
+    await screen.findByRole("row", { name: "文件条目 Season 1" });
+    expect(new URLSearchParams(window.location.search).get("path")).toBe(
+      "Breaking Bad",
+    );
+    expect(
+      screen.queryByRole("menu", { name: "条目操作 Breaking Bad" }),
+    ).toBeNull();
+  });
+
   it("navigates lazily, keeps exact breadcrumbs and refreshes the live read", async () => {
     const calls: string[] = [];
     stubFetch(async (input) => {
