@@ -1,14 +1,16 @@
 # MediaLibrary Page Visual Specification
 
-Status: TARGET — Slice 38; implementation not yet delivered
+Status: CURRENT TARGET — Slice 38; shared library-context parity added 2026-09-24
 Canonical image: [媒体库页.png](pics/媒体库页.png)
 Reference size: `1536 x 1024`
 Target route: `/ui-v2/medialib/files`
 Contract: [SLICE.md](../SLICE.md)
 
 The supplied image controls the MediaLibrary page's visual hierarchy. The 2026-09-23 user decision
-removes library-card statistics and file thumbnails. This document interprets the picture without
-changing it. Reuse the Slice 37 shared shell and preserve the ResourceLibrary Files body.
+removes library-card statistics and file thumbnails. The 2026-09-24 A presentation correction makes
+the MediaLibrary and ResourceLibrary Files library selector/context identical: card facts are not
+shown, and the selected context carries only enabled state and path. Reuse the Slice 37 shared
+shell and preserve the ResourceLibrary Files body and behavior.
 
 ## Required Composition
 
@@ -16,7 +18,8 @@ changing it. Reuse the Slice 37 shared shell and preserve the ResourceLibrary Fi
 |---|---|
 | Shared shell | Existing left rail/top bar; `媒体库` active; `文件` selects ResourceLibrary Files; shared navigation/authentication. |
 | Header | `媒体库`; subtitle `选择媒体库，浏览其中的文件。媒体库用于存放已整理的媒体文件，支持文件的常规操作。`; `+ 添加媒体库`. |
-| Card strip | Enabled libraries with name, enabled badge, Storage and root; blue selected state; accessible responsive overflow following the existing card-selection behavior. |
+| Card strip | Enabled libraries with name only; blue selected state and independent action menu; accessible responsive overflow shared with ResourceLibrary Files. |
+| Selected-library context | Immediately below the cards, show only `已启用` and exact configured `路径: /...`; do not repeat the name or show Storage. |
 | Directory pane | `目录`, selected library root and lazy directories; exact relative identity and selected directory. |
 | File toolbar | Relative breadcrumbs, `刷新`, list/grid controls and existing bounded search through the top bar. |
 | Selection bar | Above rows: selected count/known size and applicable Copy/Move/Rename/Delete/More; Rename is single-item only. |
@@ -48,8 +51,9 @@ readable content and keyboard/focus behavior.
 Use deterministic fake/local data to reproduce the structural state:
 
 - cards `115网盘`, `115网盘_2`, `夸克网盘`, with the second selected;
-- Storage labels `115 Storage`, `115 Storage 2`, `Quark Storage`;
-- displayed roots `/Movies`, `/TV Shows`, `/Media`, relative to the respective Storage;
+- the selected context displays `已启用` and the configured root path `/TV Shows`;
+- Storage labels and bindings remain fixture/configuration data but are not rendered in the normal
+  browse-page card or selected context;
 - relative directory `Breaking Bad` inside the second library; `TV Shows` may label its configured
   root but must not be duplicated in the relative request;
 - three season directories, three `Breaking.Bad.S01E0*.mkv` files, `poster.jpg`, `fanart.jpg` and

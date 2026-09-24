@@ -640,10 +640,12 @@ route remain the implementation baseline until the new journey is delivered.
   `/ui-v2/resourcelib/files`. Both share shell/authentication and preserve valid deep-link context.
   The old `/ui-v2/library` and `/ui-v2/library/files` retire with explicit recovery links and no
   automatic action or compatibility redirect.
-- **Visible state:** reference-aligned library cards with name, enabled state, Storage and root;
-  selected library, directory tree, exact relative breadcrumbs, list/grid with type icons, physical
-  file facts, selection, bounded paging and meaningful capability/error state. No card counts,
-  capacity, statistics placeholder or file thumbnails are shown or collected.
+- **Visible state:** shared library cards with name and selection, followed by selected-library
+  context showing only enabled state and exact configured root path; Storage is retained in
+  configuration/recovery surfaces but not normal browse-page cards/context. Directory tree, exact
+  relative breadcrumbs, list/grid with type icons, physical file facts, selection, bounded paging
+  and meaningful capability/error state remain. No card counts, capacity, statistics placeholder or
+  file thumbnails are shown or collected.
 - **Action:** browse/search within the existing bounded semantics, refresh, add/remove a library
   configuration, create folder/text, rename one entry, copy/move, delete and edit supported bounded
   text. Copy/Move selects the current or another MediaLibrary on the same or another supported
