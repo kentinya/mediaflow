@@ -177,7 +177,7 @@ Storage only; never use production services, credentials or user media.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [filled after commit]
+Head SHA: 3a4ac21fc5f9b24da1357bb2dd520314a406f308
 ```
 
 ## B Review Result
