@@ -207,11 +207,22 @@ Head SHA: cefc76186c076d6c1919fb39ea3d1d83ea6f8dde
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: f888cb76ca09780374562305f29b1c1aa8bcdc56..cefc76186c076d6c1919fb39ea3d1d83ea6f8dde
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Folder keyboard activation is broken on both `/ui-v2/resourcelib/files` and
+  `/ui-v2/medialib/files`: in the built artifact, focus a traversable folder-name button and press
+  `Enter`; the URL remains at the current directory and an `条目操作` menu opens instead of entering
+  the folder. This is production-reachable through the supported table journey and violates the
+  Task's folder left-click/direct activation and keyboard-accessible entry interaction criteria
+  (and the Slice RO-1/RO-2 browse continuity). Update the row keyboard handler so an Enter generated
+  by a nested interactive control (folder name/button or checkbox) is not reinterpreted as a row-menu
+  request, while Context Menu/`Shift+F10` on the row itself still opens the menu; add a regression
+  covering both routes or the shared interaction boundary and rerun the affected browser/component
+  tests.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
