@@ -7,10 +7,10 @@ the approved reference, while preserving the closed Slice 37 ResourceLibrary Fil
 Slice ID: 38
 Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: ACTIVE
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Implementation Head: 9168e59c2b001d2abe91ae28a312cac1d4c793f9
-Contract Revision: 2026-09-23 A activation — no card statistics or file thumbnails
+Implementation Head: 978db0bca61d04cf8e699e8ad808ae1b2bf36d63
+Contract Revision: 2026-09-24 A reactivation — unified Files/MediaLibrary library context presentation
 ```
 
 Slice 37 remains `PASS / CLOSED`. Its complete Contract, Closure Packet and A Final Review remain
@@ -47,6 +47,27 @@ or not MediaFlow previously organized or indexed them.
   entry points or requests. Browser Upload/Download remains excluded.
 - The presentation exclusions apply to the new MediaLibrary page; they do not authorize unrelated
   changes to the existing ResourceLibrary Files body or shared shell.
+
+## Current A Scope Revision — Unified Library Context Presentation
+
+The Files and MediaLibrary browse pages now use one shared presentation rule for library selection.
+This is a focused A-owned correction to page presentation and does not change backend authority,
+configuration schema, Storage binding, file commands or safety rules.
+
+- Library cards show only the library icon, library `name`, selection state and independent action
+  menu. Cards do not show Storage, Storage ID, root path, file counts, capacity or statistics.
+- The selected-library context immediately below the cards shows only truthful enabled state
+  (`已启用`) and exact configured root path (`路径: /...`; root is `/`). The name is already on the
+  selected card and is not repeated in this context.
+- The same composition applies to `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files`, for
+  single- and multi-library states. Switching cards updates the context without stale facts.
+- Storage remains visible in configuration input and actionable setup/failure recovery, including
+  the Add drawer's `存储位置` step, but not in the normal browse-page card or context.
+- Disabled libraries remain hidden from browse selection; re-enabling continues through configuration.
+
+This revision supersedes only the earlier card-level Storage/root presentation wording. The Add
+drawer and all existing file facts, commands, Organize continuity and safety invariants remain in
+force.
 
 ## Baseline and Requirements
 
@@ -96,8 +117,11 @@ journey or V1 `/ui` is retired. Existing ResourceLibrary API semantics remain co
 Deliver the image's hierarchy inside the existing shared shell: title/subtitle/Add button, library
 cards, directory pane, breadcrumb/refresh/view toolbar, selection action bar above the file list,
 six-column table, paging and right-side three-step drawer. Columns are
-`选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`. List/grid use type icons. Card statistics, capacity,
-statistics placeholders, thumbnails, recognition results and organize-status presentation are absent.
+`选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`. List/grid use type icons. Library cards and
+the selected-library context follow the shared Files presentation: cards show only name/selection
+and context shows only enabled state/path. Storage, card statistics, capacity, statistics
+placeholders, thumbnails, recognition results and organize-status presentation are absent from the
+normal browse page.
 No `整理` or `批量整理` page command appears.
 
 The existing shared sidebar `整理规则` remains. Removing the Organize UI does not remove
@@ -236,8 +260,8 @@ with existing prevention/recovery guidance. This Slice does not claim to fix it 
 - New providers/capabilities or identity system, broad configuration migration, new automatic
   directory-creation policy behavior, V1 cutover, generic workflow/persistence redesign, universal
   rollback and automatic uncertain replay.
-- Changes to the user's dirty `docs/pics/文件页.png`, Files presentation beyond required
-  route/navigation integration or unrelated shell/product redesign.
+- Changes to the user's dirty `docs/pics/文件页.png`, unrelated shell/product redesign, and any
+  Files presentation change beyond the explicitly required shared library-card/context parity.
 
 ## Slice Acceptance Criteria
 
@@ -282,7 +306,11 @@ evidence in the Closure Packet. B cannot change Base/boundaries/acceptance or cl
 Required Outcomes are satisfied, stop creating Tasks and submit the packet for A's
 Base..Implementation Head review under the development workflow.
 
-## Closure Packet
+## Previous Closure Packet (Superseded by Current A Reactivation)
+
+The prior B Closure Packet below was not A-final-reviewed. It remains historical evidence through
+`978db0b`, but this reactivation adds the shared presentation correction and requires a new Task
+checkpoint and fresh B/A review. No current Slice closure is claimed until that Task passes.
 
 Slice: 38 — MediaLibrary Files Workspace and Route Separation
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a

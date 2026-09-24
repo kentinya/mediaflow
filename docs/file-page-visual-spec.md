@@ -7,8 +7,8 @@ Route: `/ui-v2/library/files` (`/library/files` inside the V2 router)
 
 Slice 38 TARGET moves this same Files journey to `/ui-v2/resourcelib/files`. Its current body,
 commands and Organize continuation remain protected. The new MediaLibrary page has a separate
-[visual specification](media-library-page-visual-spec.md); that page's explicit removal of card
-statistics and file thumbnails does not revise this Files presentation. Slice 37's final Contract
+[visual specification](media-library-page-visual-spec.md); both pages now share the library card
+and selected-context presentation defined below. Slice 37's final Contract
 and review are preserved at `9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git; root
 `SLICE.md` now owns the next capability.
 
@@ -49,6 +49,20 @@ The earlier wording in this document that still names the removed columns or the
 Download surfaces is historical. Where it conflicts with the closed Slice 37 Contract, that
 historical Contract and this section control the Files baseline; the current Slice adds only its
 explicit migration requirements.
+
+## Shared Library Selector Presentation — 2026-09-24 A Revision
+
+The Files and MediaLibrary pages use the same library-selection header. Each card shows only the
+library icon, library name, selection state and independent action menu. The card does not show
+Storage, Storage ID, root path, file counts or capacity. Immediately below the cards, the selected
+library context shows only the enabled state (`已启用`) and exact configured path (`路径: /...`,
+with `/` for the root). The selected library name is not repeated because it remains visible on the
+selected card. Storage remains available in Add/configuration steps and actionable failure/setup
+guidance, but not in the normal browse-page card or context.
+
+Disabled libraries are hidden from browse selection on both pages. Re-enabling remains an existing
+configuration action; this presentation rule does not change Active authority, API payloads,
+Storage confinement, file operations or Organize continuation.
 
 ## Implementation Status — 2026-09-22
 
@@ -159,7 +173,7 @@ do not impose pixel-identical CSS geometry:
 | Page title block | Upper-left of the main content: `文件` followed by the subtitle |
 | Primary action | Upper-right of the title block: `+ 添加资源库` |
 | Information banner | Full content-width light-blue band directly below the title block |
-| ResourceLibrary summary | Single compact card below the banner, showing `source` and active state |
+| Library selector/context | Shared card strip showing `source` by name; selected context below shows `已启用` and `路径: /media/incoming` |
 | Directory pane | Left pane below the summary card, headed `目录` |
 | File pane | Center pane beside the directory pane, containing breadcrumb, toolbar and table |
 | Selection footer | Full-width strip below the directory/file work area |
@@ -200,12 +214,9 @@ The main content shows:
 - primary button `+ 添加资源库`;
 - information banner:
   `当前显示的是资源库中的文件，可从条目操作直接整理到对应的媒体库（如 Movies、TV Shows）。`;
-- summary card:
-  - name `source`;
+- selected context:
   - green state `已启用`;
-  - `存储: source-storage`;
-  - `路径: /media/incoming`;
-  - `1,248 个文件 · 324 GB`.
+  - `路径: /media/incoming`.
 
 ### Directory Pane
 
