@@ -6621,8 +6621,38 @@ class MediaFlowApi:
                         else binding.direct_transfers
                     )
                     if transfer_service is not None:
+                        # The accepted continuation answers with the *durable
+                        # transfer projection* (the Files workspace contract)
+                        # and the same Task/lifecycle envelope every other
+                        # accepted control returns, so the Operations client
+                        # reads one truthful accepted state instead of an
+                        # unapplied control (Slice 38 RO-6).
                         requeued = transfer_service.requeue_transfer(task.task_id)
-                        return self._response(start_response, 202, requeued)
+                        current = service.require(task.task_id)
+                        lifecycle = self._task_lifecycle(
+                            service,
+                            current,
+                            principal,
+                            results=service.results(current.task_id),
+                        )
+                        return self._response(
+                            start_response,
+                            202,
+                            {
+                                **requeued,
+                                "action": action,
+                                "task": task_operator_document(current),
+                                "lifecycle": lifecycle,
+                                "durableOutcome": next(
+                                    (
+                                        item["durableOutcome"]
+                                        for item in lifecycle["actions"]
+                                        if item["action"] == action
+                                    ),
+                                    None,
+                                ),
+                            },
+                        )
                 # No durable queued continuation of one exact paused scope
                 # exists today, so the transition is refused with the same
                 # actionable reason the projection states.

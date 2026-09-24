@@ -210,6 +210,133 @@ describe("mutateLifecycle", () => {
       code: "malformed_response",
     });
   });
+
+  it("accepts the durable transfer continuation the backend really returns", async () => {
+    // The exact 202 envelope of one accepted bounded transfer resume: the
+    // transfer projection plus the same Task/lifecycle document every other
+    // accepted control returns.  The real response must be an applied control,
+    // never `malformed_response` (Slice 38 RO-6).
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(
+        {
+          operation: "copy",
+          conflictMode: "fail",
+          sameStorage: true,
+          status: "QUEUED",
+          admitted: true,
+          taskId: "task-media",
+          taskStatus: "pending",
+          mediaLibraryId: "movies",
+          destinationMediaLibraryId: "tv",
+          topLevelPaths: ["show"],
+          knownEffects: [],
+          itemOutcomes: [],
+          outcomes: [],
+          outcomesTruncated: false,
+          totalItems: 1,
+          succeededItems: 0,
+          skippedItems: 0,
+          failedItems: 0,
+          terminal: false,
+          actions: [
+            { action: "pause", available: false, reason: "queued" },
+            {
+              action: "cancel",
+              available: true,
+              path: "/api/v1/tasks/task-media/cancel",
+            },
+            {
+              action: "resume",
+              available: false,
+              reason: "the transfer is queued or running",
+            },
+          ],
+          version: "2026-09-24T06:12:30.301339+00:00",
+          nextAction: "the transfer is queued for the resident Worker",
+          sideEffects: "none",
+          retrySafe: false,
+          action: "resume",
+          task: {
+            task_id: "task-media",
+            command: "media_files_transfer",
+            status: "pending",
+            execute_authorized: true,
+            created_at: "2026-09-24T06:12:30+00:00",
+            updated_at: "2026-09-24T06:12:30.301339+00:00",
+            started_at: null,
+            completed_at: null,
+            total_items: 1,
+            completed_items: 0,
+            failed_items: 0,
+            failure: null,
+            pause_requested: false,
+            configuration_snapshot_id: "snap-media",
+            item_limit: 1,
+          },
+          lifecycle: {
+            objectType: "task",
+            objectId: "task-media",
+            state: "pending",
+            version: "2026-09-24T06:12:30.301339+00:00",
+            executionPath: "operator_workflow",
+            terminal: false,
+            permitted: true,
+            permission: "cancel_job",
+            knownEffects: "no Storage effect is recorded for this Task",
+            nextAction: "follow the transfer progress in Operations",
+            pauseRequested: false,
+            effectCertainty: "none",
+            resultsObserved: 0,
+            resultsComplete: true,
+            uncertainResults: 0,
+            actions: [
+              {
+                action: "resume",
+                label: "Resume Task",
+                method: "POST",
+                path: "/api/v1/tasks/{id}/resume",
+                available: false,
+                unavailableReason: "the transfer is queued or running",
+                confirmationRequired: false,
+                cooperative: true,
+                durableOutcome:
+                  "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint",
+                sideEffects: "no Storage mutation in this request",
+                retrySafe: false,
+                nextAction: "follow the transfer progress in Operations",
+              },
+            ],
+          },
+          durableOutcome:
+            "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint",
+        },
+        202,
+      ),
+    );
+
+    const result = await mutateLifecycle("operator-token", {
+      objectType: "task",
+      objectId: "task-media",
+      action: "resume",
+      expectedVersion: "2026-09-24T06:12:00+00:00",
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.status).toBe(202);
+    expect(result.action).toBe("resume");
+    expect(result.objectId).toBe("task-media");
+    expect(result.state).toBe("pending");
+    expect(result.version).toBe("2026-09-24T06:12:30.301339+00:00");
+    expect(result.durableOutcome).toContain(
+      "re-queued for the resident Worker",
+    );
+    // Exactly one deliberate submission; the client never replays a control.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "/api/v1/tasks/task-media/resume",
+    );
+  });
 });
 
 describe("operations reads", () => {

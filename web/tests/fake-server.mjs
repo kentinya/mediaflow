@@ -5928,6 +5928,9 @@ const server = createServer(async (req, res) => {
         conflictMode: fields.conflictMode,
         destinationResourceLibraryId: fields.destinationResourceLibraryId,
         paths,
+        command: "files_transfer",
+        sourceLibraryId: resourceLibraryId,
+        createdAt: new Date().toISOString(),
       };
       state.filesTransfers.set(taskId, transfer);
       setTimeout(() => {
@@ -7143,6 +7146,9 @@ const server = createServer(async (req, res) => {
         conflictMode: fields.conflictMode,
         destinationMediaLibraryId: fields.destinationMediaLibraryId,
         paths,
+        command: "media_files_transfer",
+        sourceLibraryId: mediaLibraryId,
+        createdAt: new Date().toISOString(),
       };
       state.mediaTransfers.set(taskId, transfer);
       setTimeout(() => {
@@ -7155,6 +7161,13 @@ const server = createServer(async (req, res) => {
       setTimeout(() => {
         const current = state.mediaTransfers.get(taskId);
         if (current && !current.terminal && current.status === "RUNNING") {
+          if (state.transferPause) {
+            // The durable pause the Worker observes at its per-entry boundary:
+            // the transfer keeps its started progress and becomes resumable.
+            current.status = "PAUSED";
+            current.version = new Date().toISOString();
+            return;
+          }
           current.status =
             state.transferPartialFor === null ? "SUCCESS" : "PARTIAL";
           current.terminal = true;
@@ -7322,7 +7335,17 @@ const server = createServer(async (req, res) => {
               available: true,
               path: `/api/v1/tasks/${transfer.taskId}/cancel`,
             },
-            { action: "resume", available: false },
+            transfer.status === "PAUSED"
+              ? {
+                  action: "resume",
+                  available: true,
+                  path: `/api/v1/tasks/${transfer.taskId}/resume`,
+                }
+              : {
+                  action: "resume",
+                  available: false,
+                  reason: "the transfer is queued or running",
+                },
           ],
       sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
       retrySafe: false,
@@ -7983,6 +8006,13 @@ const server = createServer(async (req, res) => {
       : "the connected API principal does not hold the cancel_job permission required for this control";
     const terminal = TERMINAL_TASK_STATUSES.has(task.status);
     const cancellable = CANCELLABLE_TASK_STATUSES.has(task.status);
+    // A bounded Copy/Move transfer is the one Task kind with a durable queued
+    // continuation authority, so a paused transfer really does advertise resume
+    // (Slice 38 RO-6); every other paused Task keeps the truthful CLI handoff.
+    const resumable =
+      (task.command === "files_transfer" ||
+        task.command === "media_files_transfer") &&
+      task.status === "paused";
     const uncertain = results.some(
       (result) => result.effect_certainty === "attempted_unverified",
     );
@@ -8050,16 +8080,27 @@ const server = createServer(async (req, res) => {
         taskAction(
           "resume",
           "Resume Task",
-          false,
-          permissionReason ??
-            "continuing one exact paused Task scope with its pinned configuration and successful-item exclusions is currently an operator CLI workflow; no durable queued command reproduces it, so MediaFlow does not advertise resume here",
-          {
-            durableOutcome:
-              "not offered: no durable queued continuation of this exact paused scope exists",
-            sideEffects: "none",
-            nextAction:
-              "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), or leave it paused",
-          },
+          permitted && resumable,
+          resumable
+            ? null
+            : (permissionReason ??
+                "continuing one exact paused Task scope with its pinned configuration and successful-item exclusions is currently an operator CLI workflow; no durable queued command reproduces it, so MediaFlow does not advertise resume here"),
+          resumable
+            ? {
+                durableOutcome:
+                  "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
+                sideEffects:
+                  "no Storage mutation in this request; the Worker later continues the remaining transfer through OrganizerExecutor",
+                nextAction:
+                  "resume re-queues the transfer; follow its progress in the Files workspace or Operations",
+              }
+            : {
+                durableOutcome:
+                  "not offered: no durable queued continuation of this exact paused scope exists",
+                sideEffects: "none",
+                nextAction:
+                  "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), or leave it paused",
+              },
         ),
       ],
     };
@@ -8169,6 +8210,100 @@ const server = createServer(async (req, res) => {
     });
   }
 
+  /**
+   * The bounded Operations Task record of one admitted Fake Worker transfer.
+   *
+   * A real accepted transfer is a durable Task, so the Operations workspace can
+   * revisit it after the Files dialog is closed.  The fake derives that record
+   * from the same session state the Files projection reads, so the two surfaces
+   * can never disagree about the transfer's kind, state or version.
+   */
+  function transferTaskRecord(transfer, kind) {
+    const terminal = transfer.terminal === true;
+    const status =
+      transfer.status === "PAUSED"
+        ? "paused"
+        : transfer.status === "SUCCESS"
+          ? "completed"
+          : transfer.status === "PARTIAL"
+            ? "partial_success"
+            : transfer.status === "CANCELLED"
+              ? "cancelled"
+              : transfer.status === "RUNNING"
+                ? "running"
+                : "pending";
+    return {
+      task_id: transfer.taskId,
+      command: kind === "media" ? "media_files_transfer" : "files_transfer",
+      status,
+      execute_authorized: true,
+      created_at: transfer.createdAt,
+      updated_at: transfer.version,
+      started_at: transfer.createdAt,
+      completed_at:
+        status === "completed" ||
+        status === "partial_success" ||
+        status === "cancelled"
+          ? transfer.version
+          : null,
+      total_items: transfer.paths.length,
+      completed_items: terminal ? transfer.paths.length : 0,
+      failed_items: 0,
+      failure: null,
+      pause_requested: false,
+      configuration_snapshot_id: "snap-e2e-transfer",
+      item_limit: transfer.paths.length,
+    };
+  }
+
+  /**
+   * Every admitted transfer of this session as one bounded Task record.
+   *
+   * The transfer row is the durable Task authority, so the same identity is
+   * reachable from Files and from Operations in both library kinds.
+   */
+  function sessionTransferTasks(session) {
+    const resource = resourceLibraryState(session).filesTransfers;
+    const media = mediaLibraryState(session).mediaTransfers;
+    return [
+      ...[...resource.values()].map((transfer) =>
+        transferTaskRecord(transfer, "resource"),
+      ),
+      ...[...media.values()].map((transfer) =>
+        transferTaskRecord(transfer, "media"),
+      ),
+    ];
+  }
+
+  function transferItemRecords(transfer) {
+    return transfer.paths.map((path, index) => ({
+      item_id: `${transfer.taskId}-item-${index + 1}`,
+      task_id: transfer.taskId,
+      storage_id: "local-media",
+      resource_library_id:
+        transfer.command === "media_files_transfer"
+          ? `media:${transfer.sourceLibraryId}`
+          : transfer.sourceLibraryId,
+      source_path: path,
+      status: transfer.terminal
+        ? transfer.status === "PARTIAL"
+          ? "partial"
+          : "success"
+        : transfer.status === "PAUSED"
+          ? "paused"
+          : "processing",
+      stage: "transfer",
+      attempts: 1,
+      created_at: transfer.createdAt,
+      updated_at: transfer.version,
+      destination_storage_id: null,
+      destination_path: path,
+      execution_status: null,
+      failure: null,
+      checkpoint: null,
+    }));
+  }
+
   if (url.pathname === "/api/v1/tasks" && req.method === "GET") {
     if (!operationsGuard(res)) {
       return;
@@ -8207,11 +8342,17 @@ const server = createServer(async (req, res) => {
         return;
       }
     }
-    let items = [...FAKE_TASKS].sort((left, right) =>
-      left.created_at === right.created_at
-        ? right.task_id.localeCompare(left.task_id)
-        : right.created_at.localeCompare(left.created_at),
-    );
+    let items = [...FAKE_TASKS]
+      .sort((left, right) =>
+        left.created_at === right.created_at
+          ? right.task_id.localeCompare(left.task_id)
+          : right.created_at.localeCompare(left.created_at),
+      )
+      .concat(
+        sessionTransferTasks(session).sort((left, right) =>
+          right.created_at.localeCompare(left.created_at),
+        ),
+      );
     if (status !== null) {
       items = items.filter((task) => task.status === status);
     }
@@ -8246,13 +8387,26 @@ const server = createServer(async (req, res) => {
       return;
     }
     const taskId = decodeURIComponent(taskDetailMatch[1]);
-    const task = FAKE_TASKS.find((t) => t.task_id === taskId);
+    const sessionTransfer = sessionTransferTasks(session).find(
+      (task) => task.task_id === taskId,
+    );
+    const task =
+      FAKE_TASKS.find((t) => t.task_id === taskId) ?? sessionTransfer;
     if (!task) {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    const taskItems = TASK_ITEMS.filter((i) => i.task_id === taskId);
-    const taskResults = TASK_RESULTS.filter((r) => r.task_id === taskId);
+    const taskItems = sessionTransfer
+      ? transferItemRecords(
+          [
+            ...resourceLibraryState(session).filesTransfers.values(),
+            ...mediaLibraryState(session).mediaTransfers.values(),
+          ].find((transfer) => transfer.taskId === taskId),
+        )
+      : TASK_ITEMS.filter((i) => i.task_id === taskId);
+    const taskResults = sessionTransfer
+      ? []
+      : TASK_RESULTS.filter((r) => r.task_id === taskId);
     sendJson(res, 200, {
       ...taskDocument(task),
       items: taskItems,
@@ -8283,7 +8437,8 @@ const server = createServer(async (req, res) => {
     }
     const taskId = decodeURIComponent(taskControlMatch[1]);
     const admittedTransfer =
-      resourceLibraryState(session).filesTransfers.get(taskId);
+      resourceLibraryState(session).filesTransfers.get(taskId) ??
+      mediaLibraryState(session).mediaTransfers.get(taskId);
     if (admittedTransfer) {
       const transfer = admittedTransfer;
       if (transfer.terminal) {
@@ -8312,6 +8467,23 @@ const server = createServer(async (req, res) => {
         });
         return;
       }
+      if (action === "resume" && transfer.status !== "PAUSED") {
+        // Only a durably paused transfer has something to continue; the real
+        // backend refuses every other state with this same bounded reason.
+        sendJson(res, 409, {
+          error: {
+            code: "files_transfer_resume_running",
+            details: {
+              category: "resume_running",
+              durableState: "the transfer stays queued or owned by its Worker",
+              sideEffects: "none",
+              retrySafe: false,
+              nextAction: "wait for it to finish, pause or cancel it",
+            },
+          },
+        });
+        return;
+      }
       transfer.status =
         action === "resume"
           ? "QUEUED"
@@ -8320,12 +8492,105 @@ const server = createServer(async (req, res) => {
             : "CANCELLED";
       transfer.terminal = action === "cancel";
       transfer.version = new Date().toISOString();
-      sendJson(res, 200, {
-        action,
+      if (action !== "resume") {
+        sendJson(res, 200, {
+          action,
+          taskId: transfer.taskId,
+          sideEffects: "none",
+          retrySafe: false,
+          nextAction: "follow the transfer projection for the observed state",
+        });
+        return;
+      }
+      // An accepted continuation answers with the durable transfer projection
+      // *and* the same Task/lifecycle envelope every other accepted control
+      // returns, exactly as the real backend does (Slice 38 RO-6), so the
+      // Operations client reads one truthful applied control.
+      const task = {
+        task_id: transfer.taskId,
+        command: transfer.command,
+        status: "pending",
+        execute_authorized: true,
+        created_at: transfer.createdAt,
+        updated_at: transfer.version,
+        started_at: transfer.createdAt,
+        completed_at: null,
+        total_items: transfer.paths.length,
+        completed_items: 0,
+        failed_items: 0,
+        failure: null,
+        pause_requested: false,
+        configuration_snapshot_id: "snap-media-transfer",
+        item_limit: transfer.paths.length,
+      };
+      const projected = {
+        operation: transfer.operation,
+        conflictMode: transfer.conflictMode,
         taskId: transfer.taskId,
+        taskStatus: "pending",
+        mediaLibraryId: transfer.sourceLibraryId,
+        destinationMediaLibraryId: transfer.destinationMediaLibraryId,
+        topLevelPaths: transfer.paths,
+        knownEffects: [],
+        itemOutcomes: transfer.paths.map((path) => ({
+          path,
+          destination: path,
+          status: "QUEUED",
+        })),
+        outcomes: [],
+        outcomesTruncated: false,
+        totalItems: transfer.paths.length,
+        succeededItems: 0,
+        skippedItems: 0,
+        failedItems: 0,
+        status: "QUEUED",
+        terminal: false,
+        version: transfer.version,
+        actions: [
+          {
+            action: "pause",
+            available: false,
+            reason: "a pending transfer cannot be paused",
+          },
+          {
+            action: "cancel",
+            available: true,
+            path: `/api/v1/tasks/${transfer.taskId}/cancel`,
+          },
+          {
+            action: "resume",
+            available: false,
+            reason: "the transfer is queued or running",
+          },
+        ],
         sideEffects: "none",
         retrySafe: false,
-        nextAction: "follow the transfer projection for the observed state",
+        nextAction:
+          "the transfer is queued for the resident Worker; its progress appears here",
+      };
+      const lifecycle = taskLifecycle(task, []);
+      lifecycle.actions = lifecycle.actions.map((item) =>
+        item.action === "resume"
+          ? {
+              ...item,
+              available: false,
+              unavailableReason: "the transfer is queued or running",
+              durableOutcome:
+                "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
+              sideEffects:
+                "no Storage mutation in this request; the Worker later continues the remaining transfer through OrganizerExecutor",
+              nextAction:
+                "resume re-queues the transfer; follow its progress in the Files workspace or Operations",
+            }
+          : item,
+      );
+      sendJson(res, 202, {
+        ...projected,
+        action,
+        task,
+        lifecycle,
+        durableOutcome:
+          "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
       });
       return;
     }
@@ -10737,6 +11002,10 @@ const server = createServer(async (req, res) => {
       transferLog: [],
       transferPartialFor: url.searchParams.get("transferPartial"),
       transferDenied: url.searchParams.get("transferDenied") === "1",
+      // When enabled, the fake Worker stops one admitted media transfer at a
+      // durable PAUSED state instead of running it to a terminal outcome, so
+      // the Operations revisit → Resume journey is reachable in the browser.
+      transferPause: url.searchParams.get("transferPause") === "1",
     });
     res.setHeader(
       "Set-Cookie",
