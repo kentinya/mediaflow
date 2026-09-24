@@ -284,7 +284,17 @@ Base..Implementation Head review under the development workflow.
 
 ## Closure Packet
 
-Not submitted. No implementation is claimed by this activation checkpoint.
+Submitted by Developer Task 38.5 for B review. The complete T4 evidence is recorded in
+`TASK.md` and covers Python 1791 (7 skipped), Web 601, browser 168, typecheck/lint/format/build,
+Ruff, compileall, dependency/configuration validation and manifest/safety audits. Controlled
+MediaLibrary screenshots were captured at 1536x1024 with Add closed and Step 1 open, plus 760x900
+narrow evidence; the hierarchy and authorized omissions were visually inspected. The Docker
+release-security smoke is `UNAVAILABLE` because Docker Hub returned 401 resolving
+`python:3.13-slim`; no project assertion ran in that gate. The pre-existing dirty
+`docs/pics/文件页.png` was preserved, `config/alist.json` remains ignored, and no credentials or
+build artifacts were added. RO-1 through RO-8 and all required surfaces are evidenced by the
+existing implementation and regression suite; inherited narrow Local replacement/inode-reuse
+race remains the documented residual risk. B handoff decision: `SLICE READY FOR A REVIEW`.
 
 ## A Final Review
 
