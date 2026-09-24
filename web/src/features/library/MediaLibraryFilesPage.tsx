@@ -57,6 +57,7 @@ import {
   type SaveMediaLibraryOptions,
 } from "../../shared/api/api-client";
 import { TransferDialog } from "./TransferDialog";
+import { LibraryCardStrip } from "./LibraryCardStrip";
 
 type MediaView = "list" | "grid";
 
@@ -1284,93 +1285,6 @@ export function mediaLibraryRemovalFailureMessage(
 }
 
 /**
- * The selected MediaLibrary card's own `…` action menu, offering the single
- * 移除媒体库 action.  It is an anchored popover with its own focus and event
- * boundary: Escape or an outside pointer dismisses it and returns focus to the
- * trigger, and opening it never changes the selected library.
- */
-function MediaCardActionMenu({
-  libraryId,
-  libraryName,
-  onRemoveRequest,
-  disabled,
-}: {
-  readonly libraryId: string;
-  readonly libraryName: string;
-  readonly onRemoveRequest: (libraryId: string) => void;
-  readonly disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const triggerRef = useRef<HTMLButtonElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (!open) return undefined;
-    const handleKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.stopPropagation();
-        setOpen(false);
-        triggerRef.current?.focus();
-      }
-    };
-    const handlePointer = (event: PointerEvent) => {
-      const popover = popoverRef.current;
-      const target = event.target;
-      if (
-        popover !== null &&
-        target instanceof Node &&
-        !popover.contains(target) &&
-        target !== triggerRef.current
-      ) {
-        setOpen(false);
-      }
-    };
-    document.addEventListener("keydown", handleKey, true);
-    document.addEventListener("pointerdown", handlePointer, true);
-    return () => {
-      document.removeEventListener("keydown", handleKey, true);
-      document.removeEventListener("pointerdown", handlePointer, true);
-    };
-  }, [open]);
-  return (
-    <div className="mf-card-menu-anchor">
-      <button
-        ref={triggerRef}
-        type="button"
-        className="mf-card-more"
-        aria-label={`媒体库操作 ${libraryName}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        disabled={disabled}
-        onClick={() => setOpen((current) => !current)}
-      >
-        <Icon name="more" />
-      </button>
-      {open && (
-        <div
-          ref={popoverRef}
-          className="mf-card-menu"
-          role="menu"
-          aria-label={`媒体库操作 ${libraryName}`}
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="mf-card-menu-item mf-card-menu-danger"
-            onClick={() => {
-              setOpen(false);
-              triggerRef.current?.focus();
-              onRemoveRequest(libraryId);
-            }}
-          >
-            <Icon name="trash" /> 移除媒体库
-          </button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/**
  * The right-side three-step Add MediaLibrary drawer: 基本信息 → 存储位置 → 确认.
  * It is an operator-invoked action surface only; the page keeps it closed on
  * mount, re-entry, reload and authentication recovery.  Escape, the close
@@ -1869,78 +1783,6 @@ function MediaLibraryHeader({
         </button>
       </div>
     </header>
-  );
-}
-
-/**
- * Card strip of enabled MediaLibraries. The reference's library cards show
- * name, enabled badge, Storage and root only: no file-count/capacity
- * statistics and no `未统计` placeholder are ever collected or rendered.
- */
-function MediaLibraryCardStripWithSelection({
-  libraries,
-  selectedLibraryId,
-  onLibraryChange,
-  onRemoveRequest,
-  removalBusy,
-}: {
-  readonly libraries: readonly {
-    readonly id: string;
-    readonly name: string;
-    readonly rootPath: string;
-    readonly storage: { readonly id: string; readonly name: string };
-  }[];
-  readonly selectedLibraryId: string;
-  readonly onLibraryChange: (id: string) => void;
-  readonly onRemoveRequest: (id: string) => void;
-  readonly removalBusy: boolean;
-}) {
-  return (
-    <div className="mf-library-strip-block">
-      <div className="mf-library-strip">
-        {libraries.map((library) => {
-          const selected = library.id === selectedLibraryId;
-          return (
-            <div
-              key={library.id}
-              className={
-                selected ? "mf-library-card is-selected" : "mf-library-card"
-              }
-            >
-              <button
-                type="button"
-                className={
-                  selected
-                    ? "mf-library-card-select is-selected"
-                    : "mf-library-card-select"
-                }
-                aria-pressed={selected}
-                onClick={() => onLibraryChange(library.id)}
-              >
-                <span className="mf-library-card-icon" aria-hidden="true">
-                  <Icon name="library" />
-                </span>
-                <span className="mf-library-card-name">{library.name}</span>
-              </button>
-              {selected && (
-                <MediaCardActionMenu
-                  libraryId={library.id}
-                  libraryName={library.name}
-                  onRemoveRequest={onRemoveRequest}
-                  disabled={removalBusy}
-                />
-              )}
-              <div className="mf-media-card-facts">
-                <span>存储: {library.storage.name}</span>
-                <span>
-                  路径: {library.rootPath === "" ? "/" : "/" + library.rootPath}
-                </span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
   );
 }
 
@@ -2727,12 +2569,16 @@ export function MediaLibraryFilesPage() {
           }
           return (
             <div className="mf-files-layout">
-              <MediaLibraryCardStripWithSelection
+              <LibraryCardStrip
                 libraries={libraries}
                 selectedLibraryId={activeLibraryId}
+                rootPath={currentLibrary.rootPath}
                 onLibraryChange={changeLibrary}
                 onRemoveRequest={requestRemoval}
                 removalBusy={removalMutation.isPending}
+                iconName="library"
+                actionLabel="媒体库"
+                removeLabel="移除媒体库"
               />
               {libraryNotice !== null && (
                 <p className="mf-error" role="status">

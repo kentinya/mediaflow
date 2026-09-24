@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.6
 Parent Slice: 38
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 3e0c8643d63489c4fbca17ea194e437faf933535
 Difficulty: Medium
 Test Level: T2
@@ -95,21 +95,57 @@ Shared Web presentation
 
 ### Changed Files
 
+- `web/src/features/library/LibraryCardStrip.tsx`
+- `web/src/features/library/StorageFilesPage.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.test.tsx`
+- `web/src/shared/ui/styles.css`
+- `web/tests/e2e/medialib-files.spec.ts`
+
 ### Implemented
+
+- Unified ResourceLibrary and MediaLibrary browse selectors on the shared card strip.
+- Browse cards now expose only icon, name, selection and the independent action menu.
+- The selected-library context now shows `已启用` and the exact configured root path; `/` remains `/`.
+- Preserved Storage facts in configuration/recovery surfaces, disabled-library filtering, route state,
+  direct commands and the ResourceLibrary Organize continuation.
+- Reused the shared card menu with MediaLibrary-specific icon, labels and removal action.
 
 ### Tests and Results
 
+- `npm --prefix web run test -- --run` — PASS (43 files, 601 tests).
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts` — PASS (46/46; rerun after `npm --prefix web run build` refreshed the served artifact).
+- `npm --prefix web run typecheck` — PASS.
+- `npm --prefix web run lint` — PASS.
+- `npm --prefix web run format:check` — PASS.
+- `npm --prefix web run build` — PASS (Vite emitted the existing chunk-size warning).
+- `git diff --check` — PASS.
+- `python3 scripts/check_governance.py` — PASS.
+
 ### Decisions
+
+- The existing ResourceLibrary card strip is the shared presentation boundary; its item type and
+  icon/menu labels are parameterized so both library kinds retain their own identity and actions.
+- The root-path context is intentionally derived from the selected library only, so switching cards
+  cannot leave stale facts from another library visible.
 
 ### Remaining In-Slice Work
 
+- Other Slice 38 MediaLibrary configuration, browsing, direct-command and recovery outcomes remain
+  outside this Task.
+
 ### Risks / Deviations
+
+- The worktree contained a pre-existing modified `docs/pics/文件页.png`; it was preserved and excluded
+  from this checkpoint.
+- Playwright's first invocation used a stale static build and had one presentation failure; after the
+  required build refresh, the exact command passed 46/46.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: [filled after commit]
 ```
 
 ## B Review Result

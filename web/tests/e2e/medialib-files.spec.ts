@@ -66,11 +66,12 @@ test("both new routes are distinct, sidebar-owned and reach live files", async (
   await expect(
     page.getByRole("link", { name: "Library", exact: true }),
   ).toHaveAttribute("aria-current", "page");
-  // Enabled library cards carry name, Storage and root only.
-  await expect(page.getByText("存储: 115 Storage")).toBeVisible();
+  // Cards carry identity only; the selected context carries state and root.
+  await expect(page.getByText("已启用")).toBeVisible();
   await expect(page.getByText("路径: /Movies")).toBeVisible();
-  await expect(page.getByText("存储: Quark Storage")).toBeVisible();
-  await expect(page.getByText("路径: /TV Shows")).toBeVisible();
+  await expect(page.getByText("路径: /TV Shows")).toHaveCount(0);
+  await expect(page.getByText("存储: 115 Storage")).toHaveCount(0);
+  await expect(page.getByText("存储: Quark Storage")).toHaveCount(0);
   // The MediaLibrary read is live Storage: never FileIndex-derived.
   expect(
     requests.every(

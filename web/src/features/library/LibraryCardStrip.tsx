@@ -1,6 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../../shared/ui/Icons";
-import type { SystemResourceLibrary } from "../../entities/library/system-status";
+import type { IconName } from "../../shared/ui/Icons";
+
+export interface LibrarySelectorItem {
+  readonly id: string;
+  readonly name: string | null;
+  readonly rootPath: string;
+  readonly enabled: boolean;
+}
 
 /**
  * The directly visible ResourceLibrary card strip.
@@ -14,7 +21,7 @@ import type { SystemResourceLibrary } from "../../entities/library/system-status
 const CARD_MIN_WIDTH = 232;
 const CARD_GAP = 16;
 
-function libraryLabel(library: SystemResourceLibrary): string {
+function libraryLabel(library: LibrarySelectorItem): string {
   return library.name ?? library.id;
 }
 
@@ -91,12 +98,14 @@ export function CardActionMenu({
   triggerLabel,
   onRemoveRequest,
   disabled,
+  removeLabel = "删除资源库",
 }: {
   readonly libraryId: string;
   readonly libraryName: string;
   readonly triggerLabel: string;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly disabled?: boolean;
+  readonly removeLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
@@ -137,7 +146,7 @@ export function CardActionMenu({
           >
             <Icon name="trash" />
             {""}
-            删除资源库
+            {removeLabel}
           </button>
         </div>
       )}
@@ -151,12 +160,18 @@ function LibraryCard({
   onLibraryChange,
   onRemoveRequest,
   removalDisabled,
+  iconName,
+  actionLabel,
+  removeLabel,
 }: {
-  readonly library: SystemResourceLibrary;
+  readonly library: LibrarySelectorItem;
   readonly selected: boolean;
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly removalDisabled: boolean;
+  readonly iconName: IconName;
+  readonly actionLabel: string;
+  readonly removeLabel: string;
 }) {
   const label = libraryLabel(library);
   return (
@@ -179,7 +194,7 @@ function LibraryCard({
         onClick={() => onLibraryChange(library.id)}
       >
         <span className="mf-library-card-icon" aria-hidden="true">
-          <Icon name="folder" />
+          <Icon name={iconName} />
         </span>
         <span className="mf-library-card-name">{label}</span>
       </button>
@@ -187,9 +202,10 @@ function LibraryCard({
         <CardActionMenu
           libraryId={library.id}
           libraryName={label}
-          triggerLabel={`资源库操作 ${label}`}
+          triggerLabel={`${actionLabel}操作 ${label}`}
           onRemoveRequest={onRemoveRequest}
           disabled={removalDisabled}
+          removeLabel={removeLabel}
         />
       )}
     </div>
@@ -203,14 +219,23 @@ export function LibraryCardStrip({
   onLibraryChange,
   onRemoveRequest,
   removalBusy,
+  iconName,
+  actionLabel,
+  removeLabel,
 }: {
-  readonly libraries: readonly SystemResourceLibrary[];
+  readonly libraries: readonly LibrarySelectorItem[];
   readonly selectedLibraryId: string;
   readonly rootPath: string;
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly removalBusy: boolean;
+  readonly iconName?: IconName;
+  readonly actionLabel?: string;
+  readonly removeLabel?: string;
 }) {
+  const cardIcon = iconName ?? "folder";
+  const menuLabel = actionLabel ?? "资源库";
+  const menuRemoveLabel = removeLabel ?? "删除资源库";
   const { containerRef, visibleCount } = useVisibleCardCount();
   const [moreOpen, setMoreOpen] = useState(false);
   const [overflowQuery, setOverflowQuery] = useState("");
@@ -236,7 +261,7 @@ export function LibraryCardStrip({
             ]
           : [libraries[cardSlots - 1]]),
       ].filter(
-        (library): library is SystemResourceLibrary => library !== undefined,
+        (library): library is LibrarySelectorItem => library !== undefined,
       )
     : libraries;
   const overflowLibraries = overflowMode
@@ -271,6 +296,9 @@ export function LibraryCardStrip({
             }}
             onRemoveRequest={onRemoveRequest}
             removalDisabled={removalBusy}
+            iconName={cardIcon}
+            actionLabel={menuLabel}
+            removeLabel={menuRemoveLabel}
           />
         ))}
         {overflowMode && (
@@ -289,7 +317,7 @@ export function LibraryCardStrip({
               onClick={() => setMoreOpen((current) => !current)}
             >
               <span className="mf-library-card-icon" aria-hidden="true">
-                <Icon name="folder" />
+                <Icon name={cardIcon} />
               </span>
               <span className="mf-library-card-name">更多</span>
               <span className="mf-library-card-more" aria-hidden="true">
@@ -346,7 +374,8 @@ export function LibraryCardStrip({
         )}
       </div>
       <p className="mf-library-root-summary">
-        路径: {rootPath === "" ? "/" : "/" + rootPath}
+        <span className="mf-library-enabled">已启用</span>
+        <span>路径: {rootPath === "" ? "/" : "/" + rootPath}</span>
       </p>
     </div>
   );

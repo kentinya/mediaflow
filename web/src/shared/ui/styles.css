@@ -2824,6 +2824,12 @@ button.mf-grid-button {
   margin: 0;
   color: var(--ink);
   font-weight: 600;
+  display: flex;
+  gap: 14px;
+}
+
+.mf-library-enabled {
+  color: #25a25a;
 }
 
 /* ------------------------------------------------------------------ */
