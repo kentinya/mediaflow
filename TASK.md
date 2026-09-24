@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.6
 Parent Slice: 38
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 3e0c8643d63489c4fbca17ea194e437faf933535
 Difficulty: Medium
 Test Level: T2
@@ -151,11 +151,25 @@ Head SHA: 5e2255442531a2892c7b2b76c5df071c08abb21f
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 3e0c8643d63489c4fbca17ea194e437faf933535..5e2255442531a2892c7b2b76c5df071c08abb21f
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Full Python regression is not green: `.venv/bin/python -m unittest discover -s tests` ran 1791
+  tests with 1 failure in `test_release_quality_gate_commands_are_documented_for_task_execution`.
+  Evidence: `tests/test_release_security.py:128` requires the Task to document
+  `scripts/docker_release_security_smoke_test.py`, but the current `TASK.md` omits that required
+  Slice-final gate. Add the exact release-quality command documentation to the Task and rerun the
+  affected/full Python regression; do not remove or weaken the guard.
+- Full browser regression is not green: `npm --prefix web run test:e2e` ran 168 tests with 5
+  failures in `web/tests/e2e/medialib-config.spec.ts` (enabled Save, rejected Save, removal,
+  reference-blocked removal and stale removal). The common failure is the production-reachable
+  configuration/removal entry calling `selectLibrary(...storageName)` while the new browse card no
+  longer renders Storage text, so the locator times out before the configuration journey runs.
+  Update these affected tests to locate the visible MediaLibrary card by its library name/semantic
+  card control while retaining the configuration assertions, then rerun the full browser suite.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
