@@ -7,9 +7,9 @@ the approved reference, while preserving the closed Slice 37 ResourceLibrary Fil
 Slice ID: 38
 Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Implementation Head: 9030b896eaf819cf1a6eba531f94c844e62532a3
+Implementation Head: 1ae0531212c1c5c585cc2970c03f9996c1eba949
 Contract Revision: 2026-09-24 A reactivation — unified single-entry context menus and folder activation
 ```
 
@@ -331,23 +331,19 @@ evidence in the Closure Packet. B cannot change Base/boundaries/acceptance or cl
 Required Outcomes are satisfied, stop creating Tasks and submit the packet for A's
 Base..Implementation Head review under the development workflow.
 
-## Previous Closure Packet (Superseded by Current A Reactivation)
-
-The prior B Closure Packet below was not A-final-reviewed. It remains historical evidence through
-`9030b89`, but this reactivation adds the unified single-entry command-menu correction and requires
-a new Task checkpoint and fresh B/A review. No current Slice closure is claimed until that Task
-passes.
+## Closure Packet
 
 Slice: 38 — MediaLibrary Files Workspace and Route Separation
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Head SHA: e186e0b66b389ef2d621b4b4ce3b11c6251445d1
+Head SHA: 1ae0531212c1c5c585cc2970c03f9996c1eba949
 
 Required Outcomes:
 - RO-1 COMPLETE — route separation, navigation/auth continuation and ResourceLibrary Files
   continuity remain covered; the two browse routes now share one selector/context composition.
-- RO-2 COMPLETE — MediaLibrary hierarchy, six-column live table, Add drawer and unified cards/
-  selected context are present; Storage facts, statistics, thumbnails and Organize controls are
-  absent from the normal browse presentation.
+- RO-2 COMPLETE — MediaLibrary hierarchy, five-column live table, Add drawer and unified cards/
+  selected context are present; both browse tables now use the required five physical columns and
+  controlled single-entry menus, while Storage facts, statistics, thumbnails and MediaLibrary
+  Organize controls remain absent from the normal browse presentation.
 - RO-3 COMPLETE — live, bounded MediaLibrary browsing, exact paths, paging, refresh and
   missing-directory recovery are covered by application and browser tests.
 - RO-4 COMPLETE — checked Active configuration save/removal, disabled truthfulness and failure
@@ -374,6 +370,8 @@ Implemented:
   commands and durable MediaLibrary transfers; Task 38.5 completed Slice-level validation.
 - Task 38.6 unified ResourceLibrary and MediaLibrary browse cards and selected-library context while
   preserving route-specific commands, configuration and recovery behavior.
+- Task 38.7 unified five-column list/grid entry interaction, controlled context menus and direct
+  folder activation while preserving command dialogs, batch behavior and backend authority.
 - The pre-existing dirty `docs/pics/文件页.png` remains outside every reviewed checkpoint; the
   supplied `docs/pics/媒体库页.png` is unchanged in Base..Head.
 
@@ -384,14 +382,15 @@ Tasks completed:
 - 38.4 MediaLibrary Copy/Move transfer and recovery
 - 38.5 Slice integration validation and Closure Packet
 - 38.6 Files/MediaLibrary unified library-selection context presentation
+- 38.7 Files/MediaLibrary unified single-entry menus and folder activation
 
 Final Tests:
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/python -m unittest discover -s tests` — PASS, 1791 tests, 7 skipped.
-- `npm --prefix web run test -- --run` — PASS, 43 files / 601 tests.
-- `npm --prefix web run test:e2e` — PASS, 168 tests.
-- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts`
-  — PASS, 46 tests; `medialib-config.spec.ts` — PASS, 12 tests.
+- `npm --prefix web run test -- --run` — PASS, 43 files / 603 tests.
+- `npm --prefix web run test:e2e` — PASS, 170 tests.
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-commands.spec.ts`
+  — PASS, 60 tests; the two folder-keyboard blocker regressions also passed independently.
 - Typecheck, lint, format check, build, Ruff format/check, compileall, pip check and both
   configuration validations — PASS.
 - FFmpeg/FFprobe production exclusion audit — PASS, zero hits under `mediaflow` and
@@ -416,6 +415,8 @@ Safety Evidence:
   Parser, thumbnails, stream decoding or full-library statistics were introduced.
 - Task 38.6 changed only Web presentation/tests and did not change API payloads, Active authority,
   Storage bindings, route parameters or backend mutation behavior.
+- Task 38.7 changed only shared Web entry presentation/interaction and tests; menu open/dismiss and
+  folder navigation remain zero-mutation, while all commands reuse the existing guarded callbacks.
 
 Known Non-blocking Issues:
 - Inherited narrow Local directory replacement/inode-reuse race remains documented residual risk;
