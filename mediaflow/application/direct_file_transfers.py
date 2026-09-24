@@ -1,12 +1,21 @@
 """Files direct Copy/Move transfer application service.
 
 Admission and durable execution for the ordinary bounded Files transfer
-commands.  The service resolves the exact immutable Active ResourceLibrary and
-Storage of both endpoints at admission, confines and enumerates the bounded
-source trees, computes deterministic destinations and conflicts, and pins every
-one of those decisions into a server-side manifest whose opaque digest the
-browser must return.  Execution rebuilds the manifest from live Storage and
-refuses stale evidence before creating any mutation work.
+commands.  The service resolves the exact immutable Active library and Storage
+of both endpoints at admission, confines and enumerates the bounded source
+trees, computes deterministic destinations and conflicts, and pins every one of
+those decisions into a server-side manifest whose opaque digest the browser
+must return.  Execution rebuilds the manifest from live Storage and refuses
+stale evidence before creating any mutation work.
+
+One boundary serves both library kinds (Slice 38 RO-5/RO-6/RO-7).  The library
+kind of the pinned direct-command service given at construction fixes which
+configured library collection every endpoint resolves from, and it participates
+in the opaque manifest digest, the persisted admission authority, the durable
+Task command and the scoped per-item identities: equal ResourceLibrary and
+MediaLibrary IDs can never exchange manifests, evidence, claims or durable
+attribution.  ResourceLibrary documents keep their exact pre-existing keys and
+values.
 
 Application code here only lists, stats and reads for bounded admission; every
 mutation crosses ``OrganizerExecutor``, there is no hidden cross-operation
@@ -37,6 +46,7 @@ from mediaflow.domain.direct_files import (
     MAX_TRANSFER_PATHS,
     MAX_TRANSFER_PROGRESS_ENTRIES,
     DirectEntryEvidence,
+    LibraryKind,
     TransferCheckpoint,
     TransferConflict,
     TransferConflictMode,
@@ -45,9 +55,11 @@ from mediaflow.domain.direct_files import (
     TransferManifest,
     TransferManifestEntry,
     TransferOperation,
+    scoped_library_id,
+    split_library_identity,
     transfer_manifest_digest,
 )
-from mediaflow.domain.library import ResourceLibrary
+from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
@@ -60,6 +72,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskItem,
     PersistentTaskStatus,
     TaskItemStatus,
+    direct_command_task_command,
 )
 
 __all__ = ["DirectFileTransferService", "DirectFileTransferError"]
@@ -389,7 +402,16 @@ class DirectFileTransferError(DirectFileError):
 
 
 class DirectFileTransferService:
-    """Files-owned admission and execution boundary for Copy/Move transfers."""
+    """Files-owned admission and execution boundary for Copy/Move transfers.
+
+    The service is exactly as kind-pinned as the direct-command service it is
+    built on: a service over the MediaLibrary kind only ever resolves enabled
+    MediaLibraries, and a ResourceLibrary service only ever resolves enabled
+    ResourceLibraries.  The kind participates in the manifest digest, the
+    persisted authority, the durable Task command and the scoped item identity,
+    so one kind's transfer is never admitted, claimed or reconstructed as the
+    other kind's work.
+    """
 
     def __init__(
         self,
@@ -406,6 +428,83 @@ class DirectFileTransferService:
         #: start with.  It returns ``None`` when this Worker cannot lawfully
         #: reconstruct that revision, which leaves the transfer claimable.
         self._runtime_factory = runtime_factory
+
+    # ------------------------------------------------------------------
+    # Kind-pinned identity
+    # ------------------------------------------------------------------
+
+    @property
+    def library_kind(self) -> LibraryKind:
+        """The one library kind this transfer service may ever resolve."""
+
+        return self._direct.library_kind
+
+    @property
+    def task_command(self) -> str:
+        """The durable Task command every transfer of this kind records."""
+
+        return direct_command_task_command(
+            FILES_TRANSFER_TASK_COMMAND, media_library=self._is_media
+        )
+
+    @property
+    def _kind(self) -> LibraryKind:
+        return self._direct.library_kind
+
+    @property
+    def _is_media(self) -> bool:
+        return self._kind is LibraryKind.MEDIA
+
+    @property
+    def _task_command(self) -> str:
+        return self.task_command
+
+    def _identity(self, library: ResourceLibrary) -> dict[str, str]:
+        """The one error-document identity field for this service's kind."""
+
+        return (
+            {"media_library_id": library.library_id}
+            if self._is_media
+            else {"resource_library_id": library.library_id}
+        )
+
+    def _request_identity(self, library_id: object) -> dict[str, str]:
+        """The error-document identity of the raw client-supplied library ID."""
+
+        if not isinstance(library_id, str) or not library_id:
+            return {}
+        return (
+            {"media_library_id": library_id}
+            if self._is_media
+            else {"resource_library_id": library_id}
+        )
+
+    def _projection_identity(
+        self,
+        transfer: PersistentFilesTransfer | None,
+        items: tuple[PersistentTaskItem, ...],
+    ) -> dict[str, str]:
+        """The projection identity keys naming both endpoints for this kind.
+
+        ResourceLibrary projections keep their exact pre-existing
+        ``resourceLibraryId``/``destinationResourceLibraryId`` keys
+        byte-for-byte; MediaLibrary projections name the source through
+        ``mediaLibraryId`` and the destination through
+        ``destinationMediaLibraryId``, so one kind's document can never be
+        normalized or replayed as the other kind's authority.
+        """
+
+        source = _projection_source_library(transfer, items)
+        destination = _projection_destination_library(transfer, items)
+        if self._is_media:
+            return {
+                "mediaLibraryId": source,
+                "destinationMediaLibraryId": destination,
+            }
+        return {
+            "resourceLibraryId": source,
+            "destinationResourceLibraryId": destination,
+        }
 
     # ------------------------------------------------------------------
     # Zero-mutation impact / admission phase
@@ -481,9 +580,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_manifest",
                 "invalid_manifest",
                 "the transfer is missing the validated manifest evidence",
-                resource_library_id=resource_library_id
-                if isinstance(resource_library_id, str)
-                else None,
+                **self._request_identity(resource_library_id),
                 next_action="request the transfer impact summary and confirm again",
             )
         manifest = self._build_manifest(
@@ -500,7 +597,7 @@ class DirectFileTransferService:
                 "stale_manifest",
                 "the confirmed transfer scope changed since the impact summary was issued",
                 status=409,
-                resource_library_id=resource_library_id,
+                **self._request_identity(resource_library_id),
                 next_action="review the refreshed transfer impact summary and confirm again",
             )
         now = datetime.now(UTC)
@@ -509,7 +606,9 @@ class DirectFileTransferService:
         # repository's single admission transaction below.
         task = PersistentTask(
             str(uuid4()),
-            FILES_TRANSFER_TASK_COMMAND,
+            # The durable command names the library kind: a media transfer is
+            # never claimed, reconstructed or replayed as resource work.
+            self._task_command,
             PersistentTaskStatus.PENDING,
             True,
             now,
@@ -1490,6 +1589,18 @@ class DirectFileTransferService:
             # reconstructed or replayed: it is bounded investigation evidence,
             # not claimable work and never a mutation.
             raise _TransferAuthorityUnreadable("the pinned transfer authority is unreadable")
+        # The persisted authority names its library kind.  A service of the
+        # other kind refuses the claim outright: one kind's durable work is
+        # never reconstructed, claimed or executed as the other kind's, even
+        # when every configured ID happens to match.
+        try:
+            authority_kind = LibraryKind(str(authority.get("libraryKind", "")))
+        except ValueError:
+            # Authorities written before the kind existed are ResourceLibrary
+            # work by definition (the bare-identity historical rule).
+            authority_kind = LibraryKind.RESOURCE
+        if authority_kind is not self._kind:
+            raise _TransferSnapshotUnavailable("the pinned library kind is not this service's")
         if self._runtime_factory is not None:
             try:
                 rebuilt = self._runtime_factory(pinned_id, pinned_digest)
@@ -1505,6 +1616,10 @@ class DirectFileTransferService:
             # the executor it was built with, when it carries one) so the
             # claimed transfer executes under its own pinned revision.
             direct = getattr(rebuilt, "_direct", rebuilt)
+            if direct.library_kind is not self._kind:
+                # A rebuilt runtime of the other kind can never execute this
+                # work: leave the transfer claimable for a compatible Worker.
+                raise _TransferSnapshotUnavailable("the rebuilt runtime has the other library kind")
             self._direct = direct
             executor = getattr(rebuilt, "_executor", None)
             if executor is not None:
@@ -1523,6 +1638,8 @@ class DirectFileTransferService:
             raise _TransferSnapshotUnavailable(type(error).__name__) from error
         if direct is None:
             raise _TransferSnapshotUnavailable("the pinned revision is unavailable")
+        if direct.library_kind is not self._kind:
+            raise _TransferSnapshotUnavailable("the rebuilt runtime has the other library kind")
         if direct.revision.revision_id != pinned_id or (
             pinned_digest and direct.revision.digest != pinned_digest
         ):
@@ -1582,7 +1699,7 @@ class DirectFileTransferService:
             claimed_item = self._direct.tasks.begin_item(
                 task_id,
                 source.storage_id,
-                source.library_id,
+                scoped_library_id(self._kind, source.library_id),
                 _join_resource_library_path(source.root_path, item.source_display),
                 item.source_display,
                 transfer_fence=fence.value if fence is not None else None,
@@ -1664,7 +1781,7 @@ class DirectFileTransferService:
             resumed_item = self._direct.tasks.begin_item(
                 task_id,
                 source.storage_id,
-                source.library_id,
+                scoped_library_id(self._kind, source.library_id),
                 _join_resource_library_path(source.root_path, item.source_display),
                 item.source_display,
                 transfer_fence=fence.value if fence is not None else None,
@@ -1927,7 +2044,9 @@ class DirectFileTransferService:
         """
 
         task = self._direct.tasks.require(task_id)
-        if task.command != FILES_TRANSFER_TASK_COMMAND:
+        if task.command != self._task_command:
+            # One kind's continuation service never re-admits the other kind's
+            # transfer Task, even when the IDs collide.
             raise DirectFileTransferError(
                 "files_transfer_resume_unavailable",
                 "resume_unavailable",
@@ -1984,7 +2103,9 @@ class DirectFileTransferService:
 
         repository = self._direct.tasks.repository
         task = repository.get_task(task_id)
-        if task is None or task.command != FILES_TRANSFER_TASK_COMMAND:
+        if task is None or task.command != self._task_command:
+            # The projection is kind-pinned: one kind's service reads a Task
+            # only as its own kind's transfer, never across equal IDs.
             raise DirectFileTransferError(
                 "files_transfer_unknown",
                 "not_found",
@@ -2074,8 +2195,10 @@ class DirectFileTransferService:
             "conflictMode": _projection_conflict_mode(transfer),
             "taskId": task.task_id,
             "taskStatus": task.status.value,
-            "resourceLibraryId": _projection_source_library(transfer, items),
-            "destinationResourceLibraryId": _projection_destination_library(transfer, items),
+            # The projection names each endpoint through this kind's own
+            # identity keys; one kind's document never masquerades as the
+            # other kind's authority.
+            **self._projection_identity(transfer, items),
             "topLevelPaths": [item.source_display for item in items],
             "knownEffects": known_effects,
             "itemOutcomes": item_summaries[:MAX_TRANSFER_PATHS],
@@ -2313,9 +2436,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_request",
                 "invalid_request",
                 "the requested transfer operation is not supported",
-                resource_library_id=(
-                    resource_library_id if isinstance(resource_library_id, str) else None
-                ),
+                **self._request_identity(resource_library_id),
                 next_action="choose Copy or Move and retry",
             ) from None
         try:
@@ -2329,9 +2450,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_request",
                 "invalid_request",
                 "the requested destination-conflict choice is not supported",
-                resource_library_id=(
-                    resource_library_id if isinstance(resource_library_id, str) else None
-                ),
+                **self._request_identity(resource_library_id),
                 next_action="choose no-overwrite, skip or keep-both and retry",
             ) from None
         source = self._direct.library(resource_library_id)
@@ -2414,6 +2533,7 @@ class DirectFileTransferService:
             destinations=tuple(destinations),
             keep_both_names=tuple(keep_both_names),
             digest=digest,
+            library_kind=self._kind,
         )
 
     def _enumerate_directory(
@@ -2461,7 +2581,7 @@ class DirectFileTransferService:
                         "files_transfer_invalid_path",
                         "invalid_path",
                         "a source entry is not a direct child of its directory",
-                        resource_library_id=source.library_id,
+                        **self._identity(source),
                         path=current,
                         next_action="refresh the directory and retry",
                     ) from error
@@ -2507,33 +2627,42 @@ class DirectFileTransferService:
         mode: TransferConflictMode,
         destination_directory: str,
     ) -> str:
-        return transfer_manifest_digest(
-            {
-                "revisionId": self._direct.revision.revision_id,
-                "revisionDigest": self._direct.revision.digest,
-                "sourceLibraryId": source.library_id,
-                "sourceStorageId": source.storage_id,
-                "sourceRoot": source.root_path,
-                "destinationLibraryId": destination.library_id,
-                "destinationStorageId": destination.storage_id,
-                "destinationRoot": destination.root_path,
-                "destinationDirectory": destination_directory,
-                "operation": operation.value,
-                "conflictMode": mode.value,
-                "topLevelPaths": list(targets),
-                "entries": [
-                    [
-                        entry.path,
-                        entry.kind.value,
-                        entry.size,
-                        entry.modified_at,
-                        entry.fingerprint,
-                    ]
-                    for entry in sorted(entries, key=lambda value: value.path)
-                ],
-                "destinations": [[path, value] for path, value in destinations],
-            }
-        )
+        payload: dict[str, object] = {
+            "revisionId": self._direct.revision.revision_id,
+            "revisionDigest": self._direct.revision.digest,
+            "sourceLibraryId": source.library_id,
+            "sourceStorageId": source.storage_id,
+            "sourceRoot": source.root_path,
+            "destinationLibraryId": destination.library_id,
+            "destinationStorageId": destination.storage_id,
+            "destinationRoot": destination.root_path,
+            "destinationDirectory": destination_directory,
+            "operation": operation.value,
+            "conflictMode": mode.value,
+            "topLevelPaths": list(targets),
+            "entries": [
+                [
+                    entry.path,
+                    entry.kind.value,
+                    entry.size,
+                    entry.modified_at,
+                    entry.fingerprint,
+                ]
+                for entry in sorted(entries, key=lambda value: value.path)
+            ],
+            "destinations": [[path, value] for path, value in destinations],
+        }
+        if self._is_media:
+            # The library kind is part of a MediaLibrary transfer's pinned
+            # identity, so one kind's opaque evidence never admits the other
+            # kind's transfer.  It is added only for the media kind: a
+            # ResourceLibrary payload keeps its exact pre-existing field set and
+            # therefore its exact pre-existing digest value, so every
+            # already-issued ResourceLibrary manifest stays valid across this
+            # change and the two kinds still carry deliberately different
+            # payload shapes.
+            payload["libraryKind"] = self._kind.value
+        return transfer_manifest_digest(payload)
 
     # ------------------------------------------------------------------
     # Admission helpers
@@ -2545,7 +2674,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_request",
                 "invalid_request",
                 "the transfer requires at least one selected source path",
-                resource_library_id=source.library_id,
+                **self._identity(source),
                 next_action="select one or more files or directories and retry",
             )
         if len(paths) > MAX_TRANSFER_PATHS:
@@ -2553,7 +2682,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_request",
                 "invalid_request",
                 "the transfer selection exceeds the bounded multi-selection limit",
-                resource_library_id=source.library_id,
+                **self._identity(source),
                 next_action=f"transfer at most {MAX_TRANSFER_PATHS} items per command",
             )
         normalized = tuple(self._direct.relative_path(path) for path in paths)
@@ -2562,7 +2691,7 @@ class DirectFileTransferService:
                 "files_transfer_root_protected",
                 "root_protected",
                 "the ResourceLibrary root cannot be transferred",
-                resource_library_id=source.library_id,
+                **self._identity(source),
                 next_action="select entries inside the ResourceLibrary instead",
             )
         unique = sorted(set(normalized))
@@ -2571,7 +2700,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_request",
                 "invalid_request",
                 "the transfer selection contains duplicate paths",
-                resource_library_id=source.library_id,
+                **self._identity(source),
                 next_action="remove duplicate selections and retry",
             )
         for index, path in enumerate(unique):
@@ -2581,7 +2710,7 @@ class DirectFileTransferService:
                         "files_transfer_invalid_request",
                         "invalid_request",
                         "the transfer selection nests a path inside another selected path",
-                        resource_library_id=source.library_id,
+                        **self._identity(source),
                         path=path,
                         next_action="select the outermost item only and retry",
                     )
@@ -2595,7 +2724,7 @@ class DirectFileTransferService:
                 "files_transfer_invalid_path",
                 "invalid_path",
                 "the destination directory is not a safe ResourceLibrary-relative path",
-                resource_library_id=destination.library_id,
+                **self._identity(destination),
                 next_action="navigate inside the destination ResourceLibrary and retry",
             ) from error
 
@@ -2616,7 +2745,7 @@ class DirectFileTransferService:
                     "not_a_directory",
                     "the destination directory does not exist",
                     status=404,
-                    resource_library_id=destination.library_id,
+                    **self._identity(destination),
                     path=relative,
                     next_action="choose an existing destination directory",
                 ) from None
@@ -2626,7 +2755,7 @@ class DirectFileTransferService:
                 "files_transfer_not_a_directory",
                 "not_a_directory",
                 "the destination is not a directory",
-                resource_library_id=destination.library_id,
+                **self._identity(destination),
                 path=relative,
                 next_action="choose an existing destination directory",
             )
@@ -2687,7 +2816,7 @@ class DirectFileTransferService:
                 "files_transfer_overlap",
                 "overlap",
                 "the destination is the source itself or one of its descendants",
-                resource_library_id=source.library_id,
+                **self._identity(source),
                 path=target,
                 next_action="choose a destination outside the transferred directory",
             )
@@ -2696,7 +2825,7 @@ class DirectFileTransferService:
                 "files_transfer_overlap",
                 "overlap",
                 "the destination is a descendant of a selected source directory",
-                resource_library_id=source.library_id,
+                **self._identity(source),
                 path=target,
                 next_action="choose a destination outside the transferred directory",
             )
@@ -2750,7 +2879,9 @@ class DirectFileTransferService:
         )
 
     def _enforce_transfer_limits(
-        self, library: ResourceLibrary, entries: list[TransferManifestEntry]
+        self,
+        library: ResourceLibrary | MediaLibrary,
+        entries: list[TransferManifestEntry],
     ) -> None:
         """Enforce the Copy/Move control-plane bounds of the enumerated scope.
 
@@ -3559,29 +3690,34 @@ class DirectFileTransferService:
     # ------------------------------------------------------------------
 
     def _unsupported_entry(
-        self, library: ResourceLibrary, path: str, reason: str
+        self, library: ResourceLibrary | MediaLibrary, path: str, reason: str
     ) -> DirectFileTransferError:
         return DirectFileTransferError(
             "files_transfer_unsupported_entry",
             "unsupported_entry",
             reason,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             path=path,
             next_action="select a regular file or directory supported by the provider",
         )
 
-    def _limit_error(self, library: ResourceLibrary, category: str) -> DirectFileTransferError:
+    def _limit_error(
+        self, library: ResourceLibrary | MediaLibrary, category: str
+    ) -> DirectFileTransferError:
         return DirectFileTransferError(
             f"files_transfer_{category}",
             category,
             "the transfer scope exceeds the bounded transfer limits",
             status=413,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             next_action="transfer a smaller bounded selection",
         )
 
     def _storage_admission_failure(
-        self, library: ResourceLibrary, relative: str, error: StorageError
+        self,
+        library: ResourceLibrary | MediaLibrary,
+        relative: str,
+        error: StorageError,
     ) -> DirectFileTransferError:
         category, status = _storage_category(error)
         return DirectFileTransferError(
@@ -3589,7 +3725,7 @@ class DirectFileTransferService:
             category,
             "the Storage read for transfer admission failed",
             status=status,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             path=relative,
             next_action="retry the transfer once the Storage is reachable again",
         )
@@ -3877,17 +4013,20 @@ def _transfer_authority(manifest: TransferManifest) -> str:
     """The bounded, claimable admission authority of one confirmed transfer.
 
     It pins everything a Worker must reconstruct the exact confirmed
-    operation after a process restart: the configuration revision/digest,
-    both endpoint ResourceLibrary/Storage identities, the normalized logical
-    paths, the operation, the conflict choice, the confirmed per-entry scope
-    and the pinned keep-both destinations.  Host roots, credentials, provider
-    payloads and content never enter the authority.
+    operation after a process restart: the configuration revision/digest, the
+    library kind, both endpoint library/Storage identities, the normalized
+    logical paths, the operation, the conflict choice, the confirmed per-entry
+    scope and the pinned keep-both destinations.  The kind is part of the
+    pinned identity, so a persisted authority can only ever be reconstructed
+    by a service of its own kind.  Host roots, credentials, provider payloads
+    and content never enter the authority.
     """
 
     document = {
         "version": 1,
         "revisionId": manifest.revision_id,
         "revisionDigest": manifest.revision_digest,
+        "libraryKind": manifest.library_kind.value,
         "sourceResourceLibraryId": manifest.source_resource_library_id,
         "sourceStorageId": manifest.source_storage_id,
         "destinationResourceLibraryId": manifest.destination_resource_library_id,
@@ -3972,7 +4111,10 @@ def _admitted_item(
         item_id,
         task_id,
         source_storage_id,
-        manifest.source_resource_library_id,
+        # The durable item identity carries its library kind namespace: a media
+        # item is never joined, claimed or replayed as ResourceLibrary work,
+        # even when a ResourceLibrary carries the same configured ID.
+        scoped_library_id(manifest.library_kind, manifest.source_resource_library_id),
         _item_full_path(manifest, top_level),
         top_level,
         TaskItemStatus.PENDING,
@@ -4000,9 +4142,16 @@ def _queued_document(
     The mutation request returns this before the first Storage mutation: the
     Web follows the queued transfer through the projection read instead of
     holding a request open, and no raw Task ID copy/paste or execution token
-    is needed.
+    is needed.  Each endpoint is named through its kind's own identity keys,
+    so one kind's admission document is never readable as the other kind's
+    authority.
     """
 
+    kind = manifest.library_kind
+    source_key = "mediaLibraryId" if kind is LibraryKind.MEDIA else "resourceLibraryId"
+    destination_key = (
+        "destinationMediaLibraryId" if kind is LibraryKind.MEDIA else "destinationResourceLibraryId"
+    )
     return {
         "operation": manifest.operation.value,
         "conflictMode": manifest.conflict_mode.value,
@@ -4011,8 +4160,8 @@ def _queued_document(
         "admitted": True,
         "taskId": task.task_id,
         "taskStatus": task.status.value,
-        "resourceLibraryId": manifest.source_resource_library_id,
-        "destinationResourceLibraryId": manifest.destination_resource_library_id,
+        source_key: manifest.source_resource_library_id,
+        destination_key: manifest.destination_resource_library_id,
         # The exact selected top-level path strings.  The per-entry destination
         # pairs travel in ``destinations``; serializing them here would hand the
         # browser a nested tuple per path and break the shared admission
@@ -4211,9 +4360,19 @@ def _projection_conflict_mode(transfer: PersistentFilesTransfer | None) -> str:
 def _projection_source_library(
     transfer: PersistentFilesTransfer | None, items: tuple[PersistentTaskItem, ...]
 ) -> str:
+    """The configured source library ID of one durable transfer projection.
+
+    A persisted item identity may carry the media namespace, so the fallback
+    strips it before presenting the configured value; the kind itself is
+    decided by the kind-pinned service reading the Task, never by the row.
+    """
+
     if transfer is not None:
         return _plan_source_library(_parse_authority(transfer.authority_json))
-    return items[0].resource_library_id if items else ""
+    if not items:
+        return ""
+    _kind, library_id = split_library_identity(items[0].resource_library_id)
+    return library_id
 
 
 def _projection_destination_library(

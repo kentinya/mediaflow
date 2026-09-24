@@ -2974,6 +2974,87 @@ export async function fetchTransferImpact(
   ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
+  return readTransferImpactThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
+    "resource",
+    options,
+    fetchImpl,
+  );
+}
+
+/**
+ * The MediaLibrary twin of {@link fetchTransferImpact}.
+ *
+ * The same bounded zero-mutation admission read reaches the media-scoped route
+ * and is normalized as media evidence only: a ResourceLibrary document (or a
+ * ResourceLibrary ID supplied here) is simply not this kind's authority and
+ * fails closed.
+ */
+export async function fetchMediaLibraryTransferImpact(
+  token: string | null,
+  mediaLibraryId: string,
+  options: {
+    readonly operation: TransferOperation;
+    readonly paths: readonly string[];
+    readonly destinationMediaLibraryId: string;
+    readonly destinationDirectory: string;
+    readonly conflictMode: TransferConflictMode;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TransferImpactModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    mediaLibraryId.trim().length === 0 ||
+    options.paths.length === 0 ||
+    options.paths.length > 50 ||
+    options.destinationMediaLibraryId.trim().length === 0
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return readTransferImpactThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
+    "media",
+    {
+      operation: options.operation,
+      paths: options.paths,
+      destinationResourceLibraryId: options.destinationMediaLibraryId,
+      destinationDirectory: options.destinationDirectory,
+      conflictMode: options.conflictMode,
+    },
+    fetchImpl,
+  );
+}
+
+async function readTransferImpactThrough(
+  token: string | null,
+  libraryBasePath: string,
+  kind: DirectCommandLibraryKind,
+  options: {
+    readonly operation: TransferOperation;
+    readonly paths: readonly string[];
+    readonly destinationResourceLibraryId: string;
+    readonly destinationDirectory: string;
+    readonly conflictMode: TransferConflictMode;
+  },
+  fetchImpl: FetchLike,
+): Promise<
+  | { readonly ok: true; readonly model: TransferImpactModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
   const query = [
     ...options.paths.map((path) => `path=${encodeURIComponent(path)}`),
     `to=${encodeURIComponent(options.destinationResourceLibraryId)}`,
@@ -2984,8 +3065,10 @@ export async function fetchTransferImpact(
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfer-impact?${query}`,
-      { headers: directFilesReadHeaders(token) },
+      `${libraryBasePath}/files/transfer-impact?${query}`,
+      {
+        headers: directFilesReadHeaders(token),
+      },
     );
   } catch {
     return { ok: false, status: 0, code: "transport_unavailable" };
@@ -3003,7 +3086,10 @@ export async function fetchTransferImpact(
     };
   }
   try {
-    return { ok: true, model: normalizeTransferImpact(await response.json()) };
+    return {
+      ok: true,
+      model: normalizeTransferImpact(await response.json(), kind),
+    };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }
@@ -3032,10 +3118,67 @@ export async function fetchTransferProjection(
   if (resourceLibraryId.trim().length === 0 || !isSafeIdentifier(taskId)) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
+  return readTransferProjectionThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}`,
+    "resource",
+    taskId,
+    fetchImpl,
+  );
+}
+
+/**
+ * The MediaLibrary twin of {@link fetchTransferProjection}.
+ *
+ * The media projection is read from the media-scoped route and normalized as
+ * media evidence only, so an equal ResourceLibrary ID can never read a media
+ * transfer's durable state through this page (or the reverse).
+ */
+export async function fetchMediaLibraryTransferProjection(
+  token: string | null,
+  mediaLibraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TransferProjectionModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (mediaLibraryId.trim().length === 0 || !isSafeIdentifier(taskId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return readTransferProjectionThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}`,
+    "media",
+    taskId,
+    fetchImpl,
+  );
+}
+
+async function readTransferProjectionThrough(
+  token: string | null,
+  libraryBasePath: string,
+  kind: DirectCommandLibraryKind,
+  taskId: string,
+  fetchImpl: FetchLike,
+): Promise<
+  | { readonly ok: true; readonly model: TransferProjectionModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/transfers/${encodeURIComponent(taskId)}`,
+      `${libraryBasePath}/files/transfers/${encodeURIComponent(taskId)}`,
       { headers: directFilesReadHeaders(token) },
     );
   } catch {
@@ -3056,7 +3199,7 @@ export async function fetchTransferProjection(
   try {
     return {
       ok: true,
-      model: normalizeTransferProjection(await response.json()),
+      model: normalizeTransferProjection(await response.json(), kind),
     };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
@@ -3075,6 +3218,7 @@ export async function mutateTransferLifecycle(
   action: "pause" | "cancel" | "resume",
   expectedVersion: string,
   fetchImpl: FetchLike = fetch,
+  kind: DirectCommandLibraryKind = "resource",
 ): Promise<
   | {
       readonly ok: true;
@@ -3132,7 +3276,7 @@ export async function mutateTransferLifecycle(
       return {
         ok: true,
         status: response.status,
-        model: normalizeTransferProjection(body),
+        model: normalizeTransferProjection(body, kind),
       };
     } catch {
       return { ok: false, status: response.status, code: "malformed_response" };
@@ -3184,6 +3328,64 @@ export async function submitTransfer(
       manifestDigest: options.manifestDigest,
     },
     normalizeTransferResult,
+    fetchImpl,
+  );
+}
+
+/** One confirmed bounded MediaLibrary Copy/Move request. */
+export interface MediaTransferRequestOptions {
+  readonly operation: TransferOperation;
+  readonly paths: readonly string[];
+  readonly destinationMediaLibraryId: string;
+  readonly destinationDirectory: string;
+  readonly conflictMode: TransferConflictMode;
+  readonly manifestDigest: string;
+}
+
+/**
+ * The MediaLibrary twin of {@link submitTransfer}.
+ *
+ * The same single explicit submission admits one durable media transfer Task
+ * through the media-scoped route; the response is the queued durable
+ * projection and no Storage mutation happens on this request's stack.  The
+ * media document is normalized as media evidence only.
+ */
+export async function submitMediaLibraryTransfer(
+  token: string | null,
+  mediaLibraryId: string,
+  options: MediaTransferRequestOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | { readonly ok: true; readonly model: TransferResultModel }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    }
+> {
+  if (
+    mediaLibraryId.trim().length === 0 ||
+    options.paths.length === 0 ||
+    options.paths.length > 50 ||
+    options.destinationMediaLibraryId.trim().length === 0 ||
+    options.manifestDigest.trim().length === 0
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/transfers`,
+    {
+      operation: options.operation,
+      paths: [...options.paths],
+      destinationMediaLibraryId: options.destinationMediaLibraryId,
+      destinationDirectory: options.destinationDirectory,
+      conflictMode: options.conflictMode,
+      manifestDigest: options.manifestDigest,
+    },
+    (payload) => normalizeTransferResult(payload, "media"),
     fetchImpl,
   );
 }

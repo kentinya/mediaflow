@@ -5,6 +5,7 @@ import {
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
   normalizeRenameEvidence,
+  normalizeTransferImpact,
   normalizeTransferProjection,
   normalizeTransferResult,
 } from "./direct-files";
@@ -407,5 +408,119 @@ describe("real transfer admission contract", () => {
     ]);
     expect(model.outcomes[1]?.status).toBe("SKIPPED");
     expect(model.actions.filter((action) => action.available)).toHaveLength(0);
+  });
+});
+
+/**
+ * The MediaLibrary transfer contract (Slice 38 RO-5/RO-6/RO-7).
+ *
+ * The media route names both endpoints through its own identity keys
+ * (`mediaLibraryId`/`destinationMediaLibraryId`).  One shared model serves both
+ * kinds, so these cases prove the kind travels in the model and that a document
+ * of one kind is never normalized as the other kind's authority — including
+ * when the two libraries deliberately carry the same ID.
+ */
+describe("MediaLibrary transfer documents", () => {
+  const MEDIA_TRANSFER_IMPACT = {
+    mediaLibraryId: "vault",
+    destinationMediaLibraryId: "vault",
+    operation: "move",
+    conflictMode: "fail",
+    sameStorage: true,
+    sourceLibraryRoot: "/media-vault",
+    destinationDirectory: "Movies",
+    capability: "native_move",
+    topLevelPaths: ["ep01.mkv"],
+    destinations: [{ path: "ep01.mkv", destination: "Movies/ep01.mkv" }],
+    entries: [
+      {
+        path: "ep01.mkv",
+        isDirectory: false,
+        size: 32,
+        modifiedAt: "2026-09-23T12:00:00+00:00",
+      },
+    ],
+    fileCount: 1,
+    directoryCount: 0,
+    totalBytes: 32,
+    conflicts: [],
+    manifestDigest: "t1.media-manifest-digest",
+  };
+
+  const MEDIA_TRANSFER_PROJECTION = {
+    operation: "move",
+    conflictMode: "fail",
+    taskId: "task-media-1",
+    taskStatus: "completed",
+    mediaLibraryId: "vault",
+    destinationMediaLibraryId: "vault",
+    topLevelPaths: ["ep01.mkv"],
+    knownEffects: [
+      { path: "ep01.mkv", effect: "transferred", status: "SUCCESS" },
+    ],
+    itemOutcomes: [
+      { path: "ep01.mkv", destination: "Movies/ep01.mkv", status: "SUCCESS" },
+    ],
+    outcomes: [
+      {
+        path: "ep01.mkv",
+        destination: "Movies/ep01.mkv",
+        status: "SUCCESS",
+        checkpoints: ["MOVE"],
+      },
+    ],
+    outcomesTruncated: false,
+    totalItems: 1,
+    succeededItems: 1,
+    skippedItems: 0,
+    failedItems: 0,
+    status: "SUCCESS",
+    terminal: true,
+    actions: [],
+    version: "2026-09-23T12:00:00+00:00",
+    nextAction: "refresh the source and destination directories",
+  };
+
+  it("normalizes a media impact and projection as media evidence", () => {
+    const impact = normalizeTransferImpact(MEDIA_TRANSFER_IMPACT, "media");
+    expect(impact.libraryKind).toBe("media");
+    expect(impact.resourceLibraryId).toBe("vault");
+    expect(impact.destinationResourceLibraryId).toBe("vault");
+    expect(impact.destinationDirectory).toBe("Movies");
+    expect(impact.manifestDigest).toBe("t1.media-manifest-digest");
+
+    const projection = normalizeTransferProjection(
+      MEDIA_TRANSFER_PROJECTION,
+      "media",
+    );
+    expect(projection.libraryKind).toBe("media");
+    expect(projection.terminal).toBe(true);
+    expect(projection.outcomes[0]?.checkpoints).toEqual(["MOVE"]);
+  });
+
+  it("never reads one kind's transfer document as the other kind's authority", () => {
+    // A document normalized against the wrong kind must fail closed instead of
+    // silently becoming that page's evidence.
+    expect(() =>
+      normalizeTransferImpact(MEDIA_TRANSFER_IMPACT, "resource"),
+    ).toThrow(DirectFilesNormalizationError);
+    expect(() =>
+      normalizeTransferProjection(MEDIA_TRANSFER_PROJECTION, "resource"),
+    ).toThrow(DirectFilesNormalizationError);
+    expect(() => normalizeTransferImpact(MEDIA_TRANSFER_IMPACT)).toThrow(
+      DirectFilesNormalizationError,
+    );
+  });
+
+  it("refuses a document that names both kinds' destination identity", () => {
+    expect(() =>
+      normalizeTransferImpact(
+        {
+          ...MEDIA_TRANSFER_IMPACT,
+          destinationResourceLibraryId: "vault",
+        },
+        "media",
+      ),
+    ).toThrow(DirectFilesNormalizationError);
   });
 });

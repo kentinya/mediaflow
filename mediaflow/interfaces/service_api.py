@@ -57,6 +57,7 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
+    is_files_transfer_task_command,
     job_lifecycle_document,
     job_operator_document,
     manual_action_matrix_operator_document,
@@ -159,6 +160,7 @@ from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
     PersistentTaskStatus,
+    direct_command_task_command,
 )
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION
 from mediaflow.infrastructure.webhook import UrllibWebhookTransport
@@ -269,6 +271,12 @@ class _ApiRuntimeBinding:
     #: authority (or the reverse).
     direct_media_files: DirectFileCommandService | None = None
     direct_transfers: DirectFileTransferService | None = None
+    #: The MediaLibrary-owned twin of ``direct_transfers`` (Slice 38 RO-5/RO-6).
+    #: It is a separate transfer service built on the media-kind direct-command
+    #: service pinned to the same immutable Active revision, so a media
+    #: transfer can only ever resolve MediaLibrary endpoints and one kind's
+    #: manifest, evidence or claim can never be exchanged with the other.
+    direct_media_transfers: DirectFileTransferService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
 
@@ -5050,6 +5058,99 @@ class MediaFlowApi:
             return self._files_direct_command(
                 start_response, binding, parts[3], environ, media_library=True
             )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "transfer-impact"
+            and method == "GET"
+        ):
+            # The MediaLibrary transfer impact: the same zero-mutation bounded
+            # admission read as the Files surface, resolved entirely from this
+            # kind's own Active MediaLibrary authority.  A ResourceLibrary ID
+            # named here is simply not an enabled MediaLibrary, so it fails
+            # closed; the source or destination can never silently cross kinds.
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_media_transfers is None:
+                return self._files_browser_unavailable(start_response)
+            query = self._files_transfer_impact_query(environ)
+            impact = binding.direct_media_transfers.transfer_impact(
+                resource_library_id=parts[3],
+                paths=query["paths"],
+                destination_resource_library_id=query["destination"],
+                destination_directory=query["destination_path"],
+                operation=query["operation"],
+                conflict_mode=query["conflict_mode"],
+            )
+            return self._response(start_response, 200, impact.document())
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "transfers"
+            and method == "POST"
+        ):
+            # MediaLibrary transfer admission: identical permissions, request
+            # contract and durable admission behavior as the Files transfer —
+            # under this kind's own authority.  The admitted Task records the
+            # media command name, so it is never claimable or reconstructable
+            # as ResourceLibrary work.
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            if binding.direct_media_transfers is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "MediaLibrary transfer")
+            document = self._document(environ)
+            required = {
+                "operation",
+                "paths",
+                "destinationMediaLibraryId",
+                "destinationDirectory",
+                "conflictMode",
+                "manifestDigest",
+            }
+            if not isinstance(document, dict) or set(document) != required:
+                raise ValueError(
+                    "a MediaLibrary transfer requires only operation, paths, "
+                    "destinationMediaLibraryId, destinationDirectory, conflictMode, "
+                    "and manifestDigest"
+                )
+            if not isinstance(document["paths"], list):
+                raise ValueError("MediaLibrary transfer paths must be an array")
+            result = binding.direct_media_transfers.submit_transfer(
+                resource_library_id=parts[3],
+                paths=document["paths"],
+                destination_resource_library_id=document["destinationMediaLibraryId"],
+                destination_directory=document["destinationDirectory"],
+                operation=document["operation"],
+                conflict_mode=document["conflictMode"],
+                manifest_digest=document["manifestDigest"],
+            )
+            # 202: the transfer is durably admitted and queued for the resident
+            # Worker; the response carries the durable operator projection and
+            # no Storage mutation has happened on this request's stack.
+            return self._response(start_response, 202, result)
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "transfers"
+            and method == "GET"
+        ):
+            # The bounded durable projection of one admitted media transfer.
+            # The media projection is only ever served by the media-kind
+            # service, so an equal ResourceLibrary ID cannot read a media
+            # transfer (or the reverse).
+            self._require(principal, ApiPermission.READ)
+            if binding.direct_media_transfers is None:
+                return self._files_browser_unavailable(start_response)
+            self._require_empty_query(environ, "MediaLibrary transfer status")
+            try:
+                projection = binding.direct_media_transfers.transfer_projection(parts[6])
+            except DirectFileTransferError as error:
+                if error.category == "not_found":
+                    raise LookupError(f"task {parts[6]!r} was not found") from None
+                raise
+            return self._response(start_response, 200, projection)
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -6499,19 +6600,29 @@ class MediaFlowApi:
             action = parts[4]
             expected_version = self._control_version(environ, f"Task {parts[4]} control")
             service = TaskLifecycleService(self._repository)
+            media_transfer_command = direct_command_task_command(
+                FILES_TRANSFER_TASK_COMMAND, media_library=True
+            )
             if action == "resume":
                 task = service.require(parts[3])
                 service.require_version(task, expected_version)
-                if task.command == FILES_TRANSFER_TASK_COMMAND and (
-                    binding.direct_transfers is not None
-                ):
+                if is_files_transfer_task_command(task.command):
                     # The one Task kind with a persisted, bounded continuation
                     # authority: the resume request only re-queues the durable
                     # authority — the resident Worker later claims it and
                     # continues from each item's recorded known-safe
                     # checkpoint, never by replaying an uncertain mutation.
-                    requeued = binding.direct_transfers.requeue_transfer(task.task_id)
-                    return self._response(start_response, 202, requeued)
+                    # The Task's own durable command selects the kind-pinned
+                    # boundary, so a media transfer is never re-queued through
+                    # the ResourceLibrary service (or the reverse).
+                    transfer_service = (
+                        binding.direct_media_transfers
+                        if task.command == media_transfer_command
+                        else binding.direct_transfers
+                    )
+                    if transfer_service is not None:
+                        requeued = transfer_service.requeue_transfer(task.task_id)
+                        return self._response(start_response, 202, requeued)
                 # No durable queued continuation of one exact paused scope
                 # exists today, so the transition is refused with the same
                 # actionable reason the projection states.
@@ -7573,6 +7684,7 @@ class MediaFlowApi:
         direct_files = None
         direct_media_files = None
         direct_transfers = None
+        direct_media_transfers = None
         if runtime_revision is not None and runtime_configuration is not None:
             files_browser = RuntimeFilesBrowserService(
                 self._configuration_service,
@@ -7599,7 +7711,13 @@ class MediaFlowApi:
                 storage_adapters=self._storage_adapters,
                 library_kind=LibraryKind.MEDIA,
             )
+            # Each kind owns its own transfer admission/execution boundary over
+            # the same pinned Active revision: the media service resolves only
+            # enabled MediaLibraries for both endpoints, and the resource
+            # service only enabled ResourceLibraries.  One kind's manifest,
+            # evidence or claim can never be exchanged with the other's.
             direct_transfers = DirectFileTransferService(direct_files=direct_files)
+            direct_media_transfers = DirectFileTransferService(direct_files=direct_media_files)
         manual_scans = self._manual_scans_override
         if (
             manual_scans is None
@@ -7691,6 +7809,7 @@ class MediaFlowApi:
             direct_files,
             direct_media_files,
             direct_transfers,
+            direct_media_transfers,
             manual_scans,
             runtime_settings,
         )
@@ -7927,10 +8046,18 @@ class MediaFlowApi:
             len(parts) == 6
             and parts[:3] == ["api", "v1", "media-libraries"]
             and parts[4] == "files"
-            and parts[5] in {"text", "delete-impact", "rename-evidence", "commands"}
+            and parts[5]
+            in {
+                "text",
+                "delete-impact",
+                "rename-evidence",
+                "transfer-impact",
+                "commands",
+                "transfers",
+            }
         ):
-            # The media command surface is audited under its own path template,
-            # never folded into the resource-libraries one.
+            # The media command and transfer surfaces are audited under their
+            # own path template, never folded into the resource-libraries one.
             return f"/api/v1/media-libraries/{{id}}/files/{parts[5]}"
         if (
             len(parts) == 5

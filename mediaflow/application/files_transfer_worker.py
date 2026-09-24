@@ -16,6 +16,12 @@ Organize executions:
 * a Worker that fails to start a claimed transfer records one truthful
   durable failure instead of leaving it silently claimable forever, and
   never replays a mutation that may already have happened.
+
+One Worker may serve both library kinds (Slice 38 RO-6/RO-7).  Each admitted
+transfer is claimed through the same durable queue, and the claimed Task's own
+command selects the kind-pinned service that executes and resolves it: a media
+transfer is never executed by the ResourceLibrary boundary (or the reverse),
+even when the two libraries carry the same configured ID.
 """
 
 from __future__ import annotations
@@ -26,10 +32,60 @@ import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from mediaflow.domain.task_persistence import FilesTransferStatus
+from mediaflow.domain.task_persistence import (
+    FILES_TRANSFER_TASK_COMMAND,
+    FilesTransferStatus,
+    direct_command_task_command,
+)
 
 DEFAULT_TRANSFER_LEASE_SECONDS = 300.0
 _TRANSFER_TERMINAL_STATUSES = frozenset(status for status in FilesTransferStatus if status.terminal)
+
+
+def _default_services(transfer_service) -> dict[str, object]:
+    """The command→service map of one Worker's transfer boundaries.
+
+    A caller that passes a single service (the pre-existing ResourceLibrary-only
+    construction) keeps exactly that behavior, while a Worker composed with a
+    media-kind twin serves both kinds and always dispatches by the claimed
+    Task's own durable command.
+    """
+
+    if transfer_service is None:
+        return {}
+    mapping: dict[str, object] = {}
+    if isinstance(transfer_service, dict):
+        for command, service in transfer_service.items():
+            if isinstance(command, str) and service is not None:
+                mapping[command] = service
+        return mapping
+    command = getattr(transfer_service, "task_command", None)
+    if not isinstance(command, str) or not command:
+        command = FILES_TRANSFER_TASK_COMMAND
+    mapping[command] = transfer_service
+    return mapping
+
+
+def transfer_services(
+    resource_transfers=None, media_transfers=None, *, fallback=None
+) -> dict[str, object]:
+    """The command→service dispatch map for one resident Worker.
+
+    Both kind-pinned boundaries share one durable claim queue, so the Worker
+    needs one entry per kind: the claimed Task's command decides which service
+    may lawfully execute it.
+    """
+
+    services: dict[str, object] = {}
+    if resource_transfers is not None:
+        services[FILES_TRANSFER_TASK_COMMAND] = resource_transfers
+    if media_transfers is not None:
+        services[direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True)] = (
+            media_transfers
+        )
+    if not services and fallback is not None:
+        services = _default_services(fallback)
+    return services
 
 
 class FilesTransferWorker:
@@ -37,9 +93,10 @@ class FilesTransferWorker:
 
     def __init__(
         self,
-        transfer_service,
-        repository,
+        transfer_service=None,
+        repository=None,
         *,
+        media_transfer_service=None,
         lease_seconds: float = DEFAULT_TRANSFER_LEASE_SECONDS,
         clock: Callable[[], datetime] | None = None,
         worker_id: str | None = None,
@@ -51,12 +108,34 @@ class FilesTransferWorker:
             or not 0 < float(lease_seconds) <= 86_400
         ):
             raise ValueError("files transfer worker lease must be between 1 second and 1 day")
-        self._service = transfer_service
+        services = _default_services(transfer_service)
+        if media_transfer_service is not None:
+            services[
+                direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True)
+            ] = media_transfer_service
+        self._services = services
+        #: The pre-existing single-service attribute, retained so a Worker that
+        #: serves exactly one kind keeps its historical behavior and any caller
+        #: inspecting it sees the boundary it was built with.
+        self._service = next(iter(services.values()), None)
         self._repository = repository
         self._lease_seconds = float(lease_seconds)
         self._clock = clock or (lambda: datetime.now(UTC))
         self._worker_id = worker_id or f"files-transfer-{secrets.token_hex(6)}"
         self._notice = notice or (lambda line: sys.stderr.write(line))
+
+    def service_for(self, command: str | None):
+        """The one kind-pinned service that may execute a claimed Task command."""
+
+        if not isinstance(command, str) or not command:
+            return None
+        return self._services.get(command)
+
+    @property
+    def commands(self) -> tuple[str, ...]:
+        """The durable Task commands this Worker can lawfully execute."""
+
+        return tuple(sorted(self._services))
 
     @property
     def worker_id(self) -> str:
@@ -99,9 +178,17 @@ class FilesTransferWorker:
             claimed = self._claim_expired_mutation(claim_token)
             if claimed is None:
                 return None
+        service = self._service_for_transfer(claimed)
         keeper = self._start_lease_keeper(claimed.transfer_id, claim_token)
         try:
-            return self._service.run_claimed_transfer(
+            if service is None:
+                # No configured boundary of this Worker may lawfully execute the
+                # claimed transfer's kind.  It is returned to the claimable queue
+                # with bounded readiness evidence instead of being consumed as a
+                # business failure: an eligible Worker continues it later.
+                self._release_incompatible(claimed.transfer_id, claim_token)
+                return None
+            return service.run_claimed_transfer(
                 claimed,
                 claim_token=claim_token,
                 heartbeat=lambda: self._heartbeat(claimed.transfer_id, claim_token),
@@ -109,10 +196,51 @@ class FilesTransferWorker:
             )
         except Exception as error:
             self._notice(self._bounded_notice(claimed.transfer_id, error))
-            self._close_unstarted(claimed.transfer_id, claim_token, error)
+            self._close_unstarted(claimed.transfer_id, claim_token, error, service=service)
             return None
         finally:
             keeper.stop()
+
+    def _service_for_transfer(self, transfer):
+        """The one kind-pinned service that may execute a claimed transfer.
+
+        The durable Task command is the authority: it records which kind of
+        configured library owns the work, so a claimed media transfer reaches
+        only the media boundary and a claimed resource transfer only the
+        resource one — never whichever service happens to be built first.
+        """
+
+        task = None
+        task_id = getattr(transfer, "task_id", None)
+        reader = getattr(self._repository, "get_task", None)
+        if isinstance(task_id, str) and callable(reader):
+            task = reader(task_id)
+        if task is None:
+            # A transfer whose Task row cannot be read has no lawful execution
+            # boundary here: fall back to the single configured service only
+            # when this Worker serves exactly one kind, otherwise fail closed.
+            return self._service if len(self._services) == 1 else None
+        return self.service_for(getattr(task, "command", None))
+
+    def _release_incompatible(self, transfer_id: str, claim_token: str) -> None:
+        """Return one claimed transfer this Worker cannot execute to the queue."""
+
+        requeue = getattr(self._repository, "release_files_transfer_claim", None)
+        if not callable(requeue):
+            return
+        try:
+            requeue(
+                transfer_id,
+                claim_token=claim_token,
+                now=self._clock(),
+                error="files_transfer_worker_kind_unavailable",
+                next_action=(
+                    "wait for a Worker configured with this transfer's library kind, "
+                    "or inspect the Active configuration"
+                ),
+            )
+        except Exception:
+            return
 
     def _claim_expired_mutation(self, claim_token: str):
         claim = getattr(self._repository, "claim_expired_files_transfer_mutation", None)
@@ -195,7 +323,14 @@ class FilesTransferWorker:
             )
         )
 
-    def _close_unstarted(self, transfer_id: str, claim_token: str, error: BaseException) -> None:
+    def _close_unstarted(
+        self,
+        transfer_id: str,
+        claim_token: str,
+        error: BaseException,
+        *,
+        service=None,
+    ) -> None:
         """Make sure a claimed transfer that never started is not claimable forever.
 
         The claim owner closes its own lease with a truthful bounded failure,
@@ -205,9 +340,14 @@ class FilesTransferWorker:
         over an expired claim, but that continuation proceeds only from the
         persisted known-safe checkpoints — never by replaying a completed or
         uncertain mutation.
+
+        The convergence runs through the exact kind-pinned service that was
+        about to execute the transfer, so a failed start of media work is
+        converged by its own boundary rather than the other kind's.
         """
 
-        converge = getattr(self._service, "converge_worker_failure", None)
+        boundary = service if service is not None else self._service
+        converge = getattr(boundary, "converge_worker_failure", None)
         if callable(converge):
             try:
                 # A truthful convergence (or an already-terminal row) is the
