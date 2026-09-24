@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -436,7 +442,11 @@ async function openPage(): Promise<void> {
 }
 
 async function rowMenu(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click(screen.getByRole("button", { name: `更多操作 ${name}` }));
+  void user;
+  fireEvent.contextMenu(screen.getByRole("row", { name: `文件条目 ${name}` }), {
+    clientX: 40,
+    clientY: 40,
+  });
 }
 
 describe("MediaLibrary Files command surface", () => {
@@ -448,7 +458,7 @@ describe("MediaLibrary Files command surface", () => {
     expect(screen.getByRole("button", { name: "新建文件夹" })).toBeVisible();
     expect(screen.getByRole("button", { name: "新建文本文件" })).toBeVisible();
     expect(
-      screen.getByRole("button", { name: "更多操作 Season 1" }),
+      screen.getByRole("row", { name: "文件条目 Season 1" }),
     ).toBeVisible();
     // Still no organize entry point: MediaLibrary maintenance never runs the
     // media pipeline.  Copy/Move are the bounded transfer commands this Task
@@ -1039,7 +1049,7 @@ describe("MediaLibrary Files command surface", () => {
     await openPage();
     await rowMenu(user, "movie.mkv");
     const menu = await screen.findByRole("menu", {
-      name: /更多操作 movie.mkv/,
+      name: /条目操作 movie.mkv/,
     });
     // A media file has no editable text type, so no 编辑 item appears.
     expect(

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -511,8 +517,9 @@ describe("MediaLibrary bounded Copy/Move transfer", () => {
     const user = userEvent.setup();
     await openPage();
 
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 movie.mkv" }),
+    fireEvent.contextMenu(
+      screen.getByRole("row", { name: "文件条目 movie.mkv" }),
+      { clientX: 40, clientY: 40 },
     );
     expect(screen.getByRole("menuitem", { name: "复制" })).toBeVisible();
     expect(screen.getByRole("menuitem", { name: "移动" })).toBeVisible();

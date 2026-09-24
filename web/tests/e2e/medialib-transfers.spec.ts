@@ -69,20 +69,11 @@ function apiRequestsOf(page: Page): Array<{ url: string; method: string }> {
  * the same recovery an operator performs.
  */
 async function openRowMenu(page: Page, name: RegExp): Promise<void> {
-  const trigger = page
-    .getByRole("row", { name })
-    .getByRole("button", { name: /更多操作/ });
-  await expect(trigger).toBeVisible();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await trigger.click();
-    const menu = page.getByRole("menu");
-    const opened = await menu
-      .waitFor({ state: "visible", timeout: 2_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (opened) return;
-  }
-  throw new Error("the row command menu never opened");
+  const row = page.getByRole("row", { name });
+  await expect(row).toBeVisible();
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(page.getByRole("menu")).toBeVisible();
 }
 
 /** Select the destination MediaLibrary in an open transfer dialog. */

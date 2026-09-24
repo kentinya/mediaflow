@@ -75,13 +75,13 @@ test("Files listing is live-Storage bounded evidence with a safe directory conte
   await expect(
     page.getByRole("columnheader", { name: "选择全部" }),
   ).toBeVisible();
-  for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
+  for (const column of ["名称", "类型", "大小", "修改时间"]) {
     await expect(
       page.getByRole("columnheader", { name: column, exact: true }),
     ).toBeVisible();
   }
   // The removed business concepts are not Files page presentation.
-  await expect(page.getByRole("columnheader")).toHaveCount(6);
+  await expect(page.getByRole("columnheader")).toHaveCount(5);
   await expect(page.getByText("识别结果")).toHaveCount(0);
   await expect(page.getByText("整理状态")).toHaveCount(0);
 

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import admissionContract from "../../../tests/fixtures/files-transfer-admission.json";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   waitFor,
@@ -19,6 +20,14 @@ import {
   resourceLibrarySaveFailure,
   StorageFilesPage,
 } from "./StorageFilesPage";
+
+function openEntryMenu(name: string): HTMLElement {
+  const row = screen.getByRole("row", {
+    name: new RegExp(`文件条目 ${name}`),
+  });
+  fireEvent.contextMenu(row, { clientX: 40, clientY: 40 });
+  return row;
+}
 
 /**
  * The committed cross-boundary admission contract, shared with the Python API
@@ -705,7 +714,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     });
   }
 
-  it("presents the six physical columns without recognition or organize-status feedback", async () => {
+  it("presents the five physical columns without recognition or organize-status feedback", async () => {
     // The Files page presents physical file facts and explicit actions only:
     // 识别结果 and 整理状态 are not page concepts, while the 整理 action and its
     // server-authoritative continuation remain available.
@@ -746,20 +755,20 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       screen.getByRole("columnheader", { name: "选择全部" }),
     ).toBeVisible();
-    for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
+    for (const column of ["名称", "类型", "大小", "修改时间"]) {
       expect(
         screen.getByRole("columnheader", { name: new RegExp(column) }),
       ).toBeVisible();
     }
-    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
     // The removed business concepts appear neither as headers nor as row
     // cells, even though the projection still carries those bounded fields.
     expect(screen.queryByText("识别结果")).toBeNull();
     expect(screen.queryByText("整理状态")).toBeNull();
     expect(screen.queryByText("待整理")).toBeNull();
     expect(screen.queryByText("Movie (2026)")).toBeNull();
-    // The explicit 整理 action remains available for the eligible entry.
-    expect(screen.getByRole("button", { name: "整理" })).toBeEnabled();
+    openEntryMenu("movie.mkv");
+    expect(screen.getByRole("menuitem", { name: "整理" })).toBeEnabled();
   });
 
   it("keeps the Add ResourceLibrary drawer closed on normal entry and opens only on explicit activation", async () => {
@@ -1098,9 +1107,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
     expect(within(dialog).getByText(/即将永久删除/)).toBeVisible();
@@ -1116,9 +1123,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     ).toBeVisible();
     expect(screen.getByText("已删除")).toBeVisible();
     // The deleted path no longer lingers as hidden selection state.
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     expect(await screen.findByRole("menuitem", { name: "删除" })).toBeVisible();
     await user.keyboard("{Escape}");
   });
@@ -1162,7 +1167,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
     expect(
@@ -1237,7 +1242,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       directoryTree().getByRole("button", { name: "Season" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
@@ -1330,7 +1335,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       directoryTree().getByRole("button", { name: "Season" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
@@ -1409,7 +1414,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
       directoryTree().getByRole("button", { name: "Season" }),
     ).toBeVisible();
 
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "删除" }));
     const dialog = await screen.findByRole("dialog", { name: "删除确认" });
     await user.click(within(dialog).getByRole("button", { name: "删除" }));
@@ -1587,7 +1592,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
 
     // The table row keeps the same exact identity and distinction.
     const exactRow = screen.getByRole("row", {
-      name: /SSH（名称结尾包含空格）/,
+      name: /SSH\s+（名称结尾包含空格）/,
     });
     expect(exactRow.querySelector(".mf-ws-value")?.textContent).toBe("SSH ");
     expect(
@@ -1831,7 +1836,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     );
     await user.click(screen.getByRole("button", { name: "返回资源库根目录" }));
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const renameDialog = await screen.findByRole("dialog", { name: "重命名" });
     const nameInput = within(renameDialog).getByLabelText("新名称");
@@ -1888,7 +1893,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(
       directoryTree().getByRole("button", { name: "Season" }),
     ).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const renameDialog = await screen.findByRole("dialog", { name: "重命名" });
     const nameInput = within(renameDialog).getByLabelText("新名称");
@@ -1952,7 +1957,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const dialog = await screen.findByRole("dialog", { name: "重命名" });
     expect(
@@ -1994,7 +1999,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "更多操作 Season" }));
+    openEntryMenu("Season");
     await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
     const dialog = await screen.findByRole("dialog", { name: "重命名" });
     const nameInput = within(dialog).getByLabelText("新名称");
@@ -2038,9 +2043,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "编辑" }));
     const editor = await screen.findByRole("dialog", {
       name: "编辑文本 — notes.txt",
@@ -2124,9 +2127,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "编辑" }));
     const editor = await screen.findByRole("dialog", {
       name: "编辑文本 — notes.txt",
@@ -2236,9 +2237,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "编辑" }));
     const editor = await screen.findByRole("dialog", {
       name: "编辑文本 — notes.txt",
@@ -2424,15 +2423,15 @@ describe("Files entry state and ResourceLibrary strip", () => {
     // structural contract — one scrollable viewport owning every row, the
     // final row reachable inside it, and an unclipped portal menu — is
     // asserted here against the live DOM.
-    const lastRowTrigger = screen.getByRole("button", {
-      name: "更多操作 episode-12.mkv",
+    const lastRowTrigger = screen.getByRole("row", {
+      name: "文件条目 episode-12.mkv",
     });
     // The final row is inside the same scrollable viewport, so scrolling to it
     // is the operator's real path to the bottom-row actions.
     expect(viewport.contains(lastRowTrigger)).toBe(true);
-    await user.click(lastRowTrigger);
+    fireEvent.contextMenu(lastRowTrigger, { clientX: 40, clientY: 40 });
     const menu = await screen.findByRole("menu", {
-      name: "更多操作 episode-12.mkv",
+      name: "条目操作 episode-12.mkv",
     });
     // The menu renders through the page-level portal layer, not inside the
     // clipping table cell: its parent is the document body.
@@ -2450,7 +2449,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     await user.keyboard("{Escape}");
     await waitFor(() =>
       expect(
-        screen.queryByRole("menu", { name: "更多操作 episode-12.mkv" }),
+        screen.queryByRole("menu", { name: "条目操作 episode-12.mkv" }),
       ).not.toBeInTheDocument(),
     );
     // Focus returns to the exact invoking row control.
@@ -2515,9 +2514,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "复制" }));
     const dialog = await screen.findByRole("dialog", { name: "复制到…" });
     const submit = within(dialog).getByRole("button", { name: "复制" });
@@ -2799,9 +2796,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "复制" }));
     const dialog = await screen.findByRole("dialog", { name: "复制到…" });
     // The destination picker is live-Storage authoritative and zero-mutation.
@@ -2922,9 +2917,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     renderWithProviders(<StorageFilesPage />);
 
     expect(await screen.findByText("notes.txt")).toBeVisible();
-    await user.click(
-      screen.getByRole("button", { name: "更多操作 notes.txt" }),
-    );
+    openEntryMenu("notes.txt");
     await user.click(await screen.findByRole("menuitem", { name: "复制" }));
     const dialog = await screen.findByRole("dialog", { name: "复制到…" });
     await user.click(within(dialog).getByRole("button", { name: "复制" }));

@@ -46,7 +46,7 @@ async function openMediaLibrary(
 async function enterDirectory(page: Page, name: string): Promise<void> {
   await page
     .getByRole("row", { name: new RegExp(name) })
-    .getByRole("button", { name: "打开" })
+    .getByRole("button", { name: new RegExp(name) })
     .click();
   await expect(page).toHaveURL(/path=/);
   await expect(page.getByRole("table")).toBeVisible();
@@ -81,20 +81,11 @@ function apiRequestsOf(page: Page): string[] {
  * every attempt fails and the journey still fails closed.
  */
 async function openRowMenu(page: Page, name: RegExp): Promise<void> {
-  const trigger = page
-    .getByRole("row", { name })
-    .getByRole("button", { name: /更多操作/ });
-  await expect(trigger).toBeVisible();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    await trigger.click();
-    const menu = page.getByRole("menu");
-    const opened = await menu
-      .waitFor({ state: "visible", timeout: 2_000 })
-      .then(() => true)
-      .catch(() => false);
-    if (opened) return;
-  }
-  throw new Error("the row command menu never opened");
+  const row = page.getByRole("row", { name });
+  await expect(row).toBeVisible();
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  await expect(page.getByRole("menu")).toBeVisible();
 }
 
 test("creating a folder completes through the media command route and reconciles the live listing", async ({
@@ -357,7 +348,7 @@ test("an unavailable requested MediaLibrary cannot be maintained through the add
   // bounded page, so a new row there could be a paging artifact.
   await page
     .getByRole("row", { name: /Breaking Bad/ })
-    .getByRole("button", { name: "打开" })
+    .getByRole("button", { name: /Breaking Bad/ })
     .click();
   await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
   await page.getByRole("button", { name: "新建文件夹" }).click();
