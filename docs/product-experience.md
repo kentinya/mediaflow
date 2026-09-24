@@ -227,8 +227,11 @@ Storage or create work merely by viewing it.
 - **Visible state:** exact source/destination ResourceLibraries and relative paths, operation,
   relevant capabilities, bounded selection/impact, per-item transfer progress and concise conflict,
   stale or partial-state explanations; text editing shows bounded text rather than a media editor.
-- **Action:** create a folder or supported text file; rename, copy, move or delete one/bounded-many
-  files/directories; or save supported text.
+  Single-entry commands are exposed through the accessible context menu; folders also open on left
+  click without an inline Open button.
+- **Action:** create a folder or supported text file; use the entry context menu to open, rename,
+  copy, move or delete one file/directory, or save supported text. Batch commands remain in the
+  selection action bar.
 - **Success:** the backend revalidates RBAC, selected Active Storage bindings, confinement,
   capability and current entry evidence; OrganizerExecutor performs requested mutations with
   independent results, and Files returns to refreshed live truth.

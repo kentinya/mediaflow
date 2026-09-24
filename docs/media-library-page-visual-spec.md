@@ -7,7 +7,7 @@ Target route: `/ui-v2/medialib/files`
 Contract: [SLICE.md](../SLICE.md)
 
 The supplied image controls the MediaLibrary page's visual hierarchy. The 2026-09-23 user decision
-removes library-card statistics and file thumbnails. The 2026-09-24 A presentation correction makes
+removes library-card statistics and file thumbnails. The 2026-09-24 A presentation corrections make
 the MediaLibrary and ResourceLibrary Files library selector/context identical: card facts are not
 shown, and the selected context carries only enabled state and path. Reuse the Slice 37 shared
 shell and preserve the ResourceLibrary Files body and behavior.
@@ -22,8 +22,9 @@ shell and preserve the ResourceLibrary Files body and behavior.
 | Selected-library context | Immediately below the cards, show only `已启用` and exact configured `路径: /...`; do not repeat the name or show Storage. |
 | Directory pane | `目录`, selected library root and lazy directories; exact relative identity and selected directory. |
 | File toolbar | Relative breadcrumbs, `刷新`, list/grid controls and existing bounded search through the top bar. |
-| Selection bar | Above rows: selected count/known size and applicable Copy/Move/Rename/Delete/More; Rename is single-item only. |
-| Table | `选择 \| 名称 \| 类型 \| 大小 \| 修改时间 \| 操作`; type icons, directory navigation, selection and per-row actions. |
+| Selection bar | Above rows: selected count/known size and bounded batch Copy/Move/Delete; ResourceLibrary batch Organize remains available. Single-entry commands are not duplicated here. |
+| Table | `选择 \| 名称 \| 类型 \| 大小 \| 修改时间`; type icons, directory navigation and selection. No persistent operation column. |
+| Entry context menu | Right-click, Context Menu key or `Shift+F10` opens the applicable single-entry commands. Folder left click opens directly; no inline Open button. |
 | Grid | Same entries, selection and commands using type icons, without thumbnails/artwork. |
 | Paging | Existing supported bounded previous/next/cursor behavior; accurately labelled loaded/visible count, no fabricated full totals. |
 | Add drawer | Right-side white panel, close button, step rail, form and footer; `基本信息 → 存储位置 → 确认`. |
@@ -98,7 +99,7 @@ available through Task/Operations after navigation/reconnection.
 
 Capture drawer-open step 1 and drawer-closed states at `1536 x 1024`, zoom `100%`, scale `1`
 with deterministic entries, plus narrow-screen and keyboard/focus evidence. Verify hierarchy,
-selection-bar position, six columns, drawer and required functional states. Statistics/artwork
+selection-bar position, five columns, context-menu entry, drawer and required functional states. Statistics/artwork
 removals are mandatory differences from the image. Font/glyph/spacing variation is acceptable when
 the design remains clear; a nonzero pixel diff alone is not a blocker. Slice tests accept behavior
 and safety.

@@ -24,7 +24,7 @@ Files page. The Files table presents physical file facts and explicit actions wi
 columns:
 
 ```text
-选择 | 名称 | 类型 | 大小 | 修改时间 | 操作
+选择 | 名称 | 类型 | 大小 | 修改时间
 ```
 
 The information banner describes browsing and organizing ResourceLibrary files without presenting
@@ -246,41 +246,44 @@ The file pane shows the breadcrumb and controls:
 - list view selected;
 - grid view available but not selected.
 
-The screenshot remains authoritative for the closed, non-hover success-state composition. Row overflow and
-directory-node hover/focus/context actions provide `新建文件夹`, `新建文本文件`,
-`复制`, `移动`, `重命名` and `删除` without adding persistent pixels or shifting the reference controls while
-menus/dialogs are closed. Keyboard and touch users receive an equivalent focusable action entry;
-right-click alone is not sufficient discoverability.
+The screenshot remains authoritative for the closed, non-hover success-state composition. Single-entry
+commands are exposed through a controlled context menu opened by right-click, the Context Menu key or
+`Shift+F10`; keyboard and touch users receive an equivalent focusable action entry, so right-click is
+not the only discoverability path. Folder names/icons and non-checkbox row areas open folders on left
+click, while the context menu retains an explicit `打开` item. No persistent row action buttons or
+operation column are rendered.
 
 The table columns are exactly (current presentation boundary — see above):
 
 ```text
-选择 | 名称 | 类型 | 大小 | 修改时间 | 操作
+选择 | 名称 | 类型 | 大小 | 修改时间
 ```
 
 The reference rows, in order, are:
 
-| Name | Type | Size | Modified | Action |
+| Name | Type | Size | Modified |
 |---|---|---:|---|---|
-| `Avatar.2009.1080p.mkv` | `视频` | `12.4 GB` | `2024-01-15 10:30` | `整理` |
-| `Avatar.2009.nfo` | `其他` | `4 KB` | `2024-01-15 10:30` | `查看` |
-| `sample.jpg` | `图片` | `1.2 MB` | `2024-01-15 10:30` | `查看` |
-| `Subtitles` | `文件夹` | `-` | `2024-01-15 10:30` | `打开` |
-| `Behind.The.Scenes.mkv` | `视频` | `2.1 GB` | `2024-01-14 08:20` | `整理` |
-| `Poster.jpg` | `图片` | `856 KB` | `2024-01-14 08:20` | `查看` |
-| `fanart.jpg` | `图片` | `1.5 MB` | `2024-01-14 08:20` | `查看` |
+| `Avatar.2009.1080p.mkv` | `视频` | `12.4 GB` | `2024-01-15 10:30` |
+| `Avatar.2009.nfo` | `其他` | `4 KB` | `2024-01-15 10:30` |
+| `sample.jpg` | `图片` | `1.2 MB` | `2024-01-15 10:30` |
+| `Subtitles` | `文件夹` | `-` | `2024-01-15 10:30` |
+| `Behind.The.Scenes.mkv` | `视频` | `2.1 GB` | `2024-01-14 08:20` |
+| `Poster.jpg` | `图片` | `856 KB` | `2024-01-14 08:20` |
+| `fanart.jpg` | `图片` | `1.5 MB` | `2024-01-14 08:20` |
 
 The capability reference recognitions and business statuses that produced the earlier `识别结果` and
 `整理状态` columns remain backend evidence, but the current Files presentation does not render them.
 
-The first row is checked. Its thumbnail, file-type icon, action button and overflow menu retain the
-reference grouping and recognizable alignment. Exact thumbnail/icon artwork and cell measurements
-may differ. Rows with `整理` use the blue action style; `查看` and `打开` use the neutral action
-style.
+The first row is checked. Its type icon and selection retain the reference grouping and recognizable
+alignment. Exact icon artwork and cell measurements may differ. The closed table has no action
+button; command styling appears only inside the controlled context menu.
 
-The closed overflow menu is the reference screenshot state. For an authorized eligible entry, the
-menu exposes applicable `重命名`, `复制`, `移动`, `删除` and, for an allowlisted bounded
-text file, `编辑` actions.
+For an authorized eligible entry, the controlled context menu exposes applicable `打开`,
+`重命名`, `复制`, `移动`, `删除` and, for an allowlisted bounded text file, `编辑` actions.
+Folder entries include `打开`, `重命名`, `复制`, `移动` and `删除`; ResourceLibrary media entries
+may include `整理`, while MediaLibrary entries never include Organize. Unsupported operations are
+omitted or disabled with a reason. Opening a folder by left click remains available without an
+inline button.
 Opening a direct-action dialog must not disturb the reference screenshot state when the menu is
 closed. Unsupported operations are omitted or disabled with a reason.
 
