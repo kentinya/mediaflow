@@ -33,6 +33,7 @@ from mediaflow.domain.automation import (
     AutomationJobStatus,
     job_control_version,
 )
+from mediaflow.domain.direct_files import split_library_identity
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.manual_safety import redact_manual_text
 from mediaflow.domain.security import ApiPermission
@@ -586,6 +587,7 @@ def task_item_operator_document(
     stay out of the document.
     """
 
+    kind, library_id = split_library_identity(item.resource_library_id)
     document: dict[str, object] = {
         "item_id": item.item_id,
         "task_id": item.task_id,
@@ -593,7 +595,15 @@ def task_item_operator_document(
         "stage": item.stage,
         "attempts": item.attempts,
         "storage_id": item.storage_id,
-        "resource_library_id": item.resource_library_id,
+        # The configured library ID plus the library *kind*: a MediaLibrary row
+        # persists a namespaced identity so it can never be joined or replayed as
+        # ResourceLibrary work, and the operator document presents that value as
+        # the configured ID with the kind named explicitly rather than leaking the
+        # persistence namespace.
+        **{
+            "resource_library_id": library_id,
+            "library_kind": kind.value,
+        },
         "source_path": _bounded_identity_path(item.source_path),
         "destination_storage_id": item.destination_storage_id,
         "destination_path": _bounded_identity_path(item.destination_path),

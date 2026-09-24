@@ -248,7 +248,8 @@ describe("Rename version evidence", () => {
   it("keeps the opaque server-issued token and never provider internals", () => {
     const model = normalizeRenameEvidence(REAL_RENAME_EVIDENCE);
     expect(model).toEqual({
-      resourceLibraryId: "source",
+      libraryKind: "resource",
+      libraryId: "source",
       path: "notes.txt",
       isDirectory: false,
       size: 42,
@@ -257,6 +258,29 @@ describe("Rename version evidence", () => {
     });
     expect(Object.keys(model)).not.toContain("fingerprint");
     expect(Object.keys(model)).not.toContain("digest");
+  });
+
+  it("binds the evidence to the library kind its document names", () => {
+    // Slice 38 RO-7: the same ID on the other kind of library is a different
+    // authority, so one kind's document is never normalized for the other page.
+    const media = {
+      mediaLibraryId: "source",
+      path: "notes.txt",
+      isDirectory: false,
+      size: 42,
+      modifiedAt: "2026-08-23T11:15:00+00:00",
+      evidence: "v1.4b6f2c8d9e0a1b2c3d4e5f60718293aa",
+    };
+    expect(normalizeRenameEvidence(media, "media")).toMatchObject({
+      libraryKind: "media",
+      libraryId: "source",
+    });
+    expect(() =>
+      normalizeRenameEvidence(REAL_RENAME_EVIDENCE, "media"),
+    ).toThrow(DirectFilesNormalizationError);
+    expect(() => normalizeRenameEvidence(media, "resource")).toThrow(
+      DirectFilesNormalizationError,
+    );
   });
 
   it("fails closed when the evidence token is missing", () => {

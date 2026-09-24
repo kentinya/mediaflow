@@ -40,6 +40,29 @@ FILES_DELETE_TASK_COMMAND = "files_delete"
 #: independent per-item/per-entry outcomes.
 FILES_TRANSFER_TASK_COMMAND = "files_transfer"
 
+#: The command prefix that distinguishes a MediaLibrary-owned direct file
+#: command from the ResourceLibrary-owned commands above.  Slice 38 RO-6/RO-7:
+#: the two workspaces reuse the same direct-command mechanisms, but a Task is
+#: the durable record of *which kind* of configured library was maintained, so
+#: the kind belongs to the command name itself.  A MediaLibrary command records
+#: ``media_`` + the ResourceLibrary command name; the existing ResourceLibrary
+#: names are unchanged, so pre-existing durable Task history keeps its exact
+#: values and remains readable under its existing rules.
+MEDIA_LIBRARY_TASK_COMMAND_PREFIX = "media_"
+
+
+def direct_command_task_command(operation: str, *, media_library: bool) -> str:
+    """The durable Task command of one bounded direct file command.
+
+    ``operation`` is the command name of the shape the Task already records
+    (the single-item command or the bounded Delete).  MediaLibrary work never
+    shares a command name with ResourceLibrary work, so a persisted media Task
+    cannot be reconstructed, filtered or replayed as resource work just because
+    a MediaLibrary ID happens to equal a ResourceLibrary ID.
+    """
+
+    return f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}{operation}" if media_library else operation
+
 
 #: The durable admission/claim status of one bounded Files transfer.  The
 #: transfer row — not the Task row — is the Worker claim authority: only an

@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from mediaflow.domain.direct_files import LibraryKind, split_library_identity
 from mediaflow.domain.file_catalog import FileReviewLink
 from mediaflow.domain.file_index import FileIndexRecord, FileIndexRepository
 from mediaflow.domain.file_lifecycle import ProcessingDisposition
@@ -198,6 +199,17 @@ class FileCatalogService:
             list_items = getattr(self._task_repository, "list_task_items_for_source", None)
             if callable(list_items):
                 item_values = list_items(record.storage_id, record.path, limit=33)
+                # This surface attributes work to one FileIndex record, which is a
+                # ResourceLibrary source.  A MediaLibrary direct-command row is
+                # namespaced by kind precisely because it is not this file's work,
+                # even where both libraries share one Storage and the same
+                # storage-relative path; attributing it here would present media
+                # maintenance as this source file's processing history.
+                item_values = [
+                    value
+                    for value in item_values
+                    if split_library_identity(value.resource_library_id)[0] is not LibraryKind.MEDIA
+                ]
                 truncated["items"] = len(item_values) > 32
                 items = tuple(
                     self._detail_item(value, record.storage_id, record.path)

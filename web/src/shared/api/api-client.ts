@@ -40,6 +40,7 @@ import {
   type MediaLibrarySaveModel,
 } from "../../entities/library/media-library";
 import {
+  type DirectCommandLibraryKind,
   normalizeDeleteImpact,
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
@@ -2462,19 +2463,36 @@ export type DirectFileCommandOptions =
     };
 
 /**
+ * Result of one bounded direct-command read (text open, Delete impact, Rename
+ * evidence).  Shared by both library kinds.
+ */
+export type DirectCommandRead<T> =
+  | { readonly ok: true; readonly model: T }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: AutomationMutationFailureDetails;
+    };
+
+/**
  * Runs one bounded direct Files command.  The command result union carries
  * both the success and durable execution outcome; HTTP failures become the
  * bounded AutomationMutationResult failure shape.
+ *
+ * Slice 38 RO-7: the ResourceLibrary and MediaLibrary journeys share one
+ * implementation (`submitDirectCommandThrough`, `readDirectTextThrough`,
+ * `readDeleteImpactThrough`, `readRenameEvidenceThrough`) that differs only in
+ * the URL namespace it is given.  Same request contract, same permissions, same
+ * result model — and one kind's library ID is never addressed into the other
+ * kind's namespace.
  */
-export async function submitDirectFileCommand(
+async function submitDirectCommandThrough(
   token: string | null,
-  resourceLibraryId: string,
+  commandUrl: string,
   options: DirectFileCommandOptions,
-  fetchImpl: FetchLike = fetch,
+  fetchImpl: FetchLike,
 ): Promise<AutomationMutationResult<DirectFileCommandResult>> {
-  if (resourceLibraryId.trim().length === 0 || resourceLibraryId.length > 128) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
   const body: Record<string, unknown> = { operation: options.operation };
   if (options.operation === "create_directory") {
     body.parentPath = options.parentPath;
@@ -2505,9 +2523,52 @@ export async function submitDirectFileCommand(
   return submitAutomationMutation(
     token,
     "POST",
-    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/commands`,
+    commandUrl,
     body,
     normalizeDirectFileCommandResult,
+    fetchImpl,
+  );
+}
+
+/** The bounded library-identity check shared by both command kinds. */
+function directCommandLibraryGuard(libraryId: string): boolean {
+  return libraryId.trim().length > 0 && libraryId.length <= 128;
+}
+
+export async function submitDirectFileCommand(
+  token: string | null,
+  resourceLibraryId: string,
+  options: DirectFileCommandOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<DirectFileCommandResult>> {
+  if (!directCommandLibraryGuard(resourceLibraryId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitDirectCommandThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/commands`,
+    options,
+    fetchImpl,
+  );
+}
+
+/**
+ * The MediaLibrary twin of {@link submitDirectFileCommand}: the identical
+ * command admitted and executed under the exact Active MediaLibrary authority.
+ */
+export async function submitMediaLibraryDirectCommand(
+  token: string | null,
+  mediaLibraryId: string,
+  options: DirectFileCommandOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<DirectFileCommandResult>> {
+  if (!directCommandLibraryGuard(mediaLibraryId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitDirectCommandThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/commands`,
+    options,
     fetchImpl,
   );
 }
@@ -2627,27 +2688,185 @@ export async function submitFilesOrganizeIntent(
 }
 
 /** Bounded zero-mutation open of one allowlisted text file. */
+async function readDirectTextThrough(
+  token: string | null,
+  textUrl: string,
+  path: string,
+  kind: DirectCommandLibraryKind,
+  fetchImpl: FetchLike,
+): Promise<DirectCommandRead<TextFileDocument>> {
+  if (path.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(`${textUrl}?path=${encodeURIComponent(path)}`, {
+      headers: directFilesReadHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeTextFileDocument(await response.json(), kind),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
 export async function fetchTextFile(
   token: string | null,
   resourceLibraryId: string,
   path: string,
   fetchImpl: FetchLike = fetch,
-): Promise<
-  | { readonly ok: true; readonly model: TextFileDocument }
-  | {
-      readonly ok: false;
-      readonly status: number;
-      readonly code: string;
-      readonly details?: AutomationMutationFailureDetails;
-    }
-> {
-  if (resourceLibraryId.trim().length === 0 || path.trim().length === 0) {
+): Promise<DirectCommandRead<TextFileDocument>> {
+  if (resourceLibraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return readDirectTextThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/text`,
+    path,
+    "resource",
+    fetchImpl,
+  );
+}
+
+/** The MediaLibrary twin of {@link fetchTextFile}. */
+export async function fetchMediaLibraryTextFile(
+  token: string | null,
+  mediaLibraryId: string,
+  path: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectCommandRead<TextFileDocument>> {
+  if (mediaLibraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return readDirectTextThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/text`,
+    path,
+    "media",
+    fetchImpl,
+  );
+}
+
+/** Bounded zero-mutation impact enumeration for one Delete selection. */
+async function readDeleteImpactThrough(
+  token: string | null,
+  impactUrl: string,
+  paths: readonly string[],
+  kind: DirectCommandLibraryKind,
+  fetchImpl: FetchLike,
+): Promise<DirectCommandRead<DeleteImpactModel>> {
+  if (paths.length === 0 || paths.length > 50) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  const query = paths
+    .map((path) => `path=${encodeURIComponent(path)}`)
+    .join("&");
+  let response: Response;
+  try {
+    response = await fetchImpl(`${impactUrl}?${query}`, {
+      headers: directFilesReadHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    return {
+      ok: true,
+      model: normalizeDeleteImpact(await response.json(), kind),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export async function fetchDeleteImpact(
+  token: string | null,
+  resourceLibraryId: string,
+  paths: readonly string[],
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectCommandRead<DeleteImpactModel>> {
+  if (resourceLibraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return readDeleteImpactThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/delete-impact`,
+    paths,
+    "resource",
+    fetchImpl,
+  );
+}
+
+/** The MediaLibrary twin of {@link fetchDeleteImpact}. */
+export async function fetchMediaLibraryDeleteImpact(
+  token: string | null,
+  mediaLibraryId: string,
+  paths: readonly string[],
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectCommandRead<DeleteImpactModel>> {
+  if (mediaLibraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return readDeleteImpactThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/delete-impact`,
+    paths,
+    "media",
+    fetchImpl,
+  );
+}
+
+/**
+ * Zero-mutation version evidence one Rename command must return.
+ *
+ * The backend observes the exact entry version and issues an opaque token; the
+ * page only echoes it back, so a source replaced after the evidence was issued
+ * is refused stale instead of renamed.
+ */
+async function readRenameEvidenceThrough(
+  token: string | null,
+  evidenceUrl: string,
+  path: string,
+  kind: DirectCommandLibraryKind,
+  fetchImpl: FetchLike,
+): Promise<DirectCommandRead<RenameEvidenceModel>> {
+  if (path.length === 0) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
   let response: Response;
   try {
     response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/text?path=${encodeURIComponent(path)}`,
+      `${evidenceUrl}?path=${encodeURIComponent(path)}`,
       { headers: directFilesReadHeaders(token) },
     );
   } catch {
@@ -2668,116 +2887,48 @@ export async function fetchTextFile(
   try {
     return {
       ok: true,
-      model: normalizeTextFileDocument(await response.json()),
+      model: normalizeRenameEvidence(await response.json(), kind),
     };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }
 }
 
-/** Bounded zero-mutation impact enumeration for one Delete selection. */
-export async function fetchDeleteImpact(
-  token: string | null,
-  resourceLibraryId: string,
-  paths: readonly string[],
-  fetchImpl: FetchLike = fetch,
-): Promise<
-  | { readonly ok: true; readonly model: DeleteImpactModel }
-  | {
-      readonly ok: false;
-      readonly status: number;
-      readonly code: string;
-      readonly details?: AutomationMutationFailureDetails;
-    }
-> {
-  if (
-    resourceLibraryId.trim().length === 0 ||
-    paths.length === 0 ||
-    paths.length > 50
-  ) {
-    return { ok: false, status: 400, code: "invalid_request" };
-  }
-  const query = paths
-    .map((path) => `path=${encodeURIComponent(path)}`)
-    .join("&");
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/delete-impact?${query}`,
-      { headers: directFilesReadHeaders(token) },
-    );
-  } catch {
-    return { ok: false, status: 0, code: "transport_unavailable" };
-  }
-  if (!response.ok) {
-    const envelope = await readErrorEnvelope(response);
-    return {
-      ok: false,
-      status: response.status,
-      code:
-        typeof envelope.code === "string" && envelope.code.length > 0
-          ? envelope.code
-          : "request_rejected",
-      ...failureDetailsSpread(envelope.details),
-    };
-  }
-  try {
-    return { ok: true, model: normalizeDeleteImpact(await response.json()) };
-  } catch {
-    return { ok: false, status: response.status, code: "malformed_response" };
-  }
-}
-
-/**
- * Zero-mutation version evidence one Rename command must return.
- *
- * The backend observes the exact entry version and issues an opaque token; the
- * page only echoes it back, so a source replaced after the evidence was issued
- * is refused stale instead of renamed.
- */
 export async function fetchRenameEvidence(
   token: string | null,
   resourceLibraryId: string,
   path: string,
   fetchImpl: FetchLike = fetch,
-): Promise<
-  | { readonly ok: true; readonly model: RenameEvidenceModel }
-  | {
-      readonly ok: false;
-      readonly status: number;
-      readonly code: string;
-      readonly details?: AutomationMutationFailureDetails;
-    }
-> {
-  if (resourceLibraryId.trim().length === 0 || path.length === 0) {
+): Promise<DirectCommandRead<RenameEvidenceModel>> {
+  if (resourceLibraryId.trim().length === 0) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
-  let response: Response;
-  try {
-    response = await fetchImpl(
-      `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/rename-evidence?path=${encodeURIComponent(path)}`,
-      { headers: directFilesReadHeaders(token) },
-    );
-  } catch {
-    return { ok: false, status: 0, code: "transport_unavailable" };
+  return readRenameEvidenceThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/rename-evidence`,
+    path,
+    "resource",
+    fetchImpl,
+  );
+}
+
+/** The MediaLibrary twin of {@link fetchRenameEvidence}. */
+export async function fetchMediaLibraryRenameEvidence(
+  token: string | null,
+  mediaLibraryId: string,
+  path: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectCommandRead<RenameEvidenceModel>> {
+  if (mediaLibraryId.trim().length === 0) {
+    return { ok: false, status: 400, code: "invalid_request" };
   }
-  if (!response.ok) {
-    const envelope = await readErrorEnvelope(response);
-    return {
-      ok: false,
-      status: response.status,
-      code:
-        typeof envelope.code === "string" && envelope.code.length > 0
-          ? envelope.code
-          : "request_rejected",
-      ...failureDetailsSpread(envelope.details),
-    };
-  }
-  try {
-    return { ok: true, model: normalizeRenameEvidence(await response.json()) };
-  } catch {
-    return { ok: false, status: response.status, code: "malformed_response" };
-  }
+  return readRenameEvidenceThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/rename-evidence`,
+    path,
+    "media",
+    fetchImpl,
+  );
 }
 
 /** One confirmed bounded Copy/Move request the backend validates as a unit. */
