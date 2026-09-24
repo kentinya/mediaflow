@@ -516,10 +516,10 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   await connect(page, VIEWER_TOKEN);
   await expect(page.getByRole("table")).toBeVisible();
 
-  await page
-    .getByRole("row", { name: /sample\.mkv/ })
-    .getByRole("button", { name: "整理" })
-    .click();
+  const row = page.getByRole("row", { name: /sample\.mkv/ });
+  await row.focus();
+  await page.keyboard.press("Shift+F10");
+  await page.getByRole("menuitem", { name: "整理" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
   );

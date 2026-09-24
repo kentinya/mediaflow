@@ -121,12 +121,12 @@ test("Files success state presents the reference composition with live Storage r
   await expect(
     page.getByRole("columnheader", { name: "选择全部" }),
   ).toBeVisible();
-  for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
+  for (const column of ["名称", "类型", "大小", "修改时间"]) {
     await expect(
       page.getByRole("columnheader", { name: new RegExp(column) }),
     ).toBeVisible();
   }
-  await expect(page.getByRole("columnheader")).toHaveCount(6);
+  await expect(page.getByRole("columnheader")).toHaveCount(5);
   await expect(
     page.getByRole("columnheader", { name: "识别结果" }),
   ).toHaveCount(0);
@@ -136,12 +136,12 @@ test("Files success state presents the reference composition with live Storage r
   await expect(page.getByText("识别结果")).toHaveCount(0);
   await expect(page.getByText("整理状态")).toHaveCount(0);
   await expect(page.getByText("待整理")).toHaveCount(0);
-  // The explicit 整理 action for an eligible entry remains available.
-  await expect(
-    page.getByRole("row", { name: /sample\.mkv/ }).getByRole("button", {
-      name: "整理",
-    }),
-  ).toBeEnabled();
+  // The controlled menu retains Organize for an eligible ResourceLibrary file.
+  await page
+    .getByRole("row", { name: /sample\.mkv/ })
+    .click({ button: "right", position: { x: 40, y: 20 } });
+  await expect(page.getByRole("menuitem", { name: "整理" })).toBeEnabled();
+  await page.keyboard.press("Escape");
   await expect(
     directoryTree(page).getByRole("button", { name: "Movies", exact: true }),
   ).toBeVisible();
@@ -305,8 +305,8 @@ test("the row Organize action admits the existing durable intent for one eligibl
   // The row action admits exactly one eligible regular file.
   await page
     .getByRole("row", { name: /sample\.mkv/ })
-    .getByRole("button", { name: "整理" })
-    .click();
+    .click({ button: "right", position: { x: 40, y: 20 } });
+  await page.getByRole("menuitem", { name: "整理" }).click();
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
   );
@@ -853,7 +853,7 @@ test("create folder and rename complete through the direct command dialogs", asy
   await expect(page.getByRole("dialog", { name: "新建文件夹" })).toHaveCount(0);
 
   const row = page.getByRole("row", { name: /readme\.txt/ });
-  await row.getByRole("button", { name: "更多操作 readme.txt" }).click();
+  await row.click({ button: "right", position: { x: 40, y: 20 } });
   await page.getByRole("menuitem", { name: "重命名" }).click();
   const renameInput = page.getByLabel("新名称");
   await expect(renameInput).toHaveValue("readme.txt");
@@ -869,7 +869,7 @@ test("bounded text edit saves through the stale-safe editor", async ({
   await openFiles(page);
 
   const row = page.getByRole("row", { name: /readme\.txt/ });
-  await row.getByRole("button", { name: "更多操作 readme.txt" }).click();
+  await row.click({ button: "right", position: { x: 40, y: 20 } });
   await page.getByRole("menuitem", { name: "编辑" }).click();
   const editor = page.getByRole("dialog", { name: /编辑文本/ });
   const textarea = editor.getByLabel(/编辑 readme\.txt/);
@@ -1177,7 +1177,7 @@ test("a ten-row directory scrolls to the final row with an unclipped portal menu
           ".mf-files-table-scroll",
         ) as HTMLElement | null;
         const trigger = viewport
-          ? ([...viewport.querySelectorAll("button[data-row-menu]")].at(
+          ? ([...viewport.querySelectorAll("tr[data-row-menu]")].at(
               -1,
             ) as HTMLElement | null)
           : null;
@@ -1196,8 +1196,10 @@ test("a ten-row directory scrolls to the final row with an unclipped portal menu
 
   // The bottom-row menu renders through the portal layer above the clipping
   // context and every action is hit-testable on screen.
-  await page.getByRole("button", { name: "更多操作 Show.S01E12.mkv" }).click();
-  const menu = page.getByRole("menu", { name: "更多操作 Show.S01E12.mkv" });
+  await page
+    .getByRole("row", { name: /文件条目 Show\.S01E12\.mkv/ })
+    .click({ button: "right", position: { x: 40, y: 20 } });
+  const menu = page.getByRole("menu", { name: "条目操作 Show.S01E12.mkv" });
   await expect(menu).toBeVisible();
   const menuGeometry = await menu.evaluate((element) => {
     const style = window.getComputedStyle(element);
@@ -1232,7 +1234,7 @@ test("a ten-row directory scrolls to the final row with an unclipped portal menu
   await expect(menu).toHaveCount(0);
   // Focus returns to the exact invoking row control.
   await expect(
-    page.getByRole("button", { name: "更多操作 Show.S01E12.mkv" }),
+    page.getByRole("row", { name: /文件条目 Show\.S01E12\.mkv/ }),
   ).toBeFocused();
 });
 
@@ -1254,7 +1256,9 @@ test("copy completes through the live destination picker with one confirmed subm
   });
   await openFiles(page);
 
-  await page.getByRole("button", { name: "更多操作 sample.mkv" }).click();
+  await page
+    .getByRole("row", { name: /文件条目 sample\.mkv/ })
+    .click({ button: "right", position: { x: 40, y: 20 } });
   await page.getByRole("menuitem", { name: "复制" }).click();
   const dialog = page.getByRole("dialog", { name: "复制到…" });
   await expect(dialog).toBeVisible();
@@ -1299,7 +1303,9 @@ test("move exposes the compound cross-storage truth and per-item outcomes", asyn
   page,
 }) => {
   await openFiles(page);
-  await page.getByRole("button", { name: "更多操作 sample.mkv" }).click();
+  await page
+    .getByRole("row", { name: /文件条目 sample\.mkv/ })
+    .click({ button: "right", position: { x: 40, y: 20 } });
   await page.getByRole("menuitem", { name: "移动" }).click();
   const dialog = page.getByRole("dialog", { name: "移动到…" });
   await expect(dialog).toBeVisible();

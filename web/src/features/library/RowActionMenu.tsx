@@ -21,11 +21,14 @@ export function RowActionMenu({
   path,
   label,
   onClose,
+  anchorPoint,
   children,
 }: {
   readonly path: string;
   readonly label: string;
   readonly onClose: () => void;
+  /** Optional pointer location for context-menu invocation. */
+  readonly anchorPoint?: { readonly x: number; readonly y: number };
   readonly children: ReactNode;
 }) {
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -37,16 +40,16 @@ export function RowActionMenu({
 
   const measure = () => {
     const trigger = document.querySelector(triggerSelector);
-    if (!(trigger instanceof Element)) return;
-    const rect = trigger.getBoundingClientRect();
+    const rect =
+      trigger instanceof Element ? trigger.getBoundingClientRect() : null;
     const menu = menuRef.current;
     const width = menu?.offsetWidth ?? 176;
     const height = menu?.offsetHeight ?? 120;
-    let left = rect.right - width;
+    let left = anchorPoint?.x ?? (rect?.right ?? 8) - width;
     left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
-    let top = rect.bottom + 6;
+    let top = anchorPoint?.y ?? (rect?.bottom ?? 8) + 6;
     if (top + height > window.innerHeight - 8) {
-      top = rect.top - height - 6;
+      top = (anchorPoint?.y ?? rect?.top ?? 8) - height - 6;
     }
     top = Math.max(8, Math.min(top, window.innerHeight - height - 8));
     setPosition({ top, left });
@@ -59,14 +62,32 @@ export function RowActionMenu({
     const frame = window.requestAnimationFrame(measure);
     return () => window.cancelAnimationFrame(frame);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
+  }, [path, anchorPoint]);
 
   useEffect(() => {
     const menu = menuRef.current;
+    const focusFirst = () => {
+      const first =
+        menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+      first?.focus();
+    };
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.stopPropagation();
         onClose();
+      } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const items = Array.from(
+          menuRef.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ??
+            [],
+        );
+        if (items.length === 0) return;
+        event.preventDefault();
+        const current = items.indexOf(document.activeElement as HTMLElement);
+        const next =
+          event.key === "ArrowDown"
+            ? (current + 1 + items.length) % items.length
+            : (current - 1 + items.length) % items.length;
+        items[next]?.focus();
       }
     };
     const handlePointer = (event: PointerEvent) => {
@@ -95,6 +116,7 @@ export function RowActionMenu({
     document.addEventListener("pointerdown", handlePointer, true);
     window.addEventListener("scroll", handleViewportChange, true);
     window.addEventListener("resize", handleViewportChange);
+    focusFirst();
     return () => {
       document.removeEventListener("keydown", handleKey, true);
       document.removeEventListener("pointerdown", handlePointer, true);

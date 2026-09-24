@@ -102,8 +102,8 @@ test("the reference hierarchy renders without statistics, thumbnails or organize
   await expect(page.getByRole("heading", { name: "目录" })).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
   // Six-column table structure with type icons.
-  await expect(page.getByRole("columnheader")).toHaveCount(6);
-  for (const column of ["名称", "类型", "大小", "修改时间", "操作"]) {
+  await expect(page.getByRole("columnheader")).toHaveCount(5);
+  for (const column of ["名称", "类型", "大小", "修改时间"]) {
     await expect(
       page.getByRole("columnheader", { name: new RegExp(column) }),
     ).toBeVisible();
@@ -145,7 +145,7 @@ test("directory navigation, return to root and library switching keep the route 
   // library-relative directory in the address.
   await page
     .getByRole("row", { name: /Breaking Bad/ })
-    .getByRole("button", { name: "打开" })
+    .getByRole("button", { name: /Breaking Bad/ })
     .click();
   await expect(page.getByRole("row", { name: /Season 1/ })).toBeVisible();
   await expect(page).toHaveURL(
@@ -168,7 +168,7 @@ test("directory navigation, return to root and library switching keep the route 
   // Deeper navigation keeps the full exact relative path.
   await page
     .getByRole("row", { name: /Season 1/ })
-    .getByRole("button", { name: "打开" })
+    .getByRole("button", { name: /Season 1/ })
     .click();
   await expect(
     page.getByRole("row", { name: /Breaking\.Bad\.S01E01\.mkv/ }),
@@ -245,9 +245,7 @@ test("library selection, lazy navigation, breadcrumbs, search and refresh", asyn
   // Lazy directory navigation inside that library.
   await page
     .getByRole("row", { name: /电影/ })
-    .getByRole("button", {
-      name: "打开",
-    })
+    .getByRole("button", { name: /电影/ })
     .click();
   await expect(page.getByRole("row", { name: /SSH/ })).toBeVisible();
   const breadcrumbs = page.getByLabel("媒体库面包屑");
@@ -280,9 +278,7 @@ test("boundary whitespace identity survives projection and navigation", async ({
   await page.getByRole("button", { name: "夸克网盘" }).click();
   await page
     .getByRole("row", { name: /电影/ })
-    .getByRole("button", {
-      name: "打开",
-    })
+    .getByRole("button", { name: /电影/ })
     .click();
 
   // The real directory keeps its trailing space; the presentation marks it and
@@ -290,7 +286,7 @@ test("boundary whitespace identity survives projection and navigation", async ({
   const sshRow = page.getByRole("row", { name: /SSH/ });
   await expect(sshRow).toBeVisible();
   await expect(sshRow.locator(".mf-ws-marker")).toHaveCount(1);
-  await sshRow.getByRole("button", { name: "打开" }).click();
+  await sshRow.getByRole("button", { name: /SSH/ }).click();
   await expect(page.getByRole("row", { name: /inside\.mkv/ })).toBeVisible();
   const breadcrumbs = page.getByLabel("媒体库面包屑");
   await expect(breadcrumbs.getByRole("button", { name: /SSH/ })).toBeVisible();

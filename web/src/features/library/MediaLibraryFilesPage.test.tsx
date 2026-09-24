@@ -191,14 +191,14 @@ describe("MediaLibrary Files journey", () => {
     expect(screen.queryByText("未统计")).toBeNull();
     expect(screen.queryByText(/TB/)).toBeNull();
 
-    // Live rows with the six-column table structure and type icons.
+    // Live rows with the five-column table structure and type icons.
     expect(await screen.findByRole("table")).toBeVisible();
     await waitFor(() =>
       expect(
         screen.getByRole("columnheader", { name: "选择全部" }),
       ).toBeVisible(),
     );
-    expect(screen.getAllByRole("columnheader")).toHaveLength(6);
+    expect(screen.getAllByRole("columnheader")).toHaveLength(5);
     expect(screen.getByRole("row", { name: /Breaking Bad/ })).toBeVisible();
     expect(screen.getByRole("row", { name: /poster\.jpg/ })).toBeVisible();
     // No organize/scan/preview/page command exists on the MediaLibrary page.

@@ -4,6 +4,8 @@ import {
   useRef,
   useMemo,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -60,6 +62,11 @@ import { TransferDialog } from "./TransferDialog";
 import { LibraryCardStrip } from "./LibraryCardStrip";
 
 type MediaView = "list" | "grid";
+
+interface EntryMenuState {
+  readonly path: string;
+  readonly point?: { readonly x: number; readonly y: number };
+}
 
 /**
  * The command affordance of the Files direct-command journey.  The normal page
@@ -483,14 +490,37 @@ function MediaDirectoryTree({
 function MediaGridView({
   rows,
   onOpenPath,
+  onOpenMenu,
+  renderMenu,
 }: {
   readonly rows: readonly MediaRowVm[];
   readonly onOpenPath: (path: string) => void;
+  readonly onOpenMenu: (
+    row: MediaRowVm,
+    event: ReactMouseEvent | ReactKeyboardEvent,
+  ) => void;
+  readonly renderMenu: (row: MediaRowVm) => ReactNode;
 }) {
   return (
     <ul className="mf-files-grid">
       {rows.map((row) => (
-        <li key={row.path} className="mf-grid-cell">
+        <li
+          key={row.path}
+          className="mf-grid-cell"
+          tabIndex={0}
+          data-row-menu={row.path}
+          aria-label={`文件条目 ${identityAccessibleName(row.name)}`}
+          onContextMenu={(event) => onOpenMenu(row, event)}
+          onKeyDown={(event) => {
+            if (
+              event.key === "ContextMenu" ||
+              (event.shiftKey && event.key === "F10") ||
+              event.key === "Enter"
+            ) {
+              onOpenMenu(row, event);
+            }
+          }}
+        >
           {row.isDirectory && row.traversable ? (
             <button
               type="button"
@@ -514,6 +544,7 @@ function MediaGridView({
               </span>
             </span>
           )}
+          {renderMenu(row)}
         </li>
       ))}
     </ul>
@@ -797,7 +828,102 @@ function MediaBrowseView({
   const selectedPaths = model.entries
     .filter((entry) => selected.has(entry.path))
     .map((entry) => entry.path);
-  const [rowMenuPath, setRowMenuPath] = useState<string | null>(null);
+  const [rowMenu, setRowMenu] = useState<EntryMenuState | null>(null);
+  const openEntryMenu = useCallback(
+    (row: MediaRowVm, event: ReactMouseEvent | ReactKeyboardEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      const point =
+        "clientX" in event && event.clientX > 0
+          ? { x: event.clientX, y: event.clientY }
+          : undefined;
+      setRowMenu({ path: row.path, point });
+    },
+    [],
+  );
+  const renderEntryMenu = (row: MediaRowVm) =>
+    rowMenu?.path === row.path ? (
+      <RowActionMenu
+        path={row.path}
+        label={`条目操作 ${identityAccessibleName(row.name)}`}
+        anchorPoint={rowMenu.point}
+        onClose={() => setRowMenu(null)}
+      >
+        {row.isDirectory && row.traversable && (
+          <button
+            type="button"
+            role="menuitem"
+            className="mf-card-menu-item"
+            onClick={() => {
+              setRowMenu(null);
+              onOpenPath(row.path);
+            }}
+          >
+            打开
+          </button>
+        )}
+        {!row.isDirectory && !row.isSymlink && isTextFileName(row.name) && (
+          <button
+            type="button"
+            role="menuitem"
+            className="mf-card-menu-item"
+            onClick={() => {
+              setRowMenu(null);
+              onEdit(row.path);
+            }}
+          >
+            编辑
+          </button>
+        )}
+        <button
+          type="button"
+          role="menuitem"
+          className="mf-card-menu-item"
+          onClick={() => {
+            setRowMenu(null);
+            onRename(row.path, row.name, {
+              size: row.size,
+              modifiedAt: row.modifiedAt,
+            });
+          }}
+        >
+          重命名
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="mf-card-menu-item"
+          onClick={() => {
+            setRowMenu(null);
+            onTransfer("copy", [row.path]);
+          }}
+        >
+          复制
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="mf-card-menu-item"
+          onClick={() => {
+            setRowMenu(null);
+            onTransfer("move", [row.path]);
+          }}
+        >
+          移动
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          className="mf-card-menu-item mf-card-menu-danger"
+          onClick={() => {
+            setRowMenu(null);
+            onDelete([row.path]);
+          }}
+        >
+          删除
+        </button>
+      </RowActionMenu>
+    ) : null;
   return (
     <section className="mf-files" aria-label="媒体库文件浏览">
       <div className="mf-files-workarea">
@@ -891,7 +1017,12 @@ function MediaBrowseView({
                 : "此目录为空。可以刷新或返回上一级目录。"}
             </p>
           ) : view === "grid" ? (
-            <MediaGridView rows={rows} onOpenPath={onOpenPath} />
+            <MediaGridView
+              rows={rows}
+              onOpenPath={onOpenPath}
+              onOpenMenu={openEntryMenu}
+              renderMenu={renderEntryMenu}
+            />
           ) : (
             <div className="mf-files-table-scroll">
               <table className="mf-files-table">
@@ -919,7 +1050,6 @@ function MediaBrowseView({
                       </span>
                     </th>
                     <th scope="col">修改时间</th>
-                    <th scope="col">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -927,6 +1057,28 @@ function MediaBrowseView({
                     <tr
                       key={row.path}
                       className={row.checked ? "is-selected" : undefined}
+                      tabIndex={0}
+                      data-row-menu={row.path}
+                      aria-label={`文件条目 ${identityAccessibleName(row.name)}`}
+                      onClick={(event) => {
+                        if (
+                          row.isDirectory &&
+                          row.traversable &&
+                          !(event.target as Element).closest("input, button, a")
+                        ) {
+                          onOpenPath(row.path);
+                        }
+                      }}
+                      onContextMenu={(event) => openEntryMenu(row, event)}
+                      onKeyDown={(event) => {
+                        if (
+                          event.key === "ContextMenu" ||
+                          (event.shiftKey && event.key === "F10") ||
+                          event.key === "Enter"
+                        ) {
+                          openEntryMenu(row, event);
+                        }
+                      }}
                     >
                       <td className="mf-col-check">
                         <input
@@ -957,104 +1109,9 @@ function MediaBrowseView({
                       </td>
                       <td>{row.typeLabel}</td>
                       <td>{row.sizeLabel}</td>
-                      <td>{row.modifiedLabel}</td>
                       <td>
-                        {row.isDirectory && row.traversable ? (
-                          <button
-                            type="button"
-                            className="mf-button mf-button-secondary mf-button-small"
-                            onClick={() => onOpenPath(row.path)}
-                          >
-                            打开
-                          </button>
-                        ) : null}
-                        <div className="mf-row-menu-anchor">
-                          <button
-                            type="button"
-                            className="mf-row-more"
-                            aria-label={`更多操作 ${identityAccessibleName(row.name)}`}
-                            aria-haspopup="menu"
-                            aria-expanded={rowMenuPath === row.path}
-                            data-row-menu={row.path}
-                            onClick={() =>
-                              setRowMenuPath((current) =>
-                                current === row.path ? null : row.path,
-                              )
-                            }
-                          >
-                            <Icon name="more" />
-                          </button>
-                          {rowMenuPath === row.path && (
-                            <RowActionMenu
-                              path={row.path}
-                              label={`更多操作 ${identityAccessibleName(row.name)}`}
-                              onClose={() => setRowMenuPath(null)}
-                            >
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="mf-card-menu-item"
-                                onClick={() => {
-                                  setRowMenuPath(null);
-                                  onTransfer("copy", [row.path]);
-                                }}
-                              >
-                                复制
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="mf-card-menu-item"
-                                onClick={() => {
-                                  setRowMenuPath(null);
-                                  onTransfer("move", [row.path]);
-                                }}
-                              >
-                                移动
-                              </button>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="mf-card-menu-item"
-                                onClick={() => {
-                                  setRowMenuPath(null);
-                                  onRename(row.path, row.name, {
-                                    size: row.size,
-                                    modifiedAt: row.modifiedAt,
-                                  });
-                                }}
-                              >
-                                重命名
-                              </button>
-                              {!row.isDirectory &&
-                                !row.isSymlink &&
-                                isTextFileName(row.name) && (
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    className="mf-card-menu-item"
-                                    onClick={() => {
-                                      setRowMenuPath(null);
-                                      onEdit(row.path);
-                                    }}
-                                  >
-                                    编辑
-                                  </button>
-                                )}
-                              <button
-                                type="button"
-                                role="menuitem"
-                                className="mf-card-menu-item mf-card-menu-danger"
-                                onClick={() => {
-                                  setRowMenuPath(null);
-                                  onDelete([row.path]);
-                                }}
-                              >
-                                删除
-                              </button>
-                            </RowActionMenu>
-                          )}
-                        </div>
+                        {row.modifiedLabel}
+                        {renderEntryMenu(row)}
                       </td>
                     </tr>
                   ))}
