@@ -1,194 +1,124 @@
-# NO ACTIVE IMPLEMENTATION TASK
-
-Task 38.5 — Slice 38 集成验证与 Closure Packet passed B review and handed Slice 38 to A.
+# Task 38.6 — Files/MediaLibrary 统一资源库选择上下文展示
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [Slice Contract](SLICE.md).
 
 ```text
-Task ID: 38.5
+Task ID: 38.6
 Parent Slice: 38
-Status: NO ACTIVE IMPLEMENTATION TASK
-Task Base: a3a1dcc431c9875c56c71ea28508a816e0109a15
-Difficulty: High
-Test Level: T4
-Planner / Reviewer: B
+Status: PLANNED
+Task Base: 3e0c8643d63489c4fbca17ea194e437faf933535
+Difficulty: Medium
+Test Level: T2
+Planner / Reviewer: A acting for B
 ```
 
 ## Goal
 
-Produce the Slice 38 integration evidence needed to demonstrate the complete MediaLibrary Files
-journey, preserved ResourceLibrary Files continuity, safety boundaries and reference-aligned
-presentation, then prepare a factual Closure Packet for A. This advances RO-8 and verifies that
-RO-1 through RO-7 remain satisfied after the completed implementation Tasks.
+Unify the ResourceLibrary Files and MediaLibrary browse-page library selector presentation: cards
+show only library identity/selection, while the selected-library context shows only enabled state
+and exact configured path. This advances Slice 38 RO-1/RO-2 and preserves both pages' complete
+existing user journeys.
 
 ## Why This Task Exists
 
-Tasks 38.1 through 38.4 delivered the route separation, live browsing, configuration lifecycle,
-bounded direct commands and MediaLibrary Copy/Move recovery. The remaining Contract work is a
-single Slice-level proof boundary: run the complete required regression and release gates, capture
-the mandated desktop/narrow screenshots, inspect the full Base..Head manifest and record every
-Required Outcome, Required Surface, safety result, deferral and residual issue truthfully. This is
-the largest coherent final-validation unit; it does not add another product capability.
+The two delivered pages currently expose library facts differently. MediaLibrary cards repeat
+Storage and root facts per card, while Files uses a different single/multi-library summary and may
+show storage/count information. The A-approved presentation correction establishes one predictable
+selection-and-context pattern for both routes. This is a focused Web presentation unit, not a new
+configuration, Storage or file-operation capability.
 
 ## Implementation Scope
 
 ```text
-Slice Base..Head audit
-  → full Python/Web/browser/quality/security validation
-  → controlled MediaLibrary screenshots and evidence inspection
-  → factual Closure Packet and Task handoff to A
+Shared Web presentation
+  → common library card geometry and selection/menu behavior
+  → selected-library context with enabled state and exact root path only
+  → ResourceLibrary Files and MediaLibrary integration
+  → focused component/API-model/browser regression coverage
 ```
 
-- Run the Slice-final validation from `SLICE.md`, including full Python and Web regression,
-  affected ResourceLibrary and MediaLibrary browser journeys, typecheck/lint/format/build,
-  governance, Python quality/dependency checks, configuration validation, FFmpeg/FFprobe
-  exclusion and Docker release-security smoke.
-- Capture controlled `1536 x 1024` MediaLibrary screenshots with the Add drawer closed and Step 1
-  open, plus supported narrow-screen evidence. Confirm the hierarchy, library cards, directory
-  tree, breadcrumbs, list/grid, commands and drawer while confirming the authorized omissions:
-  no card statistics/capacity placeholders, thumbnails, Organize controls or browser upload.
-- Inspect the complete immutable Slice Base..Implementation Head manifest, current Task history,
-  private/credential files, ignored `config/alist.json` and both reference images. Preserve the
-  pre-existing dirty `docs/pics/文件页.png` byte-for-byte.
-- Reconcile the Closure Packet facts in `SLICE.md` only as delegated factual progress/closure
-  evidence; do not change User Goal, Required Outcomes, Required Surfaces, Safety Invariants,
-  Slice Base, Explicitly Deferred scope or A Final Review decisions. Set no Slice PASS/CLOSED
-  status; B's handoff decision must be `SLICE READY FOR A REVIEW`.
+- Update the shared selector/context presentation used by `StorageFilesPage` and
+  `MediaLibraryFilesPage`.
+- Cards retain name, icon, selected state and independent removal/configuration action only.
+- The selected context renders `已启用` and `路径: /...`; root is `/` and paths retain exact
+  configured identity. Do not render Storage name/ID, media-library name duplication, file counts,
+  capacity or statistics in this context.
+- Keep Storage selection and binding details in Add/configuration drawers and actionable failure or
+  setup recovery states.
+- Preserve disabled-library filtering, route-specific directory/file behavior, ResourceLibrary
+  Organize continuation, MediaLibrary command restrictions, accessibility, keyboard focus and
+  narrow-screen behavior.
+- Keep API payloads, Active configuration authority, route parameters and backend behavior unchanged.
 
 ## Acceptance Criteria
 
-- [ ] Slice-final Python, Web, browser, quality, configuration, security and packaging gates run
-      with actual totals, skips and unavailable gates recorded; failures are either fixed in this
-      Task or proven pre-existing/unrelated without hiding, deleting or weakening tests.
-- [ ] RO-1 through RO-7 are rechecked against the production implementation and legal Active
-      configuration: route continuity, presentation, live scoped browsing, configuration save/
-      removal, all bounded commands, durable transfer/recovery and independent library authority.
-- [ ] RO-8 is evidenced by application/API/Web/browser coverage for success, failure, recovery,
-      zero-mutation reads, stale/conflict/capability cases, cross-Storage verification and
-      ResourceLibrary compatibility.
-- [ ] Controlled desktop screenshots show Add closed and Step 1 open; supported narrow-screen
-      evidence is captured. The screenshots demonstrate the Contract's hierarchy and omissions
-      without introducing card statistics, thumbnails or Organize controls.
-- [ ] The complete Base..Head manifest contains only Slice work plus the already-preserved dirty
-      reference image; no credentials, private files, `config/alist.json`, SQLite files or build
-      artifacts are committed. `git diff --check` and governance checks pass.
-- [ ] A factual Closure Packet lists every Required Outcome and Surface as COMPLETE only when
-      supported by evidence, records safety evidence, known non-blocking issues, Explicitly
-      Deferred items and documentation reconciliation needs, and ends with `SLICE READY FOR A
-      REVIEW` for A.
+- [ ] `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files` use the same card geometry, selected
+      state, action-menu boundary and selected-context placement for one or many libraries.
+- [ ] Every browse-page card shows only the library name/icon/selection/action affordance; no card
+      renders Storage, Storage ID, root path, file count, capacity or statistics.
+- [ ] The selected context shows only the truthful `已启用` state and exact `路径: /...`; switching
+      libraries updates it without stale facts, and the root renders exactly as `/`.
+- [ ] Storage remains available in Add/configuration steps and actionable recovery messages, while
+      normal browse-page cards/context contain no Storage display.
+- [ ] Disabled libraries remain hidden from browse selection; existing configuration re-enable and
+      removal behavior remains intact.
+- [ ] Files keeps its complete browse, direct-command, Organize and return-context journey, and
+      MediaLibrary keeps its bounded command/configuration journey and no-Organize boundary.
+- [ ] Focused Web/component/browser tests and the assigned T2 quality checks pass without weakened
+      assertions, hidden skips or API behavior changes.
 
 ## Required Tests
 
-Run from the repository root unless a `web/` prefix is shown. Use local fakes and temporary
-Storage only; never use production services, credentials or user media.
-
-- `python3 scripts/check_governance.py`
-- `.venv/bin/python -m unittest discover -s tests`
-- `npm --prefix web run test -- --run`
-- `npm --prefix web run test:e2e`
+- `npm --prefix web run test -- --run` (affected Web component/entity/API tests, including Files and
+  MediaLibrary selector/context coverage).
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts`
 - `npm --prefix web run typecheck`
 - `npm --prefix web run lint`
 - `npm --prefix web run format:check`
-- `npm --prefix web run build`
-- `.venv/bin/ruff format --check .`
-- `.venv/bin/ruff check .`
-- `.venv/bin/python -m compileall -q mediaflow tests scripts`
-- `.venv/bin/python -m pip check`
-- `.venv/bin/mediaflow --config config/strategy.example.json config validate`
-- `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`
-- Confirm the FFmpeg/FFprobe exclusion with the repository-available grep command.
-- `TMPDIR=/root/mediaflow/.smoke-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py`
-- Capture `1536 x 1024` MediaLibrary Add-closed and Add-Step-1-open screenshots and supported
-  narrow-screen evidence using the repository browser harness or an equivalent reproducible
-  local-fake command. Inspect screenshot dimensions and visible hierarchy.
-- Inspect `git diff --check`, `git diff --name-status <Slice Base>..HEAD`, private files,
-  `config/alist.json` ignore/untracked state and both reference image hashes.
+- `git diff --check`
+- `python3 scripts/check_governance.py`
 
 ## Non-goals
 
-- New MediaLibrary behavior, new Storage providers, cross-kind transfers, transfer Replace mode,
-  Organize/Scan/Preview, thumbnails/statistics, Upload/Download or arbitrary media editing.
-- Changes to the A-owned User Goal, Required Outcomes, Required Surfaces, Safety Invariants,
-  Slice Base, Explicitly Deferred scope, Roadmap or A Final Review.
-- P2 wording/cleanup, optional proof beyond the Contract, or declaring the Slice PASS/CLOSED.
+- New MediaLibrary or ResourceLibrary API behavior, Storage providers, configuration schema or
+  Active-snapshot semantics.
+- Changes to route/auth/deep-link behavior, file commands, transfer/recovery, Organize, permissions,
+  Storage confinement or disabled-library lifecycle.
+- Changes to the supplied reference images, thumbnails/statistics scope, page tables or file-row
+  facts.
+- Showing Storage in the normal browse-page card/context; configuration and recovery display remains
+  explicitly allowed.
+- Declaring Slice 38 PASS/CLOSED; B review remains required after Developer checkpoint.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `TASK.md` — factual Developer Completion Report.
-- `SLICE.md` — delegated factual Closure Packet evidence only.
-- No product source files changed; pre-existing dirty `docs/pics/文件页.png` was preserved byte-for-byte.
-
 ### Implemented
-
-- Ran the complete Slice 38 T4 validation set across Python, Web unit/component, browser, quality,
-  configuration and packaging/security checks.
-- Rechecked RO-1 through RO-8 against the existing MediaLibrary and ResourceLibrary implementation;
-  all required outcomes are supported by the recorded regression and browser evidence.
-- Captured and inspected MediaLibrary evidence at `1536x1024` (Add closed and Step 1 open) and
-  `760x900` (Step 1 open). The generated files remain ignored under `web/test-results/`.
-- Audited the Base..Head manifest, ignored credential/config state, reference image hashes and
-  FFmpeg/FFprobe exclusion. No credentials, SQLite files or build artifacts were added.
 
 ### Tests and Results
 
-- `python3 scripts/check_governance.py` — PASS.
-- `.venv/bin/python -m unittest discover -s tests` — PASS, 1791 tests, 7 skipped; existing
-  SQLite `ResourceWarning` diagnostics only.
-- `npm --prefix web run test -- --run` — PASS, 43 files / 601 tests.
-- `npm --prefix web run test:e2e` — PASS, 168 tests.
-- `npm --prefix web run typecheck` — PASS.
-- `npm --prefix web run lint` — PASS.
-- `npm --prefix web run format:check` — PASS.
-- `npm --prefix web run build` — PASS; existing chunk-size warning only.
-- `.venv/bin/ruff format --check .` — PASS.
-- `.venv/bin/ruff check .` — PASS.
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m pip check` — PASS.
-- Both required `mediaflow ... config validate` commands — PASS.
-- FFmpeg/FFprobe exclusion grep — PASS; no runtime dependency/reference found.
-- MediaLibrary screenshot probe — PASS; 1536x1024, 1536x1024 and 760x900 PNGs generated and
-  visually inspected.
-- `TMPDIR=/root/mediaflow/.smoke-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py`
-  — UNAVAILABLE: Docker Hub returned HTTP 401 while resolving `python:3.13-slim`; the smoke test
-  did not reach project build or assertions.
-
 ### Decisions
-
-- Kept the pre-existing dirty reference image untouched and left all generated screenshots/build
-  outputs ignored.
-- Classified the Docker release-security gate as UNAVAILABLE rather than PASS because the external
-  base-image registry rejected anonymous metadata access.
-- No implementation change was necessary; this Task's deliverable is integration evidence and the
-  factual handoff packet.
 
 ### Remaining In-Slice Work
 
-- A must perform the Base..Head Slice final review and decide closure. No additional Developer work
-  is identified within this Task.
-
 ### Risks / Deviations
-
-- Docker release-security evidence is unavailable until registry access permits pulling the pinned
-  public base image. Existing SQLite resource warnings and jsdom `scrollTo` notices are non-failing
-  pre-existing test diagnostics.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 3a4ac21fc5f9b24da1357bb2dd520314a406f308
+Head SHA: [full SHA]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: a3a1dcc431c9875c56c71ea28508a816e0109a15..3a4ac21fc5f9b24da1357bb2dd520314a406f308
-Decision: PASS
-Slice Required Outcomes all satisfied: YES
-Next: SLICE READY FOR A REVIEW
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
