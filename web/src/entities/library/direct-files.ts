@@ -388,8 +388,17 @@ export interface TransferCheckpointEntry {
  * The zero-mutation impact summary one Copy/Move confirmation holds.  The
  * manifest digest is opaque server-side evidence: the page only echoes it back
  * and never learns host roots, fingerprints or provider payloads.
+ *
+ * One shared model serves both library kinds (Slice 38 RO-7): `libraryKind`
+ * names which kind of library owns both endpoints, and the normalizer accepts
+ * exactly that kind's own identity keys.  The source/destination identity
+ * fields keep their pre-existing ResourceLibrary names for the resource kind;
+ * a media document is normalized with `libraryKind: "media"` and its
+ * `mediaLibraryId`/`destinationMediaLibraryId` values, so a document of one
+ * kind can never be read as the other kind's authority.
  */
 export interface TransferImpactModel {
+  readonly libraryKind: DirectCommandLibraryKind;
   readonly resourceLibraryId: string;
   readonly destinationResourceLibraryId: string;
   readonly operation: TransferOperation;
@@ -408,8 +417,61 @@ export interface TransferImpactModel {
   readonly manifestDigest: string;
 }
 
-export function normalizeTransferImpact(payload: unknown): TransferImpactModel {
+/**
+ * The destination library identity key of one transfer document per kind.
+ *
+ * The source key is the shared {@link libraryIdField}; only the destination
+ * key differs, because one transfer names two endpoints of the same kind.
+ */
+function transferDestinationLibraryIdField(
+  kind: DirectCommandLibraryKind,
+): string {
+  return kind === "media"
+    ? "destinationMediaLibraryId"
+    : "destinationResourceLibraryId";
+}
+
+/**
+ * Read one transfer document's endpoint identities for exactly its own kind.
+ *
+ * A document that names the other kind's identity key is refused instead of
+ * being read as this kind's authority, so equal IDs on the two kinds can never
+ * exchange a transfer impact, projection or result.
+ */
+function expectTransferIdentities(
+  record: Record<string, unknown>,
+  kind: DirectCommandLibraryKind,
+): { sourceLibraryId: string; destinationLibraryId: string } {
+  const foreign = kind === "media" ? "resourceLibraryId" : "mediaLibraryId";
+  const foreignDestination =
+    kind === "media"
+      ? "destinationResourceLibraryId"
+      : "destinationMediaLibraryId";
+  if (record[foreign] !== undefined) {
+    throw new DirectFilesNormalizationError(
+      `transfer document names both ${libraryIdField(kind)} and ${foreign}`,
+    );
+  }
+  if (record[foreignDestination] !== undefined) {
+    throw new DirectFilesNormalizationError(
+      "transfer document names both kinds' destination identity",
+    );
+  }
+  return {
+    sourceLibraryId: expectString(record, libraryIdField(kind)),
+    destinationLibraryId: expectString(
+      record,
+      transferDestinationLibraryIdField(kind),
+    ),
+  };
+}
+
+export function normalizeTransferImpact(
+  payload: unknown,
+  kind: DirectCommandLibraryKind = "resource",
+): TransferImpactModel {
   const record = expectObject(payload);
+  const identities = expectTransferIdentities(record, kind);
   const operation = expectString(record, "operation");
   if (operation !== "copy" && operation !== "move") {
     throw new DirectFilesNormalizationError("unsupported transfer operation");
@@ -448,11 +510,9 @@ export function normalizeTransferImpact(payload: unknown): TransferImpactModel {
     );
   }
   return {
-    resourceLibraryId: expectString(record, "resourceLibraryId"),
-    destinationResourceLibraryId: expectString(
-      record,
-      "destinationResourceLibraryId",
-    ),
+    libraryKind: kind,
+    resourceLibraryId: identities.sourceLibraryId,
+    destinationResourceLibraryId: identities.destinationLibraryId,
     operation,
     conflictMode,
     sameStorage: record.sameStorage === true,
@@ -511,6 +571,7 @@ export interface TransferItemOutcome {
  * item or one failed item among successful siblings is never hidden.
  */
 export interface TransferResultModel {
+  readonly libraryKind: DirectCommandLibraryKind;
   readonly operation: TransferOperation;
   readonly conflictMode: TransferConflictMode;
   readonly sameStorage: boolean;
@@ -553,6 +614,7 @@ export interface TransferLifecycleAction {
  * reproduces the truthful state.
  */
 export interface TransferProjectionModel {
+  readonly libraryKind: DirectCommandLibraryKind;
   readonly operation: TransferOperation;
   readonly conflictMode: TransferConflictMode;
   readonly status: string;
@@ -594,8 +656,10 @@ function normalizeTransferConflictMode(value: unknown): TransferConflictMode {
 
 export function normalizeTransferProjection(
   payload: unknown,
+  kind: DirectCommandLibraryKind = "resource",
 ): TransferProjectionModel {
   const record = expectObject(payload);
+  const identities = expectTransferIdentities(record, kind);
   const operation = normalizeTransferOperation(record.operation);
   const conflictMode = normalizeTransferConflictMode(record.conflictMode);
   for (const name of [
@@ -651,11 +715,9 @@ export function normalizeTransferProjection(
     status: expectString(record, "status"),
     taskId: expectString(record, "taskId"),
     taskStatus: expectString(record, "taskStatus"),
-    resourceLibraryId: expectString(record, "resourceLibraryId"),
-    destinationResourceLibraryId: expectString(
-      record,
-      "destinationResourceLibraryId",
-    ),
+    libraryKind: kind,
+    resourceLibraryId: identities.sourceLibraryId,
+    destinationResourceLibraryId: identities.destinationLibraryId,
     topLevelPaths: (record.topLevelPaths as unknown[]).map((path) => {
       if (typeof path !== "string" || path.length === 0) {
         throw new DirectFilesNormalizationError("invalid top-level path");
@@ -695,8 +757,12 @@ export function normalizeTransferProjection(
   };
 }
 
-export function normalizeTransferResult(payload: unknown): TransferResultModel {
+export function normalizeTransferResult(
+  payload: unknown,
+  kind: DirectCommandLibraryKind = "resource",
+): TransferResultModel {
   const record = expectObject(payload);
+  const identities = expectTransferIdentities(record, kind);
   const operation = normalizeTransferOperation(record.operation);
   const conflictMode = normalizeTransferConflictMode(record.conflictMode);
   const arrays = {
@@ -748,17 +814,15 @@ export function normalizeTransferResult(payload: unknown): TransferResultModel {
       } satisfies TransferCheckpointEntry;
     });
   return {
+    libraryKind: kind,
     operation,
     conflictMode,
     sameStorage: record.sameStorage === true,
     status: expectString(record, "status"),
     taskId: expectString(record, "taskId"),
     taskStatus: expectString(record, "taskStatus"),
-    resourceLibraryId: expectString(record, "resourceLibraryId"),
-    destinationResourceLibraryId: expectString(
-      record,
-      "destinationResourceLibraryId",
-    ),
+    resourceLibraryId: identities.sourceLibraryId,
+    destinationResourceLibraryId: identities.destinationLibraryId,
     topLevelPaths: (arrays.topLevelPaths as unknown[]).map((path) => {
       if (typeof path !== "string" || path.length === 0) {
         throw new DirectFilesNormalizationError("invalid top-level path");

@@ -621,6 +621,18 @@ function mediaLibraryState(session) {
       deletedEntries: [],
       // One path a Delete reports as a failed item, for the partial journey.
       deleteFailurePath: null,
+      // --- MediaLibrary bounded Copy/Move transfer state (Task 38.4) ---
+      // The admitted media transfers of this session, keyed by Task ID: the
+      // media route's own durable identity, independent of the ResourceLibrary
+      // transfer list, so equal library IDs can never exchange progress.
+      mediaTransfers: new Map(),
+      // Every media transfer submission, so a browser test can prove exactly
+      // one explicit submit and no automatic replay on refresh or reconnect.
+      transferLog: [],
+      // When set, the media transfer reports this path as a partial item.
+      transferPartialFor: null,
+      // When true the media transfer impact is refused as a denial.
+      transferDenied: false,
     };
     MEDIA_LIBRARY_STATES.set(key, value);
   }
@@ -6524,7 +6536,7 @@ const server = createServer(async (req, res) => {
   // command log a browser test can inspect to prove one submission and no
   // automatic replay.  ResourceLibrary routes are untouched.
   const mediaLibraryCommandMatch = url.pathname.match(
-    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence)$/,
+    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence|transfer-impact|transfers)$/,
   );
   if (mediaLibraryCommandMatch) {
     const action = mediaLibraryCommandMatch[2];
@@ -6996,6 +7008,329 @@ const server = createServer(async (req, res) => {
       );
       return;
     }
+    // The transfer branch sits outside the command-POST closure, so it names
+    // its own bounded refusal envelope with the same shape the real media
+    // transfer API returns.
+    const refuseTransfer = (code, category, status, nextAction) => {
+      sendJson(res, status, {
+        error: {
+          code,
+          message: code,
+          details: {
+            category,
+            durableState: "storage_unchanged",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction,
+          },
+        },
+      });
+    };
+    // --- MediaLibrary bounded Copy/Move transfer (Task 38.4) ---
+    //
+    // The fake mirrors the real media transfer contract: its own
+    // `mediaLibraryId`/`destinationMediaLibraryId` identity keys, its own
+    // opaque manifest digest, one durable admission per submission and an
+    // asynchronous Worker that advances the queued transfer to a terminal
+    // projection.  Nothing here touches the ResourceLibrary transfer list, so
+    // a browser test can prove the two kinds never exchange progress.
+    if (action === "transfer-impact" && reading) {
+      const paths = url.searchParams.getAll("path");
+      const to = url.searchParams.get("to") ?? mediaLibraryId;
+      const toPath = url.searchParams.get("toPath") ?? "";
+      const operation = url.searchParams.get("operation") ?? "copy";
+      const conflict = url.searchParams.get("conflict") ?? "fail";
+      if (state.transferDenied) {
+        refuseTransfer(
+          "files_transfer_capability_denied",
+          "capability_denied",
+          403,
+          "select a writable destination MediaLibrary and retry",
+        );
+        return;
+      }
+      const target = mediaLibraryCards(state).find((item) => item.id === to);
+      if (target === undefined) {
+        refuseTransfer(
+          "files_direct_media_library_not_found",
+          "library_not_found",
+          404,
+          "select an enabled MediaLibrary and retry",
+        );
+        return;
+      }
+      if (paths.length === 0 || paths.length > 50) {
+        refuseTransfer(
+          "files_transfer_invalid_request",
+          "invalid_request",
+          400,
+          "select one or more bounded items and retry",
+        );
+        return;
+      }
+      const destinations = paths.map((path) => ({
+        path,
+        destination: (toPath === "" ? "" : `${toPath}/`) + path,
+      }));
+      const sameStorage = to === mediaLibraryId;
+      sendJson(res, 200, {
+        mediaLibraryId,
+        destinationMediaLibraryId: to,
+        operation,
+        conflictMode: conflict,
+        sameStorage,
+        sourceLibraryRoot: `/${target.rootPath}`,
+        destinationDirectory: toPath,
+        capability: sameStorage
+          ? `native_${operation}`
+          : "cross_storage_stream",
+        topLevelPaths: paths,
+        destinations,
+        entries: paths.map((path) => ({
+          path,
+          isDirectory: false,
+          size: 1_073_741_824,
+          modifiedAt: REFERENCE_MODIFIED_LATEST,
+        })),
+        fileCount: paths.length,
+        directoryCount: 0,
+        totalBytes: paths.length * 1_073_741_824,
+        conflicts:
+          state.transferPartialFor !== null
+            ? destinations
+                .filter((item) => item.path === state.transferPartialFor)
+                .map((item) => ({
+                  path: item.path,
+                  destination: item.destination,
+                  resolution:
+                    conflict === "skip"
+                      ? "skip"
+                      : conflict === "keep_both"
+                        ? "keep_both"
+                        : "fail_no_overwrite",
+                }))
+            : [],
+        manifestDigest: `t1.fake-media-manifest-${mediaLibraryId}-${paths.join(",")}-${to}-${toPath}-${operation}-${conflict}`,
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "confirm this exact bounded transfer to execute it",
+      });
+      return;
+    }
+    if (action === "transfers" && !reading) {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const fields = parsed.document;
+      state.transferLog.push({ mediaLibraryId, ...fields });
+      const expectedDigest = `t1.fake-media-manifest-${mediaLibraryId}-${(fields.paths ?? []).join(",")}-${fields.destinationMediaLibraryId}-${fields.destinationDirectory}-${fields.operation}-${fields.conflictMode}`;
+      if (fields.manifestDigest !== expectedDigest) {
+        refuseTransfer(
+          "files_transfer_stale_manifest",
+          "stale_manifest",
+          409,
+          "review the refreshed media transfer impact and confirm again",
+        );
+        return;
+      }
+      const paths = fields.paths ?? [];
+      const taskId = `task-e2e-media-transfer-${state.mediaTransfers.size + 1}`;
+      const transfer = {
+        taskId,
+        status: "QUEUED",
+        terminal: false,
+        version: new Date().toISOString(),
+        operation: fields.operation,
+        conflictMode: fields.conflictMode,
+        destinationMediaLibraryId: fields.destinationMediaLibraryId,
+        paths,
+      };
+      state.mediaTransfers.set(taskId, transfer);
+      setTimeout(() => {
+        const current = state.mediaTransfers.get(taskId);
+        if (current && !current.terminal && current.status === "QUEUED") {
+          current.status = "RUNNING";
+          current.version = new Date().toISOString();
+        }
+      }, 300);
+      setTimeout(() => {
+        const current = state.mediaTransfers.get(taskId);
+        if (current && !current.terminal && current.status === "RUNNING") {
+          current.status =
+            state.transferPartialFor === null ? "SUCCESS" : "PARTIAL";
+          current.terminal = true;
+          current.version = new Date().toISOString();
+        }
+      }, 800);
+      const destinations = paths.map((path) => ({
+        path,
+        destination:
+          (fields.destinationDirectory === ""
+            ? ""
+            : `${fields.destinationDirectory}/`) + path,
+      }));
+      sendJson(res, 202, {
+        operation: fields.operation,
+        conflictMode: fields.conflictMode,
+        sameStorage: fields.destinationMediaLibraryId === mediaLibraryId,
+        status: "QUEUED",
+        admitted: true,
+        taskId,
+        taskStatus: "pending",
+        mediaLibraryId,
+        destinationMediaLibraryId: fields.destinationMediaLibraryId,
+        topLevelPaths: paths,
+        destinations,
+        knownEffects: [],
+        itemOutcomes: paths.map((path) => ({
+          path,
+          destination:
+            destinations.find((entry) => entry.path === path)?.destination ??
+            path,
+          status: "QUEUED",
+        })),
+        checkpoints: [],
+        checkpointsTruncated: false,
+        totalItems: paths.length,
+        succeededItems: 0,
+        skippedItems: 0,
+        failedItems: 0,
+        outcomes: [],
+        outcomesTruncated: false,
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction:
+          "the transfer is admitted and queued for execution; its progress appears below",
+      });
+      return;
+    }
+    refuse(
+      "files_direct_invalid_request",
+      "invalid_request",
+      400,
+      "reload and choose a supported command",
+    );
+    return;
+  }
+
+  const mediaTransferProjectionMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/transfers\/([^/]+)$/,
+  );
+  if (mediaTransferProjectionMatch && req.method === "GET") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const mediaLibraryId = decodeURIComponent(mediaTransferProjectionMatch[1]);
+    const state = mediaLibraryState(session);
+    const transfer = state.mediaTransfers.get(
+      decodeURIComponent(mediaTransferProjectionMatch[2]),
+    );
+    if (!transfer) {
+      sendJson(res, 404, {
+        error: {
+          code: "not_found",
+          message: "no bounded Files transfer Task exists under this identity",
+        },
+      });
+      return;
+    }
+    const terminal = transfer.terminal;
+    const partial = transfer.status === "PARTIAL";
+    sendJson(res, 200, {
+      operation: transfer.operation,
+      conflictMode: transfer.conflictMode,
+      taskId: transfer.taskId,
+      taskStatus: terminal
+        ? partial
+          ? "partial_success"
+          : "completed"
+        : transfer.status === "QUEUED"
+          ? "pending"
+          : "running",
+      mediaLibraryId,
+      destinationMediaLibraryId: transfer.destinationMediaLibraryId,
+      topLevelPaths: transfer.paths,
+      knownEffects: transfer.paths.map((path) => ({
+        path,
+        effect: terminal
+          ? state.transferPartialFor === path
+            ? "partial"
+            : "transferred"
+          : "in_progress",
+        status: terminal
+          ? state.transferPartialFor === path
+            ? "PARTIAL"
+            : "SUCCESS"
+          : "RUNNING",
+      })),
+      itemOutcomes: transfer.paths.map((path) => ({
+        path,
+        destination: path,
+        status: terminal
+          ? state.transferPartialFor === path
+            ? "PARTIAL"
+            : "SUCCESS"
+          : "RUNNING",
+      })),
+      outcomes: transfer.paths.map((path) => ({
+        path,
+        destination: path,
+        status: terminal
+          ? state.transferPartialFor === path
+            ? "PARTIAL"
+            : "SUCCESS"
+          : "RUNNING",
+        checkpoints: terminal ? ["COPY"] : [],
+      })),
+      outcomesTruncated: false,
+      totalItems: transfer.paths.length,
+      succeededItems: terminal
+        ? transfer.paths.length - (state.transferPartialFor === null ? 0 : 1)
+        : 0,
+      skippedItems: 0,
+      failedItems:
+        terminal && state.transferPartialFor !== null
+          ? 1
+          : terminal
+            ? 0
+            : transfer.paths.length,
+      status: transfer.status,
+      terminal,
+      version: transfer.version,
+      actions: terminal
+        ? [
+            { action: "pause", available: false },
+            { action: "cancel", available: false },
+            { action: "resume", available: false },
+          ]
+        : [
+            {
+              action: "pause",
+              available: transfer.status === "RUNNING",
+              path: `/api/v1/tasks/${transfer.taskId}/pause`,
+            },
+            {
+              action: "cancel",
+              available: true,
+              path: `/api/v1/tasks/${transfer.taskId}/cancel`,
+            },
+            { action: "resume", available: false },
+          ],
+      sideEffects: transfer.status === "QUEUED" ? "none" : "storage_mutations",
+      retrySafe: false,
+      nextAction: terminal
+        ? "refresh the source and destination directories to see the current state"
+        : "the transfer is running; its per-item progress appears here",
+    });
+    return;
   }
 
   const mediaLibraryFilesMatch = url.pathname.match(
@@ -10398,6 +10733,10 @@ const server = createServer(async (req, res) => {
       renamedEntries: [],
       deletedEntries: [],
       deleteFailurePath: url.searchParams.get("deleteFail"),
+      mediaTransfers: new Map(),
+      transferLog: [],
+      transferPartialFor: url.searchParams.get("transferPartial"),
+      transferDenied: url.searchParams.get("transferDenied") === "1",
     });
     res.setHeader(
       "Set-Cookie",
@@ -10417,6 +10756,7 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, {
       mutations: state.mutationLog,
       commands: state.commandLog,
+      transfers: state.transferLog,
     });
     return;
   }

@@ -21,6 +21,9 @@ import {
   isTextFileName,
   type DeleteImpactModel,
   type DirectFileCommandResult,
+  type TransferConflictMode,
+  type TransferImpactModel,
+  type TransferProjectionModel,
 } from "../../entities/library/direct-files";
 import type { SystemStorage } from "../../entities/library/system-status";
 import {
@@ -48,17 +51,18 @@ import {
   removeMediaLibrary,
   saveMediaLibrary,
   submitMediaLibraryDirectCommand,
+  submitMediaLibraryTransfer,
   type AutomationMutationFailureDetails,
   type DirectFileCommandOptions,
   type SaveMediaLibraryOptions,
 } from "../../shared/api/api-client";
+import { TransferDialog } from "./TransferDialog";
 
 type MediaView = "list" | "grid";
 
 /**
  * The command affordance of the Files direct-command journey.  The normal page
- * stays read-only until the operator explicitly chooses one of these; there is
- * deliberately no Copy/Move entry point in this Task.
+ * stays read-only until the operator explicitly chooses one of these.
  */
 type MediaFilesDialog =
   | { readonly kind: "create_folder" }
@@ -71,6 +75,11 @@ type MediaFilesDialog =
     }
   | { readonly kind: "delete"; readonly paths: readonly string[] }
   | { readonly kind: "editor"; readonly path: string }
+  | {
+      readonly kind: "transfer";
+      readonly operation: "copy" | "move";
+      readonly paths: readonly string[];
+    }
   | null;
 
 /** The row-local version facts Rename admission needs to echo back. */
@@ -650,6 +659,71 @@ export function mediaLibraryCommandFailure(
   }
 }
 
+/**
+ * Maps a MediaLibrary Copy/Move transfer failure to an action-oriented,
+ * secret-free message.
+ *
+ * The backend runs one transfer admission/execution boundary for both library
+ * kinds, so the categories mirror the Files transfer contract exactly — but
+ * every message names the MediaLibrary journey, and no host root, provider
+ * payload, claim token or raw exception ever reaches the operator.
+ */
+export function mediaLibraryTransferFailure(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  if (details?.durableState === "mutation_effect_uncertain") {
+    return "操作结果不确定,未自动重试;请刷新来源与目标目录核实实际状态。";
+  }
+  switch (code) {
+    case "files_transfer_stale_manifest":
+      return "传输范围已变化,本次未执行;请重新确认最新的影响摘要后再试。";
+    case "files_transfer_invalid_manifest":
+      return "缺少有效的传输确认证据;请重新获取影响摘要后再试。";
+    case "files_transfer_overlap":
+      return "目标不能是来源本身或其子目录;请选择范围之外的目标。";
+    case "files_transfer_not_a_directory":
+      return "目标目录不存在或不是文件夹;请选择现有目录后重试。";
+    case "files_transfer_capability_denied":
+      return "目标存储为只读,不能执行该操作;请选择可写的目标媒体库。";
+    case "files_transfer_unsupported_capability":
+      return "当前存储不支持该传输操作;请改用支持该能力的存储。";
+    case "files_transfer_unsupported_entry":
+      return "所选内容包含不受支持的条目类型(如符号链接),未执行任何修改。";
+    case "files_transfer_entry_limit_exceeded":
+    case "files_transfer_depth_limit_exceeded":
+    case "files_transfer_size_limit_exceeded":
+      return "传输范围超出限制,未执行任何修改;请选择更小的范围分批传输。";
+    case "files_transfer_root_protected":
+      return "媒体库根目录不能被传输;请选择内部的文件或文件夹。";
+    case "files_transfer_invalid_request":
+      return "传输请求无效,未执行任何修改;请检查所选内容和目标后重试。";
+    case "files_transfer_invalid_path":
+      return "路径不是安全的媒体库相对路径,未做任何修改。";
+    case "files_transfer_media_library_not_found":
+      return "所选媒体库在当前 Active 配置中不可用或已停用;请选择其他已启用的媒体库。";
+    case "files_transfer_storage_unavailable":
+    case "files_transfer_connection_failed":
+    case "files_transfer_timeout":
+    case "files_transfer_authentication_failed":
+    case "files_transfer_rate_limited":
+    case "files_transfer_storage_failure":
+      return "存储暂不可用或读取失败,未做任何修改;请等待存储恢复后重试。";
+    case "files_transfer_resume_running":
+      return "该传输仍由当前 Worker 持有,未重复提交;请等待其结束或先暂停。";
+    case "files_transfer_resume_unavailable":
+      return "该传输没有可继续的耐久授权,未重复提交;请在任务详情中查看逐项结果。";
+    case "forbidden":
+      return "当前账号没有执行传输所需权限,请切换有权限的账号。";
+    case "transport_unavailable":
+      return "传输结果未知,未自动重试;请刷新来源与目标目录核实当前状态。";
+    case "malformed_response":
+      return "服务返回了无法理解的结果,未自动重试;请刷新目录核实当前状态。";
+    default:
+      return "传输未执行,来源与目标均未被修改;请修正原因后重试或刷新目录。";
+  }
+}
+
 function MediaBrowseView({
   model,
   selected,
@@ -673,6 +747,7 @@ function MediaBrowseView({
   onRename,
   onEdit,
   onDelete,
+  onTransfer,
 }: {
   readonly model: MediaLibraryFilesModel;
   readonly selected: ReadonlySet<string>;
@@ -701,6 +776,10 @@ function MediaBrowseView({
   ) => void;
   readonly onEdit: (path: string) => void;
   readonly onDelete: (paths: readonly string[]) => void;
+  readonly onTransfer: (
+    operation: "copy" | "move",
+    paths: readonly string[],
+  ) => void;
 }) {
   const rows = useMemo(
     () => buildRows(model, selected, query),
@@ -916,6 +995,28 @@ function MediaBrowseView({
                                 className="mf-card-menu-item"
                                 onClick={() => {
                                   setRowMenuPath(null);
+                                  onTransfer("copy", [row.path]);
+                                }}
+                              >
+                                复制
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onTransfer("move", [row.path]);
+                                }}
+                              >
+                                移动
+                              </button>
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item"
+                                onClick={() => {
+                                  setRowMenuPath(null);
                                   onRename(row.path, row.name, {
                                     size: row.size,
                                     modifiedAt: row.modifiedAt,
@@ -987,6 +1088,28 @@ function MediaBrowseView({
             删除
           </button>
         )}
+        <button
+          className="mf-button mf-button-secondary"
+          type="button"
+          onClick={() => onTransfer("copy", selectedPaths)}
+          disabled={busy || selectedCount === 0 || selectedPaths.length > 50}
+          title={
+            selectedPaths.length > 50 ? "单次复制最多选择 50 项" : undefined
+          }
+        >
+          复制
+        </button>
+        <button
+          className="mf-button mf-button-secondary"
+          type="button"
+          onClick={() => onTransfer("move", selectedPaths)}
+          disabled={busy || selectedCount === 0 || selectedPaths.length > 50}
+          title={
+            selectedPaths.length > 50 ? "单次移动最多选择 50 项" : undefined
+          }
+        >
+          移动
+        </button>
         <button
           className="mf-button mf-button-secondary"
           type="button"
@@ -1862,6 +1985,14 @@ export function MediaLibraryFilesPage() {
     useState<DirectFileCommandResult | null>(null);
   const [editorStale, setEditorStale] = useState(false);
   const [editorSaved, setEditorSaved] = useState(false);
+  // The MediaLibrary transfer journey.  A transfer dialog is operator-invoked
+  // only, its error survives a recoverable failure so the entered context stays
+  // correctable, and the admitted durable identity is the one the dialog
+  // follows — a refresh or reconnect never resubmits the mutation.
+  const [transferError, setTransferError] = useState<string | null>(null);
+  const [admittedTransferId, setAdmittedTransferId] = useState<string | null>(
+    null,
+  );
   // Auxiliary to the browse boundary: the Add prerequisites (an Active
   // configuration and at least one enabled Storage) come from system status,
   // never from the MediaLibrary list, so a status hiccup only disables Add.
@@ -2320,6 +2451,76 @@ export function MediaLibraryFilesPage() {
     },
   });
 
+  // The media transfer admission is the one explicit submission: the impact
+  // read and this mutation are the only requests that can create the durable
+  // transfer, and the response is the queued identity the dialog then follows.
+  const transferMutation = useMutation({
+    mutationFn: (input: {
+      readonly operation: "copy" | "move";
+      readonly paths: readonly string[];
+      readonly destinationMediaLibraryId: string;
+      readonly destinationDirectory: string;
+      readonly conflictMode: TransferConflictMode;
+      readonly manifestDigest: string;
+    }) =>
+      submitMediaLibraryTransfer(token, activeLibraryId, {
+        operation: input.operation,
+        paths: input.paths,
+        destinationMediaLibraryId: input.destinationMediaLibraryId,
+        destinationDirectory: input.destinationDirectory,
+        conflictMode: input.conflictMode,
+        manifestDigest: input.manifestDigest,
+      }),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setTransferError(
+          mediaLibraryTransferFailure(result.code, {
+            durableState: result.details?.durableState,
+          }),
+        );
+        return;
+      }
+      setTransferError(null);
+      // Admission only: the durable queued identity is followed through the
+      // media-scoped projection; live source and destination truth is
+      // refreshed when the terminal projection arrives.
+      setAdmittedTransferId(result.model.taskId);
+    },
+    onError: () => {
+      setTransferError(
+        "传输结果未知,未自动重试;请刷新来源与目标目录核实当前状态后再决定下一步。",
+      );
+      void queryClient.invalidateQueries({
+        queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+      });
+    },
+  });
+
+  // Terminal projection: refresh authoritative source/destination truth and
+  // prune only the selection whose physical truth changed.  A Copy leaves the
+  // source present, so only a Move whose known effect proves the source no
+  // longer exists may prune the selection; skipped, partial and uncertain
+  // sources keep their selection.
+  const handleTransferTerminal = useCallback(
+    (projection: TransferProjectionModel) => {
+      void queryClient.invalidateQueries({
+        queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      if (
+        projection.operation === "move" &&
+        (projection.status === "SUCCESS" || projection.status === "PARTIAL")
+      ) {
+        const removed = projection.knownEffects
+          .filter((effect) => effect.effect === "transferred")
+          .map((effect) => effect.path);
+        pruneAffectedBrowseState(removed, null);
+      }
+    },
+    [queryClient, pruneAffectedBrowseState],
+  );
+
   const editorPath = dialog?.kind === "editor" ? dialog.path : null;
   const editorQuery = useQuery({
     queryKey: [MEDIA_LIBRARY_TEXT_QUERY_KEY, activeLibraryId, editorPath],
@@ -2643,6 +2844,11 @@ export function MediaLibraryFilesPage() {
                         setCommandResult(null);
                         setDialog({ kind: "delete", paths });
                       }}
+                      onTransfer={(operation, paths) => {
+                        setTransferError(null);
+                        setAdmittedTransferId(null);
+                        setDialog({ kind: "transfer", operation, paths });
+                      }}
                       onNextPage={() => {
                         if (model.nextCursor !== null) {
                           setCursorHistory((current) => [
@@ -2845,6 +3051,51 @@ export function MediaLibraryFilesPage() {
             void queryClient.invalidateQueries({
               queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
             });
+          }}
+        />
+      )}
+      {dialog?.kind === "transfer" && (
+        <TransferDialog
+          kind="media"
+          state={{
+            operation: dialog.operation,
+            paths: dialog.paths,
+          }}
+          libraries={libraries}
+          currentLibraryId={activeLibraryId}
+          token={token}
+          submitting={transferMutation.isPending}
+          admittedTaskId={admittedTransferId}
+          error={transferError}
+          onTerminal={handleTransferTerminal}
+          onSubmit={({
+            impact,
+            conflictMode,
+          }: {
+            readonly impact: TransferImpactModel;
+            readonly conflictMode: TransferConflictMode;
+          }) => {
+            setTransferError(null);
+            transferMutation.mutate({
+              operation: dialog.operation,
+              paths: dialog.paths,
+              destinationMediaLibraryId: impact.destinationResourceLibraryId,
+              destinationDirectory: impact.destinationDirectory,
+              conflictMode,
+              manifestDigest: impact.manifestDigest,
+            });
+          }}
+          onImpactFailure={(message: string) => {
+            setTransferError(message);
+          }}
+          onClose={() => {
+            setTransferError(null);
+            setAdmittedTransferId(null);
+            setDialog(null);
+            void queryClient.invalidateQueries({
+              queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+            });
+            void queryClient.invalidateQueries({ queryKey: ["system-status"] });
           }}
         />
       )}

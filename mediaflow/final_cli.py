@@ -3561,8 +3561,9 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
     from mediaflow.application.direct_file_commands import DirectFileCommandService
     from mediaflow.application.direct_file_transfers import DirectFileTransferService
     from mediaflow.application.files_transfer_worker import FilesTransferWorker
+    from mediaflow.domain.direct_files import LibraryKind
 
-    def reconstruct(revision_id: str, revision_digest: str):
+    def reconstruct(revision_id: str, revision_digest: str, *, media_library: bool = False):
         """Rebuild the exact persisted revision a claimed transfer pinned.
 
         A resident Worker may outlive an activation, so it must execute each
@@ -3570,6 +3571,10 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
         than under whatever Active snapshot the process started with.  A
         revision this process cannot lawfully reconstruct returns ``None`` and
         leaves the transfer claimable instead of consuming it as a failure.
+
+        ``media_library`` selects the library kind of the rebuilt runtime: one
+        kind's reconstructor never returns a service of the other kind, so the
+        persisted kind of a claimed transfer is always honored.
         """
 
         with SQLiteConfigurationRepository(configuration.database_path) as pinned_repository:
@@ -3601,6 +3606,7 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
             task_repository=repository,
             storage_adapters=None,
             revision_rebuilder=reconstruct,
+            library_kind=(LibraryKind.MEDIA if media_library else LibraryKind.RESOURCE),
         )
 
     with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
@@ -3620,8 +3626,24 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
                 task_repository=repository,
                 revision_rebuilder=reconstruct,
             )
+            direct_media_files = DirectFileCommandService(
+                active_revision=active,
+                runtime_configuration=runtime,
+                task_repository=repository,
+                revision_rebuilder=reconstruct,
+                library_kind=LibraryKind.MEDIA,
+            )
             transfers = DirectFileTransferService(
-                direct_files=direct_files, runtime_factory=reconstruct
+                direct_files=direct_files,
+                runtime_factory=lambda revision_id, digest: reconstruct(
+                    revision_id, digest, media_library=False
+                ),
+            )
+            media_transfers = DirectFileTransferService(
+                direct_files=direct_media_files,
+                runtime_factory=lambda revision_id, digest: reconstruct(
+                    revision_id, digest, media_library=True
+                ),
             )
         except Exception as error:
             # An unhealthy Active configuration must not disable this Worker's
@@ -3635,7 +3657,7 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
             )
             yield _NullFilesTransferWorker()
             return
-        yield FilesTransferWorker(transfers, repository)
+        yield FilesTransferWorker(transfers, repository, media_transfer_service=media_transfers)
 
 
 class _NullFilesTransferWorker:

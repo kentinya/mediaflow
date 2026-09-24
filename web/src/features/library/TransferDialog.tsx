@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  type DirectCommandLibraryKind,
   type TransferConflictMode,
   type TransferImpactModel,
   type TransferItemOutcome,
@@ -10,18 +11,20 @@ import {
 } from "../../entities/library/direct-files";
 import { ModalDialog } from "./FileCommandDialogs";
 import { storageFilesQueryOptions } from "./storage-files-query";
+import { mediaLibraryFilesQueryOptions } from "./media-library-query";
 import {
+  fetchMediaLibraryTransferImpact,
+  fetchMediaLibraryTransferProjection,
   fetchTransferImpact,
   fetchTransferProjection,
   mutateTransferLifecycle,
 } from "../../shared/api/api-client";
-import type { SystemResourceLibrary } from "../../entities/library/system-status";
 
 /**
  * The Files Copy/Move dialog.
  *
- * The destination picker is a live-Storage/Active-ResourceLibrary bounded
- * browser: the operator selects an enabled destination ResourceLibrary and a
+ * The destination picker is a live-Storage/bounded browser of the transfer's
+ * own library kind: the operator selects an enabled destination library and a
  * confined directory, sees the exact selection and capability truth, and
  * submits once.  Opening, navigating and cancelling perform zero mutation and
  * create no Task; only the single explicit submit admits the transfer.  The
@@ -31,6 +34,12 @@ import type { SystemResourceLibrary } from "../../entities/library/system-status
  * only when the backend projection advertises them — never as raw Task-ID or
  * execution-token ceremony.  Entered context survives a recoverable failure,
  * duplicate submission is prevented, and Escape still closes.
+ *
+ * One dialog serves the ResourceLibrary Files journey and the MediaLibrary
+ * Files journey (Slice 38 RO-7).  `kind` selects the media-scoped or
+ * resource-scoped routes, browse cache and destination list; neither page can
+ * read the other kind's impact, projection or library selection, even when the
+ * two libraries carry equal IDs.
  */
 
 export type TransferKind = TransferOperation;
@@ -38,6 +47,12 @@ export type TransferKind = TransferOperation;
 export interface TransferDialogState {
   readonly operation: TransferKind;
   readonly paths: readonly string[];
+}
+
+/** The bounded destination-library choice both kinds present in the picker. */
+export interface TransferDestinationLibrary {
+  readonly id: string;
+  readonly name: string | null;
 }
 
 const CONFLICT_CHOICES: readonly {
@@ -207,6 +222,7 @@ function destinationLabel(path: string): string {
 
 export function TransferDialog({
   state,
+  kind = "resource",
   libraries,
   currentLibraryId,
   token,
@@ -219,7 +235,9 @@ export function TransferDialog({
   onClose,
 }: {
   readonly state: TransferDialogState;
-  readonly libraries: readonly SystemResourceLibrary[];
+  /** Which library kind owns both endpoints of this transfer. */
+  readonly kind?: DirectCommandLibraryKind;
+  readonly libraries: readonly TransferDestinationLibrary[];
   readonly currentLibraryId: string;
   readonly token: string | null;
   readonly submitting: boolean;
@@ -236,6 +254,8 @@ export function TransferDialog({
   readonly onClose: () => void;
 }) {
   const queryClient = useQueryClient();
+  const isMedia = kind === "media";
+  const libraryLabel = isMedia ? "媒体库" : "资源库";
   const [destinationLibraryId, setDestinationLibraryId] =
     useState(currentLibraryId);
   const [destinationPath, setDestinationPath] = useState("");
@@ -262,21 +282,38 @@ export function TransferDialog({
   const working = submitting || impactPending;
   const terminalNotified = useRef<string | null>(null);
 
-  const destinationQuery = useQuery({
+  // The destination browser belongs to this transfer's own kind: a media
+  // transfer browses MediaLibrary roots through the media cache, a resource
+  // transfer browses ResourceLibrary roots through the Files cache, and equal
+  // IDs on the two kinds never share a browse entry.  Exactly one of the two
+  // queries is enabled, so no inactive read runs.
+  const resourceDestinationQuery = useQuery({
     ...storageFilesQueryOptions(token, {
-      resourceLibraryId: destinationLibraryId,
+      resourceLibraryId: isMedia ? "" : destinationLibraryId,
       path: destinationPath,
       cursor: null,
     }),
-    enabled: admittedTaskId === null,
+    enabled: !isMedia && admittedTaskId === null,
     retry: false,
   });
+  const mediaDestinationQuery = useQuery({
+    ...mediaLibraryFilesQueryOptions(token, {
+      mediaLibraryId: isMedia ? destinationLibraryId : "",
+      path: destinationPath,
+      cursor: null,
+    }),
+    enabled: isMedia && admittedTaskId === null,
+    retry: false,
+  });
+  const destinationRead = isMedia
+    ? mediaDestinationQuery.data
+    : resourceDestinationQuery.data;
   const destinationModel = useMemo(
     () =>
-      destinationQuery.data !== undefined && destinationQuery.data.ok
-        ? destinationQuery.data.model
+      destinationRead !== undefined && destinationRead.ok
+        ? destinationRead.model
         : null,
-    [destinationQuery.data],
+    [destinationRead],
   );
   const directories = useMemo(
     () =>
@@ -285,24 +322,40 @@ export function TransferDialog({
       ),
     [destinationModel],
   );
+  const destinationFetching = isMedia
+    ? mediaDestinationQuery.isFetching
+    : resourceDestinationQuery.isFetching;
   // The destination browse failure is derived render state, not an effect:
   // the picker never fabricates a selectable directory after a failed read.
-  const browseError =
+  const browseFailureKind =
     admittedTaskId === null &&
-    destinationQuery.data !== undefined &&
-    !destinationQuery.data.ok
-      ? destinationQuery.data.failure.kind === "not_found"
-        ? "目标目录不存在或已被移动；请返回上级目录重新选择。"
-        : "目标目录读取失败；请刷新或返回根目录重试。"
+    destinationRead !== undefined &&
+    !destinationRead.ok
+      ? destinationRead.failure.kind
       : null;
+  const browseError =
+    browseFailureKind === null
+      ? null
+      : browseFailureKind === "not_found" ||
+          browseFailureKind === "media_library_not_found"
+        ? `目标${libraryLabel}或目录不存在或已被移动；请重新选择。`
+        : `目标${libraryLabel}读取失败；请刷新或返回根目录重试。`;
 
   // The durable projection is polled while the admitted transfer works; the
-  // interval stops once the Task reaches a terminal state.
+  // interval stops once the Task reaches a terminal state.  The projection is
+  // read from this kind's own route, so an equal ID on the other kind cannot
+  // supply this transfer's progress.
   const projectionQuery = useQuery({
-    queryKey: ["files-transfer", admittedTaskId],
+    queryKey: ["files-transfer", kind, admittedTaskId],
     queryFn: () => {
       if (admittedTaskId === null) throw new Error("unreachable");
-      return fetchTransferProjection(token, currentLibraryId, admittedTaskId);
+      return isMedia
+        ? fetchMediaLibraryTransferProjection(
+            token,
+            currentLibraryId,
+            admittedTaskId,
+          )
+        : fetchTransferProjection(token, currentLibraryId, admittedTaskId);
     },
     enabled: admittedTaskId !== null && token !== null,
     refetchInterval: (query) => {
@@ -342,13 +395,21 @@ export function TransferDialog({
     setImpactPending(true);
     let admitted = false;
     try {
-      const read = await fetchTransferImpact(token, currentLibraryId, {
-        operation: state.operation,
-        paths: state.paths,
-        destinationResourceLibraryId: destinationLibraryId,
-        destinationDirectory: destinationPath,
-        conflictMode,
-      });
+      const read = isMedia
+        ? await fetchMediaLibraryTransferImpact(token, currentLibraryId, {
+            operation: state.operation,
+            paths: state.paths,
+            destinationMediaLibraryId: destinationLibraryId,
+            destinationDirectory: destinationPath,
+            conflictMode,
+          })
+        : await fetchTransferImpact(token, currentLibraryId, {
+            operation: state.operation,
+            paths: state.paths,
+            destinationResourceLibraryId: destinationLibraryId,
+            destinationDirectory: destinationPath,
+            conflictMode,
+          });
       if (!read.ok) {
         onImpactFailure(
           transferFailureMessage(read.code, {
@@ -385,6 +446,8 @@ export function TransferDialog({
       projection.taskId,
       action.action as "pause" | "cancel" | "resume",
       projection.version,
+      undefined,
+      kind,
     );
     setActionPending(null);
     if (!result.ok) {
@@ -398,7 +461,7 @@ export function TransferDialog({
       return;
     }
     void queryClient.invalidateQueries({
-      queryKey: ["files-transfer", projection.taskId],
+      queryKey: ["files-transfer", kind, projection.taskId],
     });
   };
 
@@ -577,7 +640,8 @@ export function TransferDialog({
             {state.paths.length === 1
               ? `“${state.paths[0]}”`
               : `${state.paths.length} 个所选项目`}
-            到所选资源库中的目标目录。移动跨存储时按“复制→校验→删除来源”执行，
+            到所选{libraryLabel}
+            中的目标目录。移动跨存储时按“复制→校验→删除来源”执行，
             校验失败绝不会删除来源文件。
           </p>
           {(error !== null || browseError !== null) && (
@@ -586,7 +650,7 @@ export function TransferDialog({
             </p>
           )}
           <label className="mf-dialog-field" htmlFor="mf-transfer-library">
-            目标资源库
+            目标{libraryLabel}
           </label>
           <select
             id="mf-transfer-library"
@@ -634,10 +698,10 @@ export function TransferDialog({
             role="listbox"
             aria-label="目标子目录"
           >
-            {destinationQuery.isFetching && (
+            {destinationFetching && (
               <p className="mf-dialog-hint">正在读取目标目录…</p>
             )}
-            {!destinationQuery.isFetching &&
+            {!destinationFetching &&
               directories.length === 0 &&
               destinationModel !== null && (
                 <p className="mf-dialog-hint">

@@ -229,10 +229,17 @@ class TransferManifest:
     """The pinned, confirmed logical scope of one bounded Copy/Move command.
 
     The manifest binds the exact Active configuration revision/digest, the
-    source and destination ResourceLibrary/Storage identities, the normalized
-    relative roots, the requested operation, the explicit conflict choice, the
+    source and destination library/Storage identities, the normalized relative
+    roots, the requested operation, the explicit conflict choice, the
     deterministic per-entry destination paths and the bounded entry scope.  Only
     an opaque digest of this server-side value is returned to the browser.
+
+    ``library_kind`` names which kind of configured library owns the transfer
+    (ResourceLibrary or MediaLibrary).  It participates in the opaque digest
+    and in the persisted admission authority, so equal IDs on the two kinds
+    can never exchange manifests, evidence or task claims (Slice 38 RO-6/RO-7).
+    The field defaults to ResourceLibrary so every pre-existing call site and
+    document keeps its exact behavior byte-for-byte.
     """
 
     revision_id: str
@@ -252,6 +259,10 @@ class TransferManifest:
     destinations: tuple[tuple[str, str], ...]
     keep_both_names: tuple[tuple[str, str], ...]
     digest: str
+    # Which kind of configured library owns both endpoints.  It travels in the
+    # digest and the persisted authority; one kind's manifest can never be
+    # admitted or executed as the other kind's work.
+    library_kind: LibraryKind = LibraryKind.RESOURCE
 
     @property
     def entry_count(self) -> int:
@@ -298,9 +309,20 @@ class TransferImpact:
     unavailable: tuple[str, ...] = ()
 
     def document(self) -> dict[str, object]:
+        kind = self.manifest.library_kind
+        source_identity = (
+            {"mediaLibraryId": self.manifest.source_resource_library_id}
+            if kind is LibraryKind.MEDIA
+            else {"resourceLibraryId": self.manifest.source_resource_library_id}
+        )
+        destination_identity = (
+            {"destinationMediaLibraryId": self.manifest.destination_resource_library_id}
+            if kind is LibraryKind.MEDIA
+            else {"destinationResourceLibraryId": self.manifest.destination_resource_library_id}
+        )
         return {
-            "resourceLibraryId": self.manifest.source_resource_library_id,
-            "destinationResourceLibraryId": self.manifest.destination_resource_library_id,
+            **source_identity,
+            **destination_identity,
             "operation": self.manifest.operation.value,
             "conflictMode": self.manifest.conflict_mode.value,
             "sameStorage": self.manifest.same_storage,

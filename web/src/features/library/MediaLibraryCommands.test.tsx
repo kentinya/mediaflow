@@ -450,11 +450,14 @@ describe("MediaLibrary Files command surface", () => {
     expect(
       screen.getByRole("button", { name: "更多操作 Season 1" }),
     ).toBeVisible();
-    // Still no organize entry point and no transfer command in this Task.
+    // Still no organize entry point: MediaLibrary maintenance never runs the
+    // media pipeline.  Copy/Move are the bounded transfer commands this Task
+    // adds (Slice 38 RO-5) and stay disabled until something is selected, so
+    // normal entry remains read-only and issues no request.
     expect(screen.queryByRole("button", { name: "整理" })).toBeNull();
     expect(screen.queryByRole("button", { name: "批量整理" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "复制" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "移动" })).toBeNull();
+    expect(screen.getByRole("button", { name: "复制" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "移动" })).toBeDisabled();
     // A dialog is closed on normal entry.
     expect(screen.queryByRole("dialog")).toBeNull();
   });

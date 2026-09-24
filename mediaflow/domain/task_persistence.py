@@ -37,7 +37,10 @@ FILES_DELETE_TASK_COMMAND = "files_delete"
 #: The command recorded by a bounded Files Copy/Move transfer.  Every transfer
 #: runs as one durable Task admitted before the first Storage mutation and
 #: executed by the resident Worker under a persisted claim fence, with
-#: independent per-item/per-entry outcomes.
+#: independent per-item/per-entry outcomes.  A MediaLibrary-owned transfer
+#: (Slice 38 RO-5/RO-6) records ``media_`` + this command name through
+#: :func:`direct_command_task_command`, so a media transfer Task can never be
+#: claimed, reconstructed or replayed as ResourceLibrary work.
 FILES_TRANSFER_TASK_COMMAND = "files_transfer"
 
 #: The command prefix that distinguishes a MediaLibrary-owned direct file

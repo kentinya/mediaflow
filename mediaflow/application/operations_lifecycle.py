@@ -40,12 +40,34 @@ from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
     MANUAL_ORGANIZE_TASK_COMMAND,
+    MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     PersistentResultRecord,
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskRepository,
     PersistentTaskStatus,
 )
+
+#: The durable transfer Task command of one library kind.  Both kinds reuse a
+#: single transfer lifecycle (Slice 38 RO-6), so their resume eligibility is
+#: decided by this set rather than by one kind's literal command.
+_TRANSFER_TASK_COMMANDS = frozenset(
+    {
+        FILES_TRANSFER_TASK_COMMAND,
+        f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}{FILES_TRANSFER_TASK_COMMAND}",
+    }
+)
+
+
+def is_files_transfer_task_command(command: object) -> bool:
+    """Whether one durable Task command is a bounded Copy/Move transfer.
+
+    The ResourceLibrary transfer command and its ``media_``-prefixed twin are
+    both transfers; every other Task command is not.
+    """
+
+    return command in _TRANSFER_TASK_COMMANDS
+
 
 TASK_TERMINAL_STATUSES = frozenset(
     {
@@ -2077,7 +2099,7 @@ class TaskLifecycleService:
         return TaskExecutionContext(
             TaskExecutionPath.OPERATOR_WORKFLOW,
             resumable=(
-                task.command == FILES_TRANSFER_TASK_COMMAND
+                is_files_transfer_task_command(task.command)
                 and task.status is PersistentTaskStatus.PAUSED
             ),
         )
@@ -2260,6 +2282,7 @@ __all__ = [
     "TaskLifecycleService",
     "bounded_failure_document",
     "bounded_identity_path",
+    "is_files_transfer_task_command",
     "job_failure_document",
     "job_lifecycle_document",
     "job_operator_document",
