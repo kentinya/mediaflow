@@ -207,6 +207,12 @@ class TaskExecutionContext:
     #: a paused Task may be re-queued for the resident Worker (currently only
     #: the bounded Files Copy/Move transfer Tasks).
     resumable: bool = False
+    #: Whether this Task kind owns a durable continuation authority at all,
+    #: independent of its current state.  A bounded transfer keeps that
+    #: authority while it is queued or running; the control is merely not
+    #: available yet, so the projection must say so instead of claiming that no
+    #: continuation exists.
+    durable_continuation: bool = False
 
 
 class OperationsLifecycleConflict(RuntimeError):
@@ -1958,6 +1964,36 @@ def task_lifecycle_document(
                 "or Operations"
             ),
         )
+    elif execution.durable_continuation:
+        # The same durable continuation authority exists, but the current
+        # durable state offers nothing to continue: a queued/running transfer is
+        # already owned by its Worker and a terminal one has no remaining work.
+        resume = _action(
+            action="resume",
+            label="Resume Task",
+            path=f"/api/v1/tasks/{task.task_id}/resume",
+            available=False,
+            unavailable_reason=(
+                permission_reason
+                or (
+                    "the transfer already reached a terminal state"
+                    if terminal
+                    else "the transfer is queued or running"
+                )
+            ),
+            durable_outcome=(
+                "the transfer is re-queued for the resident Worker; it continues only from "
+                "each item's recorded known-safe checkpoint and never replays completed or "
+                "uncertain mutations"
+            ),
+            side_effects=(
+                "no Storage mutation in this request; the Worker later continues the "
+                "remaining transfer through OrganizerExecutor"
+            ),
+            next_action=(
+                "follow the transfer's durable progress in the Files workspace or Operations"
+            ),
+        )
     else:
         resume = _action(
             action="resume",
@@ -2102,6 +2138,7 @@ class TaskLifecycleService:
                 is_files_transfer_task_command(task.command)
                 and task.status is PersistentTaskStatus.PAUSED
             ),
+            durable_continuation=is_files_transfer_task_command(task.command),
         )
 
     def require_version(self, task: PersistentTask, expected_version: str | None) -> None:

@@ -297,3 +297,61 @@ test("the media transfer journey works at a supported narrow viewport", async ({
     page.getByRole("dialog", { name: "复制进度" }).getByText(/传输完成/),
   ).toBeVisible();
 });
+
+test("a paused media transfer is resumed from Operations and continues once", async ({
+  page,
+}) => {
+  // Slice 38 RO-6/RO-7: a paused bounded transfer is a durable Operations
+  // object.  Revisiting it in Operations and using its advertised Resume must
+  // report an *applied* control (never `Control was not applied`) and must
+  // re-queue the transfer exactly once for the resident Worker.
+  await resetMediaTransfers(page, "?transferPause=1");
+  await openMediaLibrary(page);
+  await page.getByRole("checkbox", { name: "选择 Dune (2021)" }).check();
+  await openRowMenu(page, /Dune \(2021\)/);
+  await page.getByRole("menuitem", { name: "复制" }).click();
+  const dialog = page.getByRole("dialog", { name: "复制到…" });
+  await chooseDestination(page, "tv");
+  await dialog.getByRole("button", { name: "复制", exact: true }).click();
+  await expect.poll(async () => (await transferPosts(page)).length).toBe(1);
+  const [post] = await transferPosts(page);
+  const taskId = `task-e2e-media-transfer-1`;
+  expect(post.mediaLibraryId).toBe("movies");
+
+  // The Files dialog follows the durable projection into its paused state and
+  // advertises the continuation the backend really supports.
+  await expect(
+    page
+      .getByRole("dialog", { name: "复制进度" })
+      .getByText(/传输已在安全边界暂停/),
+  ).toBeVisible({ timeout: 10_000 });
+  const resumeRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/resume")) {
+      resumeRequests.push(request.url());
+    }
+  });
+
+  // Revisit the same durable Task through the shell, so the memory-only
+  // connection survives exactly as an ordinary revisit does.
+  await page
+    .getByRole("dialog", { name: "复制进度" })
+    .getByRole("button", { name: "后台跟踪" })
+    .click();
+  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await page.getByRole("link", { name: "Tasks", exact: true }).first().click();
+  await page.getByRole("link", { name: taskId }).click();
+  await expect(
+    page.getByRole("heading", { name: `Task ${taskId}` }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Resume Task" }).click();
+
+  // The accepted continuation is reported truthfully, not as an unapplied
+  // control, and it is submitted exactly once.
+  await expect(
+    page.getByRole("heading", { name: "Control accepted" }),
+  ).toBeVisible();
+  await expect(page.getByText("Control was not applied")).toHaveCount(0);
+  await expect(page.getByText(/Durable state: pending/)).toBeVisible();
+  expect(resumeRequests).toHaveLength(1);
+});

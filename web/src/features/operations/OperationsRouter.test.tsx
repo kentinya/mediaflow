@@ -472,4 +472,85 @@ describe("Operations router journeys", () => {
     const back = screen.getByRole("link", { name: "Back to Tasks" });
     expect(back).toHaveAttribute("href");
   });
+
+  it("reports an accepted paused-transfer resume as an applied control", async () => {
+    // Slice 38 RO-6: the real backend answers a bounded transfer resume with
+    // the durable transfer projection plus the Task/lifecycle envelope.  The
+    // Operations page must show the accepted continuation instead of an
+    // unapplied control.
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    const resumedTask = taskRecord({
+      command: "media_files_transfer",
+      status: "pending",
+      total_items: 2,
+    });
+    const pausedTask = taskRecord({
+      command: "media_files_transfer",
+      status: "paused",
+      total_items: 2,
+    });
+    const detail = taskDetailPayload({
+      ...pausedTask,
+      lifecycle: taskLifecycle({
+        state: "paused",
+        terminal: false,
+        actions: [
+          action("cancel", true, null),
+          action("pause", false, "only a running Task accepts a pause request"),
+          action("resume", true, null),
+        ],
+      }),
+    });
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      calls.push(url);
+      if (url === "/api/v1/tasks/task-run/resume") {
+        expect(init?.method).toBe("POST");
+        return jsonResponse(
+          {
+            action: "resume",
+            task: resumedTask,
+            lifecycle: taskLifecycle({
+              state: "pending",
+              terminal: false,
+              pauseRequested: false,
+              actions: [
+                action("cancel", true, null),
+                action("pause", false, "this Task is pending"),
+                action("resume", false, "the transfer is queued or running"),
+              ],
+            }),
+            durableOutcome:
+              "the transfer is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint",
+            sideEffects: "none",
+            retrySafe: false,
+            nextAction: "follow the transfer progress in Operations",
+          },
+          202,
+        );
+      }
+      if (url.startsWith("/api/v1/operations/tasks/task-run")) {
+        return jsonResponse(detail);
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/tasks/task-run");
+
+    await screen.findByRole("heading", { name: "Task task-run" });
+    await user.click(
+      await screen.findByRole("button", { name: "resume label" }),
+    );
+
+    await screen.findByRole("heading", { name: "Control accepted" });
+    expect(screen.queryByText("Control was not applied")).toBeNull();
+    expect(screen.getByText(/Durable state: pending/)).toBeVisible();
+    expect(screen.getByText(/re-queued for the resident Worker/)).toBeVisible();
+    // Exactly one deliberate submission; a control is never replayed.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(
+      calls.filter((url) => url === "/api/v1/tasks/task-run/resume"),
+    ).toHaveLength(1);
+  });
 });

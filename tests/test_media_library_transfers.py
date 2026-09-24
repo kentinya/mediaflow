@@ -23,6 +23,7 @@ from __future__ import annotations
 import io
 import json
 import tempfile
+import threading
 import unittest
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -1404,6 +1405,47 @@ class MediaLibraryTransferTests(unittest.TestCase):
             self.assertEqual(body["mediaLibraryId"], "movies")
             self.assertEqual(body["destinationMediaLibraryId"], "movies")
             self.assertNotIn("resourceLibraryId", body)
+            # ...and the same Task/lifecycle envelope every other accepted
+            # control returns, so the Operations page reads one applied control
+            # instead of an unapplied one (Slice 38 RO-6).
+            self.assertEqual(body["action"], "resume")
+            self.assertEqual(body["task"]["task_id"], task_id)
+            self.assertEqual(body["task"]["command"], MEDIA_TRANSFER_COMMAND)
+            self.assertEqual(body["lifecycle"]["objectType"], "task")
+            self.assertEqual(body["lifecycle"]["objectId"], task_id)
+            self.assertEqual(body["lifecycle"]["state"], "pending")
+            self.assertTrue(body["lifecycle"]["permitted"])
+            resume_action = next(
+                item for item in body["lifecycle"]["actions"] if item["action"] == "resume"
+            )
+            self.assertIn("re-queued for the resident Worker", resume_action["durableOutcome"])
+            self.assertEqual(body["durableOutcome"], resume_action["durableOutcome"])
+
+            # A second, stale resume against the version the operator already
+            # acted on is refused with the same stable reason as every other
+            # control, and changes nothing.
+            stale_status, stale_body = request(
+                api,
+                f"/api/v1/tasks/{task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
+                token="admin-token",
+            )
+            self.assertEqual(stale_status, 409)
+            # A duplicate resume is refused with a bounded, actionable reason:
+            # the transfer is already queued for its Worker.
+            self.assertEqual(stale_body["error"]["code"], "files_transfer_resume_running")
+            self.assertEqual(stale_body["error"]["details"]["category"], "resume_running")
+            self.assertNotIn("cannot be re-queued", json.dumps(stale_body))
+            # A read-only principal may not continue the transfer at all.
+            denied_status, denied_body = request(
+                api,
+                f"/api/v1/tasks/{task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
+                token="viewer-token",
+            )
+            self.assertEqual(denied_status, 403)
 
             # The Worker then completes it from the persisted authority.
             self._run_worker(media, runtime)
@@ -1480,6 +1522,277 @@ class MediaLibraryTransferTests(unittest.TestCase):
             self.assertIsNone(row.mutation_state)
             projection = media.transfer_projection(task_id)
             self.assertIn(projection["status"], {"FAILED", "UNCERTAIN"})
+            self.assertFalse((root / "target" / "Movies" / "Dst" / "a.mkv").exists())
+            self.assertTrue((root / "target" / "Movies" / "a.mkv").exists())
+
+    # ------------------------------------------------------------------
+    # Started-directory continuation (mid-item pause/resume)
+    # ------------------------------------------------------------------
+
+    def _started_directory_transfer(
+        self,
+        root: Path,
+        *,
+        operation: str,
+        gated: _GatedMediaStorage,
+        case,
+    ):
+        """Pause one *genuinely started* directory transfer at a native mutation."""
+
+        api, active, runtime = self._activate(root, storage_adapters={"media-target": gated})
+        media = self._media_transfers(api, active)
+        show = root / "target" / "Movies" / "show"
+        show.mkdir(parents=True, exist_ok=True)
+        for name in ("one.mkv", "two.mkv", "three.mkv"):
+            (show / name).write_bytes(b"payload-" + name.encode())
+
+        impact = media.transfer_impact(
+            resource_library_id="movies",
+            paths=["show"],
+            destination_resource_library_id="tv",
+            destination_directory="",
+            operation=operation,
+        )
+        admitted = media.submit_transfer(
+            resource_library_id="movies",
+            paths=["show"],
+            destination_resource_library_id="tv",
+            destination_directory="",
+            operation=operation,
+            conflict_mode="fail",
+            manifest_digest=impact.manifest.digest,
+        )
+        task_id = admitted["taskId"]
+        self.assertEqual(admitted["sideEffects"], "none")
+        self.assertFalse((root / "target" / "TV Shows" / "show").exists())
+
+        # A separately invoked Worker really starts the transfer and blocks
+        # inside a native mutation; the durable pause is requested through the
+        # authenticated lifecycle API while that operation is in flight.
+        outcomes: list = []
+
+        def run() -> None:
+            worker = self._worker(media, runtime)
+            try:
+                outcomes.append(worker.run_next())
+            except Exception as error:  # noqa: BLE001 - reported through outcomes
+                outcomes.append(error)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        self.assertTrue(gated.reached.wait(30), "the native mutation was never reached")
+        version = runtime.get_task(task_id).updated_at.isoformat()
+        status, _body = request(
+            api,
+            f"/api/v1/tasks/{task_id}/pause",
+            method="POST",
+            body={"expectedUpdatedAt": version},
+        )
+        self.assertEqual(status, 200)
+        gated.release.set()
+        thread.join(30)
+        self.assertFalse(thread.is_alive())
+
+        # The running transfer observes the request at its per-entry boundary
+        # and durably pauses with a real, started item.
+        task = runtime.get_task(task_id)
+        self.assertEqual(task.status.value, "paused")
+        items = runtime.list_items(task_id)
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].status, TaskItemStatus.PAUSED)
+        # The durable item identity names the library *kind*, while the pinned
+        # Active configuration identifies the same MediaLibrary by its bare ID.
+        self.assertEqual(items[0].resource_library_id, "media:movies")
+        self.assertEqual(split_library_identity(items[0].resource_library_id)[1], "movies")
+        payload = json.loads(items[0].progress)
+        self.assertGreater(payload["completedEntries"], 0)
+        mutations_before_resume = gated.mutation_calls
+        self.assertGreater(mutations_before_resume, 0)
+        return media, runtime, api, task_id, mutations_before_resume
+
+    def test_a_started_media_copy_pauses_and_resumes_from_its_own_checkpoints(self) -> None:
+        """B P1: a genuinely started media directory transfer must continue.
+
+        The item identity is persisted as ``media:movies`` while the pinned
+        Active configuration calls the same library ``movies``; every
+        continuation lookup therefore has to decode the recorded kind before
+        resolving the configured ID.  The completed entries stay terminal and
+        only the remaining ones are transferred.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir(parents=True, exist_ok=True)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            gated = _GatedMediaStorage("media-target", root / "target", gate_after=2)
+            media, runtime, api, task_id, mutations_before = self._started_directory_transfer(
+                root, operation="copy", gated=gated, case=self
+            )
+
+            # Resume through the real authenticated API; the request re-queues
+            # the durable authority and performs no Storage work itself.
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
+            )
+            self.assertEqual(status, 202)
+            self.assertEqual(gated.mutation_calls, mutations_before)
+            # The accepted continuation also carries the Operations envelope,
+            # so the Operations page reads one truthful accepted control.
+            self.assertEqual(body["action"], "resume")
+            self.assertEqual(body["task"]["task_id"], task_id)
+            self.assertEqual(body["lifecycle"]["objectId"], task_id)
+            self.assertEqual(body["lifecycle"]["state"], runtime.get_task(task_id).status.value)
+            self.assertTrue(body["lifecycle"]["permitted"])
+            self.assertIn("durableOutcome", body)
+
+            finished = self._run_worker(media, runtime)
+            self.assertEqual(
+                [transfer.status.value for transfer in finished if transfer is not None],
+                ["completed"],
+            )
+            projection = media.transfer_projection(task_id)
+            self.assertEqual(projection["status"], "SUCCESS")
+            self.assertEqual(runtime.get_task(task_id).status.value, "completed")
+            self.assertEqual(
+                [item.status.value for item in runtime.list_items(task_id)], ["success"]
+            )
+            # Every entry is now in the destination and only the entries that
+            # were not already completed were transferred again.
+            destination = sorted(
+                path.name for path in (root / "target" / "TV Shows" / "show").glob("*.mkv")
+            )
+            self.assertEqual(destination, ["one.mkv", "three.mkv", "two.mkv"])
+            self.assertGreater(gated.mutation_calls, mutations_before)
+            # The source is a Copy: every source byte stays in place.
+            self.assertEqual(
+                sorted(path.name for path in (root / "target" / "Movies" / "show").glob("*.mkv")),
+                ["one.mkv", "three.mkv", "two.mkv"],
+            )
+
+    def test_a_started_media_move_pauses_and_resumes_and_removes_only_after_copy(self) -> None:
+        """The same B P1 continuation for the destructive Move sequence.
+
+        The already-moved entries stay terminal (their source is legitimately
+        gone) and the remaining ones are transferred; the emptied source root is
+        removed only by the verified continuation, never replayed.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir(parents=True, exist_ok=True)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            gated = _GatedMediaStorage("media-target", root / "target", gate_after=2)
+            media, runtime, api, task_id, mutations_before = self._started_directory_transfer(
+                root, operation="move", gated=gated, case=self
+            )
+            moved_before = sorted(
+                path.name for path in (root / "target" / "TV Shows" / "show").glob("*.mkv")
+            )
+            # At least one entry really crossed the mutation boundary before the
+            # pause was observed; those completed moves stay terminal.
+            self.assertGreaterEqual(len(moved_before), 1)
+            self.assertLess(len(moved_before), 3)
+
+            status, body = request(
+                api,
+                f"/api/v1/tasks/{task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": runtime.get_task(task_id).updated_at.isoformat()},
+            )
+            self.assertEqual(status, 202)
+            self.assertEqual(body["lifecycle"]["objectId"], task_id)
+
+            finished = self._run_worker(media, runtime)
+            self.assertEqual(
+                [transfer.status.value for transfer in finished if transfer is not None],
+                ["completed"],
+            )
+            self.assertEqual(media.transfer_projection(task_id)["status"], "SUCCESS")
+            destination = sorted(
+                path.name for path in (root / "target" / "TV Shows" / "show").glob("*.mkv")
+            )
+            self.assertEqual(destination, ["one.mkv", "three.mkv", "two.mkv"])
+            # A verified Move removes the emptied source tree exactly once.
+            self.assertFalse((root / "target" / "Movies" / "show").exists())
+            self.assertEqual(
+                runtime.list_items(task_id)[0].status.value,
+                "success",
+            )
+
+    def test_a_started_item_of_the_other_kind_is_never_continued(self) -> None:
+        """The persisted kind is decoded before any configured-ID lookup.
+
+        A media service must never resolve a bare ResourceLibrary identity (and
+        the reverse): such a row fails closed as a changed scope instead of
+        being read, claimed or continued under the wrong authority.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            media = self._media_transfers(api, active)
+            (root / "target" / "Movies" / "a.mkv").write_bytes(b"media-a")
+            (root / "target" / "Movies" / "Dst").mkdir()
+            impact = media.transfer_impact(
+                resource_library_id="movies",
+                paths=["a.mkv"],
+                destination_resource_library_id="movies",
+                destination_directory="Dst",
+                operation="copy",
+            )
+            admitted = media.submit_transfer(
+                resource_library_id="movies",
+                paths=["a.mkv"],
+                destination_resource_library_id="movies",
+                destination_directory="Dst",
+                operation="copy",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            task_id = admitted["taskId"]
+            item = runtime.list_items(task_id)[0]
+            # A bare identity is ResourceLibrary work by the historical rule and
+            # is never this media service's authority.
+            runtime._connection.execute(
+                "UPDATE task_items SET resource_library_id=? WHERE item_id=?",
+                ("movies", item.item_id),
+            )
+            runtime._connection.execute(
+                "UPDATE task_items SET status=?, progress=? WHERE item_id=?",
+                (
+                    TaskItemStatus.PROCESSING.value,
+                    json.dumps(
+                        {
+                            "version": 1,
+                            "status": "processing",
+                            "operation": "copy",
+                            "conflictMode": "fail",
+                            "destinationStorageId": "media-target",
+                            "destinationResourceLibraryId": "movies",
+                            "destinationPath": "Dst/a.mkv",
+                            "confirmedEntries": [["a.mkv", "Dst/a.mkv", "file"]],
+                            "confirmedTruncated": False,
+                            "completedEntries": 0,
+                            "failedEntries": 0,
+                            "skippedEntries": 0,
+                            "truncated": False,
+                            "entries": [],
+                        }
+                    ),
+                    item.item_id,
+                ),
+            )
+            runtime._connection.commit()
+
+            self._run_worker(media, runtime)
+            projection = media.transfer_projection(task_id)
+            # The foreign row is an explicit investigation state, never a
+            # silently continued or replayed mutation.
+            self.assertEqual(projection["status"], "FAILED")
+            self.assertEqual(projection["itemOutcomes"][0]["status"], "FAILED")
             self.assertFalse((root / "target" / "Movies" / "Dst" / "a.mkv").exists())
             self.assertTrue((root / "target" / "Movies" / "a.mkv").exists())
 
@@ -1568,6 +1881,39 @@ class MediaLibraryTransferTests(unittest.TestCase):
             storage_browser_cursor_secret="media-transfer-test-secret",
         )
         return api, active, runtime_repository
+
+
+class _GatedMediaStorage(LocalStorage):
+    """One MediaLibrary provider that blocks the Nth native mutation.
+
+    The gate lets a test observe one genuinely *started* media transfer item —
+    a real native copy/move already in progress — and request the durable pause
+    through the authenticated lifecycle API while it is blocked.  Nothing about
+    the provider is simulated: it only controls the timing of the real
+    ``LocalStorage`` copy/move, exactly as a slow SMB/OpenList/S3 provider would.
+    """
+
+    def __init__(self, storage_id: str, root: Path, *, gate_after: int) -> None:
+        super().__init__(storage_id, root)
+        self._gate_after = gate_after
+        self.mutation_calls = 0
+        self.reached = threading.Event()
+        self.release = threading.Event()
+
+    def _gate(self) -> None:
+        self.mutation_calls += 1
+        if self.mutation_calls != self._gate_after:
+            return
+        self.reached.set()
+        self.release.wait(timeout=30)
+
+    def copy(self, *args, **kwargs):
+        self._gate()
+        return super().copy(*args, **kwargs)
+
+    def move(self, *args, **kwargs):
+        self._gate()
+        return super().move(*args, **kwargs)
 
 
 def _media_direct(binding, storage) -> DirectFileCommandService:

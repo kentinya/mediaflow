@@ -106,6 +106,7 @@ class _ResumeContext:
     """One item's rebuilt continuation plan plus its persisted checkpoint."""
 
     plan: _TransferPlan
+    source: ResourceLibrary
     destination: ResourceLibrary
     destination_storage: Storage
     skip_paths: frozenset[str]
@@ -1776,7 +1777,7 @@ class DirectFileTransferService:
             # item: it is an explicit interrupted/investigation state.
             self._mark_interrupted_item(item, "files_transfer_interrupted_unknown", fence=fence)
             return None
-        source = self._direct.library(item.resource_library_id)
+        source = context.source
         try:
             resumed_item = self._direct.tasks.begin_item(
                 task_id,
@@ -2063,16 +2064,6 @@ class DirectFileTransferService:
                 status=409,
                 next_action="submit a fresh bounded transfer instead",
             )
-        if transfer.status is FilesTransferStatus.RUNNING and (
-            transfer.claim_expires_at is not None and transfer.claim_expires_at > datetime.now(UTC)
-        ):
-            raise DirectFileTransferError(
-                "files_transfer_resume_running",
-                "resume_running",
-                "the transfer is still owned by a live Worker claim",
-                status=409,
-                next_action="wait for it to finish, pause or cancel it",
-            )
         if transfer.status in {
             FilesTransferStatus.COMPLETED,
             FilesTransferStatus.PARTIAL_SUCCESS,
@@ -2085,6 +2076,28 @@ class DirectFileTransferService:
                 "the transfer already reached a terminal state",
                 status=409,
                 next_action="inspect the recorded per-item outcomes",
+            )
+        if transfer.status is not FilesTransferStatus.PAUSED:
+            # Only a durably paused (or abandoned) transfer has something to
+            # continue.  A transfer that is still queued or running is owned by
+            # the Worker lifecycle: a live claim is never re-queued beneath its
+            # owner, and a duplicate resume of already-queued work is refused
+            # with the same bounded reason instead of surfacing an internal
+            # refusal.
+            live_claim = (
+                transfer.claim_expires_at is not None
+                and transfer.claim_expires_at > datetime.now(UTC)
+            )
+            raise DirectFileTransferError(
+                "files_transfer_resume_running",
+                "resume_running",
+                (
+                    "the transfer is still owned by a live Worker claim"
+                    if live_claim
+                    else "the transfer is already queued or owned by its Worker"
+                ),
+                status=409,
+                next_action="wait for it to finish, pause or cancel it",
             )
         self._direct.tasks.requeue(task_id)
         transfer = self._direct.tasks.repository.requeue_files_transfer(
@@ -2263,6 +2276,14 @@ class DirectFileTransferService:
         confirmed scope that no longer matches live Storage raises a fail-closed
         ``scope_changed`` error so the continuation never expands the confirmed
         transfer, and a recorded uncertain effect is never replayed.
+
+        The persisted item identity is the *durable* identity: a MediaLibrary
+        item is stored as ``media:<configured ID>`` while the pinned
+        configuration identifies the same library by its bare configured ID.
+        Every lookup therefore decodes the kind first, so a started media
+        transfer continues from its own recorded checkpoints exactly as a
+        resource one does — and a row of the other kind is never resolved as
+        this service's library (Slice 38 RO-6/RO-7).
         """
 
         payload = _progress_payload(item)
@@ -2296,7 +2317,7 @@ class DirectFileTransferService:
             raise DirectFileTransferError(
                 "files_transfer_resume_scope_changed",
                 "scope_changed",
-                "the paused transfer's destination ResourceLibrary is not part of the pinned "
+                "the paused transfer's destination library is not part of the pinned "
                 "Active configuration",
                 status=409,
                 next_action=(
@@ -2305,7 +2326,7 @@ class DirectFileTransferService:
                 mutated=False,
             ) from None
         destination_storage = self._direct.open_storage(destination)
-        source = self._direct.library(item.resource_library_id)
+        source = self._started_item_library(item, mutated=bool(payload.get("completedEntries")))
         source_storage = self._direct.open_storage(source)
         top_level = item.source_display
         try:
@@ -2408,12 +2429,48 @@ class DirectFileTransferService:
         )
         return _ResumeContext(
             plan=plan,
+            source=source,
             destination=destination,
             destination_storage=destination_storage,
             skip_paths=frozenset(skip),
             confirmed_entries=confirmed_scope,
             confirmed_truncated=False,
         )
+
+    def _started_item_library(self, item: PersistentTaskItem, *, mutated: bool) -> ResourceLibrary:
+        """Resolve one already-started item's persisted library identity.
+
+        The durable item identity names its library kind (``media:`` prefix for
+        a MediaLibrary), so the configured ID is decoded before the pinned
+        Active lookup.  A row whose recorded kind is not this service's kind is
+        never resolved here: it fails closed as a changed scope instead of being
+        read, claimed or continued under the wrong authority.
+        """
+
+        kind, library_id = split_library_identity(item.resource_library_id)
+        if kind is not self._kind or not library_id:
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the started item does not belong to this library kind",
+                status=409,
+                next_action="inspect the Task in Operations and submit a fresh bounded transfer",
+                mutated=mutated,
+            )
+        try:
+            return self._direct.library(library_id)
+        except DirectFileError:
+            raise DirectFileTransferError(
+                "files_transfer_resume_scope_changed",
+                "scope_changed",
+                "the paused transfer's source library is not part of the pinned "
+                "Active configuration",
+                status=409,
+                next_action=(
+                    "submit a fresh bounded transfer against the current Active configuration"
+                ),
+                mutated=mutated,
+            ) from None
 
     # ------------------------------------------------------------------
     # Manifest construction
