@@ -201,6 +201,23 @@ test("directory navigation, return to root and library switching keep the route 
   await expect(page).toHaveURL(/\/ui-v2\/medialib\/files\?mediaLibraryId=tv$/);
 });
 
+test("focused MediaLibrary folder activation enters the folder instead of opening its row menu", async ({
+  page,
+}) => {
+  await openMediaLibrary(page);
+  const folder = page
+    .getByRole("row", { name: /文件条目 Breaking Bad/ })
+    .getByRole("button", { name: "Breaking Bad" });
+
+  await folder.focus();
+  await page.keyboard.press("Enter");
+
+  await expect(page).toHaveURL(/path=Breaking\+Bad/);
+  await expect(
+    page.getByRole("menu", { name: /条目操作 Breaking Bad/ }),
+  ).toHaveCount(0);
+});
+
 test("an unavailable requested library is replaced by the browsed one in the route", async ({
   page,
 }) => {

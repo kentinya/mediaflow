@@ -771,6 +771,41 @@ describe("Files entry state and ResourceLibrary strip", () => {
     expect(screen.getByRole("menuitem", { name: "整理" })).toBeEnabled();
   });
 
+  it("lets a focused folder button handle Enter without opening the row menu", async () => {
+    const reads: string[] = [];
+    const baseFetch = stripFetchMock({
+      status: activeStatus([libraryItem("lib-a", "local-1")]),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (/\/resource-libraries\/[^/]+\/files(\?|$)/.test(url)) {
+          reads.push(url);
+        }
+        return baseFetch(input, init);
+      }),
+    );
+    const user = userEvent.setup();
+    authStore.setToken("test-token");
+    renderWithProviders(<StorageFilesPage />);
+
+    const row = await screen.findByRole("row", { name: "文件条目 Season" });
+    const folder = within(row).getByRole("button", { name: "Season" });
+    folder.focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() =>
+      expect(
+        reads.some(
+          (url) =>
+            new URL(url, "http://x").searchParams.get("path") === "Season",
+        ),
+      ).toBe(true),
+    );
+    expect(screen.queryByRole("menu", { name: "条目操作 Season" })).toBeNull();
+  });
+
   it("keeps the Add ResourceLibrary drawer closed on normal entry and opens only on explicit activation", async () => {
     const user = userEvent.setup();
     vi.stubGlobal(

@@ -211,6 +211,25 @@ test("directory navigation, breadcrumb return, refresh and selection reset", asy
   ).toBe(true);
 });
 
+test("focused ResourceLibrary folder activation enters the folder instead of opening its row menu", async ({
+  page,
+}) => {
+  await openFiles(page);
+  const folder = page
+    .getByRole("row", { name: /文件条目 Movies/ })
+    .getByRole("button", { name: "Movies" });
+
+  await folder.focus();
+  await page.keyboard.press("Enter");
+
+  await expect(
+    page.getByRole("row", { name: /文件条目 Behind\.The\.Scenes\.mkv/ }),
+  ).toBeVisible();
+  await expect(page.getByRole("menu", { name: /条目操作 Movies/ })).toHaveCount(
+    0,
+  );
+});
+
 test("row selection, selected-row styling and clear selection", async ({
   page,
 }) => {
