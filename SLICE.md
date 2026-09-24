@@ -7,10 +7,10 @@ the approved reference, while preserving the closed Slice 37 ResourceLibrary Fil
 Slice ID: 38
 Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: ACTIVE
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Implementation Head: e186e0b66b389ef2d621b4b4ce3b11c6251445d1
-Contract Revision: 2026-09-24 A reactivation — unified Files/MediaLibrary library context presentation
+Implementation Head: 9030b896eaf819cf1a6eba531f94c844e62532a3
+Contract Revision: 2026-09-24 A reactivation — unified single-entry context menus and folder activation
 ```
 
 Slice 37 remains `PASS / CLOSED`. Its complete Contract, Closure Packet and A Final Review remain
@@ -69,6 +69,29 @@ This revision supersedes only the earlier card-level Storage/root presentation w
 drawer and all existing file facts, commands, Organize continuity and safety invariants remain in
 force.
 
+## Current A Scope Revision — Unified Single-Entry Command Menus
+
+The Files and MediaLibrary browse pages now use one command-entry rule for individual entries. This
+is a focused presentation and interaction correction; it does not change command APIs, permissions,
+Storage capability checks, stale evidence, OrganizerExecutor mutation or batch actions.
+
+- Both browse tables remove the `操作` column. The visible columns are exactly
+  `选择 | 名称 | 类型 | 大小 | 修改时间`.
+- A right-click, Context Menu key or `Shift+F10` on an eligible entry opens the controlled single-entry
+  menu. The menu keeps the existing capability/RBAC filtering and confirmation dialogs.
+- Folder entries keep `打开`, `重命名`, `复制`, `移动` and `删除` in the menu. A left click on a
+  folder's name, icon or non-checkbox row area opens it directly; there is no duplicate inline
+  `打开` button. The root remains protected from rename/delete.
+- File entries keep supported `打开/编辑`, `重命名`, `复制`, `移动` and `删除`; ResourceLibrary
+  entries may also expose `整理`, while MediaLibrary entries never expose Organize.
+- Batch selection bars and their bounded batch commands remain unchanged. Moving single-entry
+  commands to the context menu does not create new batch semantics or bypass authorization.
+- Context menus support Escape/outside click dismissal, keyboard focus return, accessible names and
+  usable narrow-screen behavior. Viewing, selecting or opening a menu never submits a mutation.
+
+This revision changes only the entry surface for already-delivered commands. It does not authorize
+new operations, arbitrary editing, upload/download, cross-kind transfer or backend fallback.
+
 ## Baseline and Requirements
 
 At Base, the V2 Library landing links to ResourceLibrary Files, Scan and Preview; it is not a
@@ -117,11 +140,12 @@ journey or V1 `/ui` is retired. Existing ResourceLibrary API semantics remain co
 Deliver the image's hierarchy inside the existing shared shell: title/subtitle/Add button, library
 cards, directory pane, breadcrumb/refresh/view toolbar, selection action bar above the file list,
 six-column table, paging and right-side three-step drawer. Columns are
-`选择 | 名称 | 类型 | 大小 | 修改时间 | 操作`. List/grid use type icons. Library cards and
+`选择 | 名称 | 类型 | 大小 | 修改时间`. List/grid use type icons. Library cards and
 the selected-library context follow the shared Files presentation: cards show only name/selection
 and context shows only enabled state/path. Storage, card statistics, capacity, statistics
 placeholders, thumbnails, recognition results and organize-status presentation are absent from the
-normal browse page.
+normal browse page. Individual commands are entered through the controlled context menu; batch
+commands remain in the selection bar.
 No `整理` or `批量整理` page command appears.
 
 The existing shared sidebar `整理规则` remains. Removing the Organize UI does not remove
@@ -261,7 +285,8 @@ with existing prevention/recovery guidance. This Slice does not claim to fix it 
   directory-creation policy behavior, V1 cutover, generic workflow/persistence redesign, universal
   rollback and automatic uncertain replay.
 - Changes to the user's dirty `docs/pics/文件页.png`, unrelated shell/product redesign, and any
-  Files presentation change beyond the explicitly required shared library-card/context parity.
+  Files presentation change beyond the explicitly required shared library-card/context parity and
+  single-entry command-menu parity.
 
 ## Slice Acceptance Criteria
 
@@ -306,7 +331,12 @@ evidence in the Closure Packet. B cannot change Base/boundaries/acceptance or cl
 Required Outcomes are satisfied, stop creating Tasks and submit the packet for A's
 Base..Implementation Head review under the development workflow.
 
-## Closure Packet
+## Previous Closure Packet (Superseded by Current A Reactivation)
+
+The prior B Closure Packet below was not A-final-reviewed. It remains historical evidence through
+`9030b89`, but this reactivation adds the unified single-entry command-menu correction and requires
+a new Task checkpoint and fresh B/A review. No current Slice closure is claimed until that Task
+passes.
 
 Slice: 38 — MediaLibrary Files Workspace and Route Separation
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
