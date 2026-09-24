@@ -75,9 +75,7 @@ def _entry_evidence(api, active, resource_library_id: str, relative: str) -> dic
 
     binding = api._prepare_runtime_binding_for_revision(active)
     service = binding.direct_files
-    document = service.rename_evidence(
-        resource_library_id=resource_library_id, path=relative
-    ).document()
+    document = service.rename_evidence(library_id=resource_library_id, path=relative).document()
     return {
         "size": document["size"],
         "modifiedAt": document["modifiedAt"],
@@ -88,7 +86,7 @@ def _entry_evidence(api, active, resource_library_id: str, relative: str) -> dic
 def _loaded_evidence(service: DirectFileCommandService, resource_library_id: str, path: str):
     """The exact loaded text-version evidence the API issues for a read."""
 
-    return service.read_text(resource_library_id=resource_library_id, path=path).evidence.document()
+    return service.read_text(library_id=resource_library_id, path=path).evidence.document()
 
 
 def _directory_identity(fingerprint: str | None) -> str | None:
@@ -644,15 +642,15 @@ class DirectFileOperationsTests(unittest.TestCase):
             root = Path(directory)
             api, _objects, active, runtime = self._activate(root)
             service = self._service(api, active)
-            service.create_directory(resource_library_id="source", parent_path="", name="movies")
+            service.create_directory(library_id="source", parent_path="", name="movies")
             outcome = service.create_directory(
-                resource_library_id="source", parent_path="movies", name="2024"
+                library_id="source", parent_path="movies", name="2024"
             )
             self.assertEqual(outcome["status"], "SUCCESS")
             self.assertEqual(outcome["effectCertainty"], "verified_complete")
             self.assertTrue((root / "source" / "movies" / "2024").is_dir())
             rename = service.rename(
-                resource_library_id="source",
+                library_id="source",
                 path="movies/2024",
                 name="2025",
                 expected=_entry_evidence(api, active, "source", "movies/2024"),
@@ -674,15 +672,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             for name in ("../escape", "a/b", "con", "name.", "/abs", ""):
                 with self.assertRaises(DirectFileError) as caught:
-                    service.create_directory(
-                        resource_library_id="source", parent_path="", name=name
-                    )
+                    service.create_directory(library_id="source", parent_path="", name=name)
                 self.assertEqual(caught.exception.category, "invalid_name")
                 self.assertEqual(caught.exception.status, 400)
             self.assertEqual(list(root.glob("source/*")), [])
-            service.create_directory(resource_library_id="source", parent_path="", name="shows")
+            service.create_directory(library_id="source", parent_path="", name="shows")
             with self.assertRaises(DirectFileError) as conflict:
-                service.create_directory(resource_library_id="source", parent_path="", name="shows")
+                service.create_directory(library_id="source", parent_path="", name="shows")
             self.assertEqual(conflict.exception.category, "target_exists")
             self.assertEqual(conflict.exception.details["durableState"], "storage_unchanged")
 
@@ -691,9 +687,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             root = Path(directory)
             api, _objects, active, _tasks = self._activate(root)
             service = self._service(api, active)
-            service.create_directory(resource_library_id="source", parent_path="", name="notes")
+            service.create_directory(library_id="source", parent_path="", name="notes")
             outcome = service.create_text(
-                resource_library_id="source",
+                library_id="source",
                 parent_path="notes",
                 name="plan.txt",
                 content="hello",
@@ -704,13 +700,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             for name in ("movie.mkv", "binary.exe", "data.dat"):
                 with self.assertRaises(DirectFileError) as caught:
-                    service.create_text(
-                        resource_library_id="source", parent_path="", name=name, content=""
-                    )
+                    service.create_text(library_id="source", parent_path="", name=name, content="")
                 self.assertEqual(caught.exception.category, "unsupported_text_type")
             with self.assertRaises(DirectFileError) as conflict:
                 service.create_text(
-                    resource_library_id="source",
+                    library_id="source",
                     parent_path="notes",
                     name="plan.txt",
                     content="replacement",
@@ -721,7 +715,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             with self.assertRaises(DirectFileError) as oversized:
                 service.create_text(
-                    resource_library_id="source",
+                    library_id="source",
                     parent_path="",
                     name="big.txt",
                     content="x" * (512 * 1024 + 1),
@@ -736,7 +730,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             (root / "source" / "notes").mkdir()
             (root / "source" / "notes" / "a.nfo").write_text("body", encoding="utf-8")
-            document = service.read_text(resource_library_id="source", path="notes/a.nfo")
+            document = service.read_text(library_id="source", path="notes/a.nfo")
             self.assertEqual(document.content, "body")
             self.assertEqual(document.evidence.size, 4)
             self.assertTrue(document.evidence.digest)
@@ -747,15 +741,15 @@ class DirectFileOperationsTests(unittest.TestCase):
                 ("notes/missing.txt", "not_found"),
             ):
                 with self.assertRaises(DirectFileError) as caught:
-                    service.read_text(resource_library_id="source", path=path)
+                    service.read_text(library_id="source", path=path)
                 self.assertEqual(caught.exception.category, expected)
             (root / "source" / "notes" / "bin.nfo").write_bytes(b"\xff\xfe\x00binary")
             with self.assertRaises(DirectFileError) as binary:
-                service.read_text(resource_library_id="source", path="notes/bin.nfo")
+                service.read_text(library_id="source", path="notes/bin.nfo")
             self.assertEqual(binary.exception.category, "text_not_decodable")
             (root / "source" / "notes" / "big.srt").write_bytes(b"x" * (512 * 1024 + 1))
             with self.assertRaises(DirectFileError) as oversized:
-                service.read_text(resource_library_id="source", path="notes/big.srt")
+                service.read_text(library_id="source", path="notes/big.srt")
             self.assertEqual(oversized.exception.category, "text_too_large")
 
     def test_save_text_is_stale_safe_and_never_overwrites_newer_content(self) -> None:
@@ -764,11 +758,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, active, _tasks = self._activate(root)
             service = self._service(api, active)
             (root / "source" / "a.txt").write_text("v1", encoding="utf-8")
-            loaded = service.read_text(resource_library_id="source", path="a.txt")
+            loaded = service.read_text(library_id="source", path="a.txt")
             (root / "source" / "a.txt").write_text("v2-newer", encoding="utf-8")
             with self.assertRaises(DirectFileError) as stale:
                 service.save_text(
-                    resource_library_id="source",
+                    library_id="source",
                     path="a.txt",
                     content="editor edits",
                     expected=loaded.evidence.document(),
@@ -776,9 +770,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(stale.exception.category, "stale_changed")
             self.assertEqual(stale.exception.status, 409)
             self.assertEqual((root / "source" / "a.txt").read_text(encoding="utf-8"), "v2-newer")
-            reloaded = service.read_text(resource_library_id="source", path="a.txt")
+            reloaded = service.read_text(library_id="source", path="a.txt")
             outcome = service.save_text(
-                resource_library_id="source",
+                library_id="source",
                 path="a.txt",
                 content="editor edits",
                 expected=reloaded.evidence.document(),
@@ -803,7 +797,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, active, _tasks = self._activate(root)
             service = self._service(api, active)
             (root / "source" / "a.txt").write_text("v1!", encoding="utf-8")
-            loaded = service.read_text(resource_library_id="source", path="a.txt")
+            loaded = service.read_text(library_id="source", path="a.txt")
             evidence = loaded.evidence.document()
             # The file still matches the loaded evidence at admission time; the
             # same-size replacement happens only inside the executor's
@@ -811,7 +805,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             swapper = _LateSwapExecutor(root, "a.txt", "vX!")
             with patch.object(service, "_executor", swapper):
                 outcome = service.save_text(
-                    resource_library_id="source",
+                    library_id="source",
                     path="a.txt",
                     content="editor edits",
                     expected=evidence,
@@ -849,7 +843,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(swapped.st_mtime_ns, observed.st_mtime_ns)
             with self.assertRaises(DirectFileError) as stale:
                 service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="rename-me.txt",
                     name="renamed.txt",
                     expected=evidence,
@@ -862,7 +856,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             # Fresh evidence succeeds and the durable record carries the target.
             fresh = _entry_evidence(api, active, "source", "rename-me.txt")
             outcome = service.rename(
-                resource_library_id="source",
+                library_id="source",
                 path="rename-me.txt",
                 name="renamed.txt",
                 expected=fresh,
@@ -946,7 +940,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(raced.stat().st_mtime_ns, observed.st_mtime_ns)
             with patch.object(service, "_executor", swapper):
                 outcome = service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="race.txt",
                     name="raced.txt",
                     expected=evidence,
@@ -983,7 +977,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             for relative in ("note.txt", "folder"):
                 with self.assertRaises(DirectFileError) as refused:
-                    service.rename_evidence(resource_library_id="source", path=relative)
+                    service.rename_evidence(library_id="source", path=relative)
                 self.assertEqual(refused.exception.code, "files_direct_entry_identity_unavailable")
                 self.assertEqual(refused.exception.category, "entry_identity_unavailable")
                 self.assertEqual(refused.exception.status, 400)
@@ -992,7 +986,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             with self.assertRaises(DirectFileError) as command_refused:
                 service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="note.txt",
                     name="renamed-note.txt",
                     expected={
@@ -1042,7 +1036,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             for paths in (["folder"], ["single.txt"], ["folder", "single.txt"]):
                 with self.assertRaises(DirectFileError) as preview:
-                    service.delete_impact(resource_library_id="source", paths=paths)
+                    service.delete_impact(library_id="source", paths=paths)
                 self.assertEqual(preview.exception.code, "files_direct_entry_identity_unavailable")
                 self.assertEqual(preview.exception.category, "entry_identity_unavailable")
                 self.assertEqual(preview.exception.status, 400)
@@ -1050,7 +1044,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             with self.assertRaises(DirectFileError) as command_refused:
                 service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["folder", "single.txt"],
                     confirmation_digest="0" * 64,
                 )
@@ -1099,22 +1093,22 @@ class DirectFileOperationsTests(unittest.TestCase):
                 side_effect=AssertionError("Rename/Delete must not run duplicate hashing"),
             ) as hasher_calculate:
                 outcome = service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="renamed.txt",
                     name="moved.txt",
                     expected=_entry_evidence(api, active, "source", "renamed.txt"),
                 )
                 self.assertEqual(outcome["status"], "SUCCESS")
-                impact = service.delete_impact(resource_library_id="source", paths=["moved.txt"])
+                impact = service.delete_impact(library_id="source", paths=["moved.txt"])
                 deleted = service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["moved.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
                 self.assertEqual(deleted["status"], "SUCCESS")
-                recursive = service.delete_impact(resource_library_id="source", paths=["victim"])
+                recursive = service.delete_impact(library_id="source", paths=["victim"])
                 recursive_outcome = service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["victim"],
                     confirmation_digest=recursive.scope_digest,
                 )
@@ -1151,7 +1145,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             swapped.write_text("v1", encoding="utf-8")
             observed = swapped.stat()
             evidence = _entry_evidence(api, active, "source", "swapped.txt")
-            impact = service.delete_impact(resource_library_id="source", paths=["swapped.txt"])
+            impact = service.delete_impact(library_id="source", paths=["swapped.txt"])
 
             # Same size, same mtime, same name: only the provider identity moves.
             swapped.write_text("v2", encoding="utf-8")
@@ -1162,7 +1156,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             with self.assertRaises(DirectFileError) as stale:
                 service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="swapped.txt",
                     name="renamed.txt",
                     expected=evidence,
@@ -1175,7 +1169,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             with self.assertRaises(DirectFileError) as stale_confirmation:
                 service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["swapped.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
@@ -1187,15 +1181,15 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             # The current version still completes both journeys.
             outcome = service.rename(
-                resource_library_id="source",
+                library_id="source",
                 path="swapped.txt",
                 name="renamed.txt",
                 expected=_entry_evidence(api, active, "source", "swapped.txt"),
             )
             self.assertEqual(outcome["status"], "SUCCESS")
-            refreshed = service.delete_impact(resource_library_id="source", paths=["renamed.txt"])
+            refreshed = service.delete_impact(library_id="source", paths=["renamed.txt"])
             deleted = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["renamed.txt"],
                 confirmation_digest=refreshed.scope_digest,
             )
@@ -1265,10 +1259,10 @@ class DirectFileOperationsTests(unittest.TestCase):
                     )
 
             rename_evidence = _entry_evidence(api, active, "source", "race.txt")
-            impact = service.delete_impact(resource_library_id="source", paths=["deleted.txt"])
+            impact = service.delete_impact(library_id="source", paths=["deleted.txt"])
             with patch.object(service, "_executor", BumpIdentityInPreflight(storage)):
                 outcome = service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="race.txt",
                     name="raced.txt",
                     expected=rename_evidence,
@@ -1280,7 +1274,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
                 storage.version = "v1"
                 delete_outcome = service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["deleted.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
@@ -1298,7 +1292,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, active, _tasks = self._activate(root)
             service = self._service(api, active)
             (root / "source" / "victim.txt").write_text("v1", encoding="utf-8")
-            impact = service.delete_impact(resource_library_id="source", paths=["victim.txt"])
+            impact = service.delete_impact(library_id="source", paths=["victim.txt"])
             # Same size, different content and a later mtime: the modifiedAt in
             # the scope digest makes the old confirmation stale instead of
             # deleting the new file.
@@ -1307,7 +1301,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             os.utime(root / "source" / "victim.txt", (later.timestamp(), later.timestamp()))
             with self.assertRaises(DirectFileError) as stale:
                 service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["victim.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
@@ -1373,10 +1367,10 @@ class DirectFileOperationsTests(unittest.TestCase):
                         verify=verify,
                     )
 
-            impact = service.delete_impact(resource_library_id="source", paths=["race-victim.txt"])
+            impact = service.delete_impact(library_id="source", paths=["race-victim.txt"])
             with patch.object(service, "_executor", SwapInDeletePreflight(root)):
                 outcome = service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["race-victim.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
@@ -1397,7 +1391,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             (root / "source" / "victim").mkdir()
             (root / "source" / "victim" / "a.txt").write_text("a", encoding="utf-8")
-            impact = service.delete_impact(resource_library_id="source", paths=["victim"])
+            impact = service.delete_impact(library_id="source", paths=["victim"])
             document = impact.document()
             rendered = json.dumps(document)
             self.assertNotIn("inode:", rendered)
@@ -1493,9 +1487,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "season" / "inner").mkdir()
             (root / "source" / "season" / "inner" / "e1.mkv").write_bytes(b"01")
             (root / "source" / "season" / "e0.mkv").write_bytes(b"0")
-            impact = service.delete_impact(resource_library_id="source", paths=["season"])
+            impact = service.delete_impact(library_id="source", paths=["season"])
             outcome = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["season"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -1637,7 +1631,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             evidence = _entry_evidence(api, active, "source", "first.txt")
             with self.assertRaises(DirectFileError) as stale:
                 service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="second.txt",
                     name="renamed-second.txt",
                     expected=evidence,
@@ -1649,7 +1643,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             # A tampered token is not accepted either.
             with self.assertRaises(DirectFileError) as tampered:
                 service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="first.txt",
                     name="renamed-first.txt",
                     expected={**evidence, "evidence": "v1." + "f" * 32},
@@ -1658,7 +1652,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertTrue((root / "source" / "first.txt").exists())
             # The evidence issued for this exact entry still succeeds.
             outcome = service.rename(
-                resource_library_id="source",
+                library_id="source",
                 path="first.txt",
                 name="renamed-first.txt",
                 expected=evidence,
@@ -1675,11 +1669,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             (root / "source" / "one.txt").write_text("1", encoding="utf-8")
             (root / "source" / "two.txt").write_text("2", encoding="utf-8")
-            impact = service.delete_impact(
-                resource_library_id="source", paths=["one.txt", "two.txt"]
-            )
+            impact = service.delete_impact(library_id="source", paths=["one.txt", "two.txt"])
             outcome = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["one.txt", "two.txt"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -1698,12 +1690,10 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             (root / "source" / "three.txt").write_text("3", encoding="utf-8")
             (root / "source" / "four.txt").write_text("4", encoding="utf-8")
-            impact = service.delete_impact(
-                resource_library_id="source", paths=["three.txt", "four.txt"]
-            )
+            impact = service.delete_impact(library_id="source", paths=["three.txt", "four.txt"])
             with patch.object(LocalStorage, "delete", failing_delete):
                 partial = service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["three.txt", "four.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
@@ -1738,11 +1728,11 @@ class DirectFileOperationsTests(unittest.TestCase):
             big.mkdir()
             for index in range(201):
                 (big / f"file-{index:03}.txt").write_text("x", encoding="utf-8")
-            impact = service.delete_impact(resource_library_id="source", paths=["big-dir"])
+            impact = service.delete_impact(library_id="source", paths=["big-dir"])
             # 201 files + the directory itself.
             self.assertEqual(len(impact.entries), 202)
             outcome = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["big-dir"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -1767,23 +1757,23 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "season" / "ep1").mkdir()
             (root / "source" / "season" / "ep1" / "e1.mkv").write_bytes(b"0123456789")
             (root / "source" / "season" / "e0.mkv").write_bytes(b"01")
-            impact = service.delete_impact(resource_library_id="source", paths=["season"])
+            impact = service.delete_impact(library_id="source", paths=["season"])
             self.assertEqual(impact.file_count, 2)
             self.assertEqual(impact.directory_count, 2)
             self.assertEqual(impact.total_bytes, 12)
             self.assertTrue(impact.scope_digest)
             self.assertEqual(len(impact.entries), 4)
             with self.assertRaises(DirectFileError) as root_protected:
-                service.delete_impact(resource_library_id="source", paths=[""])
+                service.delete_impact(library_id="source", paths=[""])
             self.assertEqual(root_protected.exception.category, "root_protected")
             with self.assertRaises(DirectFileError) as nested:
-                service.delete_impact(resource_library_id="source", paths=["season", "season/ep1"])
+                service.delete_impact(library_id="source", paths=["season", "season/ep1"])
             self.assertEqual(nested.exception.category, "invalid_request")
             outside = root / "outside.txt"
             outside.write_text("keep", encoding="utf-8")
             os.symlink(outside, root / "source" / "season" / "link.mkv")
             with self.assertRaises(DirectFileError) as escaped:
-                service.delete_impact(resource_library_id="source", paths=["season"])
+                service.delete_impact(library_id="source", paths=["season"])
             self.assertEqual(escaped.exception.category, "symlink_not_supported")
             self.assertTrue(outside.exists())
 
@@ -1797,7 +1787,7 @@ class DirectFileOperationsTests(unittest.TestCase):
                 (root / "source" / "many" / f"file-{index}.txt").write_text("x", encoding="utf-8")
             with patch("mediaflow.application.direct_file_commands.MAX_IMPACT_ENTRIES", 3):
                 with self.assertRaises(DirectFileError) as limited:
-                    service.delete_impact(resource_library_id="source", paths=["many"])
+                    service.delete_impact(library_id="source", paths=["many"])
             self.assertEqual(limited.exception.category, "impact_entry_limit_exceeded")
             self.assertEqual(limited.exception.status, 413)
             self.assertEqual(len(os.listdir(root / "source")), 1)
@@ -1813,21 +1803,19 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "bulk" / "inner" / "deep.txt").write_text("d", encoding="utf-8")
             (root / "source" / "bulk" / "top.txt").write_text("t", encoding="utf-8")
             (root / "source" / "single.txt").write_text("s", encoding="utf-8")
-            impact = service.delete_impact(
-                resource_library_id="source", paths=["bulk", "single.txt"]
-            )
+            impact = service.delete_impact(library_id="source", paths=["bulk", "single.txt"])
             self.assertEqual(impact.file_count, 3)
             self.assertEqual(impact.directory_count, 2)
             with self.assertRaises(DirectFileError) as mismatch:
                 service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["bulk", "single.txt"],
                     confirmation_digest="0" * 64,
                 )
             self.assertEqual(mismatch.exception.category, "stale_confirmation")
             self.assertTrue((root / "source" / "bulk").exists())
             outcome = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["bulk", "single.txt"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -1848,9 +1836,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, active, runtime = self._activate(root)
             service = self._service(api, active)
             (root / "source" / "one.txt").write_text("1", encoding="utf-8")
-            impact = service.delete_impact(resource_library_id="source", paths=["one.txt"])
+            impact = service.delete_impact(library_id="source", paths=["one.txt"])
             outcome = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["one.txt"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -1867,7 +1855,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "batch").mkdir()
             (root / "source" / "batch" / "one.txt").write_text("1", encoding="utf-8")
             (root / "source" / "batch" / "two.txt").write_text("2", encoding="utf-8")
-            impact = service.delete_impact(resource_library_id="source", paths=["batch"])
+            impact = service.delete_impact(library_id="source", paths=["batch"])
 
             real_delete = LocalStorage.delete
 
@@ -1878,7 +1866,7 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             with patch.object(LocalStorage, "delete", selective_delete):
                 outcome = service.execute_delete(
-                    resource_library_id="source",
+                    library_id="source",
                     paths=["batch"],
                     confirmation_digest=impact.scope_digest,
                 )
@@ -1908,26 +1896,24 @@ class DirectFileOperationsTests(unittest.TestCase):
                 binding = api._prepare_runtime_binding_for_revision(active)
             service = binding.direct_files
             self.assertIs(service._executor, executor)
-            service.create_directory(resource_library_id="source", parent_path="", name="d1")
-            service.create_text(
-                resource_library_id="source", parent_path="", name="n.txt", content="x"
-            )
+            service.create_directory(library_id="source", parent_path="", name="d1")
+            service.create_text(library_id="source", parent_path="", name="n.txt", content="x")
             service.rename(
-                resource_library_id="source",
+                library_id="source",
                 path="n.txt",
                 name="m.txt",
                 expected=_entry_evidence(api, active, "source", "n.txt"),
             )
-            loaded = service.read_text(resource_library_id="source", path="m.txt")
+            loaded = service.read_text(library_id="source", path="m.txt")
             service.save_text(
-                resource_library_id="source",
+                library_id="source",
                 path="m.txt",
                 content="y",
                 expected=loaded.evidence.document(),
             )
-            impact = service.delete_impact(resource_library_id="source", paths=["m.txt"])
+            impact = service.delete_impact(library_id="source", paths=["m.txt"])
             service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["m.txt"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -1954,13 +1940,13 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             for call in (
                 lambda: service.create_directory(
-                    resource_library_id="source", parent_path="", name="blocked"
+                    library_id="source", parent_path="", name="blocked"
                 ),
                 lambda: service.create_text(
-                    resource_library_id="source", parent_path="", name="a.txt", content=""
+                    library_id="source", parent_path="", name="a.txt", content=""
                 ),
                 lambda: service.rename(
-                    resource_library_id="source",
+                    library_id="source",
                     path="a.txt",
                     name="b.txt",
                     expected={
@@ -1984,21 +1970,21 @@ class DirectFileOperationsTests(unittest.TestCase):
             api, _objects, active, runtime = self._activate(root)
             service = self._service(api, active)
             created = service.create_directory(
-                resource_library_id="source", parent_path="", name="created-dir"
+                library_id="source", parent_path="", name="created-dir"
             )
             results = runtime.list_results(created["taskId"])
             self.assertEqual(results[0].source_path, "created-dir")
             self.assertEqual(results[0].destination_path, "created-dir")
 
             text = service.create_text(
-                resource_library_id="source", parent_path="", name="file.txt", content="x"
+                library_id="source", parent_path="", name="file.txt", content="x"
             )
             results = runtime.list_results(text["taskId"])
             self.assertEqual(results[0].source_path, "file.txt")
             self.assertEqual(results[0].destination_path, "file.txt")
 
             renamed = service.rename(
-                resource_library_id="source",
+                library_id="source",
                 path="file.txt",
                 name="moved.txt",
                 expected=_entry_evidence(api, active, "source", "file.txt"),
@@ -2008,7 +1994,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(results[0].destination_path, "moved.txt")
 
             saved = service.save_text(
-                resource_library_id="source",
+                library_id="source",
                 path="moved.txt",
                 content="y",
                 expected=_loaded_evidence(service, "source", "moved.txt"),
@@ -2017,9 +2003,9 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(results[0].source_path, "moved.txt")
             self.assertEqual(results[0].destination_path, "moved.txt")
 
-            impact = service.delete_impact(resource_library_id="source", paths=["moved.txt"])
+            impact = service.delete_impact(library_id="source", paths=["moved.txt"])
             deleted = service.execute_delete(
-                resource_library_id="source",
+                library_id="source",
                 paths=["moved.txt"],
                 confirmation_digest=impact.scope_digest,
             )
@@ -2043,7 +2029,7 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             secret_text = "SECRET-EDITOR-CONTENT-9f3b1c"
             outcome = service.create_text(
-                resource_library_id="source",
+                library_id="source",
                 parent_path="",
                 name="secret.txt",
                 content=secret_text,

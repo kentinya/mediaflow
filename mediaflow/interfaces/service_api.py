@@ -113,6 +113,7 @@ from mediaflow.domain.direct_files import (
     MAX_DELETE_PATHS,
     MAX_TRANSFER_PATHS,
     DirectFileOperation,
+    LibraryKind,
 )
 from mediaflow.domain.failure import failure_document
 from mediaflow.domain.file_lifecycle import (
@@ -261,6 +262,12 @@ class _ApiRuntimeBinding:
     dashboard: DashboardService
     files_browser: RuntimeFilesBrowserService | None = None
     direct_files: DirectFileCommandService | None = None
+    #: The MediaLibrary-owned twin of ``direct_files`` (Slice 38 RO-5/RO-7).  It
+    #: is a separate service pinned to the same immutable Active revision but
+    #: constructed for the media library kind, so it can only ever resolve an
+    #: enabled MediaLibrary and can never be handed a ResourceLibrary ID as
+    #: authority (or the reverse).
+    direct_media_files: DirectFileCommandService | None = None
     direct_transfers: DirectFileTransferService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
@@ -4830,21 +4837,17 @@ class MediaFlowApi:
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            if binding.direct_files is None:
-                return self._files_browser_unavailable(start_response)
-            path = self._files_direct_text_query(environ)
-            document = binding.direct_files.read_text(resource_library_id=parts[3], path=path)
-            return self._response(
-                start_response,
-                200,
-                {
-                    "resourceLibraryId": document.resource_library_id,
-                    "path": document.path,
-                    "content": document.content,
-                    "evidence": document.evidence.document(),
-                    "sideEffects": "none",
-                    "retrySafe": True,
-                },
+            return self._files_direct_text_read(start_response, binding, parts[3], environ)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "text"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            return self._files_direct_text_read(
+                start_response, binding, parts[3], environ, media_library=True
             )
         if (
             len(parts) == 6
@@ -4854,19 +4857,18 @@ class MediaFlowApi:
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            if binding.direct_files is None:
-                return self._files_browser_unavailable(start_response)
-            paths = self._files_delete_impact_query(environ)
-            document = binding.direct_files.delete_impact(resource_library_id=parts[3], paths=paths)
-            response = document.document()
-            response["sideEffects"] = "none"
-            response["retrySafe"] = True
-            response["nextAction"] = (
-                "confirm this exact impact to run the bounded Delete"
-                if document.entries
-                else "the selection is empty; refresh the directory and retry"
+            return self._files_direct_delete_impact(start_response, binding, parts[3], environ)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "delete-impact"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            return self._files_direct_delete_impact(
+                start_response, binding, parts[3], environ, media_library=True
             )
-            return self._response(start_response, 200, response)
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -4875,18 +4877,18 @@ class MediaFlowApi:
             and method == "GET"
         ):
             self._require(principal, ApiPermission.READ)
-            if binding.direct_files is None:
-                return self._files_browser_unavailable(start_response)
-            path = self._files_direct_rename_evidence_query(environ)
-            evidence = binding.direct_files.rename_evidence(resource_library_id=parts[3], path=path)
-            response = evidence.document()
-            response["sideEffects"] = "none"
-            response["retrySafe"] = True
-            response["nextAction"] = (
-                "submit the Rename with this exact evidence, or refresh the directory "
-                "if the entry changed in the meantime"
+            return self._files_direct_rename_evidence(start_response, binding, parts[3], environ)
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "rename-evidence"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            return self._files_direct_rename_evidence(
+                start_response, binding, parts[3], environ, media_library=True
             )
-            return self._response(start_response, 200, response)
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -5029,71 +5031,25 @@ class MediaFlowApi:
             and method == "POST"
         ):
             self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
-            if binding.direct_files is None:
-                return self._files_browser_unavailable(start_response)
-            self._require_empty_query(environ, "Files direct command")
-            document = self._document(environ)
-            if not isinstance(document, dict) or "operation" not in document:
-                raise ValueError("a Files direct command requires an operation")
-            operation = document["operation"]
-            resource_library_id = parts[3]
-            if operation == DirectFileOperation.CREATE_DIRECTORY.value:
-                required = {"operation", "parentPath", "name"}
-                if set(document) != required:
-                    raise ValueError("Create Folder requires only operation, parentPath, and name")
-                result = binding.direct_files.create_directory(
-                    resource_library_id=resource_library_id,
-                    parent_path=document["parentPath"],
-                    name=document["name"],
-                )
-            elif operation == DirectFileOperation.CREATE_TEXT.value:
-                required = {"operation", "parentPath", "name", "content"}
-                if set(document) != required:
-                    raise ValueError(
-                        "Create Text File requires only operation, parentPath, name, and content"
-                    )
-                result = binding.direct_files.create_text(
-                    resource_library_id=resource_library_id,
-                    parent_path=document["parentPath"],
-                    name=document["name"],
-                    content=document["content"],
-                )
-            elif operation == DirectFileOperation.RENAME.value:
-                required = {"operation", "path", "name", "expected"}
-                if set(document) != required:
-                    raise ValueError("Rename requires only operation, path, name, and expected")
-                result = binding.direct_files.rename(
-                    resource_library_id=resource_library_id,
-                    path=document["path"],
-                    name=document["name"],
-                    expected=document["expected"],
-                )
-            elif operation == DirectFileOperation.SAVE_TEXT.value:
-                required = {"operation", "path", "content", "expected"}
-                if set(document) != required:
-                    raise ValueError(
-                        "Text Save requires only operation, path, content, and expected"
-                    )
-                result = binding.direct_files.save_text(
-                    resource_library_id=resource_library_id,
-                    path=document["path"],
-                    content=document["content"],
-                    expected=document["expected"],
-                )
-            elif operation == DirectFileOperation.DELETE.value:
-                required = {"operation", "paths", "confirmationDigest"}
-                if set(document) != required:
-                    raise ValueError(
-                        "Delete requires only operation, paths, and confirmationDigest"
-                    )
-                result = binding.direct_files.execute_delete(
-                    resource_library_id=resource_library_id,
-                    paths=document["paths"],
-                    confirmation_digest=document["confirmationDigest"],
-                )
-            else:
-                raise ValueError("the Files direct command operation is not supported")
-            return self._response(start_response, 200, result)
+            return self._files_direct_command(
+                start_response, binding, parts[3], environ, media_library=False
+            )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] == "commands"
+            and method == "POST"
+        ):
+            # The MediaLibrary page reaches the same application behavior through
+            # its own library authority: identical permissions, identical request
+            # contract, identical admission and execution boundary — and a
+            # ResourceLibrary ID supplied here is simply not an enabled
+            # MediaLibrary, so it fails closed.
+            self._require(principal, ApiPermission.EXECUTE_MANUAL_ORGANIZE)
+            return self._files_direct_command(
+                start_response, binding, parts[3], environ, media_library=True
+            )
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -7615,6 +7571,7 @@ class MediaFlowApi:
     ) -> _ApiRuntimeBinding:
         files_browser = None
         direct_files = None
+        direct_media_files = None
         direct_transfers = None
         if runtime_revision is not None and runtime_configuration is not None:
             files_browser = RuntimeFilesBrowserService(
@@ -7630,6 +7587,17 @@ class MediaFlowApi:
                 runtime_configuration=runtime_configuration,
                 task_repository=self._repository,
                 storage_adapters=self._storage_adapters,
+            )
+            # A second, media-kind service over the same pinned Active revision:
+            # the MediaLibrary Files page gets its own library authority rather
+            # than a relabelled ResourceLibrary one, and one service can never
+            # resolve the other kind's library.
+            direct_media_files = DirectFileCommandService(
+                active_revision=runtime_revision,
+                runtime_configuration=runtime_configuration,
+                task_repository=self._repository,
+                storage_adapters=self._storage_adapters,
+                library_kind=LibraryKind.MEDIA,
             )
             direct_transfers = DirectFileTransferService(direct_files=direct_files)
         manual_scans = self._manual_scans_override
@@ -7721,6 +7689,7 @@ class MediaFlowApi:
             ),
             files_browser,
             direct_files,
+            direct_media_files,
             direct_transfers,
             manual_scans,
             runtime_settings,
@@ -7954,6 +7923,15 @@ class MediaFlowApi:
             and parts[4] == "files"
         ):
             return "/api/v1/media-libraries/{id}/files"
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "files"
+            and parts[5] in {"text", "delete-impact", "rename-evidence", "commands"}
+        ):
+            # The media command surface is audited under its own path template,
+            # never folded into the resource-libraries one.
+            return f"/api/v1/media-libraries/{{id}}/files/{parts[5]}"
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "media-libraries"]
@@ -9035,6 +9013,164 @@ class MediaFlowApi:
             "limit": cls._parse_bounded_limit(query.get("limit", ["50"])[0], "Files"),
             "cursor": cursor,
         }
+
+    # ------------------------------------------------------------------
+    # Shared direct-command transport for both library kinds
+    #
+    # Slice 38 RO-7: API and Web must use the same application behavior, and the
+    # ResourceLibrary and MediaLibrary journeys must do so through *independent*
+    # library authority.  One implementation therefore serves both kinds and is
+    # given only the kind-selected service; nothing here chooses a library, a
+    # Storage, a root or a path — that is the service's job.
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _direct_command_service(binding: _ApiRuntimeBinding, *, media_library: bool):
+        """The one kind-pinned service a direct command may use, or ``None``."""
+
+        return binding.direct_media_files if media_library else binding.direct_files
+
+    def _files_direct_text_read(
+        self,
+        start_response: Callable,
+        binding: _ApiRuntimeBinding,
+        library_id: str,
+        environ: dict,
+        *,
+        media_library: bool = False,
+    ):
+        service = self._direct_command_service(binding, media_library=media_library)
+        if service is None:
+            return self._files_browser_unavailable(start_response)
+        path = self._files_direct_text_query(environ)
+        document = service.read_text(library_id=library_id, path=path)
+        return self._response(
+            start_response,
+            200,
+            {
+                **document.document(),
+                "sideEffects": "none",
+                "retrySafe": True,
+            },
+        )
+
+    def _files_direct_delete_impact(
+        self,
+        start_response: Callable,
+        binding: _ApiRuntimeBinding,
+        library_id: str,
+        environ: dict,
+        *,
+        media_library: bool = False,
+    ):
+        service = self._direct_command_service(binding, media_library=media_library)
+        if service is None:
+            return self._files_browser_unavailable(start_response)
+        paths = self._files_delete_impact_query(environ)
+        document = service.delete_impact(library_id=library_id, paths=paths)
+        response = document.document()
+        response["sideEffects"] = "none"
+        response["retrySafe"] = True
+        response["nextAction"] = (
+            "confirm this exact impact to run the bounded Delete"
+            if document.entries
+            else "the selection is empty; refresh the directory and retry"
+        )
+        return self._response(start_response, 200, response)
+
+    def _files_direct_rename_evidence(
+        self,
+        start_response: Callable,
+        binding: _ApiRuntimeBinding,
+        library_id: str,
+        environ: dict,
+        *,
+        media_library: bool = False,
+    ):
+        service = self._direct_command_service(binding, media_library=media_library)
+        if service is None:
+            return self._files_browser_unavailable(start_response)
+        path = self._files_direct_rename_evidence_query(environ)
+        evidence = service.rename_evidence(library_id=library_id, path=path)
+        response = evidence.document()
+        response["sideEffects"] = "none"
+        response["retrySafe"] = True
+        response["nextAction"] = (
+            "submit the Rename with this exact evidence, or refresh the directory "
+            "if the entry changed in the meantime"
+        )
+        return self._response(start_response, 200, response)
+
+    def _files_direct_command(
+        self,
+        start_response: Callable,
+        binding: _ApiRuntimeBinding,
+        library_id: str,
+        environ: dict,
+        *,
+        media_library: bool,
+    ):
+        service = self._direct_command_service(binding, media_library=media_library)
+        if service is None:
+            return self._files_browser_unavailable(start_response)
+        self._require_empty_query(environ, "Files direct command")
+        document = self._document(environ)
+        if not isinstance(document, dict) or "operation" not in document:
+            raise ValueError("a Files direct command requires an operation")
+        operation = document["operation"]
+        if operation == DirectFileOperation.CREATE_DIRECTORY.value:
+            required = {"operation", "parentPath", "name"}
+            if set(document) != required:
+                raise ValueError("Create Folder requires only operation, parentPath, and name")
+            result = service.create_directory(
+                library_id=library_id,
+                parent_path=document["parentPath"],
+                name=document["name"],
+            )
+        elif operation == DirectFileOperation.CREATE_TEXT.value:
+            required = {"operation", "parentPath", "name", "content"}
+            if set(document) != required:
+                raise ValueError(
+                    "Create Text File requires only operation, parentPath, name, and content"
+                )
+            result = service.create_text(
+                library_id=library_id,
+                parent_path=document["parentPath"],
+                name=document["name"],
+                content=document["content"],
+            )
+        elif operation == DirectFileOperation.RENAME.value:
+            required = {"operation", "path", "name", "expected"}
+            if set(document) != required:
+                raise ValueError("Rename requires only operation, path, name, and expected")
+            result = service.rename(
+                library_id=library_id,
+                path=document["path"],
+                name=document["name"],
+                expected=document["expected"],
+            )
+        elif operation == DirectFileOperation.SAVE_TEXT.value:
+            required = {"operation", "path", "content", "expected"}
+            if set(document) != required:
+                raise ValueError("Text Save requires only operation, path, content, and expected")
+            result = service.save_text(
+                library_id=library_id,
+                path=document["path"],
+                content=document["content"],
+                expected=document["expected"],
+            )
+        elif operation == DirectFileOperation.DELETE.value:
+            required = {"operation", "paths", "confirmationDigest"}
+            if set(document) != required:
+                raise ValueError("Delete requires only operation, paths, and confirmationDigest")
+            result = service.execute_delete(
+                library_id=library_id,
+                paths=document["paths"],
+                confirmation_digest=document["confirmationDigest"],
+            )
+        else:
+            raise ValueError("the Files direct command operation is not supported")
+        return self._response(start_response, 200, result)
 
     @classmethod
     def _files_direct_text_query(cls, environ: dict) -> str:

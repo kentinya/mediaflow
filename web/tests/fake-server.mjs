@@ -604,6 +604,23 @@ function mediaLibraryState(session) {
       // Every MediaLibrary mutation this session admitted, so a browser test
       // can prove a mutation was never replayed automatically.
       mutationLog: [],
+      // --- Direct file command maintenance state (Task 38.3) ---
+      // Every MediaLibrary command this session submitted, in order.
+      commandLog: [],
+      // Names a Create must refuse as an existing target (no silent overwrite).
+      conflictNames: [],
+      // A loaded text version the following Save must refuse as stale.
+      textStale: false,
+      // Entries whose server-issued version changes after evidence was given.
+      staleRenamePaths: [],
+      // Entries this session created, so a later read can see them.
+      createdEntries: [],
+      // Entries this session renamed away.
+      renamedEntries: [],
+      // Entries this session deleted.
+      deletedEntries: [],
+      // One path a Delete reports as a failed item, for the partial journey.
+      deleteFailurePath: null,
     };
     MEDIA_LIBRARY_STATES.set(key, value);
   }
@@ -743,6 +760,118 @@ const MEDIA_LIBRARIES = [
     },
   },
 ];
+
+/** The allowlisted bounded-text extensions the real backend admits. */
+const MEDIA_TEXT_EXTENSIONS = [
+  ".ass",
+  ".csv",
+  ".ini",
+  ".json",
+  ".log",
+  ".md",
+  ".nfo",
+  ".srt",
+  ".ssa",
+  ".sub",
+  ".txt",
+  ".vtt",
+  ".xml",
+  ".yaml",
+  ".yml",
+];
+
+function isMediaTextName(value) {
+  const suffix = value.slice(value.lastIndexOf("."));
+  return (
+    value.includes(".") && MEDIA_TEXT_EXTENSIONS.includes(suffix.toLowerCase())
+  );
+}
+
+/** The server-issued version token of one MediaLibrary fixture entry.
+ *
+ * The library *kind* and ID are part of the deterministic token, so the fake
+ * rejects a ResourceLibrary evidence value presented to a media command exactly
+ * as the real backend does. */
+function mediaRenameToken(state, mediaLibraryId, entry) {
+  // The version the browser is given: when a path is marked stale, the issued
+  // token describes the entry as it was *before* the replacement, so the later
+  // command must be refused against the current version.
+  const version = state.staleRenamePaths.includes(entry.path)
+    ? `${entry.size}-replaced`
+    : `${entry.size}-${entry.modifiedAt}`;
+  return `v1.media-${mediaLibraryId}-${entry.path}-${version}`;
+}
+
+/** The token matching the entry as it is right now, checked at admission. */
+function mediaRenameCurrentToken(mediaLibraryId, entry) {
+  return `v1.media-${mediaLibraryId}-${entry.path}-${entry.size}-${entry.modifiedAt}`;
+}
+
+/** The session-visible MediaLibrary-relative entries of one directory. */
+function mediaSessionEntries(state, libraryId, path) {
+  const base = mediaLibraryEntries(libraryId, path).filter(
+    (entry) => !mediaEntryRemoved(state, libraryId, entry.path),
+  );
+  // A rename is visible as exactly one new path; the old identity is gone.
+  const renamedAway = (state.renamedEntries ?? [])
+    .filter((item) => item.libraryId === libraryId)
+    .map((item) => item.path);
+  const visible = base.filter((entry) => !renamedAway.includes(entry.path));
+  const additions = state.createdEntries
+    .filter(
+      (item) =>
+        item.libraryId === libraryId &&
+        parentOf(item.path) === path &&
+        !mediaEntryRemoved(state, libraryId, item.path) &&
+        !visible.some((entry) => entry.path === item.path),
+    )
+    .map((item) => mediaCreatedEntry(item.path));
+  const renamedHere = (state.renamedEntries ?? [])
+    .filter(
+      (item) =>
+        item.libraryId === libraryId &&
+        parentOf(item.target) === path &&
+        !mediaEntryRemoved(state, libraryId, item.target) &&
+        !visible.some((entry) => entry.path === item.target),
+    )
+    .map((item) => mediaCreatedEntry(item.target));
+  // The frozen fixture order is kept so existing paging evidence is unchanged;
+  // a created or renamed entry simply becomes another live row.
+  return [...visible, ...additions, ...renamedHere];
+}
+
+function parentOf(path) {
+  const separator = path.lastIndexOf("/");
+  return separator === -1 ? "" : path.slice(0, separator);
+}
+
+function mediaCreatedEntry(path) {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const isDirectory = !isMediaTextName(path);
+  // The full browse entry shape: a session-visible entry must normalize exactly
+  // like the frozen fixture rows it joins.
+  return isDirectory
+    ? directoryEntry(name, path, REFERENCE_MODIFIED_LATEST)
+    : fileEntry(name, path, 16, REFERENCE_MODIFIED_LATEST, {
+        selectable: true,
+      });
+}
+
+function mediaEntryRemoved(state, libraryId, path) {
+  return state.deletedEntries.some(
+    (item) =>
+      item.libraryId === libraryId &&
+      (item.path === path || path.startsWith(`${item.path}/`)),
+  );
+}
+
+/** Resolve one MediaLibrary-relative path in this session's fixture view. */
+function mediaLibraryCommandEntry(state, mediaLibraryId, path) {
+  if (!path) return undefined;
+  return mediaSessionEntries(state, mediaLibraryId, parentOf(path)).find(
+    (entry) => entry.path === path,
+  );
+}
 
 /** One MediaLibrary-relative directory listing, keyed by library and path. */
 function mediaLibraryEntries(libraryId, path) {
@@ -910,7 +1039,7 @@ function mediaLibraryFilesDocument(libraryId, path, cursor, state) {
             REFERENCE_MODIFIED_OLDER,
           ),
         ]
-      : mediaLibraryEntries(libraryId, path);
+      : mediaSessionEntries(state ?? mediaLibraryState(null), libraryId, path);
   // Deterministic bounded paging: the movies root is one entry longer than a
   // page, so the browser proof can exercise truthful next/previous paging and
   // the selection reset that follows a page change.
@@ -6388,6 +6517,487 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, mediaLibrariesDocument(mediaLibraryState(session)));
     return;
   }
+  // --- MediaLibrary direct file commands (Task 38.3) ---
+  //
+  // The fake mirrors the real media command contract exactly: its own
+  // `mediaLibraryId` identity, its own deterministic version token, and a
+  // command log a browser test can inspect to prove one submission and no
+  // automatic replay.  ResourceLibrary routes are untouched.
+  const mediaLibraryCommandMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)\/files\/(commands|text|delete-impact|rename-evidence)$/,
+  );
+  if (mediaLibraryCommandMatch) {
+    const action = mediaLibraryCommandMatch[2];
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 403, {
+        error: { code: "forbidden", message: "principal lacks permission" },
+      });
+      return;
+    }
+    const reading = req.method === "GET";
+    if (!reading && READ_ONLY_TOKENS.has(token)) {
+      // A read-only principal may browse but holds no execute permission, so the
+      // media command surface refuses it exactly as the real RBAC does.
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks manual organize execute permission",
+          details: {
+            category: "forbidden",
+            durableState: "storage_unchanged",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "当前账号没有执行该操作所需权限,请切换有权限的账号。",
+          },
+        },
+      });
+      return;
+    }
+    const mediaLibraryId = decodeURIComponent(mediaLibraryCommandMatch[1]);
+    const state = mediaLibraryState(session);
+    const card = mediaLibraryCards(state).find(
+      (item) => item.id === mediaLibraryId,
+    );
+    if (card === undefined) {
+      // A disabled or unknown MediaLibrary is never maintainable.
+      sendJson(res, 404, {
+        error: {
+          code: "files_direct_media_library_not_found",
+          message:
+            "the selected MediaLibrary is not part of the Active configuration",
+          details: {
+            mediaLibraryId,
+            category: "library_not_found",
+            durableState: "storage_unchanged",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "select an enabled MediaLibrary and retry",
+          },
+        },
+      });
+      return;
+    }
+    const mediaEntry = (path) =>
+      mediaLibraryCommandEntry(state, mediaLibraryId, path);
+    if (action === "rename-evidence" && reading) {
+      const path = url.searchParams.get("path") ?? "";
+      const entry = mediaEntry(path);
+      if (entry === undefined) {
+        sendJson(res, 404, {
+          error: {
+            code: "files_direct_not_found",
+            details: {
+              mediaLibraryId,
+              category: "not_found",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "refresh the directory and retry",
+            },
+          },
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        mediaLibraryId,
+        path,
+        isDirectory: entry.isDirectory,
+        size: entry.size,
+        modifiedAt: entry.modifiedAt,
+        evidence: mediaRenameToken(state, mediaLibraryId, entry),
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction:
+          "submit the Rename with this exact evidence, or refresh the directory if the entry changed in the meantime",
+      });
+      return;
+    }
+    if (action === "text" && reading) {
+      const path = url.searchParams.get("path") ?? "";
+      const entry = mediaEntry(path);
+      if (entry === undefined) {
+        sendJson(res, 404, {
+          error: {
+            code: "files_direct_not_found",
+            details: {
+              mediaLibraryId,
+              category: "not_found",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "refresh the directory and retry",
+            },
+          },
+        });
+        return;
+      }
+      if (entry.isDirectory) {
+        sendJson(res, 400, {
+          error: {
+            code: "files_direct_is_a_directory",
+            details: {
+              mediaLibraryId,
+              category: "is_a_directory",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "select a text file instead",
+            },
+          },
+        });
+        return;
+      }
+      if (!isMediaTextName(path)) {
+        sendJson(res, 400, {
+          error: {
+            code: "files_direct_unsupported_text_type",
+            details: {
+              mediaLibraryId,
+              category: "unsupported_text_type",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "only allowlisted text sidecars can be opened in the editor",
+            },
+          },
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        mediaLibraryId,
+        path,
+        content: state.textStale
+          ? "server version one\n"
+          : "server version one\n",
+        evidence: {
+          size: 20,
+          modifiedAt: entry.modifiedAt,
+          digest: state.textStale ? "digest-stale-media" : "digest-media-1",
+        },
+        sideEffects: "none",
+        retrySafe: true,
+      });
+      return;
+    }
+    if (action === "delete-impact" && reading) {
+      const paths = url.searchParams.getAll("path");
+      if (paths.length === 0) {
+        sendJson(res, 400, {
+          error: {
+            code: "files_direct_invalid_request",
+            details: {
+              mediaLibraryId,
+              category: "invalid_request",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "select one or more files or directories and retry",
+            },
+          },
+        });
+        return;
+      }
+      const missing = paths.filter((path) => mediaEntry(path) === undefined);
+      if (missing.length > 0) {
+        sendJson(res, 404, {
+          error: {
+            code: "files_direct_not_found",
+            details: {
+              mediaLibraryId,
+              category: "not_found",
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "refresh the directory and retry",
+            },
+          },
+        });
+        return;
+      }
+      const entries = paths.map((path) => {
+        const entry = mediaEntry(path);
+        return {
+          path,
+          isDirectory: entry.isDirectory,
+          size: entry.isDirectory ? 0 : entry.size,
+        };
+      });
+      sendJson(res, 200, {
+        mediaLibraryId,
+        topLevelPaths: [...paths],
+        entries,
+        fileCount: entries.filter((entry) => !entry.isDirectory).length,
+        directoryCount: entries.filter((entry) => entry.isDirectory).length,
+        totalBytes: entries.reduce((sum, entry) => sum + entry.size, 0),
+        truncated: false,
+        scopeDigest: `fake-media-scope-digest-${mediaLibraryId}-${paths.join(",")}`,
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "confirm this exact impact to run the bounded Delete",
+      });
+      return;
+    }
+    if (action === "commands" && req.method === "POST") {
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const fields = parsed.document;
+      // A command never carries a Storage, host root or library id inside the
+      // body: the route identity is the only authority the fake honours.
+      state.commandLog.push({ mediaLibraryId, ...fields });
+      const refuse = (
+        code,
+        category,
+        status = 400,
+        nextAction = "correct the reported condition and retry",
+      ) => {
+        sendJson(res, status, {
+          error: {
+            code,
+            details: {
+              mediaLibraryId,
+              category,
+              durableState: "storage_unchanged",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction,
+            },
+          },
+        });
+      };
+      if (
+        fields.operation === "create_directory" ||
+        fields.operation === "create_text"
+      ) {
+        const parent = fields.parentPath ?? "";
+        const name = fields.name ?? "";
+        if (
+          parent.includes("..") ||
+          parent.startsWith("/") ||
+          name.includes("/")
+        ) {
+          refuse(
+            "files_direct_invalid_path",
+            "invalid_media_path",
+            400,
+            "navigate inside the MediaLibrary and retry",
+          );
+          return;
+        }
+        if (fields.operation === "create_text" && !isMediaTextName(name)) {
+          refuse(
+            "files_direct_unsupported_text_type",
+            "unsupported_text_type",
+            400,
+            "choose an allowlisted text extension such as .txt, .md or .nfo",
+          );
+          return;
+        }
+        const target = parent === "" ? name : `${parent}/${name}`;
+        if (
+          state.conflictNames.includes(target) ||
+          mediaEntry(target) !== undefined
+        ) {
+          refuse(
+            "files_direct_target_exists",
+            "target_exists",
+            409,
+            "choose a different name or refresh the directory",
+          );
+          return;
+        }
+        state.createdEntries.push({ libraryId: mediaLibraryId, path: target });
+        sendJson(res, 200, {
+          operation: fields.operation,
+          mediaLibraryId,
+          libraryKind: "media",
+          path: target,
+          target,
+          status: "SUCCESS",
+          taskId: `task-e2e-media-${state.commandLog.length}`,
+          taskCommand: "media_files_direct_command",
+          taskStatus: "completed",
+          effectCertainty: "verified_complete",
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction: "refresh the directory to see the current state",
+        });
+        return;
+      }
+      if (fields.operation === "rename") {
+        const path = fields.path ?? "";
+        const name = fields.name ?? "";
+        const entry = mediaEntry(path);
+        if (entry === undefined) {
+          refuse(
+            "files_direct_not_found",
+            "not_found",
+            404,
+            "refresh the directory and retry",
+          );
+          return;
+        }
+        const expected = mediaRenameCurrentToken(mediaLibraryId, entry);
+        if ((fields.expected ?? {}).evidence !== expected) {
+          refuse(
+            "files_direct_stale_source",
+            "stale_source",
+            409,
+            "refresh the directory and rename the current entry again",
+          );
+          return;
+        }
+        const parent = path.includes("/")
+          ? path.slice(0, path.lastIndexOf("/"))
+          : "";
+        const target = parent === "" ? name : `${parent}/${name}`;
+        if (state.conflictNames.includes(target)) {
+          refuse(
+            "files_direct_target_exists",
+            "target_exists",
+            409,
+            "choose a different name or refresh the directory",
+          );
+          return;
+        }
+        state.renamedEntries ??= [];
+        state.renamedEntries.push({ libraryId: mediaLibraryId, path, target });
+        sendJson(res, 200, {
+          operation: "rename",
+          mediaLibraryId,
+          libraryKind: "media",
+          path,
+          target,
+          status: "SUCCESS",
+          taskId: `task-e2e-media-${state.commandLog.length}`,
+          taskCommand: "media_files_direct_command",
+          taskStatus: "completed",
+          effectCertainty: "verified_complete",
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction: "refresh the directory to see the current state",
+        });
+        return;
+      }
+      if (fields.operation === "save_text") {
+        const path = fields.path ?? "";
+        const entry = mediaEntry(path);
+        if (entry === undefined) {
+          refuse(
+            "files_direct_not_found",
+            "not_found",
+            404,
+            "refresh the directory and retry",
+          );
+          return;
+        }
+        if (state.textStale) {
+          refuse(
+            "files_direct_stale_content",
+            "stale_changed",
+            409,
+            "reload the current content, reapply the edits and save again",
+          );
+          return;
+        }
+        if ((fields.expected ?? {}).digest !== "digest-media-1") {
+          refuse(
+            "files_direct_stale_content",
+            "stale_changed",
+            409,
+            "reload the current content, reapply the edits and save again",
+          );
+          return;
+        }
+        sendJson(res, 200, {
+          operation: "save_text",
+          mediaLibraryId,
+          libraryKind: "media",
+          path,
+          target: path,
+          status: "SUCCESS",
+          taskId: `task-e2e-media-${state.commandLog.length}`,
+          taskCommand: "media_files_direct_command",
+          taskStatus: "completed",
+          effectCertainty: "verified_complete",
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction: "refresh the directory to see the current state",
+        });
+        return;
+      }
+      if (fields.operation === "delete") {
+        const paths = fields.paths ?? [];
+        const digest = `fake-media-scope-digest-${mediaLibraryId}-${paths.join(",")}`;
+        if (fields.confirmationDigest !== digest) {
+          refuse(
+            "files_direct_stale_confirmation",
+            "stale_confirmation",
+            409,
+            "review the refreshed impact summary and confirm again",
+          );
+          return;
+        }
+        const outcomes = paths.map((path) => ({
+          path,
+          status: state.deleteFailurePath === path ? "FAILED" : "SUCCESS",
+          errorCategory:
+            state.deleteFailurePath === path ? "storage_failure" : null,
+        }));
+        const failed = outcomes.filter(
+          (outcome) => outcome.status !== "SUCCESS",
+        );
+        // Only the items the fake really removed leave the live listing; a
+        // failed item stays exactly where it was, with its own outcome.
+        paths
+          .filter((path) => state.deleteFailurePath !== path)
+          .forEach((path) =>
+            state.deletedEntries.push({ libraryId: mediaLibraryId, path }),
+          );
+        sendJson(res, 200, {
+          operation: "delete",
+          mediaLibraryId,
+          libraryKind: "media",
+          status: failed.length === 0 ? "SUCCESS" : "PARTIAL",
+          taskId: "task-e2e-media-delete",
+          taskCommand:
+            paths.length === 1
+              ? "media_files_direct_command"
+              : "media_files_delete",
+          taskStatus: failed.length === 0 ? "completed" : "partial_success",
+          topLevelPaths: paths,
+          knownEffects: paths.map((path) => ({
+            path,
+            effect: state.deleteFailurePath === path ? "partial" : "deleted",
+            status: state.deleteFailurePath === path ? "PARTIAL" : "SUCCESS",
+          })),
+          totalItems: outcomes.length,
+          succeededItems: outcomes.length - failed.length,
+          failedItems: failed.length,
+          outcomes,
+          outcomesTruncated: false,
+          sideEffects: "storage_mutations",
+          retrySafe: false,
+          nextAction: "refresh the directory to see the current state",
+        });
+        return;
+      }
+      refuse(
+        "files_direct_invalid_request",
+        "invalid_request",
+        400,
+        "reload and choose a supported command",
+      );
+      return;
+    }
+  }
+
   const mediaLibraryFilesMatch = url.pathname.match(
     /^\/api\/v1\/media-libraries\/([^/]+)\/files$/,
   );
@@ -9780,6 +10390,14 @@ const server = createServer(async (req, res) => {
       staleRemovalOnce: url.searchParams.get("staleRemoval") === "1",
       staleRemovalDone: false,
       mutationLog: [],
+      commandLog: [],
+      conflictNames: url.searchParams.getAll("conflict"),
+      textStale: url.searchParams.get("textStale") === "1",
+      staleRenamePaths: url.searchParams.getAll("staleRename"),
+      createdEntries: [],
+      renamedEntries: [],
+      deletedEntries: [],
+      deleteFailurePath: url.searchParams.get("deleteFail"),
     });
     res.setHeader(
       "Set-Cookie",
@@ -9795,7 +10413,11 @@ const server = createServer(async (req, res) => {
     url.pathname === "/__test__/media-library-mutations" &&
     req.method === "GET"
   ) {
-    sendJson(res, 200, { mutations: mediaLibraryState(session).mutationLog });
+    const state = mediaLibraryState(session);
+    sendJson(res, 200, {
+      mutations: state.mutationLog,
+      commands: state.commandLog,
+    });
     return;
   }
 

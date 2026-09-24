@@ -28,8 +28,16 @@ export function ModalDialog({
   readonly busy?: boolean;
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
+  // The invoking control is captured while the dialog first renders — before
+  // React commits it and before the dialog's own autofocus moves focus inside.
+  // Capturing from an effect would instead record the dialog's own input, and
+  // focus would land nowhere once that input unmounted.  The value is recorded
+  // once per dialog mount and never re-derived, so a re-render or a pending
+  // state flip cannot lose the operator's original control.
+  const invokerRef = useRef<Element | null>(
+    typeof document === "undefined" ? null : document.activeElement,
+  );
   useEffect(() => {
-    const previouslyFocused = document.activeElement;
     const firstInput = dialogRef.current?.querySelector<HTMLElement>(
       "input, textarea, button",
     );
@@ -43,11 +51,17 @@ export function ModalDialog({
     document.addEventListener("keydown", handleKey, true);
     return () => {
       document.removeEventListener("keydown", handleKey, true);
-      if (previouslyFocused instanceof HTMLElement) {
-        previouslyFocused.focus();
-      }
     };
   }, [onClose, busy]);
+  useEffect(
+    () => () => {
+      const invoker = invokerRef.current;
+      if (invoker instanceof HTMLElement) {
+        invoker.focus();
+      }
+    },
+    [],
+  );
   return (
     <div className="mf-dialog-overlay">
       <div
@@ -376,6 +390,7 @@ export function DeleteImpactDialog({
   error,
   confirming,
   result,
+  rootLabel = "资源库",
   onConfirm,
   onClose,
   onRefreshImpact,
@@ -385,6 +400,13 @@ export function DeleteImpactDialog({
   readonly error: string | null;
   readonly confirming: boolean;
   readonly result: DirectFileCommandResult | null;
+  /**
+   * Which kind of configured library the protected root belongs to.  The Files
+   * journey keeps its existing wording; the MediaLibrary page names its own
+   * root, so the operator is never told a ResourceLibrary root is protected
+   * while maintaining a MediaLibrary.
+   */
+  readonly rootLabel?: string;
   readonly onConfirm: () => void;
   readonly onClose: () => void;
   readonly onRefreshImpact: () => void;
@@ -498,7 +520,7 @@ export function DeleteImpactDialog({
                 )}
               </ul>
               <p className="mf-dialog-hint">
-                删除操作不可撤销，且不会删除资源库根目录本身。
+                删除操作不可撤销,且不会删除{rootLabel}根目录本身。
               </p>
             </>
           )}

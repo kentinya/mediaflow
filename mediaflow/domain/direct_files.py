@@ -96,6 +96,70 @@ class DirectFileOperation(StrEnum):
     DELETE = "delete"
 
 
+class LibraryKind(StrEnum):
+    """Which kind of configured library owns one direct-file command.
+
+    Slice 38 RO-7: the Files workspace maintains ResourceLibrary sources and the
+    MediaLibrary workspace maintains configured destinations.  Both journeys
+    reuse the same direct-command safety mechanisms, but the two kinds never
+    share authority: the kind is part of every persisted Task identity, every
+    issued version token and every confirmed scope digest, so a ResourceLibrary
+    ID and a MediaLibrary ID that happen to be equal cannot be exchanged by a
+    client, a stale response or a reconstructed Task.
+    """
+
+    RESOURCE = "resource"
+    MEDIA = "media"
+
+
+def library_identity(kind: LibraryKind, library_id: str) -> dict[str, str]:
+    """The single API identity field naming one direct-command library.
+
+    ResourceLibrary responses keep the pre-existing ``resourceLibraryId`` key
+    byte-for-byte, and MediaLibrary responses carry their own
+    ``mediaLibraryId``.  Exactly one of the two is ever present, so neither page
+    can read the other kind's document as its own authority.
+    """
+
+    return {"mediaLibraryId" if kind is LibraryKind.MEDIA else "resourceLibraryId": library_id}
+
+
+#: The durable persistence namespace prefix of one MediaLibrary library identity.
+_MEDIA_IDENTITY_PREFIX = f"{LibraryKind.MEDIA.value}:"
+
+
+def scoped_library_id(kind: LibraryKind, library_id: str) -> str:
+    """The durable library identity a MediaLibrary command persists.
+
+    A media command persists a ``media:``-namespaced ID into the existing
+    ``resource_library_id`` column, so a persisted row can never be joined,
+    looked up or replayed as ResourceLibrary work by a consumer that matches on
+    ``(storage, library ID, path)`` — equal IDs and overlapping roots do not make
+    the two kinds interchangeable (Slice 38 RO-6/RO-7).  A ResourceLibrary
+    command keeps persisting its exact bare configured ID, so every pre-existing
+    durable Task, Result and checkpoint row stays valid and readable under its
+    own kind.
+    """
+
+    return f"{_MEDIA_IDENTITY_PREFIX}{library_id}" if kind is LibraryKind.MEDIA else library_id
+
+
+def split_library_identity(persisted: object) -> tuple[LibraryKind, str]:
+    """Split one persisted library identity into ``(kind, configured ID)``.
+
+    A bare value — every row written before the MediaLibrary journey existed, and
+    every ResourceLibrary row since — is resource work.  Only the explicit
+    ``media:`` namespace names a MediaLibrary.
+    """
+
+    value = persisted if isinstance(persisted, str) else ""
+    if value.startswith(_MEDIA_IDENTITY_PREFIX):
+        remainder = value[len(_MEDIA_IDENTITY_PREFIX) :]
+        if remainder:
+            return LibraryKind.MEDIA, remainder
+    return LibraryKind.RESOURCE, value
+
+
 class TransferOperation(StrEnum):
     """The two explicitly requested Files transfer operations.
 
@@ -372,12 +436,26 @@ class TextVersionEvidence:
 
 @dataclass(frozen=True)
 class DirectFileTextDocument:
-    """One zero-mutation bounded text read result."""
+    """One zero-mutation bounded text read result.
 
-    resource_library_id: str
+    ``library_kind`` names which kind of configured library owns the read, and
+    the projection uses the matching identity key, so a MediaLibrary document
+    can never be mistaken for — or replayed against — a ResourceLibrary one.
+    """
+
+    library_kind: LibraryKind
+    library_id: str
     path: str
     content: str
     evidence: TextVersionEvidence
+
+    def document(self) -> dict[str, object]:
+        return {
+            **library_identity(self.library_kind, self.library_id),
+            "path": self.path,
+            "content": self.content,
+            "evidence": self.evidence.document(),
+        }
 
 
 @dataclass(frozen=True)
@@ -424,15 +502,18 @@ class DirectEntryEvidence:
 class RenameEvidence:
     """Server-issued version evidence one Rename command must return.
 
-    ``token`` binds the exact entry version the backend observed — Active
-    ResourceLibrary, ResourceLibrary-relative path, entry type, size, modified
+    ``token`` binds the exact entry version the backend observed — the Active
+    library and its kind, the library-relative path, entry type, size, modified
     time and the provider's verifiable entry identity — without disclosing any
     of those implementation values to the browser.  Only the backend can mint
     it, and an older token never matches a changed entry, so replaying stale
-    evidence fails closed instead of renaming a replacement.
+    evidence fails closed instead of renaming a replacement.  The identity
+    projection names the library *kind*, so one kind's token is never presented
+    to the browser as the other kind's.
     """
 
-    resource_library_id: str
+    library_kind: LibraryKind
+    library_id: str
     path: str
     is_directory: bool
     size: int
@@ -441,7 +522,7 @@ class RenameEvidence:
 
     def document(self) -> dict[str, object]:
         return {
-            "resourceLibraryId": self.resource_library_id,
+            **library_identity(self.library_kind, self.library_id),
             "path": self.path,
             "isDirectory": self.is_directory,
             "size": self.size,
@@ -454,7 +535,8 @@ class RenameEvidence:
 
 def entry_version_token(
     *,
-    resource_library_id: str,
+    library_kind: str,
+    library_id: str,
     path: str,
     is_directory: bool,
     size: int,
@@ -467,12 +549,18 @@ def entry_version_token(
     verifiable entry identity — so re-deriving it from a later observation only
     reproduces the client's token while nothing about the entry changed.  It is
     not a permission: the command still requires the operator's permission, the
-    Active ResourceLibrary and every admission check.
+    Active library and every admission check.
+
+    ``library_kind`` is part of the tokened identity, never just the ID: a
+    ResourceLibrary and a MediaLibrary that happen to carry the same ID
+    therefore mint different tokens, and one library kind's evidence can never
+    authorize a command against the other.
     """
 
     payload = json.dumps(
         {
-            "resourceLibraryId": resource_library_id,
+            "libraryKind": library_kind,
+            "libraryId": library_id,
             "path": path,
             "isDirectory": is_directory,
             "size": size,
@@ -511,10 +599,13 @@ class DeleteImpact:
     """Bounded, human-presentable effect of one Delete request.
 
     ``scope_digest`` pins the exact enumerated scope so the later mutating
-    command can prove the operator confirmed this exact effect.
+    command can prove the operator confirmed this exact effect.  The digest
+    covers the library *kind* as well as its ID, so an identically named
+    ResourceLibrary selection can never confirm a MediaLibrary Delete.
     """
 
-    resource_library_id: str
+    library_kind: LibraryKind
+    library_id: str
     top_level_paths: tuple[str, ...]
     entries: tuple[DirectFileImpactEntry, ...]
     file_count: int
@@ -525,7 +616,7 @@ class DeleteImpact:
 
     def document(self) -> dict[str, object]:
         return {
-            "resourceLibraryId": self.resource_library_id,
+            **library_identity(self.library_kind, self.library_id),
             "topLevelPaths": list(self.top_level_paths),
             "entries": [
                 {

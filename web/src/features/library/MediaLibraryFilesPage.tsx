@@ -17,27 +17,75 @@ import type {
   MediaLibraryFilesModel,
 } from "../../entities/library/media-library-files";
 import type { MediaLibraryRemovalPreviewModel } from "../../entities/library/media-library";
-import type { SystemStorage } from "../../entities/library/system-status";
-import { ModalDialog } from "./FileCommandDialogs";
 import {
+  isTextFileName,
+  type DeleteImpactModel,
+  type DirectFileCommandResult,
+} from "../../entities/library/direct-files";
+import type { SystemStorage } from "../../entities/library/system-status";
+import {
+  DeleteImpactDialog,
+  ModalDialog,
+  NamePromptDialog,
+  TextEditorDialog,
+  type TextEditorState,
+} from "./FileCommandDialogs";
+import { RowActionMenu } from "./RowActionMenu";
+import {
+  MEDIA_LIBRARY_DELETE_IMPACT_QUERY_KEY,
+  MEDIA_LIBRARY_FILES_QUERY_KEY,
+  MEDIA_LIBRARY_RENAME_EVIDENCE_QUERY_KEY,
+  MEDIA_LIBRARY_TEXT_QUERY_KEY,
   mediaLibraryFilesQueryOptions,
   mediaLibraryListQueryOptions,
 } from "./media-library-query";
 import { systemStatusQueryOptions } from "./system-status-query";
 import {
+  fetchMediaLibraryDeleteImpact,
   fetchMediaLibraryRemovalPreview,
+  fetchMediaLibraryRenameEvidence,
+  fetchMediaLibraryTextFile,
   removeMediaLibrary,
   saveMediaLibrary,
+  submitMediaLibraryDirectCommand,
   type AutomationMutationFailureDetails,
+  type DirectFileCommandOptions,
   type SaveMediaLibraryOptions,
 } from "../../shared/api/api-client";
 
 type MediaView = "list" | "grid";
 
+/**
+ * The command affordance of the Files direct-command journey.  The normal page
+ * stays read-only until the operator explicitly chooses one of these; there is
+ * deliberately no Copy/Move entry point in this Task.
+ */
+type MediaFilesDialog =
+  | { readonly kind: "create_folder" }
+  | { readonly kind: "create_text" }
+  | {
+      readonly kind: "rename";
+      readonly path: string;
+      readonly name: string;
+      readonly expected: { readonly size: number; readonly modifiedAt: string };
+    }
+  | { readonly kind: "delete"; readonly paths: readonly string[] }
+  | { readonly kind: "editor"; readonly path: string }
+  | null;
+
+/** The row-local version facts Rename admission needs to echo back. */
+interface EntryVersionEvidenceVm {
+  readonly size: number;
+  readonly modifiedAt: string;
+}
+
 interface MediaRowVm {
   readonly name: string;
   readonly path: string;
+  readonly size: number;
+  readonly modifiedAt: string;
   readonly isDirectory: boolean;
+  readonly isSymlink: boolean;
   readonly traversable: boolean;
   readonly typeLabel: string;
   readonly sizeLabel: string;
@@ -248,7 +296,10 @@ function buildRows(
     .map((entry) => ({
       name: entry.name,
       path: entry.path,
+      size: entry.size,
+      modifiedAt: entry.modifiedAt,
       isDirectory: entry.isDirectory,
+      isSymlink: entry.isSymlink || entry.type === "symlink",
       traversable: entry.traversable,
       typeLabel: entryTypeLabel(entry),
       sizeLabel: entry.isDirectory ? "-" : formatBytes(entry.size),
@@ -517,6 +568,88 @@ function failureDetail(kind: string, path: string): string {
   }
 }
 
+/**
+ * Maps a MediaLibrary direct-command failure to an action-oriented, secret-free
+ * message.  It mirrors the ResourceLibrary Files command contract — the backend
+ * runs one admission boundary for both kinds — but names the MediaLibrary
+ * journey and its own `files_direct_media_library_not_found` code, so an
+ * operator is never told to fix a ResourceLibrary while maintaining a
+ * MediaLibrary.
+ */
+export function mediaLibraryCommandFailure(
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  if (details?.durableState === "mutation_effect_uncertain") {
+    return "操作结果不确定,未自动重试;请刷新目录查看实际状态并在任务详情中核查。";
+  }
+  switch (code) {
+    case "files_direct_target_exists":
+      return "目标已存在,未替换任何内容;请换一个名称或刷新目录后重试。";
+    case "files_direct_stale_content":
+      return "文件在打开后已发生变化,本次编辑未保存;请重新加载最新内容后再保存。";
+    case "files_direct_stale_source":
+    case "source_changed":
+      return "目标在操作前已发生变化,未做任何修改;请刷新目录后重试。";
+    case "files_direct_stale_confirmation":
+      return "删除范围已变化,本次未执行;请重新确认最新影响摘要后再删除。";
+    case "files_direct_invalid_name":
+      return "名称不是单个安全文件名;请去除路径分隔符、保留字或结尾的点/空格后重试。";
+    case "files_direct_invalid_path":
+    case "invalid_media_path":
+      return "路径不是安全的媒体库相对路径,未做任何修改。";
+    case "files_direct_root_protected":
+      return "媒体库根目录不能被重命名或删除。";
+    case "files_direct_capability_denied":
+      return "该媒体库使用的存储为只读,不能执行该操作。";
+    case "files_direct_entry_identity_unavailable":
+      return "当前存储无法校验该条目的版本身份,为避免重命名或删除被替换的目标,本次操作未执行;请刷新目录后改用支持该能力的存储。";
+    case "unsupported_capability":
+      return "当前存储不支持该操作,未做任何修改;请改用支持该能力的存储后重试。";
+    case "files_direct_unsupported_text_type":
+      return "该扩展名不在可编辑的文本类型内。";
+    case "files_direct_text_too_large":
+      return "文本超过可编辑大小上限(512 KB),未保存。";
+    case "files_direct_text_not_decodable":
+      return "文件不是有效的 UTF-8 文本,无法在编辑器中打开。";
+    case "files_direct_symlink_not_supported":
+      return "链接文件不支持该操作。";
+    case "files_direct_media_library_not_found":
+      return "所选媒体库在当前 Active 配置中不可用或已停用;请选择其他已启用的媒体库。";
+    case "files_direct_not_found":
+      return "目标不存在,可能已被删除或移动;请刷新目录后重试。";
+    case "files_direct_is_a_directory":
+      return "目标是一个文件夹,不能作为文本打开。";
+    case "files_direct_not_a_directory":
+      return "目标父目录不存在或不是文件夹;请选择现有目录后重试。";
+    case "files_direct_impact_entry_limit_exceeded":
+    case "files_direct_impact_depth_limit_exceeded":
+    case "files_direct_impact_size_limit_exceeded":
+      return "删除范围超出限制,未执行任何删除;请选择更小的范围分批删除。";
+    case "files_direct_invalid_confirmation":
+      return "缺少有效的影响确认证据;请重新获取影响摘要后再确认删除。";
+    case "files_direct_path_locked":
+      return "目标正被其他任务占用,未做修改;请稍后重试。";
+    case "files_direct_task_paused":
+      return "该命令的任务已在执行前被暂停,未做修改;请在操作与任务中继续该任务。";
+    case "files_direct_storage_unavailable":
+    case "files_direct_connection_failed":
+    case "files_direct_timeout":
+    case "files_direct_authentication_failed":
+    case "files_direct_rate_limited":
+    case "files_direct_storage_failure":
+      return "存储暂不可用或读取失败,未做任何修改;请等待存储恢复后重试。";
+    case "forbidden":
+      return "当前账号没有执行该操作所需权限,请切换有权限的账号。";
+    case "transport_unavailable":
+      return "命令结果未知,未自动重试;请刷新目录核实当前状态后再决定下一步。";
+    case "malformed_response":
+      return "服务返回了无法理解的结果,未自动重试;请刷新目录核实当前状态。";
+    default:
+      return "命令未执行,当前数据未被修改;请根据原因修正后重试或刷新目录。";
+  }
+}
+
 function MediaBrowseView({
   model,
   selected,
@@ -525,6 +658,7 @@ function MediaBrowseView({
   query,
   page,
   canPrev,
+  busy,
   onViewChange,
   onToggle,
   onToggleAll,
@@ -534,6 +668,11 @@ function MediaBrowseView({
   onNextPage,
   onPrevPage,
   onReturnRoot,
+  onCreateFolder,
+  onCreateText,
+  onRename,
+  onEdit,
+  onDelete,
 }: {
   readonly model: MediaLibraryFilesModel;
   readonly selected: ReadonlySet<string>;
@@ -542,6 +681,8 @@ function MediaBrowseView({
   readonly query: string;
   readonly page: number;
   readonly canPrev: boolean;
+  /** True while one command is admitted or executing: no control submits twice. */
+  readonly busy: boolean;
   readonly onViewChange: (view: MediaView) => void;
   readonly onToggle: (path: string) => void;
   readonly onToggleAll: () => void;
@@ -551,6 +692,15 @@ function MediaBrowseView({
   readonly onNextPage: () => void;
   readonly onPrevPage: () => void;
   readonly onReturnRoot: () => void;
+  readonly onCreateFolder: () => void;
+  readonly onCreateText: () => void;
+  readonly onRename: (
+    path: string,
+    name: string,
+    expected: EntryVersionEvidenceVm,
+  ) => void;
+  readonly onEdit: (path: string) => void;
+  readonly onDelete: (paths: readonly string[]) => void;
 }) {
   const rows = useMemo(
     () => buildRows(model, selected, query),
@@ -563,6 +713,11 @@ function MediaBrowseView({
   const library = model.mediaLibrary;
   const libraryName = library?.name ?? "媒体库";
   const hasNext = model.hasNext && model.nextCursor !== null;
+  // Model order keeps a bounded Delete selection deterministic across pages.
+  const selectedPaths = model.entries
+    .filter((entry) => selected.has(entry.path))
+    .map((entry) => entry.path);
+  const [rowMenuPath, setRowMenuPath] = useState<string | null>(null);
   return (
     <section className="mf-files" aria-label="媒体库文件浏览">
       <div className="mf-files-workarea">
@@ -602,7 +757,22 @@ function MediaBrowseView({
               <button
                 className="mf-button mf-button-secondary"
                 type="button"
+                onClick={onCreateFolder}
+              >
+                新建文件夹
+              </button>
+              <button
+                className="mf-button mf-button-secondary"
+                type="button"
+                onClick={onCreateText}
+              >
+                新建文本文件
+              </button>
+              <button
+                className="mf-button mf-button-secondary"
+                type="button"
                 onClick={onRefresh}
+                disabled={busy}
               >
                 <Icon name="refresh" /> 刷新
               </button>
@@ -717,9 +887,72 @@ function MediaBrowseView({
                           >
                             打开
                           </button>
-                        ) : (
-                          <span className="mf-dashboard-meta">—</span>
-                        )}
+                        ) : null}
+                        <div className="mf-row-menu-anchor">
+                          <button
+                            type="button"
+                            className="mf-row-more"
+                            aria-label={`更多操作 ${identityAccessibleName(row.name)}`}
+                            aria-haspopup="menu"
+                            aria-expanded={rowMenuPath === row.path}
+                            data-row-menu={row.path}
+                            onClick={() =>
+                              setRowMenuPath((current) =>
+                                current === row.path ? null : row.path,
+                              )
+                            }
+                          >
+                            <Icon name="more" />
+                          </button>
+                          {rowMenuPath === row.path && (
+                            <RowActionMenu
+                              path={row.path}
+                              label={`更多操作 ${identityAccessibleName(row.name)}`}
+                              onClose={() => setRowMenuPath(null)}
+                            >
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onRename(row.path, row.name, {
+                                    size: row.size,
+                                    modifiedAt: row.modifiedAt,
+                                  });
+                                }}
+                              >
+                                重命名
+                              </button>
+                              {!row.isDirectory &&
+                                !row.isSymlink &&
+                                isTextFileName(row.name) && (
+                                  <button
+                                    type="button"
+                                    role="menuitem"
+                                    className="mf-card-menu-item"
+                                    onClick={() => {
+                                      setRowMenuPath(null);
+                                      onEdit(row.path);
+                                    }}
+                                  >
+                                    编辑
+                                  </button>
+                                )}
+                              <button
+                                type="button"
+                                role="menuitem"
+                                className="mf-card-menu-item mf-card-menu-danger"
+                                onClick={() => {
+                                  setRowMenuPath(null);
+                                  onDelete([row.path]);
+                                }}
+                              >
+                                删除
+                              </button>
+                            </RowActionMenu>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -741,6 +974,19 @@ function MediaBrowseView({
             ? "（" + formatSelectedSize(model, selected) + "）"
             : ""}
         </span>
+        {selectedCount > 0 && (
+          <button
+            className="mf-button mf-button-secondary"
+            type="button"
+            title={
+              selectedPaths.length > 50 ? "单次删除最多选择 50 项" : undefined
+            }
+            onClick={() => onDelete(selectedPaths)}
+            disabled={busy || selectedCount === 0 || selectedPaths.length > 50}
+          >
+            删除
+          </button>
+        )}
         <button
           className="mf-button mf-button-secondary"
           type="button"
@@ -1607,6 +1853,15 @@ export function MediaLibraryFilesPage() {
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [removalDialogId, setRemovalDialogId] = useState<string | null>(null);
   const [removalError, setRemovalError] = useState<string | null>(null);
+  // Direct-file command state.  A command dialog is operator-invoked only: it
+  // never survives mount, reload or authentication reconnect, and an admitted
+  // command is never re-submitted automatically.
+  const [dialog, setDialog] = useState<MediaFilesDialog>(null);
+  const [commandError, setCommandError] = useState<string | null>(null);
+  const [commandResult, setCommandResult] =
+    useState<DirectFileCommandResult | null>(null);
+  const [editorStale, setEditorStale] = useState(false);
+  const [editorSaved, setEditorSaved] = useState(false);
   // Auxiliary to the browse boundary: the Add prerequisites (an Active
   // configuration and at least one enabled Storage) come from system status,
   // never from the MediaLibrary list, so a status hiccup only disables Add.
@@ -1725,6 +1980,11 @@ export function MediaLibraryFilesPage() {
     setPath("");
     setVisitedDirectories([]);
     setKnownDirectoryPaths([]);
+    // A command dialog belongs to one exact library; switching library closes it
+    // rather than letting it act on a different authority than it describes.
+    setDialog(null);
+    setCommandError(null);
+    setCommandResult(null);
     resetBrowseState();
   };
 
@@ -1867,6 +2127,278 @@ export function MediaLibraryFilesPage() {
       void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
     },
   });
+
+  // Rename/Delete success must clear or remap exactly the affected selection and
+  // directory-tree state; unrelated sibling selections stay independent.  The
+  // live read remains the only authority — this only forgets local memory that
+  // the known result proves stale.
+  const pruneAffectedBrowseState = useCallback(
+    (
+      removedPaths: readonly string[],
+      renameRemap: { readonly from: string; readonly to: string } | null,
+    ) => {
+      if (renameRemap !== null) {
+        const { from, to } = renameRemap;
+        const remap = (value: string) =>
+          value === from
+            ? to
+            : value.startsWith(from + "/")
+              ? to + value.slice(from.length)
+              : value;
+        const changed = (list: readonly string[], next: readonly string[]) =>
+          next.length !== list.length ||
+          next.some((value, index) => value !== list[index]);
+        setSelectedFiles((current) => {
+          if (!current.has(from)) return current;
+          const next = new Set(current);
+          next.delete(from);
+          next.add(to);
+          return next;
+        });
+        setKnownDirectoryPaths((current) => {
+          const next = current.map(remap);
+          return changed(current, next) ? next : current;
+        });
+        setVisitedDirectories((current) => {
+          const next = current.map(remap);
+          return changed(current, next) ? next : current;
+        });
+        return;
+      }
+      if (removedPaths.length === 0) return;
+      const isRemoved = (value: string) =>
+        removedPaths.some(
+          (path) => value === path || value.startsWith(path + "/"),
+        );
+      setSelectedFiles((current) => {
+        const next = new Set([...current].filter((path) => !isRemoved(path)));
+        return next.size === current.size ? current : next;
+      });
+      setKnownDirectoryPaths((current) => {
+        const next = current.filter((path) => !isRemoved(path));
+        return next.length === current.length ? current : next;
+      });
+      setVisitedDirectories((current) => {
+        const next = current.filter((path) => !isRemoved(path));
+        return next.length === current.length ? current : next;
+      });
+    },
+    [],
+  );
+
+  // Every MediaLibrary mutation goes through the media-scoped command route,
+  // which admits and executes it against the exact Active MediaLibrary.  The
+  // mutation is never retried: an unknown transport outcome is reported and the
+  // operator recovers by refreshing the live listing.
+  const commandMutation = useMutation({
+    mutationFn: ({ options }: { readonly options: DirectFileCommandOptions }) =>
+      submitMediaLibraryDirectCommand(token, activeLibraryId, options),
+    retry: false,
+    onSuccess: (result, variables) => {
+      if (!result.ok) {
+        if (
+          result.code === "files_direct_stale_content" &&
+          dialog?.kind === "editor"
+        ) {
+          // A stale save keeps the local edits and explicitly enters the
+          // reloadable editor state instead of a generic failure.
+          setCommandError(
+            mediaLibraryCommandFailure(result.code, result.details),
+          );
+          setEditorStale(true);
+          return;
+        }
+        setCommandError(
+          mediaLibraryCommandFailure(result.code, result.details),
+        );
+        return;
+      }
+      setCommandResult(result.model);
+      const knownEffectFailed =
+        result.model.status === "FAILED" ||
+        result.model.durableState === "mutation_effect_uncertain";
+      if (variables.options.operation === "delete") {
+        // The response names the exact durable effect; refresh the live
+        // listing and prune only the top-level targets the backend confirms as
+        // fully deleted.  Partial/failed targets keep their entries and their
+        // own outcomes.
+        void queryClient.invalidateQueries({
+          queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+        });
+        void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+        const deletedTargets = (result.model.knownEffects ?? [])
+          .filter((effect) => effect.effect === "deleted")
+          .map((effect) => effect.path);
+        pruneAffectedBrowseState(deletedTargets, null);
+        setCommandError(
+          knownEffectFailed
+            ? mediaLibraryCommandFailure(result.model.errorCategory ?? "", {
+                durableState: result.model.durableState,
+              })
+            : null,
+        );
+        return;
+      }
+      if (knownEffectFailed) {
+        setCommandError(
+          mediaLibraryCommandFailure(result.model.errorCategory ?? "", {
+            durableState: result.model.durableState,
+          }),
+        );
+        return;
+      }
+      setCommandError(null);
+      void queryClient.invalidateQueries({
+        queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      if (dialog?.kind === "editor") {
+        setEditorStale(false);
+        if (variables.options.operation === "save_text") {
+          // The exact saved version is authoritative: refresh the editor
+          // evidence so the next Save submits the current version, and keep the
+          // editor open for consecutive saves.
+          setEditorSaved(true);
+          void queryClient
+            .refetchQueries({
+              queryKey: [
+                MEDIA_LIBRARY_TEXT_QUERY_KEY,
+                activeLibraryId,
+                dialog.path,
+              ],
+              exact: true,
+            })
+            .then(() => {
+              const refreshed = queryClient.getQueryData<{
+                readonly ok: boolean;
+              }>([MEDIA_LIBRARY_TEXT_QUERY_KEY, activeLibraryId, dialog.path]);
+              if (!refreshed || !refreshed.ok) {
+                // Without fresh evidence the next Save would fail stale;
+                // surface the explicit reload path instead.
+                setEditorStale(true);
+                setEditorSaved(false);
+              }
+            });
+          return;
+        }
+      }
+      if (dialog?.kind === "delete") {
+        // Keep the impact dialog open: it now shows the durable per-item
+        // outcome and recovery path.
+        return;
+      }
+      if (dialog?.kind === "rename") {
+        const renamePath =
+          variables.options.operation === "rename"
+            ? variables.options.path
+            : null;
+        const renameTarget =
+          variables.options.operation === "rename"
+            ? (result.model.target ?? variables.options.path)
+            : null;
+        if (renamePath !== null && renameTarget !== null) {
+          pruneAffectedBrowseState([], { from: renamePath, to: renameTarget });
+        }
+      }
+      const createdFile =
+        dialog?.kind === "create_text" && result.model.target
+          ? {
+              path: result.model.target,
+              name: result.model.target.split("/").pop() ?? result.model.target,
+            }
+          : null;
+      setDialog(null);
+      setCommandResult(null);
+      if (createdFile !== null) {
+        setDialog({ kind: "editor", path: createdFile.path });
+      }
+    },
+    onError: () => {
+      setCommandError(
+        "命令结果未知,未自动重试;请刷新目录核实当前状态后再决定下一步。",
+      );
+    },
+  });
+
+  const editorPath = dialog?.kind === "editor" ? dialog.path : null;
+  const editorQuery = useQuery({
+    queryKey: [MEDIA_LIBRARY_TEXT_QUERY_KEY, activeLibraryId, editorPath],
+    queryFn: () => {
+      if (editorPath === null) throw new Error("unreachable");
+      return fetchMediaLibraryTextFile(token, activeLibraryId, editorPath);
+    },
+    enabled: editorPath !== null && token !== null,
+    retry: false,
+  });
+  const editorState: TextEditorState = {
+    loading: editorQuery.isFetching,
+    loadError:
+      editorQuery.data !== undefined && !editorQuery.data.ok
+        ? mediaLibraryCommandFailure(editorQuery.data.code)
+        : null,
+    document:
+      editorQuery.data !== undefined && editorQuery.data.ok
+        ? editorQuery.data.model
+        : null,
+    saveError:
+      dialog?.kind === "editor"
+        ? (commandError ??
+          (commandResult !== null &&
+          commandResult.status !== "SUCCESS" &&
+          commandResult.status !== "PARTIAL"
+            ? mediaLibraryCommandFailure(commandResult.errorCategory ?? "", {
+                durableState: commandResult.durableState,
+              })
+            : null))
+        : null,
+    stale: editorStale,
+    saved: editorSaved,
+  };
+
+  const deletePaths = dialog?.kind === "delete" ? dialog.paths : null;
+  const deletePathsKey = deletePaths === null ? "" : deletePaths.join("\n");
+  const impactQuery = useQuery({
+    queryKey: [
+      MEDIA_LIBRARY_DELETE_IMPACT_QUERY_KEY,
+      activeLibraryId,
+      deletePathsKey,
+    ],
+    queryFn: () => {
+      if (deletePaths === null) throw new Error("unreachable");
+      return fetchMediaLibraryDeleteImpact(token, activeLibraryId, deletePaths);
+    },
+    enabled: deletePaths !== null && token !== null,
+    retry: false,
+  });
+
+  // Rename must return the version evidence the backend issued for this exact
+  // entry, so the dialog loads it before the operator can submit.
+  const renamePath = dialog?.kind === "rename" ? dialog.path : null;
+  const renameEvidenceQuery = useQuery({
+    queryKey: [
+      MEDIA_LIBRARY_RENAME_EVIDENCE_QUERY_KEY,
+      activeLibraryId,
+      renamePath,
+    ],
+    queryFn: () => {
+      if (renamePath === null) throw new Error("unreachable");
+      return fetchMediaLibraryRenameEvidence(
+        token,
+        activeLibraryId,
+        renamePath,
+      );
+    },
+    enabled: renamePath !== null && token !== null,
+    retry: false,
+  });
+  const renameEvidence =
+    renameEvidenceQuery.data !== undefined && renameEvidenceQuery.data.ok
+      ? renameEvidenceQuery.data.model
+      : null;
+  const impactModel: DeleteImpactModel | null =
+    impactQuery.data !== undefined && impactQuery.data.ok
+      ? impactQuery.data.model
+      : null;
 
   /**
    * One writer keeps the address equal to the location actually being browsed:
@@ -2075,9 +2607,42 @@ export function MediaLibraryFilesPage() {
                           return every ? new Set() : new Set(selectablePaths);
                         });
                       }}
+                      busy={commandMutation.isPending}
                       onClearSelection={() => setSelectedFiles(new Set())}
                       onRefresh={() => refreshBrowse(refresh)}
                       onOpenPath={openPath}
+                      onCreateFolder={() => {
+                        setCommandError(null);
+                        setCommandResult(null);
+                        setDialog({ kind: "create_folder" });
+                      }}
+                      onCreateText={() => {
+                        setCommandError(null);
+                        setCommandResult(null);
+                        setDialog({ kind: "create_text" });
+                      }}
+                      onRename={(entryPath, name, expected) => {
+                        setCommandError(null);
+                        setCommandResult(null);
+                        setDialog({
+                          kind: "rename",
+                          path: entryPath,
+                          name,
+                          expected,
+                        });
+                      }}
+                      onEdit={(entryPath) => {
+                        setCommandError(null);
+                        setCommandResult(null);
+                        setEditorStale(false);
+                        setEditorSaved(false);
+                        setDialog({ kind: "editor", path: entryPath });
+                      }}
+                      onDelete={(paths) => {
+                        setCommandError(null);
+                        setCommandResult(null);
+                        setDialog({ kind: "delete", paths });
+                      }}
                       onNextPage={() => {
                         if (model.nextCursor !== null) {
                           setCursorHistory((current) => [
@@ -2117,6 +2682,172 @@ export function MediaLibraryFilesPage() {
           );
         }}
       </AuthorizedReadBoundary>
+      {dialog?.kind === "create_folder" && (
+        <NamePromptDialog
+          kind="create_folder"
+          initialValue=""
+          busy={commandMutation.isPending}
+          error={commandError}
+          onClose={() => {
+            setCommandError(null);
+            setDialog(null);
+          }}
+          onSubmit={(name) => {
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "create_directory",
+                parentPath: effectivePath,
+                name,
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "create_text" && (
+        <NamePromptDialog
+          kind="create_text"
+          initialValue=""
+          busy={commandMutation.isPending}
+          error={commandError}
+          onClose={() => {
+            setCommandError(null);
+            setDialog(null);
+          }}
+          onSubmit={(name) => {
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "create_text",
+                parentPath: effectivePath,
+                name,
+                content: "",
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "rename" && (
+        <NamePromptDialog
+          kind="rename"
+          initialValue={dialog.name}
+          busy={commandMutation.isPending || renameEvidenceQuery.isFetching}
+          submitDisabled={
+            renameEvidenceQuery.data !== undefined &&
+            !renameEvidenceQuery.data.ok
+          }
+          error={
+            commandError ??
+            (renameEvidenceQuery.data !== undefined &&
+            !renameEvidenceQuery.data.ok
+              ? mediaLibraryCommandFailure(renameEvidenceQuery.data.code)
+              : null)
+          }
+          onClose={() => {
+            setCommandError(null);
+            setDialog(null);
+          }}
+          onSubmit={(name) => {
+            if (renameEvidence === null) {
+              setCommandError(
+                "尚未取得该条目的服务器版本证据,未执行重命名;请刷新目录后重新打开重命名。",
+              );
+              return;
+            }
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "rename",
+                path: dialog.path,
+                name,
+                expected: {
+                  size: dialog.expected.size,
+                  modifiedAt: dialog.expected.modifiedAt,
+                  evidence: renameEvidence.evidence,
+                },
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "editor" && (
+        <TextEditorDialog
+          fileName={dialog.path.split("/").pop() ?? dialog.path}
+          state={editorState}
+          saving={commandMutation.isPending}
+          onClose={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setEditorStale(false);
+            setEditorSaved(false);
+            setDialog(null);
+          }}
+          onReload={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setEditorStale(false);
+            setEditorSaved(false);
+            void queryClient.invalidateQueries({
+              queryKey: [
+                MEDIA_LIBRARY_TEXT_QUERY_KEY,
+                activeLibraryId,
+                dialog.path,
+              ],
+            });
+          }}
+          onSave={(content, evidence) => {
+            setCommandError(null);
+            setCommandResult(null);
+            setEditorSaved(false);
+            commandMutation.mutate({
+              options: {
+                operation: "save_text",
+                path: dialog.path,
+                content,
+                expected: { size: evidence.size, digest: evidence.digest },
+              },
+            });
+          }}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <DeleteImpactDialog
+          impact={impactModel}
+          rootLabel="媒体库"
+          loading={impactQuery.isFetching}
+          error={
+            impactQuery.data !== undefined && !impactQuery.data.ok
+              ? mediaLibraryCommandFailure(impactQuery.data.code)
+              : commandError
+          }
+          confirming={commandMutation.isPending}
+          result={
+            commandResult !== null && commandResult.operation === "delete"
+              ? commandResult
+              : null
+          }
+          onRefreshImpact={() => void impactQuery.refetch()}
+          onConfirm={() => {
+            if (impactModel === null) return;
+            setCommandError(null);
+            commandMutation.mutate({
+              options: {
+                operation: "delete",
+                paths: dialog.paths,
+                confirmationDigest: impactModel.scopeDigest,
+              },
+            });
+          }}
+          onClose={() => {
+            setCommandError(null);
+            setCommandResult(null);
+            setDialog(null);
+            void queryClient.invalidateQueries({
+              queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+            });
+          }}
+        />
+      )}
       {drawerOpen &&
         (eligibleStorages.length > 0 ||
           saveMediaLibraryMutation.isPending ||

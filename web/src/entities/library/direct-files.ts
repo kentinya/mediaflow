@@ -5,9 +5,43 @@
  * impact summary and the durable direct-command result.  Every normalizer is
  * strict and secret-free: unexpected shapes fail closed instead of leaking
  * raw server data into the UI.
+ *
+ * One set of models serves both library kinds (Slice 38 RO-7).  Each document
+ * names the kind through exactly one identity field — `resourceLibraryId` or
+ * `mediaLibraryId` — and a normalizer is given the kind it expects, so a
+ * MediaLibrary response can never be normalized into a ResourceLibrary page (or
+ * the reverse) even when the two libraries carry the same ID.
  */
 
 export const MAX_TEXT_BYTES = 512 * 1024;
+
+/** Which configured library kind owns one direct-command document. */
+export type DirectCommandLibraryKind = "resource" | "media";
+
+/** The single API identity field naming one kind's library. */
+export function libraryIdField(kind: DirectCommandLibraryKind): string {
+  return kind === "media" ? "mediaLibraryId" : "resourceLibraryId";
+}
+
+/**
+ * Read one document's library identity, accepting exactly its own kind's key.
+ *
+ * A document that names both kinds carries a split identity: one of the two
+ * authorities is false, so nothing here guesses which one is real — the read
+ * fails closed instead.
+ */
+function expectLibraryId(
+  record: Record<string, unknown>,
+  kind: DirectCommandLibraryKind,
+): string {
+  const foreign = kind === "media" ? "resourceLibraryId" : "mediaLibraryId";
+  if (record[foreign] !== undefined) {
+    throw new DirectFilesNormalizationError(
+      `document names both ${libraryIdField(kind)} and ${foreign}`,
+    );
+  }
+  return expectString(record, libraryIdField(kind));
+}
 
 /** Allowlisted bounded-text extensions; mirrors the backend admission list. */
 export const TEXT_FILE_EXTENSIONS: readonly string[] = [
@@ -47,7 +81,9 @@ export interface TextVersionEvidence {
 }
 
 export interface TextFileDocument {
-  readonly resourceLibraryId: string;
+  /** Which kind of library owns the read, and its configured ID. */
+  readonly libraryKind: DirectCommandLibraryKind;
+  readonly libraryId: string;
   readonly path: string;
   readonly content: string;
   readonly evidence: TextVersionEvidence;
@@ -80,11 +116,15 @@ function expectNumber(record: Record<string, unknown>, key: string): number {
   return value;
 }
 
-export function normalizeTextFileDocument(payload: unknown): TextFileDocument {
+export function normalizeTextFileDocument(
+  payload: unknown,
+  kind: DirectCommandLibraryKind = "resource",
+): TextFileDocument {
   const record = expectObject(payload);
   const evidence = expectObject(record.evidence);
   const document: TextFileDocument = {
-    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    libraryKind: kind,
+    libraryId: expectLibraryId(record, kind),
     path: expectString(record, "path"),
     content: expectString(record, "content"),
     evidence: {
@@ -102,7 +142,8 @@ export function normalizeTextFileDocument(payload: unknown): TextFileDocument {
 }
 
 export interface RenameEvidenceModel {
-  readonly resourceLibraryId: string;
+  readonly libraryKind: DirectCommandLibraryKind;
+  readonly libraryId: string;
   readonly path: string;
   readonly isDirectory: boolean;
   readonly size: number;
@@ -117,14 +158,18 @@ export interface RenameEvidenceModel {
  * digests or host paths into the UI, and the page only echoes it back for the
  * exact entry version the backend observed.
  */
-export function normalizeRenameEvidence(payload: unknown): RenameEvidenceModel {
+export function normalizeRenameEvidence(
+  payload: unknown,
+  kind: DirectCommandLibraryKind = "resource",
+): RenameEvidenceModel {
   const record = expectObject(payload);
   const evidence = expectString(record, "evidence");
   if (evidence.length === 0 || evidence.length > 256) {
     throw new DirectFilesNormalizationError("expected bounded rename evidence");
   }
   return {
-    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    libraryKind: kind,
+    libraryId: expectLibraryId(record, kind),
     path: expectString(record, "path"),
     isDirectory: record.isDirectory === true,
     size: expectNumber(record, "size"),
@@ -140,7 +185,8 @@ export interface DeleteImpactEntry {
 }
 
 export interface DeleteImpactModel {
-  readonly resourceLibraryId: string;
+  readonly libraryKind: DirectCommandLibraryKind;
+  readonly libraryId: string;
   readonly topLevelPaths: readonly string[];
   readonly entries: readonly DeleteImpactEntry[];
   readonly fileCount: number;
@@ -150,7 +196,10 @@ export interface DeleteImpactModel {
   readonly scopeDigest: string;
 }
 
-export function normalizeDeleteImpact(payload: unknown): DeleteImpactModel {
+export function normalizeDeleteImpact(
+  payload: unknown,
+  kind: DirectCommandLibraryKind = "resource",
+): DeleteImpactModel {
   const record = expectObject(payload);
   const rawPaths = record.topLevelPaths;
   const rawEntries = record.entries;
@@ -172,7 +221,8 @@ export function normalizeDeleteImpact(payload: unknown): DeleteImpactModel {
     } satisfies DeleteImpactEntry;
   });
   return {
-    resourceLibraryId: expectString(record, "resourceLibraryId"),
+    libraryKind: kind,
+    libraryId: expectLibraryId(record, kind),
     topLevelPaths: rawPaths.map((path) => {
       if (typeof path !== "string" || path.length === 0) {
         throw new DirectFilesNormalizationError("invalid top-level path");

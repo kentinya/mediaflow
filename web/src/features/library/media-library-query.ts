@@ -12,6 +12,21 @@ import {
  */
 export const MEDIA_LIBRARY_FILES_QUERY_KEY = "media-library-files" as const;
 
+/**
+ * Query keys for the MediaLibrary direct-command reads.
+ *
+ * Each is namespaced by the media kind plus the exact library ID and is never
+ * shared with the ResourceLibrary Files cache, so equal IDs on the two kinds of
+ * library keep separate text versions, impact scopes and Rename evidence.  All
+ * three are bounded zero-mutation reads; `retry: false` keeps a failed read from
+ * being silently repeated behind an open command dialog.
+ */
+export const MEDIA_LIBRARY_TEXT_QUERY_KEY = "media-library-text" as const;
+export const MEDIA_LIBRARY_DELETE_IMPACT_QUERY_KEY =
+  "media-library-delete-impact" as const;
+export const MEDIA_LIBRARY_RENAME_EVIDENCE_QUERY_KEY =
+  "media-library-rename-evidence" as const;
+
 export function mediaLibraryFilesQueryOptions(
   token: string | null,
   options: MediaLibraryFilesQueryOptions,

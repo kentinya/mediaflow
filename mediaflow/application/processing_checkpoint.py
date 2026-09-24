@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.direct_files import LibraryKind, split_library_identity
 from mediaflow.domain.failure import decode_failure_explanation
 from mediaflow.domain.manual_safety import redact_evidence_text
 from mediaflow.domain.processing_checkpoint import (
@@ -378,6 +379,7 @@ class ProcessingCheckpointService:
             recovery_continuation=current_continuation,
             failure=failure,
         )
+        library_kind, library_id = split_library_identity(item.resource_library_id)
         payload = {
             "task_id": item.task_id,
             "item_id": item.item_id,
@@ -386,7 +388,15 @@ class ProcessingCheckpointService:
             "stage": stage.value,
             "attempts": item.attempts,
             "source_storage_id": _bounded(item.storage_id),
-            "resource_library_id": _bounded(item.resource_library_id),
+            # A MediaLibrary direct-command row persists a namespaced identity so it
+            # can never be joined or replayed as ResourceLibrary work.  This contract
+            # presents the configured ID and names the kind explicitly, so the
+            # persistence namespace never appears as part of a library ID.  The key
+            # is added for media rows only: the checkpoint version is a durable
+            # concurrency fence, and every pre-existing ResourceLibrary/organize
+            # checkpoint keeps its exact digest across an upgrade.
+            "resource_library_id": _bounded(library_id),
+            **({"library_kind": library_kind.value} if library_kind is LibraryKind.MEDIA else {}),
             "source_path": _safe_path(item.source_path),
             "plan_id": _bounded(item.plan_id),
             "destination_storage_id": _bounded(item.destination_storage_id),
@@ -425,7 +435,7 @@ class ProcessingCheckpointService:
             stage=stage,
             attempts=item.attempts,
             source_storage_id=_bounded(item.storage_id),
-            resource_library_id=_bounded(item.resource_library_id),
+            resource_library_id=_bounded(library_id),
             source_path=_safe_path(item.source_path),
             plan_id=_bounded(item.plan_id),
             destination_storage_id=_bounded(item.destination_storage_id),

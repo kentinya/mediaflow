@@ -3,12 +3,18 @@
 Admission and durable execution for the ordinary file-management commands of
 the Files workspace: Create Folder, Create Text File, Rename, bounded text
 open/save and bounded Delete.  The service resolves the exact immutable Active
-ResourceLibrary and its referenced enabled Storage at admission, re-checks
-confinement, existence, type, capability, limits and stale state immediately
-before mutation, and lets every mutation pass through OrganizerExecutor.
-Application code here only performs bounded reads; it never calls a mutating
-Storage method directly, never touches the media pipeline, and never persists
-text contents, credentials, host roots or raw exception details.
+library and its referenced enabled Storage at admission, re-checks confinement,
+existence, type, capability, limits and stale state immediately before mutation,
+and lets every mutation pass through OrganizerExecutor.  Application code here
+only performs bounded reads; it never calls a mutating Storage method directly,
+never touches the media pipeline, and never persists text contents, credentials,
+host roots or raw exception details.
+
+One boundary serves two library kinds (Slice 38 RO-5/RO-7).  A
+:class:`~mediaflow.domain.direct_files.LibraryKind` given at construction fixes
+which configured library collection the service may resolve, and every issued
+token, confirmed scope digest and durable Task records that kind: equal
+ResourceLibrary and MediaLibrary IDs can never exchange command authority.
 """
 
 from __future__ import annotations
@@ -39,19 +45,23 @@ from mediaflow.domain.direct_files import (
     DirectFileOperation,
     DirectFileTextDocument,
     EntryVersionEvidence,
+    LibraryKind,
     RenameEvidence,
     TextVersionEvidence,
     entry_version_token,
     is_text_file_name,
+    library_identity,
+    scoped_library_id,
     unsafe_direct_basename,
 )
-from mediaflow.domain.library import ResourceLibrary
+from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_DIRECT_COMMAND_TASK,
     TaskItemStatus,
+    direct_command_task_command,
 )
 
 __all__ = ["DirectFileCommandService", "DirectFileError"]
@@ -65,6 +75,30 @@ RENAME_EVIDENCE_NEXT_ACTION = (
     "open the Rename dialog again so the current entry version is loaded, then retry"
 )
 
+#: The human name of each library kind, used only for secret-free messages.
+_LIBRARY_KIND_LABEL = {LibraryKind.RESOURCE: "ResourceLibrary", LibraryKind.MEDIA: "MediaLibrary"}
+
+#: The request field naming one library kind's ID.  Each kind has exactly one
+#: field and no request ever accepts both.
+_LIBRARY_KIND_REQUEST_FIELD = {
+    LibraryKind.RESOURCE: "resource_library_id",
+    LibraryKind.MEDIA: "media_library_id",
+}
+
+#: The stable error-code suffix naming a library that is not in the Active
+#: configuration for this service's kind.
+_LIBRARY_NOT_FOUND_CODE = {
+    LibraryKind.RESOURCE: "files_direct_resource_library_not_found",
+    LibraryKind.MEDIA: "files_direct_media_library_not_found",
+}
+
+#: The stable error-code suffix naming a path that is not safe *relative to the
+#: library kind being maintained*.
+_INVALID_PATH_CATEGORY = {
+    LibraryKind.RESOURCE: "invalid_path",
+    LibraryKind.MEDIA: "invalid_media_path",
+}
+
 
 class DirectFileError(RuntimeError):
     """A stable, secret-free direct file-command failure."""
@@ -77,6 +111,7 @@ class DirectFileError(RuntimeError):
         *,
         status: int = 400,
         resource_library_id: str | None = None,
+        media_library_id: str | None = None,
         path: str = "",
         retry_safe: bool = True,
         next_action: str,
@@ -87,7 +122,10 @@ class DirectFileError(RuntimeError):
         self.category = category
         self.message = message
         self.status = status
+        # Exactly one kind's identity is ever carried: an error belongs to the
+        # library that was named in the request and cannot describe the other.
         self.resource_library_id = resource_library_id
+        self.media_library_id = media_library_id
         self.path = path if _is_safe_normalized_path(path) else ""
         self.retry_safe = retry_safe
         self.next_action = next_action
@@ -97,6 +135,7 @@ class DirectFileError(RuntimeError):
     def details(self) -> dict[str, object]:
         return {
             "resourceLibraryId": self.resource_library_id,
+            "mediaLibraryId": self.media_library_id,
             "path": self.path,
             "stage": "files_direct",
             "category": self.category,
@@ -120,6 +159,7 @@ class DirectFileCommandService:
         executor: OrganizerExecutor | None = None,
         clock: Callable[[], float] = time.monotonic,
         revision_rebuilder: (Callable[[str, str], DirectFileCommandService | None] | None) = None,
+        library_kind: LibraryKind = LibraryKind.RESOURCE,
     ) -> None:
         from mediaflow.domain.configuration_management import ManagedConfigurationStatus
 
@@ -132,6 +172,9 @@ class DirectFileCommandService:
             != active_revision.digest
         ):
             raise ValueError("direct Files command snapshot does not match the Active revision")
+        if not isinstance(library_kind, LibraryKind):
+            raise ValueError("direct Files commands require a known library kind")
+        self._kind = library_kind
         self._revision = active_revision
         self._runtime_configuration = runtime_configuration
         self._storage_adapters = dict(storage_adapters or {})
@@ -143,14 +186,15 @@ class DirectFileCommandService:
         #: executes under the exact revision it was admitted against, never
         #: under whatever snapshot the Worker process happened to start with.
         self._revision_rebuilder = revision_rebuilder
-        self._libraries: dict[str, ResourceLibrary] = {
+        configured = getattr(
+            runtime_configuration,
+            "media_libraries" if library_kind is LibraryKind.MEDIA else "resource_libraries",
+            (),
+        )
+        self._libraries: dict[str, ResourceLibrary | MediaLibrary] = {
             library.library_id: library
             for library in sorted(
-                (
-                    library
-                    for library in getattr(runtime_configuration, "resource_libraries", ())
-                    if getattr(library, "enabled", True) is True
-                ),
+                (library for library in configured if getattr(library, "enabled", True) is True),
                 key=lambda library: library.library_id,
             )
         }
@@ -164,16 +208,22 @@ class DirectFileCommandService:
         return self._revision
 
     @property
+    def library_kind(self) -> LibraryKind:
+        """The one library kind this service may ever resolve or mutate."""
+
+        return self._kind
+
+    @property
     def tasks(self) -> PersistentTaskCoordinator:
         return self._tasks
 
-    def library(self, resource_library_id: str) -> ResourceLibrary:
+    def library(self, resource_library_id: str) -> ResourceLibrary | MediaLibrary:
         return self._library(resource_library_id)
 
     def relative_path(self, path: object) -> str:
         return self._relative_path(path)
 
-    def open_storage(self, library: ResourceLibrary) -> Storage:
+    def open_storage(self, library: ResourceLibrary | MediaLibrary) -> Storage:
         return self._open_storage(library)
 
     def rebind_to_revision(
@@ -203,14 +253,18 @@ class DirectFileCommandService:
             revision_digest and rebuilt.revision.digest != revision_digest
         ):
             return None
+        # A rebuilt service belongs to the same library kind as the work it is
+        # resuming; a media Task is never re-executed by a resource service.
+        if rebuilt.library_kind is not self._kind:
+            return None
         return rebuilt
 
     # ------------------------------------------------------------------
     # Bounded zero-mutation text read
     # ------------------------------------------------------------------
 
-    def read_text(self, *, resource_library_id: str, path: str) -> DirectFileTextDocument:
-        library = self._library(resource_library_id)
+    def read_text(self, *, library_id: str, path: str) -> DirectFileTextDocument:
+        library = self._library(library_id)
         relative = self._relative_path(path)
         entry = self._require_regular_file(library, relative, allow_text_only=True)
         if entry.size > MAX_TEXT_BYTES:
@@ -219,7 +273,7 @@ class DirectFileCommandService:
                 "text_too_large",
                 "the text file exceeds the bounded editing size limit",
                 status=413,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="download or edit this file outside the bounded text editor",
             )
@@ -234,7 +288,7 @@ class DirectFileCommandService:
                 "text_not_decodable",
                 "the file is not valid UTF-8 text",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="only UTF-8 text files can be opened in the bounded editor",
             ) from None
@@ -244,7 +298,8 @@ class DirectFileCommandService:
             digest=hashlib.sha256(raw).hexdigest(),
         )
         return DirectFileTextDocument(
-            resource_library_id=library.library_id,
+            library_kind=self._kind,
+            library_id=library.library_id,
             path=relative,
             content=content,
             evidence=evidence,
@@ -255,9 +310,9 @@ class DirectFileCommandService:
     # ------------------------------------------------------------------
 
     def create_directory(
-        self, *, resource_library_id: str, parent_path: str, name: str
+        self, *, library_id: str, parent_path: str, name: str
     ) -> dict[str, object]:
-        library = self._library(resource_library_id)
+        library = self._library(library_id)
         parent = self._relative_path(parent_path)
         self._require_basename(name)
         target = self._join_child(parent, name)
@@ -277,9 +332,9 @@ class DirectFileCommandService:
         )
 
     def create_text(
-        self, *, resource_library_id: str, parent_path: str, name: str, content: str
+        self, *, library_id: str, parent_path: str, name: str, content: str
     ) -> dict[str, object]:
-        library = self._library(resource_library_id)
+        library = self._library(library_id)
         parent = self._relative_path(parent_path)
         self._require_basename(name)
         if not is_text_file_name(name):
@@ -287,7 +342,7 @@ class DirectFileCommandService:
                 "files_direct_unsupported_text_type",
                 "unsupported_text_type",
                 "the file extension is not an allowlisted bounded text type",
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=posixpath.join(parent, name) if parent else name,
                 next_action="choose an allowlisted text extension such as .txt, .md or .nfo",
             )
@@ -311,12 +366,12 @@ class DirectFileCommandService:
     def rename(
         self,
         *,
-        resource_library_id: str,
+        library_id: str,
         path: str,
         name: str,
         expected: Mapping[str, object],
     ) -> dict[str, object]:
-        library = self._library(resource_library_id)
+        library = self._library(library_id)
         source = self._relative_path(path)
         self._require_non_root(source)
         self._require_basename(name)
@@ -345,7 +400,7 @@ class DirectFileCommandService:
                 "files_direct_invalid_name",
                 "invalid_name",
                 "the new name is identical to the current name",
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=source,
                 next_action="enter a different name or cancel the rename",
             )
@@ -358,10 +413,11 @@ class DirectFileCommandService:
         if entry.size != expected_size or entry.modified_at.isoformat() != expected_modified:
             raise self._stale_source_error(library, source)
         # The version the operator holds is re-verified against the entry as it
-        # is right now, from provider metadata only: the token covers type,
-        # size, modified time and the provider's verifiable entry identity, so a
-        # source replaced after the evidence was issued is refused with zero
-        # mutation — without reading a single byte of the file.
+        # is right now, from provider metadata only: the token covers the library
+        # kind, type, size, modified time and the provider's verifiable entry
+        # identity, so a source replaced — or evidence issued for the other
+        # library kind — after the evidence was created is refused with zero
+        # mutation, without reading a single byte of the file.
         source_evidence = self._observed_entry_evidence(library, source, entry)
         if self._entry_version_token(library, source, source_evidence) != expected_token:
             raise self._stale_source_error(library, source)
@@ -382,7 +438,7 @@ class DirectFileCommandService:
             target=target,
         )
 
-    def rename_evidence(self, *, resource_library_id: str, path: str) -> RenameEvidence:
+    def rename_evidence(self, *, library_id: str, path: str) -> RenameEvidence:
         """Issue the version evidence one Rename command must return.
 
         Zero-mutation and content-free: the entry is observed with one metadata
@@ -390,7 +446,7 @@ class DirectFileCommandService:
         provider cannot verify is refused here instead of being renamed later.
         """
 
-        library = self._library(resource_library_id)
+        library = self._library(library_id)
         relative = self._relative_path(path)
         self._require_non_root(relative)
         storage = self._open_storage(library)
@@ -398,7 +454,8 @@ class DirectFileCommandService:
         self._require_renamable_entry(library, relative, entry)
         evidence = self._observed_entry_evidence(library, relative, entry)
         return RenameEvidence(
-            resource_library_id=library.library_id,
+            library_kind=self._kind,
+            library_id=library.library_id,
             path=relative,
             is_directory=evidence.is_directory is True,
             size=evidence.size,
@@ -409,12 +466,12 @@ class DirectFileCommandService:
     def save_text(
         self,
         *,
-        resource_library_id: str,
+        library_id: str,
         path: str,
         content: str,
         expected: Mapping[str, object],
     ) -> dict[str, object]:
-        library = self._library(resource_library_id)
+        library = self._library(library_id)
         relative = self._relative_path(path)
         entry = self._require_regular_file(library, relative, allow_text_only=True)
         encoded = self._bounded_text_bytes(content)
@@ -453,8 +510,8 @@ class DirectFileCommandService:
     # Bounded Delete: impact discovery and confirmed execution
     # ------------------------------------------------------------------
 
-    def delete_impact(self, *, resource_library_id: str, paths) -> DeleteImpact:
-        library = self._library(resource_library_id)
+    def delete_impact(self, *, library_id: str, paths) -> DeleteImpact:
+        library = self._library(library_id)
         targets = self._delete_targets(paths)
         storage = self._open_storage(library)
         entries = self._impact_entries(library, storage, targets)
@@ -462,20 +519,21 @@ class DirectFileCommandService:
         file_count = sum(1 for entry in entries if not entry.is_directory)
         directory_count = len(entries) - file_count
         return DeleteImpact(
-            resource_library_id=library.library_id,
+            library_kind=self._kind,
+            library_id=library.library_id,
             top_level_paths=targets,
             entries=tuple(entries),
             file_count=file_count,
             directory_count=directory_count,
             total_bytes=self._impact_bytes(entries),
             truncated=False,
-            scope_digest=self._scope_digest(library.library_id, entries),
+            scope_digest=self._scope_digest(self._kind, library.library_id, entries),
         )
 
     def execute_delete(
-        self, *, resource_library_id: str, paths, confirmation_digest: str
+        self, *, library_id: str, paths, confirmation_digest: str
     ) -> dict[str, object]:
-        library = self._library(resource_library_id)
+        library = self._library(library_id)
         targets = self._delete_targets(paths)
         if not isinstance(confirmation_digest, str) or not confirmation_digest:
             raise DirectFileError(
@@ -483,22 +541,25 @@ class DirectFileCommandService:
                 "invalid_confirmation",
                 "the Delete confirmation is missing the validated scope evidence",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 next_action="request the Delete impact summary and confirm again",
             )
         storage = self._open_storage(library)
         entries = self._impact_entries(library, storage, targets)
-        if self._scope_digest(library.library_id, entries) != confirmation_digest:
+        if self._scope_digest(self._kind, library.library_id, entries) != confirmation_digest:
             raise DirectFileError(
                 "files_direct_stale_confirmation",
                 "stale_confirmation",
                 "the confirmed Delete scope no longer matches the current directory state",
                 status=409,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 next_action="review the refreshed impact summary and confirm again",
             )
         single = len(entries) == 1 and not entries[0].is_directory
-        command = FILES_DIRECT_COMMAND_TASK if single else FILES_DELETE_TASK_COMMAND
+        command = direct_command_task_command(
+            FILES_DIRECT_COMMAND_TASK if single else FILES_DELETE_TASK_COMMAND,
+            media_library=self._kind is LibraryKind.MEDIA,
+        )
         scope_parent = posixpath.commonpath(targets) if len(targets) > 1 else targets[0]
         task = self._tasks.create(
             command,
@@ -522,7 +583,7 @@ class DirectFileCommandService:
                 item = self._tasks.begin_item(
                     task.task_id,
                     library.storage_id,
-                    library.library_id,
+                    scoped_library_id(self._kind, library.library_id),
                     full,
                     entry.path,
                 )
@@ -605,6 +666,8 @@ class DirectFileCommandService:
                 attempted=len(items),
             ),
             "taskId": task.task_id,
+            "taskCommand": command,
+            "libraryKind": self._kind.value,
             "taskStatus": final.status.value,
             "topLevelPaths": targets,
             # At most MAX_DELETE_PATHS top-level targets exist by admission, so
@@ -643,7 +706,7 @@ class DirectFileCommandService:
 
     def _run_single(
         self,
-        library: ResourceLibrary,
+        library: ResourceLibrary | MediaLibrary,
         storage: Storage,
         operation: DirectFileOperation,
         *,
@@ -652,7 +715,10 @@ class DirectFileCommandService:
         executor_call,
         target: str,
     ) -> dict[str, object]:
-        command = FILES_DIRECT_COMMAND_TASK
+        command = direct_command_task_command(
+            FILES_DIRECT_COMMAND_TASK,
+            media_library=self._kind is LibraryKind.MEDIA,
+        )
         task = self._tasks.create(
             command,
             execute_authorized=True,
@@ -665,7 +731,10 @@ class DirectFileCommandService:
             item = self._tasks.begin_item(
                 task.task_id,
                 library.storage_id,
-                library.library_id,
+                # The durable library identity carries its kind: the same ID on
+                # the other kind of library is a different source of truth and
+                # can never be claimed, reconstructed or replayed as this one's.
+                scoped_library_id(self._kind, library.library_id),
                 storage_path,
                 library_path,
             )
@@ -676,7 +745,7 @@ class DirectFileCommandService:
                 "task_paused",
                 "the command Task was paused before execution",
                 status=409,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=library_path,
                 next_action="resume the Task from Operations and retry the command",
             ) from None
@@ -689,11 +758,13 @@ class DirectFileCommandService:
             "target": target,
             "status": result.status.value,
             "taskId": task.task_id,
+            "taskCommand": command,
+            "libraryKind": self._kind.value,
             "taskStatus": self._tasks.require(task.task_id).status.value,
             "effectCertainty": result.effect_certainty.value,
             "sideEffects": "storage_mutations" if result.status.value != "DRY_RUN" else "none",
             "retrySafe": False,
-        }
+        } | library_identity(self._kind, library.library_id)
         error_category = _result_error_category(result)
         if error_category is not None:
             document["errorCategory"] = error_category
@@ -736,38 +807,54 @@ class DirectFileCommandService:
             "errorCategory": "path_locked",
         }
 
-    def _library(self, resource_library_id: str) -> ResourceLibrary:
-        if not isinstance(resource_library_id, str) or not resource_library_id:
+    def _library(self, library_id: str) -> ResourceLibrary | MediaLibrary:
+        label = _LIBRARY_KIND_LABEL[self._kind]
+        if not isinstance(library_id, str) or not library_id:
             raise DirectFileError(
                 "files_direct_invalid_request",
                 "invalid_request",
-                "a ResourceLibrary identity is required",
+                f"a {label} identity is required",
                 status=400,
-                next_action="select a ResourceLibrary and retry",
+                next_action=f"select a {label} and retry",
             )
-        library = self._libraries.get(resource_library_id)
+        library = self._libraries.get(library_id)
         if library is None:
             raise DirectFileError(
-                "files_direct_resource_library_not_found",
-                "resource_library_not_found",
-                "the selected ResourceLibrary is not part of the Active configuration",
+                _LIBRARY_NOT_FOUND_CODE[self._kind],
+                "library_not_found",
+                f"the selected {label} is not part of the Active configuration",
                 status=404,
-                resource_library_id=resource_library_id,
-                next_action="select an enabled ResourceLibrary and retry",
+                **{_LIBRARY_KIND_REQUEST_FIELD[self._kind]: library_id},
+                next_action=f"select an enabled {label} and retry",
             )
         return library
 
+    def _identity(self, library: ResourceLibrary | MediaLibrary) -> dict[str, str]:
+        """The one error-document identity field for this service's library kind.
+
+        A failure is always attributed to the kind that was actually named in
+        the request, so an operator and the Web can never read a MediaLibrary
+        refusal as a ResourceLibrary one (or replay it against the other kind).
+        """
+
+        return (
+            {"media_library_id": library.library_id}
+            if self._kind is LibraryKind.MEDIA
+            else {"resource_library_id": library.library_id}
+        )
+
     def _relative_path(self, path: object) -> str:
+        label = _LIBRARY_KIND_LABEL[self._kind]
         try:
             return _normalize_storage_relative_path(path)
         except ValueError as error:
             raise DirectFileError(
                 "files_direct_invalid_path",
-                "invalid_path",
-                "the path is not a safe ResourceLibrary-relative path",
+                _INVALID_PATH_CATEGORY[self._kind],
+                f"the path is not a safe {label}-relative path",
                 status=400,
                 path=path if isinstance(path, str) else "",
-                next_action="navigate inside the ResourceLibrary and retry",
+                next_action=f"navigate inside the {label} and retry",
             ) from error
 
     def _require_basename(self, name: object) -> None:
@@ -787,15 +874,16 @@ class DirectFileCommandService:
 
     def _require_non_root(self, relative: str) -> None:
         if not relative:
+            label = _LIBRARY_KIND_LABEL[self._kind]
             raise DirectFileError(
                 "files_direct_root_protected",
                 "root_protected",
-                "the ResourceLibrary root cannot be renamed or deleted",
+                f"the {label} root cannot be renamed or deleted",
                 status=400,
-                next_action="select a file or directory inside the ResourceLibrary",
+                next_action=f"select a file or directory inside the {label}",
             )
 
-    def _open_storage(self, library: ResourceLibrary) -> Storage:
+    def _open_storage(self, library: ResourceLibrary | MediaLibrary) -> Storage:
         # One adapter instance per configured Storage identity for the whole
         # service lifetime (the pinned Active snapshot boundary).  Normal
         # runtime adapter construction may otherwise return a new object per
@@ -817,13 +905,13 @@ class DirectFileCommandService:
                 "storage_unavailable",
                 "the referenced Storage is not available",
                 status=503,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 next_action="check the Storage configuration and retry",
             )
         self._storage_cache[library.storage_id] = storage
         return storage
 
-    def _require_writable_storage(self, library: ResourceLibrary) -> Storage:
+    def _require_writable_storage(self, library: ResourceLibrary | MediaLibrary) -> Storage:
         storage = self._open_storage(library)
         if getattr(storage, "read_only", False):
             raise DirectFileError(
@@ -831,13 +919,15 @@ class DirectFileCommandService:
                 "capability_denied",
                 "the referenced Storage is read-only",
                 status=403,
-                resource_library_id=library.library_id,
-                next_action="select a writable ResourceLibrary or enable Storage writes",
+                **self._identity(library),
+                next_action=(
+                    f"select a writable {_LIBRARY_KIND_LABEL[self._kind]} or enable Storage writes"
+                ),
             )
         return storage
 
     def _require_writable_parent(
-        self, library: ResourceLibrary, storage: Storage, parent: str
+        self, library: ResourceLibrary | MediaLibrary, storage: Storage, parent: str
     ) -> None:
         if not parent:
             return
@@ -850,7 +940,7 @@ class DirectFileCommandService:
                     "not_a_directory",
                     "the destination parent does not exist",
                     status=404,
-                    resource_library_id=library.library_id,
+                    **self._identity(library),
                     path=parent,
                     next_action="choose an existing directory as the destination",
                 ) from None
@@ -861,7 +951,7 @@ class DirectFileCommandService:
                 "not_a_directory",
                 "the destination parent is not a directory",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=parent,
                 next_action="choose an existing directory as the destination",
             )
@@ -882,7 +972,9 @@ class DirectFileCommandService:
             )
         return data
 
-    def _require_target_free(self, library: ResourceLibrary, storage: Storage, target: str) -> None:
+    def _require_target_free(
+        self, library: ResourceLibrary | MediaLibrary, storage: Storage, target: str
+    ) -> None:
         full = _join_resource_library_path(library.root_path, target)
         try:
             exists = storage.exists(full)
@@ -898,13 +990,13 @@ class DirectFileCommandService:
                 "target_exists",
                 "the destination already exists; nothing was replaced",
                 status=409,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=target,
                 next_action="choose a different name or refresh the directory",
             )
 
     def _require_regular_file(
-        self, library: ResourceLibrary, relative: str, *, allow_text_only: bool
+        self, library: ResourceLibrary | MediaLibrary, relative: str, *, allow_text_only: bool
     ):
         storage = self._open_storage(library)
         entry = self._stat_entry(library, storage, relative)
@@ -914,7 +1006,7 @@ class DirectFileCommandService:
                 "is_a_directory",
                 "directories cannot be opened as text",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="select a text file instead",
             )
@@ -924,7 +1016,7 @@ class DirectFileCommandService:
                 "symlink_not_supported",
                 "symbolic links are not editable",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="open the link target through its own path instead",
             )
@@ -935,13 +1027,13 @@ class DirectFileCommandService:
                 "unsupported_text_type",
                 "the file extension is not an allowlisted bounded text type",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="only allowlisted text sidecars can be opened in the editor",
             )
         return entry
 
-    def _stat_entry(self, library: ResourceLibrary, storage: Storage, relative: str):
+    def _stat_entry(self, library: ResourceLibrary | MediaLibrary, storage: Storage, relative: str):
         full = _join_resource_library_path(library.root_path, relative)
         try:
             return storage.stat(full)
@@ -956,14 +1048,16 @@ class DirectFileCommandService:
                 library, relative, StorageError(StorageErrorCode.IO_ERROR, "stat", full)
             ) from error
 
-    def _require_deletable_entry(self, library: ResourceLibrary, relative: str, entry) -> str:
+    def _require_deletable_entry(
+        self, library: ResourceLibrary | MediaLibrary, relative: str, entry
+    ) -> str:
         if entry.entry_type is StorageEntryType.SYMLINK:
             raise DirectFileError(
                 "files_direct_symlink_not_supported",
                 "symlink_not_supported",
                 "symbolic links are excluded from Delete",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="remove the link through its own provider instead",
             )
@@ -976,7 +1070,9 @@ class DirectFileCommandService:
         value = getattr(entry, "fingerprint", None)
         return value if isinstance(value, str) and value else None
 
-    def _require_entry_identity(self, library: ResourceLibrary, relative: str, entry) -> str:
+    def _require_entry_identity(
+        self, library: ResourceLibrary | MediaLibrary, relative: str, entry
+    ) -> str:
         """Refuse an entry whose exact version this provider cannot verify.
 
         Rename and Delete both bind the provider's own entry validator and
@@ -996,7 +1092,7 @@ class DirectFileCommandService:
             "this Storage provider cannot verify the exact version of the selected entry, so the "
             "operation was not executed",
             status=400,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             path=relative,
             next_action=(
                 "refresh the directory and retry from a Storage provider that publishes a "
@@ -1004,7 +1100,9 @@ class DirectFileCommandService:
             ),
         )
 
-    def _require_renamable_entry(self, library: ResourceLibrary, relative: str, entry) -> str:
+    def _require_renamable_entry(
+        self, library: ResourceLibrary | MediaLibrary, relative: str, entry
+    ) -> str:
         """Admission rule for the entry a Rename command may observe."""
 
         if entry.entry_type is StorageEntryType.SYMLINK:
@@ -1013,14 +1111,14 @@ class DirectFileCommandService:
                 "symlink_not_supported",
                 "symbolic links cannot be renamed",
                 status=400,
-                resource_library_id=library.library_id,
+                **self._identity(library),
                 path=relative,
                 next_action="rename the link through its own provider instead",
             )
         return self._require_entry_identity(library, relative, entry)
 
     def _observed_entry_evidence(
-        self, library: ResourceLibrary, relative: str, entry
+        self, library: ResourceLibrary | MediaLibrary, relative: str, entry
     ) -> DirectEntryEvidence:
         """The metadata-only exact-version evidence of one observed entry.
 
@@ -1039,10 +1137,11 @@ class DirectFileCommandService:
         )
 
     def _entry_version_token(
-        self, library: ResourceLibrary, relative: str, evidence: DirectEntryEvidence
+        self, library: ResourceLibrary | MediaLibrary, relative: str, evidence: DirectEntryEvidence
     ) -> str:
         return entry_version_token(
-            resource_library_id=library.library_id,
+            library_kind=self._kind.value,
+            library_id=library.library_id,
             path=relative,
             is_directory=evidence.is_directory,
             size=evidence.size,
@@ -1051,7 +1150,7 @@ class DirectFileCommandService:
         )
 
     def _impact_entries(
-        self, library: ResourceLibrary, storage: Storage, targets: tuple[str, ...]
+        self, library: ResourceLibrary | MediaLibrary, storage: Storage, targets: tuple[str, ...]
     ) -> list[DirectFileImpactEntry]:
         """The bounded flattened effect of the confirmed top-level targets."""
 
@@ -1085,7 +1184,7 @@ class DirectFileCommandService:
 
     def _enumerate_into(
         self,
-        library: ResourceLibrary,
+        library: ResourceLibrary | MediaLibrary,
         storage: Storage,
         relative: str,
         collected: list[DirectFileImpactEntry],
@@ -1123,7 +1222,7 @@ class DirectFileCommandService:
                     stack.append((child_relative, depth + 1))
 
     def _enforce_impact_limits(
-        self, library: ResourceLibrary, entries: list[DirectFileImpactEntry]
+        self, library: ResourceLibrary | MediaLibrary, entries: list[DirectFileImpactEntry]
     ) -> None:
         if len(entries) > MAX_IMPACT_ENTRIES:
             raise self._impact_limit_error(library, "impact_entry_limit_exceeded")
@@ -1152,9 +1251,9 @@ class DirectFileCommandService:
             raise DirectFileError(
                 "files_direct_root_protected",
                 "root_protected",
-                "the ResourceLibrary root cannot be deleted",
+                f"the {_LIBRARY_KIND_LABEL[self._kind]} root cannot be deleted",
                 status=400,
-                next_action="select entries inside the ResourceLibrary instead",
+                next_action=f"select entries inside the {_LIBRARY_KIND_LABEL[self._kind]} instead",
             )
         unique = sorted(set(normalized))
         if len(unique) != len(normalized):
@@ -1224,37 +1323,41 @@ class DirectFileCommandService:
             )
         return expected[key]
 
-    @staticmethod
-    def _stale_error(library: ResourceLibrary, relative: str, category: str) -> DirectFileError:
+    def _stale_error(
+        self, library: ResourceLibrary | MediaLibrary, relative: str, category: str
+    ) -> DirectFileError:
         return DirectFileError(
             "files_direct_stale_content",
             category,
             "the file changed since it was loaded; the editor version was not saved",
             status=409,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             path=relative,
             next_action="reload the current content, reapply the edits and save again",
         )
 
-    @staticmethod
-    def _stale_source_error(library: ResourceLibrary, relative: str) -> DirectFileError:
+    def _stale_source_error(
+        self, library: ResourceLibrary | MediaLibrary, relative: str
+    ) -> DirectFileError:
         return DirectFileError(
             "files_direct_stale_source",
             "stale_source",
             "the entry changed since it was observed; nothing was renamed",
             status=409,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             path=relative,
             next_action="refresh the directory and rename the current entry again",
         )
 
-    def _impact_limit_error(self, library: ResourceLibrary, category: str) -> DirectFileError:
+    def _impact_limit_error(
+        self, library: ResourceLibrary | MediaLibrary, category: str
+    ) -> DirectFileError:
         return DirectFileError(
             f"files_direct_{category}",
             category,
             "the Delete scope exceeds the bounded impact limits",
             status=413,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             next_action="delete smaller batches so the effect stays bounded and confirmable",
         )
 
@@ -1263,10 +1366,18 @@ class DirectFileCommandService:
         return sum(entry.size for entry in entries)
 
     @staticmethod
-    def _scope_digest(resource_library_id: str, entries: list[DirectFileImpactEntry]) -> str:
+    def _scope_digest(
+        kind: LibraryKind,
+        library_id: str,
+        entries: list[DirectFileImpactEntry],
+    ) -> str:
+        # The digest covers the library *kind* as well as its ID: an identically
+        # named ResourceLibrary selection can never confirm a MediaLibrary
+        # Delete, and a media confirmation can never be replayed as resource work.
         payload = json.dumps(
             {
-                "resourceLibraryId": resource_library_id,
+                "libraryKind": kind.value,
+                "libraryId": library_id,
                 "entries": [
                     [
                         entry.path,
@@ -1285,7 +1396,7 @@ class DirectFileCommandService:
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     def _storage_admission_failure(
-        self, library: ResourceLibrary, relative: str, error: StorageError
+        self, library: ResourceLibrary | MediaLibrary, relative: str, error: StorageError
     ) -> DirectFileError:
         category, status = _storage_category(error)
         return DirectFileError(
@@ -1293,18 +1404,20 @@ class DirectFileCommandService:
             category,
             "the Storage read for command admission failed",
             status=status,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             path=relative,
             next_action="retry the command once the Storage is reachable again",
         )
 
-    def _storage_unavailable(self, library: ResourceLibrary, error: Exception) -> DirectFileError:
+    def _storage_unavailable(
+        self, library: ResourceLibrary | MediaLibrary, error: Exception
+    ) -> DirectFileError:
         return DirectFileError(
             "files_direct_storage_unavailable",
             "storage_unavailable",
             "the referenced Storage could not be opened",
             status=503,
-            resource_library_id=library.library_id,
+            **self._identity(library),
             next_action="check the Storage configuration and retry",
         )
 
