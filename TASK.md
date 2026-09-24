@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.4
 Parent Slice: 38
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 8cfddad289d2883a17f915e96162ae9e52724140
 Difficulty: High
 Test Level: T4
@@ -336,11 +336,52 @@ Head SHA: d0470747c5767fea195a272cc4869057a7d42160
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 8cfddad289d2883a17f915e96162ae9e52724140..d0470747c5767fea195a272cc4869057a7d42160
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+- **P1 — An actually started MediaLibrary directory transfer cannot resume.**
+  `mediaflow/application/direct_file_transfers.py:2308` (`_resume_item_plan`) and `:1779`
+  (`_continue_item`) pass the persisted `item.resource_library_id` directly to
+  `self._direct.library(...)`. This Task persists media items as `media:movies`, while the
+  pinned configuration identifies that MediaLibrary as `movies`. The lookup therefore fails
+  after a real item has begun. This breaks the Task's durable continuation criteria and Slice
+  RO-6/RO-7 (supported pause/resume and kind-correct reconstruction).
+  Evidence: ran `PYTHONPATH=/root/mediaflow .venv/bin/python
+  /tmp/mediaflow-b-38-4-resume-probe.py` and the same command with argument `move` against
+  this checkpoint. Both probes use the existing checked-Active fixture, real SQLite/API/Worker
+  and `_GatedSource`, which inherits the production LocalStorage implementation and only gates
+  the timing of a native copy/move; no capability is removed and no Task state is fabricated.
+  Reproduction: create `Movies/show/{one,two,three}.mkv`; admit `movies` → `tv`; pause through
+  `/api/v1/tasks/{id}/pause` while the first native operation is in progress; release it and
+  observe a genuinely PAUSED item; resume through the API; run the Worker again. Observed:
+  pause HTTP 200, item identity `media:movies`, resume HTTP 202 / QUEUED, final transfer FAILED,
+  item projection still PAUSED, mutation count remains 1, destination contains only `one.mkv`.
+  Fix direction: validate/decode the persisted kind and configured ID at every started-item
+  continuation lookup, preserve the pinned MediaLibrary authority and completed checkpoints,
+  and continue only the remaining entries. Add real mid-directory pause/resume coverage for
+  Copy and Move; the current test that manually pauses an unstarted row does not exercise this
+  path. Keep completed effects non-replayable and terminal/per-item projections truthful.
+
+- **P1 — Operations reports an accepted media transfer Resume as an unapplied control.**
+  `mediaflow/interfaces/service_api.py:6624` returns the media transfer projection with HTTP 202
+  from the new kind-routed resume branch, while the existing Operations page calls
+  `mutateLifecycle` (`web/src/shared/api/api-client.ts:1036`), which requires a `{task,
+  lifecycle}` document. The transfer response has neither field, so the real client returns
+  `malformed_response`; `TaskDetailPage.tsx` displays `Control was not applied` even though
+  the transfer has already been queued. This affects the supported
+  `/ui-v2/operations/tasks/{id}` revisit → Resume journey and violates the Task's Operations
+  recovery/known-state criteria and Slice RO-6 / Required Surface for Operations lifecycle.
+  Evidence: the same LocalStorage/API probe feeds the actual 202 resume response unchanged
+  into the production `mutateLifecycle` function via
+  `/tmp/mediaflow-b-38-4-client-probe.cjs`. Result:
+  `{"ok":false,"status":202,"code":"malformed_response"}` while the durable transfer is QUEUED.
+  The Node harness only transpiles the actual TypeScript and supplies the captured HTTP
+  response; it does not invent a different server payload or weaken production capabilities.
+  Fix direction: make Operations consume the successful transfer continuation response
+  truthfully (or reconcile through the authoritative Task projection), refresh its state
+  without resubmitting, and preserve both library kinds' existing dialog/API contracts. Cover
+  Operations revisit → Resume with the real backend response shape, including accepted,
+  denied/stale and uncertain outcomes.
