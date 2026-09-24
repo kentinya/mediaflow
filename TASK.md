@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 38.7
 Parent Slice: 38
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: f888cb76ca09780374562305f29b1c1aa8bcdc56
 Difficulty: Medium
 Test Level: T2
@@ -126,21 +126,82 @@ Shared entry interaction/presentation
 
 ### Changed Files
 
+- `web/src/features/library/RowActionMenu.tsx`
+- `web/src/features/library/StorageFilesPage.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.tsx`
+- `web/src/features/library/StorageFilesPage.test.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.test.tsx`
+- `web/src/features/library/MediaLibraryCommands.test.tsx`
+- `web/src/features/library/MediaLibraryTransfers.test.tsx`
+- `web/src/shared/ui/styles.css`
+- `web/tests/e2e/library-file-detail.spec.ts`
+- `web/tests/e2e/library-files.spec.ts`
+- `web/tests/e2e/manual-operations.spec.ts`
+- `web/tests/e2e/medialib-files.spec.ts`
+- `web/tests/e2e/medialib-commands.spec.ts`
+- `web/tests/e2e/medialib-transfers.spec.ts`
+- `TASK.md`
+
 ### Implemented
+
+- Removed the persistent `操作` column and row Open/Organize/overflow controls from both five-column
+  browse tables while retaining stable responsive column geometry.
+- Added one shared portal-backed entry menu opened from right-click, Context Menu, `Shift+F10` or
+  focused Enter in both list and grid views, with viewport confinement, first-item focus, arrow-key
+  traversal, Escape/outside dismissal and focus restoration.
+- Made folder name/icon and non-control row space open the exact folder; checkbox interaction remains
+  selection-only and file left-click does not create a command.
+- Preserved the existing single-entry dialogs and command callbacks for Open/Edit, Rename, Copy,
+  Move, Delete and ResourceLibrary Organize; MediaLibrary exposes no Organize command and batch bars
+  retain their independent selection semantics.
+- Updated component and built-artifact browser coverage for five-column structure, direct folder
+  navigation, controlled menu entry and the existing command/recovery journeys.
 
 ### Tests and Results
 
+- `npm --prefix web run test -- --run` — PASS (full Vitest suite).
+- `npm --prefix web run build` — PASS (Vite emitted the existing chunk-size warning).
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-files.spec.ts tests/e2e/medialib-commands.spec.ts` — PASS.
+- `npm --prefix web run test:e2e` — PASS (168/168).
+- `npm --prefix web run typecheck` — PASS.
+- `npm --prefix web run lint` — PASS.
+- `npm --prefix web run format:check` — PASS.
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/ruff format --check .` — PASS (314 files).
+- `.venv/bin/ruff check .` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1791 tests, 7 skipped).
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS.
+- `git diff --check` — PASS.
+
 ### Decisions
+
+- `RowActionMenu` remains the shared controlled portal boundary; it accepts either an invoking-entry
+  rectangle or pointer coordinates so keyboard and pointer entry use identical commands.
+- Entry rows/grid cells are the focusable menu anchors. This removes persistent action chrome while
+  providing an explicit focus interaction and reliable focus return after dismissal.
+- Single-entry menu commands always receive the invoked row path directly; existing multi-selection
+  is left untouched and is used only by the existing batch footer.
 
 ### Remaining In-Slice Work
 
+- No additional Task-local work is known; Slice completeness remains for B/A review.
+
 ### Risks / Deviations
+
+- The worktree contained a pre-existing modified `docs/pics/文件页.png`; it was preserved and excluded
+  from both Task commits.
+- Python regression passed with the suite's existing `ResourceWarning` messages for unclosed test
+  SQLite connections. No production Python code changed.
+- The first full E2E run exposed three stale assertions/selectors for the removed action column and
+  inline controls; they were updated, the focused 30-test reproduction passed, and the complete
+  168-test suite then passed.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: cefc76186c076d6c1919fb39ea3d1d83ea6f8dde
 ```
 
 ## B Review Result
