@@ -422,7 +422,47 @@ describe("Storage management journey", () => {
       if (!url.startsWith(INVENTORY_PATH)) {
         return jsonResponse({ error: { code: "not_found" } }, 404);
       }
-      const after = new URL(url, "http://test").searchParams.get("after");
+      const params = new URL(url, "http://test").searchParams;
+      const after = params.get("after");
+      const query = params.get("q") ?? "";
+      if (query !== "") {
+        // The search runs on the backend over the complete Active set. The
+        // regression under test is that a new search after continuation must
+        // not carry the stale cursor: `?q=local-0&after=local-3` would slice
+        // the one match away and falsely return an empty page.
+        const searchable = [
+          ...Array.from({ length: 4 }, (_value, index) => ({
+            ...STORAGE_LOCAL,
+            id: `local-${index}`,
+            name: `Local ${index}`,
+          })),
+          STORAGE_BEYOND_PAGE,
+        ];
+        const needle = query.toLowerCase();
+        const matched = searchable.filter((item) =>
+          [item.name, item.id, item.type]
+            .join(" ")
+            .toLowerCase()
+            .includes(needle),
+        );
+        const remaining =
+          after === null ? matched : matched.filter((item) => item.id > after);
+        const page = remaining.slice(0, 100);
+        const hasMore = remaining.length > page.length;
+        return jsonResponse({
+          ...(inventoryPayload(page) as Record<string, unknown>),
+          total: 105,
+          matched: matched.length,
+          returned: page.length,
+          truncated: hasMore,
+          hasMore,
+          nextAfter:
+            hasMore && page.length > 0
+              ? (page[page.length - 1] as { id: string }).id
+              : null,
+          families: { local: 102, smb: 1, openlist: 1, s3: 1 },
+        });
+      }
       if (after === null) {
         return jsonResponse(overLimitInventoryPayload());
       }
@@ -473,6 +513,26 @@ describe("Storage management journey", () => {
     await waitFor(() => {
       expect(screen.queryByText(/当前显示 4 \/ 105 个匹配的存储/)).toBeNull();
     });
+
+    // A new search after continuation resets the page window: the next
+    // request must drop the stale cursor instead of combining it with the new
+    // query (the `?q=...&after=...` false-empty regression). Searching for an
+    // earlier configured Storage that sits before the continuation cursor
+    // must still find it.
+    const search = screen.getByRole("searchbox", {
+      name: "搜索存储、路径",
+    }) as HTMLInputElement;
+    await userEvent.clear(search);
+    await userEvent.type(search, "local-0");
+    await waitFor(() => {
+      const lastUrl = lastInventoryUrl(fetchMock);
+      expect(lastUrl).toContain("q=local-0");
+      expect(lastUrl).not.toContain("after=");
+      expect(
+        within(screen.getAllByRole("row")[1]).getByText("Local 0"),
+      ).toBeVisible();
+    });
+    expect(screen.queryByText("没有匹配搜索或筛选条件的存储")).toBeNull();
   });
 
   it("applies the provider family filter on the server side", async () => {

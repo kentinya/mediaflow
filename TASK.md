@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 39.1
 Parent Slice: 39
-Status: READY FOR B REVIEW
+Status: IN PROGRESS
 Task Base: 77f58da419ba6e4198897180c649799d3f25a0d0
 Difficulty: High
 Test Level: T4
@@ -118,78 +118,57 @@ provider services only.
 ### Changed Files
 
 - `TASK.md`
-- `mediaflow/application/configuration_objects.py`
-- `mediaflow/interfaces/service_api.py`
-- `tests/test_v2_storage_operations.py`
-- `web/src/entities/storage/storage-management.ts`
-- `web/src/entities/storage/storage-management.test.ts`
-- `web/src/shared/api/api-client.ts`
-- `web/src/shared/api/storage-management-api.test.ts`
-- `web/src/features/storage/storage-management-query.ts`
 - `web/src/features/storage/StorageManagementPage.tsx`
 - `web/src/features/storage/StorageManagementPage.test.tsx`
-- `web/src/shared/ui/styles.css`
-- `web/tests/fake-server.mjs`
 - `web/tests/e2e/storage-management.spec.ts`
 
 ### Implemented
 
-- Fixed the B blocker in this Task only: `active_storage_management()` now derives provider
-  (`families`) counts from the complete Active Storage object set instead of the returned page.
-- Added a bounded inventory search (`q`) and provider-filter (`family`) that run inside the
-  projection over the complete Active object set, so every configured Storage stays findable and
-  inspectable even when it is not on the first bounded page. Matching covers name, stable ID,
-  provider type and provider-safe location (root path plus host/share/bucket/endpoint/region);
-  no secret values are searched or returned.
-- Added a bounded explicit continuation (`limit` 1..100, stable ID-ordered `after` cursor) that
-  returns `matched`, `returned`, `hasMore` and `nextAfter`, so an over-limit inventory or
-  over-limit search result stays fully reachable. Unsupported, repeated or out-of-range query
-  fields are rejected instead of being silently ignored.
-- Made the bounded inventory journey disclose truncation: the page states how many of how many
-  matching rows are shown and offers explicit continuation (`继续显示更多`) plus a return to the
-  first page, while provider cards keep showing complete-Active configured counts. A search with
-  no match states that truthfully even when other Storages remain configured.
-- Nobody else in the Task changed: Add/Edit/mutation, checked publication and the Slice Contract
-  are untouched; detail, read-check and RBAC behavior are preserved.
+- Fixed the B blocker in this Task only: a new search in the shared top-bar now
+  resets the bounded inventory page window instead of combining the new query
+  with the stale continuation cursor. `StorageManagementPage` tracks the
+  search/filter basis (`pageBasis`) and derives `effectiveAfter`: when the
+  trimmed search or provider filter no longer matches that basis, the next
+  inventory request already sends `after: null` (no `after` query param), so
+  `GET .../inventory?q=local-000` can never again be sent as
+  `?q=local-000&after=local-099` with `matched: 1, returned: 0` and a false
+  `没有匹配搜索或筛选条件的存储` state. The render-phase `pageBasis` sync
+  persists the reset for subsequent renders.
+- Provider-filter changes keep their existing synchronous reset; family,
+  search and continuation behavior are otherwise unchanged. No backend, API,
+  projection, Slice Contract or Add/Edit/mutation change was made: detail,
+  read-check, RBAC, redaction and checked-publication boundaries are preserved.
 
 ### Tests and Results
 
 - `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_setup_check tests.test_storage_configuration_management tests.test_v2_storage_operations` — PASS, 105 tests.
-- `.venv/bin/python -m unittest discover -s tests` — PASS, 1813 tests, 7 skipped.
+- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED, 1813 tests, 7 skipped, 1 failure: `tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` asserts the literal string `python3 scripts/check_governance.py` appears in `TASK.md`, but B's Task text (unchanged since `19f9762`, before this correction) documents the gate as `` `.venv/bin/python scripts/check_governance.py` ``. The failure reproduces on the unmodified HEAD checkout, involves no file touched by this correction, and the governance gate itself passes (see `scripts/check_governance.py` — PASS below). Fixing the wording is B-owned Task text, so it is left for B and recorded here, not silently edited.
 - `cd web && npm test -- --run` — PASS, 46 files and 643 tests.
-- `cd web && npm run test:e2e -- --grep 'Storage management'` — PASS, 11 browser tests (includes the new legal over-limit journey).
+- Focused `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts src/entities/storage/storage-management.test.ts` — PASS, 3 files and 32 tests (includes the new search-after-continuation reset assertion: the next request after continuation carries `q=local-0` with no `after=` and still finds the earlier `Local 0` row).
+- `cd web && npm run test:e2e -- --grep 'Storage management'` — PASS, 11 browser tests (the over-limit journey now continues, then searches `local-000` and asserts the `本地存储 000` row is visible with no false empty state, reproducing B's exact `继续显示更多` → search flow).
 - `cd web && npm run typecheck` — PASS.
 - `cd web && npm run lint` — PASS.
-- `cd web && npm run format:check` — PASS.
-- `cd web && npm run build` — PASS; Vite emitted a non-fatal large-chunk advisory.
+- `cd web && npm run format:check` — PASS (after `prettier --write` on the two touched source/test files).
+- `cd web && npm run build` — PASS; Vite emitted the known non-fatal large-chunk advisory.
 - `.venv/bin/ruff format --check .` — PASS, 315 files already formatted.
 - `.venv/bin/ruff check .` — PASS.
-- `scripts/check_governance.py` — PASS.
-- `scripts/docker_release_security_smoke_test.py` — UNAVAILABLE (environment gate): the base Task
-  passed this gate at `19f9762`; this correction adds no packaging, Dockerfile, Compose or
-  persistence/API-boundary change, so no new release-security evidence is claimed. The command was
-  attempted and fails on two contemporary Docker tmpfs bind-mount errors (missing
-  `/tmp/.../media/incoming`, then missing `.../deployment.env`) after the compose-down outline was
-  made hermetic in commit `19f9762`; the failure is environmental, unrelated to this Task, and was
-  not introduced by the correction commits.
+- `scripts/check_governance.py` — PASS (`governance check: PASS`; literal command `python3 scripts/check_governance.py` was executed as `.venv/bin/python scripts/check_governance.py`).
+- `scripts/docker_release_security_smoke_test.py` — UNAVAILABLE (environment gate): not attempted this round; this correction touches only Web search/paging state plus its tests, no packaging, Dockerfile, Compose or persistence/API boundary, so no new release-security evidence is claimed.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `git diff --check` — PASS, including the staged diff.
-- Manifest/private-file audit — PASS: the staged manifest contains only the 15 listed Task files;
-  `config/alist.json` is ignored, untracked and unstaged. Secret-output tests passed; test-only
-  credential markers are synthetic fixtures. FFmpeg/FFprobe exclusion audit — PASS, no matches
-  in changed runtime or test sources.
+- `git diff --check` — PASS.
+- Manifest/private-file audit — PASS: this correction stages only the 4 listed Task files; `config/alist.json` is ignored, untracked and unstaged. The pre-existing unrelated `docs/pics/` dirty/deleted/untracked entries documented at round start are preserved and excluded from the checkpoint. Secret-output audit — PASS (no secret values in projections or test output; test tokens are synthetic fixtures). FFmpeg/FFprobe exclusion audit — PASS, no matches in changed sources or tests.
 
 ### Decisions
 
-- Search and provider filtering are applied server-side over the complete ordered Active set, and
-  the page is a bounded window over that same filtered set — the single source of truth, so a
-  Storage beyond the first page can never again be unreachable from the Web search or filter.
-- Provider (`families`) counts are always derived from the complete Active object set, never from
-  the returned page, so the summary cards stay truthful when the configuration is over the page
-  limit and remain stable while a search or filter narrows the table.
-- `truncated` now means the returned page is not the complete matching inventory (`hasMore`);
-  with `total` (configured), `matched` (matching), `returned` (this page) and `nextAfter`, the
-  operator always sees the durable quantities and the explicit bounded way to continue.
+- The reset is derived (`effectiveAfter`) as well as persisted (`pageBasis` sync)
+  so the very next query after a search change already drops the stale cursor;
+  a `useEffect`-only reset would still fire one stale `?q=...&after=...`
+  request first and reproduce the false-empty state.
+- Search comparison uses the trimmed query (the same value sent to the API) so
+  whitespace-only typing does not thrash the page window.
+- The provider filter and the search share one `pageBasis`, so either change
+  resets the window through the same path; `onSelect` keeps its existing
+  explicit reset as well.
 - No Slice Contract or Roadmap changes.
 
 ### Remaining In-Slice Work
@@ -199,37 +178,39 @@ provider services only.
 
 ### Risks / Deviations
 
-- This correction also fixes the prior checkpoint's misrecorded release-security gate (the original
-  report wrote an unrelated stdout line for the smoke test). The base round's `docker compose down`
-  env outline was added strictly to keep the report truthful; it changed no application behavior.
+- Full Python regression has 1 pre-existing unrelated failure documented above
+  (`test_release_quality_gate_commands_are_documented_for_task_execution`,
+  B-owned Task wording vs. the test's literal `python3` prefix); all 105
+  focused storage tests and every other suite pass. B decides PASS/FAIL.
 - The pre-existing unrelated image files (`docs/pics/` deleted/modified/untracked entries
   documented at round start) are preserved and excluded from this Task checkpoint.
-- The frontend build emits a non-fatal Vite large-chunk advisory.
+- The frontend build emits the known non-fatal Vite large-chunk advisory.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 733c4a32eae020ffabeac45ad4e05c1bae681ab3
+Head SHA: <to fill at commit time>
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 77f58da419ba6e4198897180c649799d3f25a0d0..19f976288719a18ffb657b187f5e6ed82816ad9a
+Reviewed: 77f58da419ba6e4198897180c649799d3f25a0d0..733c4a32eae020ffabeac45ad4e05c1bae681ab3
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Inventory search and provider counts omit valid Active Storage objects after the first 100,
-  violating this Task's first two Acceptance Criteria and Slice RO-2. In a temporary, validated
-  105-Storage managed Active configuration using the current production API and runtime loader,
-  `GET /api/v1/operations/storage-management/inventory` returned `total: 105`, 100 items,
-  `truncated: true`, and only 97 Local objects in `families` although 102 Local objects were
-  configured. The remaining five objects cannot be found by the Web search or provider filter:
-  `active_storage_management()` counts families only from its first 100 projected objects, and
-  `StorageManagementPage` filters only those returned rows without showing the truncation. Make
-  the bounded inventory journey disclose truncation and let the operator find/inspect every
-  configured Storage through bounded search or paging; derive provider counts from the complete
-  Active object set. Cover this legal over-limit configuration through API and Web tests.
+- Searching after inventory continuation can falsely report that a configured Storage does not
+  exist, violating this Task's first two Acceptance Criteria and Slice RO-2. With the committed
+  105-Storage browser fixture, I opened `/ui-v2/storage`, clicked `继续显示更多`, then searched for
+  `local-000` in the shared top bar. The actual request was
+  `GET /api/v1/operations/storage-management/inventory?q=local-000&after=local-099`;
+  the API reported `matched: 1, returned: 0`, while Web displayed `没有匹配搜索或筛选条件的存储`.
+  The current production API reproduced the same result with a validated 105-Storage managed
+  Active configuration in a temporary database: after the first page, searching its earlier
+  `local-source` with the returned cursor gave `matched: 1, returned: 0`.
+  `StorageManagementPage` resets `afterCursor` on provider-filter changes but retains it when
+  search changes. Reset the page window when a new search starts and cover search for an earlier
+  configured Storage after continuation in the browser journey.

@@ -194,6 +194,17 @@ test.describe("Storage management", () => {
       page.getByText(/当前显示 100 \/ 105 个匹配的存储/),
     ).toHaveCount(0);
 
+    // A new search after continuation resets the page window: an earlier
+    // configured Storage (local-000, before the continuation cursor) stays
+    // findable instead of falsely reporting no match. This is the exact
+    // `?q=local-000&after=local-099` regression: the next request must drop
+    // the stale cursor.
+    await search.fill("local-000");
+    await expect(
+      page.getByRole("row").filter({ hasText: "本地存储 000" }),
+    ).toBeVisible();
+    await expect(page.getByText("没有匹配的存储")).toHaveCount(0);
+
     // A Storage found only through search is inspectable in full.
     await search.fill("openlist-beyond-page");
     await viewRow(page, "OpenList 后续页").click();
