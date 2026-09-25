@@ -138,8 +138,7 @@ Relabelling the page or passing a media ID as a resource ID cannot deliver this 
 
 Applicable requirements include `REQ-LIB-002/003/004/005`, `REQ-STO-*`, `REQ-CONFIG-*`, `REQ-SAFE-*`,
 `UX-001/002/003/004/007/009/010`, `V2-UX-*`, `V2-AUTH-*`, `V2-SAFE-001`,
-`REQ-LIB-005`, `V2-FILES-002/003/004` for retained Files behavior and
-`V2-MEDIALIB-001/002/003/004`.
+`V2-FILES-002/003/004` for retained Files behavior and `V2-MEDIALIB-001/002/003/004`.
 The canonical MediaLibrary definition and final destination composition remain unchanged. Product
 and architecture documents distinguish the delivered route/browse/command baseline from the active
 page-local editing target.
