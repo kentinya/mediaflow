@@ -8,9 +8,9 @@ journey with page-local library configuration editing.
 Slice ID: 38
 Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Implementation Head: 1ae0531212c1c5c585cc2970c03f9996c1eba949
+Implementation Head: 6cf15c154a97e56292ecbc29f21831e71da70818
 Contract Revision: 2026-09-25 A scope expansion — page-local ResourceLibrary/MediaLibrary editing
 ```
 
@@ -392,6 +392,90 @@ B may update Implementation Head and submit factual checkpoint, outcome status, 
 evidence in the Closure Packet. B cannot change Base/boundaries/acceptance or close the Slice. Once
 Required Outcomes are satisfied, stop creating Tasks and submit the packet for A's
 Base..Implementation Head review under the development workflow.
+
+## Current B Closure Packet — Task 38.8
+
+```text
+Slice: 38 — MediaLibrary Files Workspace and Route Separation
+Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
+Head SHA: 7d4503e45dc3aa79628ed0d98e887167e1e7c529
+
+Required Outcomes:
+- RO-1 COMPLETE — separate ResourceLibrary/MediaLibrary routes and Files continuity remain green.
+- RO-2 COMPLETE — reference-aligned MediaLibrary hierarchy and omissions remain green.
+- RO-3 COMPLETE — live bounded MediaLibrary browsing and path recovery remain green.
+- RO-4 COMPLETE — MediaLibrary Add/Edit/Remove uses checked Active activation and recovery.
+- RO-5 COMPLETE — bounded common file maintenance and transfer behavior remain green.
+- RO-6 COMPLETE — durable per-item outcomes and supported recovery remain green.
+- RO-7 COMPLETE — library kind, IDs, roots, snapshots and Worker authority remain separated.
+- RO-8 COMPLETE — application/API/Web/browser integration and safety evidence are complete.
+- RO-9 COMPLETE — symmetric exact-Active ResourceLibrary/MediaLibrary editing is delivered.
+
+Required Surfaces:
+- `/ui-v2/medialib/files` and `/ui-v2/resourcelib/files` with Add/Edit/remove and file journeys COMPLETE.
+- Shared navigation/search/auth continuation and retired-route recovery COMPLETE.
+- Kind-specific edit projections and PUT mutations with checked activation COMPLETE.
+- Operations progress, item outcomes, lifecycle/recovery and configuration handoff COMPLETE.
+- Automated regression, browser journeys and controlled edit screenshots COMPLETE.
+
+Implemented:
+- Task 38.8 added immutable-ID ResourceLibrary and MediaLibrary page-local edit projections and
+  atomic PUT activation, preserving unexposed fields and exact Active concurrency.
+- Edit projections now carry enabled Storage choices from the same verified Active snapshot;
+  malformed or unrepresentable bindings fail closed with visible recovery.
+- Web drawers retain correctable input, avoid automatic replay, reconcile browse state, expose
+  disabled-library configuration handoff and restore keyboard focus after known success.
+- API, component, browser and fake/local-server evidence covers success, stale/failure recovery,
+  Storage authority, no replay, RBAC, zero Storage-content mutation and unchanged Remove behavior.
+
+Tasks completed:
+- 38.1 Route separation and MediaLibrary Files shell
+- 38.2 Live MediaLibrary browsing and configuration lifecycle
+- 38.3 Bounded MediaLibrary direct maintenance commands
+- 38.4 MediaLibrary Copy/Move transfer and recovery
+- 38.5 Slice integration validation and Closure Packet
+- 38.6 Files/MediaLibrary unified library-selection context presentation
+- 38.7 Files/MediaLibrary unified single-entry menus and folder activation
+- 38.8 ResourceLibrary/MediaLibrary page-local edit and atomic activation
+
+Final Tests:
+- `.venv/bin/python -m unittest discover -s tests` — PASS, 1795 tests, 7 skipped.
+- `npm --prefix web run test -- --run` — PASS, 43 files / 611 tests.
+- `npm --prefix web run test:e2e` — PASS, 181 tests.
+- Web typecheck, lint, format check and build — PASS; build retained existing chunk-size warning.
+- `python3 scripts/check_governance.py`, `git diff --check`, compileall, Ruff check/format — PASS.
+- Docker release-security smoke — PASS; transfer-impact smoke — PASS with bounded 22,548,578,304-byte
+  impact evidence and fail-closed depth/entry/escape probes.
+- Wheel install/configuration/backup/migration/restore/verify smoke — PASS; no schema migration required.
+- FFmpeg/FFprobe exclusion and private-file/config audit — PASS; `config/alist.json` remains ignored
+  and the pre-existing `docs/pics/文件页.png` modification remains outside the checkpoint.
+- Controlled Add/Edit screenshots and narrow-screen/focus browser evidence — PASS.
+
+Safety Evidence:
+- Edit reads, validation, evidence and activation use the managed exact Active snapshot and perform
+  zero Storage-content mutations; no Scanner, Task, Provider, Metadata or OrganizerExecutor work is
+  started.
+- Stable IDs and unexposed fields are preserved; stale revision/digest writers fail closed before
+  publication, and bounded secret-free audit/runtime binding remain on the existing activation path.
+- Web/API RBAC and kind-specific namespaces remain aligned; unknown results are not retried and
+  disabled libraries never delete or migrate Storage content.
+
+Known Non-blocking Issues:
+- Existing unclosed-SQLite `ResourceWarning` noise in the Python regression remains inherited.
+- Existing Web production chunk-size warning remains non-blocking.
+- Accepted narrow Local directory replacement/inode-reuse race remains outside this Slice.
+
+Explicitly Deferred:
+- Maintained exactly as listed in `Explicitly Deferred / Excluded`, including thumbnails/statistics,
+  MediaLibrary Scan/Preview/Organize, Upload/Download, cross-kind transfers and transfer Replace.
+
+Documentation Reconciliation Needed:
+- A should reconcile the canonical Product Experience, Requirements, Architecture and Roadmap text
+  that still describes page-local ResourceLibrary/MediaLibrary editing as TARGET/planned, and record
+  the final Slice 38 closure ledger.
+
+Decision: SLICE READY FOR A REVIEW
+```
 
 ## Historical Closure Packet — superseded by 2026-09-25 A scope expansion
 
