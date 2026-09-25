@@ -1886,7 +1886,9 @@ export function MediaLibraryFilesPage() {
   // closed: neither survives as durable page state.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
+  const editDrawerInvokerRef = useRef<HTMLElement | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
   const [editInitial, setEditInitial] = useState<
     SaveMediaLibraryOptions | undefined
   >();
@@ -2050,6 +2052,7 @@ export function MediaLibraryFilesPage() {
   const openDrawer = (invokerId: string) => {
     setDrawerInvokerId(invokerId);
     setSaveError(null);
+    setEditLoadError(null);
     setSaveNotice(null);
     setEditInitial(undefined);
     setEditExpected(undefined);
@@ -2062,7 +2065,10 @@ export function MediaLibraryFilesPage() {
     setDrawerOpen(false);
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
+    } else {
+      editDrawerInvokerRef.current?.focus();
     }
+    editDrawerInvokerRef.current = null;
   };
   const requestRemoval = (id: string) => {
     setRemovalError(null);
@@ -2129,10 +2135,19 @@ export function MediaLibraryFilesPage() {
   });
 
   const openMediaLibraryEdit = async (id: string) => {
+    editDrawerInvokerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     setSaveError(null);
+    setEditLoadError(null);
     const result = await fetchMediaLibraryEdit(token, id);
     if (!result.ok) {
-      setSaveError("编辑失败：无法读取当前 Active 配置，请刷新后重试。");
+      setEditLoadError(
+        result.code === "transport_unavailable"
+          ? "无法读取媒体库编辑信息，结果未知且未自动重试。请检查连接并刷新 Active 状态后重试。"
+          : "无法读取媒体库编辑信息，未执行任何更改。请刷新 Active 状态、确认权限和媒体库状态后重试。",
+      );
       return;
     }
     setEditInitial(result.model.library);
@@ -2601,6 +2616,33 @@ export function MediaLibraryFilesPage() {
         addDisabledReason={addDisabledReason}
         onOpenDrawer={() => openDrawer("mf-add-media-library-button")}
       />
+      {editLoadError !== null && (
+        <div className="mf-files-banner" role="alert">
+          <span className="mf-banner-icon" aria-hidden="true">
+            <Icon name="info" />
+          </span>
+          <span className="mf-banner-text">{editLoadError}</span>
+          <span className="mf-banner-actions">
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => {
+                void listQuery.refetch();
+                void statusQuery.refetch();
+              }}
+            >
+              刷新 Active 状态
+            </button>
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => setEditLoadError(null)}
+            >
+              知道了
+            </button>
+          </span>
+        </div>
+      )}
       {saveNotice !== null && (
         <div className="mf-files-banner" role="status">
           <span className="mf-banner-icon" aria-hidden="true">
@@ -2694,6 +2736,7 @@ export function MediaLibraryFilesPage() {
                 removalBusy={removalMutation.isPending}
                 iconName="library"
                 actionLabel="媒体库"
+                editLabel="编辑媒体库"
                 removeLabel="移除媒体库"
               />
               {libraryNotice !== null && (

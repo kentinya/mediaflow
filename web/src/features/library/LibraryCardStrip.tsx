@@ -98,6 +98,7 @@ export function CardActionMenu({
   triggerLabel,
   onRemoveRequest,
   onEditRequest,
+  editLabel = "编辑资源库",
   disabled,
   removeLabel = "删除资源库",
 }: {
@@ -106,6 +107,7 @@ export function CardActionMenu({
   readonly triggerLabel: string;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly onEditRequest?: (libraryId: string) => void;
+  readonly editLabel?: string;
   readonly disabled?: boolean;
   readonly removeLabel?: string;
 }) {
@@ -148,7 +150,7 @@ export function CardActionMenu({
               }}
             >
               <Icon name="settings" />
-              编辑{libraryName}
+              {editLabel}
             </button>
           )}
           <button
@@ -176,6 +178,7 @@ function LibraryCard({
   onLibraryChange,
   onRemoveRequest,
   onEditRequest,
+  editLabel,
   removalDisabled,
   iconName,
   actionLabel,
@@ -186,6 +189,7 @@ function LibraryCard({
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly onEditRequest?: (libraryId: string) => void;
+  readonly editLabel: string;
   readonly removalDisabled: boolean;
   readonly iconName: IconName;
   readonly actionLabel: string;
@@ -223,6 +227,7 @@ function LibraryCard({
           triggerLabel={`${actionLabel}操作 ${label}`}
           onRemoveRequest={onRemoveRequest}
           onEditRequest={onEditRequest}
+          editLabel={editLabel}
           disabled={removalDisabled}
           removeLabel={removeLabel}
         />
@@ -238,6 +243,7 @@ export function LibraryCardStrip({
   onLibraryChange,
   onRemoveRequest,
   onEditRequest,
+  editLabel,
   removalBusy,
   iconName,
   actionLabel,
@@ -249,6 +255,7 @@ export function LibraryCardStrip({
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveRequest: (libraryId: string) => void;
   readonly onEditRequest?: (libraryId: string) => void;
+  readonly editLabel?: string;
   readonly removalBusy: boolean;
   readonly iconName?: IconName;
   readonly actionLabel?: string;
@@ -257,6 +264,7 @@ export function LibraryCardStrip({
   const cardIcon = iconName ?? "folder";
   const menuLabel = actionLabel ?? "资源库";
   const menuRemoveLabel = removeLabel ?? "删除资源库";
+  const menuEditLabel = editLabel ?? "编辑资源库";
   const { containerRef, visibleCount } = useVisibleCardCount();
   const [moreOpen, setMoreOpen] = useState(false);
   const [overflowQuery, setOverflowQuery] = useState("");
@@ -317,6 +325,7 @@ export function LibraryCardStrip({
             }}
             onRemoveRequest={onRemoveRequest}
             onEditRequest={onEditRequest}
+            editLabel={menuEditLabel}
             removalDisabled={removalBusy}
             iconName={cardIcon}
             actionLabel={menuLabel}

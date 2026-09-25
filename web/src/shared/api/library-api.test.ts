@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchStorageFiles,
   fetchSystemStatus,
+  fetchResourceLibraryEdit,
+  editResourceLibrary,
   saveResourceLibrary,
   storageFilesUrl,
 } from "./api-client";
@@ -463,5 +465,71 @@ describe("error classes", () => {
     const error = new SystemStatusApiError("unavailable");
     expect(error.name).toBe("SystemStatusApiError");
     expect(error.category).toBe("unavailable");
+  });
+});
+
+describe("ResourceLibrary edit API", () => {
+  it("reads revisionSequence and submits the exact immutable Active identity", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({
+        resourceLibrary: {
+          id: "resources",
+          name: "Resources",
+          enabled: true,
+          storageId: "local-1",
+          storagePath: "incoming",
+        },
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+        sideEffects: "none",
+      }),
+    );
+    const projection = await fetchResourceLibraryEdit(TOKEN, "resources");
+    expect(projection.ok).toBe(true);
+    if (!projection.ok) return;
+    expect(projection.model.activeVersion).toBe(3);
+    fetchMock.mockImplementationOnce(async () =>
+      jsonResponse({
+        resourceLibrary: {
+          id: "resources",
+          name: "Edited Resources",
+          enabled: true,
+          storageId: "local-1",
+          storagePath: "incoming",
+        },
+        active: { revisionId: "rev-4", status: "active", version: 2 },
+      }),
+    );
+    await editResourceLibrary(TOKEN, {
+      ...projection.model.library,
+      name: "Edited Resources",
+      expectedRevisionId: projection.model.activeRevisionId,
+      expectedVersion: projection.model.activeVersion,
+      expectedDigest: projection.model.activeDigest,
+    });
+    const [, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      expectedRevisionId: "rev-3",
+      expectedVersion: 3,
+      expectedDigest: "digest-3",
+    });
+  });
+
+  it("reports projection transport failure once without retry", async () => {
+    const fetchMock = stubFetch(async () => {
+      throw new TypeError("offline");
+    });
+    const result = await fetchResourceLibraryEdit(TOKEN, "resources");
+    expect(result).toEqual({
+      ok: false,
+      status: 0,
+      code: "transport_unavailable",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

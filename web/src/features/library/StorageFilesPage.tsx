@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -975,6 +976,7 @@ function FileBrowseView({
   onViewChange,
   onLibraryChange,
   onRemoveLibraryRequest,
+  onEditLibraryRequest,
   onCreateFolder,
   onCreateText,
   onRename,
@@ -1008,6 +1010,7 @@ function FileBrowseView({
   readonly onViewChange: (view: FilesView) => void;
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveLibraryRequest: (id: string) => void;
+  readonly onEditLibraryRequest: (id: string) => void;
   readonly onCreateFolder: () => void;
   readonly onCreateText: () => void;
   readonly onRename: (
@@ -1188,6 +1191,7 @@ function FileBrowseView({
         rootPath={library?.rootPath ?? ""}
         onLibraryChange={onLibraryChange}
         onRemoveRequest={onRemoveLibraryRequest}
+        onEditRequest={onEditLibraryRequest}
         removalBusy={removalBusy}
       />
       <div className="mf-files-workarea">
@@ -1844,7 +1848,10 @@ export function StorageFilesPage() {
   // mount, re-entry, refresh and authentication recovery keep it closed.
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
+  const editDrawerInvokerRef = useRef<HTMLElement | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [editInitial, setEditInitial] = useState<
     SaveResourceLibraryOptions | undefined
   >();
@@ -2032,6 +2039,8 @@ export function StorageFilesPage() {
   const openDrawer = (invokerId: string) => {
     setDrawerInvokerId(invokerId);
     setSaveError(null);
+    setEditLoadError(null);
+    setSaveNotice(null);
     setEditInitial(undefined);
     setEditExpected(undefined);
     setDrawerOpen(true);
@@ -2044,7 +2053,10 @@ export function StorageFilesPage() {
     setDrawerOpen(false);
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
+    } else {
+      editDrawerInvokerRef.current?.focus();
     }
+    editDrawerInvokerRef.current = null;
   };
 
   const saveLibraryMutation = useMutation({
@@ -2084,6 +2096,11 @@ export function StorageFilesPage() {
       resetBrowseState();
       updateLibraryRouteState(savedId);
       updateDirectoryRouteState(nextPath);
+      setSaveNotice(
+        result.model.enabled
+          ? null
+          : `资源库“${result.model.name}”已保存，但当前为停用状态：不会出现在文件列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
+      );
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
@@ -2097,10 +2114,19 @@ export function StorageFilesPage() {
   });
 
   const openResourceLibraryEdit = async (id: string) => {
+    editDrawerInvokerRef.current =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     setSaveError(null);
+    setEditLoadError(null);
     const result = await fetchResourceLibraryEdit(token, id);
     if (!result.ok) {
-      setSaveError("编辑失败：无法读取当前 Active 配置，请刷新后重试。");
+      setEditLoadError(
+        result.code === "transport_unavailable"
+          ? "无法读取资源库编辑信息，结果未知且未自动重试。请检查连接并刷新 Active 状态后重试。"
+          : "无法读取资源库编辑信息，未执行任何更改。请刷新 Active 状态、确认权限和资源库状态后重试。",
+      );
       return;
     }
     setEditInitial(result.model.library);
@@ -2504,6 +2530,54 @@ export function StorageFilesPage() {
         }
         onOpenDrawer={() => openDrawer("mf-add-resource-library-button")}
       />
+      {editLoadError !== null && (
+        <div className="mf-files-banner" role="alert">
+          <span className="mf-banner-icon" aria-hidden="true">
+            <Icon name="info" />
+          </span>
+          <span className="mf-banner-text">{editLoadError}</span>
+          <span className="mf-banner-actions">
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => void statusQuery.refetch()}
+            >
+              刷新 Active 状态
+            </button>
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => setEditLoadError(null)}
+            >
+              知道了
+            </button>
+          </span>
+        </div>
+      )}
+      {saveNotice !== null && (
+        <div className="mf-files-banner" role="status">
+          <span className="mf-banner-icon" aria-hidden="true">
+            <Icon name="info" />
+          </span>
+          <span className="mf-banner-text">{saveNotice}</span>
+          <span className="mf-banner-actions">
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => navigate({ to: "/configuration" })}
+            >
+              前往配置启用
+            </button>
+            <button
+              type="button"
+              className="mf-link-button"
+              onClick={() => setSaveNotice(null)}
+            >
+              知道了
+            </button>
+          </span>
+        </div>
+      )}
       <AuthorizedReadBoundary
         query={statusQuery}
         unavailableTitle="文件页不可用"
@@ -2718,6 +2792,9 @@ export function StorageFilesPage() {
                         onViewChange={setView}
                         onLibraryChange={changeLibrary}
                         onRemoveLibraryRequest={requestRemoval}
+                        onEditLibraryRequest={(id) =>
+                          void openResourceLibraryEdit(id)
+                        }
                         onCreateFolder={() => {
                           setCommandError(null);
                           setDialog({ kind: "create_folder" });

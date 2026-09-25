@@ -2468,7 +2468,7 @@ async function fetchLibraryEditProjection<T>(
       model: {
         library: normalize(source[key]),
         activeRevisionId: String(active.revisionId),
-        activeVersion: Number(active.version),
+        activeVersion: Number(active.revisionSequence),
         activeDigest: String(active.digest),
       },
     };
