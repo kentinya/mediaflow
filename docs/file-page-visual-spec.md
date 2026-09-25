@@ -64,6 +64,16 @@ Disabled libraries are hidden from browse selection on both pages. Re-enabling r
 configuration action; this presentation rule does not change Active authority, API payloads,
 Storage confinement, file operations or Organize continuation.
 
+## Selected-card Library Editing — 2026-09-25 A Revision
+
+The selected ResourceLibrary card action menu adds `编辑资源库` beside `删除资源库`; the selected
+MediaLibrary card adds `编辑媒体库` beside `移除媒体库`. Edit reuses the three-step configuration
+drawer, prefilled from exact Active state. ID is visible/read-only; name, enabled state, Storage and
+kind-specific relative root are editable. Save performs checked atomic activation and keeps
+correctable input on failure. A Storage/root edit changes configuration only and never moves,
+copies, creates or deletes files. This addition does not change normal card/context facts or file
+entry command menus.
+
 ## Implementation Status — 2026-09-22
 
 The current implementation already establishes the data and authority boundary required by this

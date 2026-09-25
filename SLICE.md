@@ -1,29 +1,33 @@
 # Slice 38 — MediaLibrary Files Workspace and Route Separation
 
 This is the A-owned Contract for browsing and maintaining files in configured MediaLibraries using
-the approved reference, while preserving the closed Slice 37 ResourceLibrary Files journey.
+the approved reference, while preserving and extending the closed Slice 37 ResourceLibrary Files
+journey with page-local library configuration editing.
 
 ```text
 Slice ID: 38
 Name: MediaLibrary Files Workspace and Route Separation
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: ACTIVE
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
 Implementation Head: 1ae0531212c1c5c585cc2970c03f9996c1eba949
-Contract Revision: 2026-09-24 A reactivation — unified single-entry context menus and folder activation
+Contract Revision: 2026-09-25 A scope expansion — page-local ResourceLibrary/MediaLibrary editing
 ```
 
 Slice 37 remains `PASS / CLOSED`. Its complete Contract, Closure Packet and A Final Review remain
 in Git at `9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md`, with its closure recorded in
 `docs/progress.md`. This Slice does not reopen that implementation or rewrite history. The Base is
-immutable. B may plan Tasks after this Contract and its ACTIVE Roadmap row are committed; no
-implementation Task has yet been assigned.
+immutable. The 2026-09-24 Closure Packet through the recorded Implementation Head remains historical
+evidence, but A did not perform Final Review before the user authorized this material scope
+expansion. The Slice therefore returns to `ACTIVE`. B may plan the focused editing Task only after
+this revised Contract and its ACTIVE Roadmap row are committed.
 
 ## User Goal
 
-An authorized operator selects or adds a MediaLibrary, browses actual files below its configured
-root, performs ordinary bounded file maintenance, and understands each result and safe recovery
-action. The separate Files page retains the complete ResourceLibrary journey, including Organize.
+An authorized operator selects, adds or edits a MediaLibrary, browses actual files below its
+configured root, performs ordinary bounded file maintenance, and understands each result and safe
+recovery action. The separate Files page retains the complete ResourceLibrary journey, including
+Organize, and gains the same direct edit-and-activate configuration experience.
 
 MediaLibrary remains the configured destination used by Classification and Organize. Its browser
 shows actual Storage entries, including externally created files, directories and sidecars, whether
@@ -92,6 +96,39 @@ Storage capability checks, stale evidence, OrganizerExecutor mutation or batch a
 This revision changes only the entry surface for already-delivered commands. It does not authorize
 new operations, arbitrary editing, upload/download, cross-kind transfer or backend fallback.
 
+## Current A Scope Revision — Page-local Library Editing and Activation
+
+The selected ResourceLibrary or MediaLibrary card's configuration menu adds an Edit action beside
+the existing removal action. This is a focused completion of the page-local library-management
+journey and does not turn either browse page into a general configuration editor.
+
+- Edit opens the same task-oriented `基本信息 → 存储位置 → 确认` composition prefilled from the
+  exact current Active object. The stable library ID is visible and read-only; changing an ID is a
+  migration, not an edit.
+- The editable fields are name, enabled state, existing enabled Storage binding and safe
+  Storage-relative root (`storagePath` for ResourceLibrary, `rootPath` for MediaLibrary). Existing
+  object fields outside this focused form are preserved and are never reset to creation defaults.
+- Opening the form performs zero mutation. Save is bound internally to the exact Active revision
+  read for the form, composes a successor, validates the complete dependency graph, runs applicable
+  read-only checked evidence, prepares runtime binding and atomically activates only on full
+  success. The operator does not handle revision IDs or perform a separate Activate step.
+- A stale writer, invalid field/path, unavailable Storage/root, dependency failure, denied
+  permission, failed evidence, persistence error or runtime-load failure leaves the prior Active
+  and current Storage contents authoritative. Correctable input stays in the form; unknown outcomes
+  are not automatically retried.
+- A successful enabled edit refreshes the exact card and runtime browse authority. A name-only edit
+  preserves a still-valid directory context; a Storage/root change returns that library to its root
+  before reading. A successful disable hides the library from browse selection and provides the
+  existing configuration recovery handoff. Graph validation may block disabling referenced
+  libraries.
+- Editing Storage/root changes configuration only. It never moves, copies, renames, creates or
+  deletes the old or new root or any media content. Existing admitted work remains pinned to its
+  original immutable configuration snapshot.
+
+This revision authorizes only focused editing of existing ResourceLibrary and MediaLibrary objects.
+ID rename/migration, bulk editing, editing other configuration-object fields, automatic root-content
+migration and general Configuration-page redesign remain outside this Slice.
+
 ## Baseline and Requirements
 
 At Base, the V2 Library landing links to ResourceLibrary Files, Scan and Preview; it is not a
@@ -99,11 +136,13 @@ MediaLibrary browser. The browser, direct commands, transfer evidence and durabl
 resolve ResourceLibrary authority. MediaLibrary configuration and Storage adapters already exist.
 Relabelling the page or passing a media ID as a resource ID cannot deliver this Slice.
 
-Applicable requirements include `REQ-LIB-002/003`, `REQ-STO-*`, `REQ-CONFIG-*`, `REQ-SAFE-*`,
+Applicable requirements include `REQ-LIB-002/003/004/005`, `REQ-STO-*`, `REQ-CONFIG-*`, `REQ-SAFE-*`,
 `UX-001/002/003/004/007/009/010`, `V2-UX-*`, `V2-AUTH-*`, `V2-SAFE-001`,
-`V2-FILES-002/003` for retained Files behavior and `V2-MEDIALIB-001/002/003/004`.
-The canonical MediaLibrary definition and final destination composition remain unchanged. TARGET
-sections in product and architecture documents describe planned work, not delivery.
+`REQ-LIB-005`, `V2-FILES-002/003/004` for retained Files behavior and
+`V2-MEDIALIB-001/002/003/004`.
+The canonical MediaLibrary definition and final destination composition remain unchanged. Product
+and architecture documents distinguish the delivered route/browse/command baseline from the active
+page-local editing target.
 
 ## Operator Journey and UX Constraints
 
@@ -111,13 +150,13 @@ sections in product and architecture documents describe planned work, not delive
 |---|---|
 | Entry | Shared sidebar `媒体库` or MediaLibrary deep link; `文件` selects the separate ResourceLibrary route. Authentication continuation preserves a valid page and bounded directory context. |
 | Visible state | Shared library cards with name and selection; selected-library context with enabled state and exact configured path (no Storage in normal browse presentation); lazy directory tree; exact relative breadcrumbs; live rows; list/grid; selection; bounded paging; permissions and read failures. |
-| Action | Select a library, navigate, search within the existing bounded browser semantics, refresh, select entries, add/remove a library configuration, create folder/text, rename, copy, move, delete or edit supported text. |
-| Success | A saved enabled library is actually Active and browseable; known file-command success is recorded per item and reflected in a fresh live listing. Long work has durable Task progress and supported lifecycle actions in Web. |
-| Failure | Missing Active, missing/disabled library, invalid path/name, denied permission, unavailable Storage, unsupported capability, stale evidence, conflict, invalid configuration and partial/uncertain mutation identify the affected scope and known effects. |
-| Recovery | Follow existing setup/configuration; retain and correct form input; select another library/destination; return to root; refresh/revalidate; inspect durable per-item outcomes and use only backend-advertised safe continuation. |
+| Action | Select a library, navigate, search within the existing bounded browser semantics, refresh, select entries, add/edit/remove a library configuration, create folder/text, rename, copy, move, delete or edit supported text. |
+| Success | A created or edited enabled library is actually Active and browseable; known file-command success is recorded per item and reflected in a fresh live listing. Long work has durable Task progress and supported lifecycle actions in Web. |
+| Failure | Missing Active, missing/disabled library, stale edit authority, invalid path/name, denied permission, unavailable Storage, unsupported capability, stale evidence, conflict, invalid configuration and partial/uncertain mutation identify the affected scope and known effects. |
+| Recovery | Follow existing setup/configuration; retain and correct create/edit input; refresh a stale edit before resubmitting; select another library/destination; return to root; refresh/revalidate; inspect durable per-item outcomes and use only backend-advertised safe continuation. |
 
-Ordinary operations do not require raw tokens, revision IDs, Task IDs or evidence copying. The Add
-drawer opens only on explicit intent and retains correctable input after failure. Navigation or
+Ordinary operations do not require raw tokens, revision IDs, Task IDs or evidence copying. Add and
+Edit drawers open only on explicit intent and retain correctable input after failure. Navigation or
 closing a dialog never implies cancellation/rollback of admitted work. Keyboard use, focus return,
 accessible names and usable narrow-screen layouts are required.
 
@@ -164,9 +203,10 @@ or unsupported arbitrary-page navigation. Exact path identity, including boundar
 survives projection and navigation. Refresh reconciles stale directory memory and selection while
 preserving a still-valid location. Missing paths offer root/read recovery without trimmed-path retry.
 
-### RO-4 — Add and remove MediaLibrary configuration
+### RO-4 — Add, edit and remove MediaLibrary configuration
 
-The page-local drawer offers `基本信息 → 存储位置 → 确认`: name, immutable-on-creation ID,
+The page-local Add/Edit drawer offers `基本信息 → 存储位置 → 确认`: name,
+immutable-on-creation ID,
 enabled state, existing Storage and safe Storage-relative root. API and Web enforce the image's
 lowercase-letter/digit/hyphen ID rule. Existing MediaLibrary root validation remains authoritative;
 the form does not accept arbitrary host paths or silently create a missing root.
@@ -175,14 +215,17 @@ Save composes the candidate into the save-time Active document and performs full
 reference validation, applicable read-only Storage/destination checks, checked activation and runtime
 binding. Only complete success publishes an immutable successor. Invalid/duplicate input, missing
 root/Storage, concurrent activation, reference and runtime-load failures preserve prior Active
-authority and correctable input. New enabled libraries are immediately selectable; disabled libraries
-are saved truthfully but hidden from browsing, with an explicit existing Web configuration handoff
-for re-enabling them.
+authority and correctable input. Edits replace only the selected immutable-ID object while
+preserving every field outside the focused form, bind to the exact Active form snapshot and reject
+stale writers. New or edited enabled libraries are immediately selectable; disabled libraries are
+saved truthfully but hidden from browsing, with an explicit existing Web configuration handoff for
+re-enabling them.
 
 The selected card's configuration-removal action confirms intent, reports blocking references and
 uses the same managed authority. Removing configuration never deletes the library root or files.
-Referenced libraries cannot be disabled/removed by bypassing graph validation. Full configuration
-editing/migration and new automatic-directory-creation policy semantics are outside this Slice.
+Referenced libraries cannot be disabled/removed by bypassing graph validation. ID migration,
+editing fields outside this focused form and new automatic-directory-creation policy semantics are
+outside this Slice.
 
 ### RO-5 — Bounded common file maintenance
 
@@ -235,12 +278,26 @@ journey. Reference screenshots prove the hierarchy with the authorized omissions
 failures/recovery and zero-side-effect reads, not just controls or isolated services. Closure
 documents truthfully distinguish delivery, deferrals and inherited residual risks.
 
+### RO-9 — Symmetric ResourceLibrary and MediaLibrary configuration editing
+
+Both `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files` expose Edit from the selected card's
+configuration menu. The form is prefilled from an exact bounded Active projection, shows ID as
+read-only, and edits only name, enabled state, Storage and the kind-specific relative root.
+
+Web and API use kind-specific endpoints backed by the same application lifecycle: exact-Active
+optimistic concurrency, merge-without-field-loss, complete validation, applicable read-only
+evidence, prepared runtime binding and atomic activation. A successful edit updates the selected
+card/runtime truth without requiring a second Activate action. Failure preserves the old Active,
+Storage contents and correctable input with an actionable recovery. Resource and media IDs, routes,
+cache keys and API payloads cannot cross kinds even when IDs are equal.
+
 ## Required Surfaces
 
-- `/ui-v2/medialib/files`, library-relative deep links, common command dialogs and Add drawer.
+- `/ui-v2/medialib/files`, library-relative deep links, common command dialogs and Add/Edit drawer.
 - `/ui-v2/resourcelib/files` with complete Slice 37 functionality and Organize return context.
 - Shared navigation/search/auth continuation and bounded retired-route recovery.
-- MediaLibrary list/browse, page-local configuration save/removal and scoped common-command API.
+- ResourceLibrary and MediaLibrary page-local configuration edit projections/mutations using
+  checked activation, plus existing MediaLibrary list/browse/save/removal and scoped command APIs.
 - Existing Task/Operations progress, item outcomes and supported lifecycle/recovery for media work.
 - Existing configuration handoff for setup, unavailable bindings, disabled libraries and references.
 - Automated tests and controlled screenshots; no new CLI journey is required.
@@ -266,6 +323,9 @@ documents truthfully distinguish delivery, deferrals and inherited residual risk
    identity when reusing A policies and exact final destination composition.
 9. No stream decoding, FFmpeg/FFprobe, thumbnails or full-library statistics are introduced.
    Per-file metadata reads and bounded command impact remain allowed.
+10. Library edit reads and checks perform zero Storage mutation. Edit preserves the stable library
+    ID and all unexposed object fields, uses optimistic concurrency and bounded secret-free
+    Before/After audit, and cannot silently migrate root contents or rebind already admitted work.
 
 The accepted narrow Local directory replacement/inode-reuse race remains inherited residual risk,
 with existing prevention/recovery guidance. This Slice does not claim to fix it or weaken checks.
@@ -281,7 +341,9 @@ with existing prevention/recovery guidance. This Slice does not claim to fix it 
   recursion/global search and new transfer overwrite/Replace.
 - Ordinary ResourceLibrary↔MediaLibrary transfers; existing policy-driven source Organize to
   MediaLibrary remains supported.
-- New providers/capabilities or identity system, broad configuration migration, new automatic
+- New providers/capabilities or identity system, library ID rename/migration, automatic movement or
+  copying of contents after a Storage/root edit, bulk library editing, editing fields outside the
+  focused page-local form, broad configuration migration, new automatic
   directory-creation policy behavior, V1 cutover, generic workflow/persistence redesign, universal
   rollback and automatic uncertain replay.
 - Changes to the user's dirty `docs/pics/文件页.png`, unrelated shell/product redesign, and any
@@ -295,12 +357,13 @@ with existing prevention/recovery guidance. This Slice does not claim to fix it 
 | AC-1 | Both new routes support direct/sidebar/auth continuation; retired routes offer bounded recovery, and internal links no longer emit them. |
 | AC-2 | Reference hierarchy and drawer work without card statistics/placeholders or thumbnails; normal entry keeps the drawer closed. |
 | AC-3 | Live browse covers empty/multi-page libraries, exact whitespace paths, missing current directory and refresh of externally removed directories without fabricated rows or FileIndex dependency. |
-| AC-4 | Add succeeds only after actual activation; invalid/duplicate input, Storage/root/reference and concurrent activation failures preserve Active with recovery. Disabled-save and safe configuration removal are explicit. |
+| AC-4 | Add/Edit succeeds only after actual activation; invalid/duplicate/stale input, Storage/root/reference and concurrent activation failures preserve Active with recovery. Disabled-save and safe configuration removal are explicit. |
 | AC-5 | Each common command completes in Web/API with matching permissions/results, covering single/multi-item, directories, conflicts, stale, denied, read-only and unsupported-provider cases. |
 | AC-6 | Media transfers work within/between libraries, including cross-Storage verification, independent partial results, durable revisit and supported lifecycle continuation without replay. |
 | AC-7 | Same-ID libraries, overlapping roots, cursor/evidence reuse, snapshot changes and Worker reconstruction cannot cross authority; pre-existing ResourceLibrary durable work remains compatible. |
 | AC-8 | Files retains add/remove, browse/search/refresh, direct commands, single/batch Organize, policy binding and return context; other V2/V1 journeys remain functional. |
 | AC-9 | Safety invariants hold; final evidence and CURRENT documentation cover all vertical outcomes without claiming excluded capabilities. |
+| AC-10 | ResourceLibrary and MediaLibrary Edit are prefilled, ID-immutable, field-preserving and kind-separated; success atomically activates and refreshes truthful browse state, while failure retains input, prior Active and zero Storage-content mutation. |
 
 ## Final Validation Expectations
 
@@ -316,7 +379,7 @@ material to API composition, immutable bindings and resident Worker execution; i
 recovery rehearsal if persisted schemas change. Use fake/local services and temporary media, never
 production credentials/services or user media. Record actual totals/skips/unavailable gates.
 
-Capture controlled `1536 x 1024` screenshots with Add step 1 open and closed, plus usable
+Capture controlled `1536 x 1024` screenshots with Add and Edit step 1 open and closed, plus usable
 narrow-screen evidence. The exclusions deliberately differ from the image; structural alignment and
 functioning controls determine acceptance, not zero pixel differences. Files regression covers the
 new address without redesigning its body.
@@ -331,7 +394,7 @@ evidence in the Closure Packet. B cannot change Base/boundaries/acceptance or cl
 Required Outcomes are satisfied, stop creating Tasks and submit the packet for A's
 Base..Implementation Head review under the development workflow.
 
-## Closure Packet
+## Historical Closure Packet — superseded by 2026-09-25 A scope expansion
 
 Slice: 38 — MediaLibrary Files Workspace and Route Separation
 Base SHA: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
@@ -436,8 +499,15 @@ Documentation Reconciliation Needed:
   as TARGET/planned or describe the pre-correction library context. No Contract or implementation
   change is requested.
 
-Decision: SLICE READY FOR A REVIEW
+Historical Decision: SLICE READY FOR A REVIEW
+
+This packet remains the factual B submission for implementation through
+`1ae0531212c1c5c585cc2970c03f9996c1eba949`. It is no longer the current stop-rule decision because
+RO-9 and the expanded RO-4/AC-10 are not implemented. A Final Review was not performed before the
+scope expansion.
 
 ## A Final Review
 
-Not performed. Await B's completed Closure Packet and actual implementation evidence.
+Not performed. Slice is ACTIVE for the 2026-09-25 page-local library-editing expansion. A Final
+Review requires a new B Closure Packet covering the updated Required Outcomes and final
+Implementation Head.
