@@ -3100,3 +3100,169 @@ button.mf-grid-button {
     flex: 1 1 46%;
   }
 }
+
+/* ------------------------------------------------------------------ */
+/* Storage management workspace (Slice 39)                             */
+/* ------------------------------------------------------------------ */
+
+.mf-storage-cards {
+  list-style: none;
+  margin: 0 0 16px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.mf-storage-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 16px;
+  cursor: pointer;
+  color: var(--ink);
+}
+
+.mf-storage-card:hover,
+.mf-storage-card:focus-visible {
+  border-color: #2563eb;
+}
+
+.mf-storage-card.is-selected {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.25);
+}
+
+.mf-storage-card-clear {
+  font-weight: 600;
+}
+
+.mf-storage-card-icon svg {
+  width: 20px;
+  height: 20px;
+}
+
+.mf-storage-card-name {
+  font-weight: 600;
+}
+
+.mf-storage-card-count {
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.mf-storage-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mf-storage-type-icon svg {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.mf-storage-name {
+  font-weight: 600;
+}
+
+.mf-storage-id {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.mf-storage-location {
+  font-family: monospace;
+  font-size: 0.85rem;
+}
+
+.mf-storage-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mf-storage-state-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #25a25a;
+  display: inline-block;
+}
+
+.mf-storage-state-enabled {
+  color: #25a25a;
+}
+
+.mf-storage-state-disabled .mf-storage-state-dot {
+  background: #9aa5b1;
+}
+
+.mf-storage-state-disabled {
+  color: var(--muted);
+}
+
+.mf-storage-readonly-tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.mf-storage-references {
+  display: grid;
+  gap: 2px;
+  font-size: 0.85rem;
+}
+
+.mf-storage-ref-truncated {
+  color: #b45309;
+  font-size: 0.78rem;
+}
+
+.mf-storage-detail-section {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.mf-storage-detail-section h3 {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+}
+
+.mf-storage-check {
+  margin: 8px 0;
+}
+
+.mf-storage-check-passed {
+  border-color: #25a25a;
+}
+
+.mf-storage-check-failed {
+  border-color: #b42318;
+}
+
+.mf-storage-check ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.mf-storage-check-note {
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin: 6px 0 0;
+}
+
+.mf-storage-check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}

@@ -36,6 +36,20 @@ export function useFilesSearch(): FilesSearchContextValue {
   return useContext(FilesSearchContext);
 }
 
+interface StorageSearchContextValue {
+  readonly query: string;
+  readonly setQuery: (query: string) => void;
+}
+
+const StorageSearchContext = createContext<StorageSearchContextValue>({
+  query: "",
+  setQuery: () => undefined,
+});
+
+export function useStorageSearch(): StorageSearchContextValue {
+  return useContext(StorageSearchContext);
+}
+
 /** Shared feature-independent V2 shell and operator-goal navigation. */
 export function AppShell({ children }: AppShellProps) {
   const pathname = useRouterState({
@@ -44,6 +58,7 @@ export function AppShell({ children }: AppShellProps) {
   const destination = destinationForPath(pathname);
   const [menuOpen, setMenuOpen] = useState(false);
   const [filesSearch, setFilesSearch] = useState("");
+  const [storageSearch, setStorageSearch] = useState("");
   const filesSearchListeners = useRef(new Set<() => void>());
   const setFilesSearchValue = useCallback((value: string) => {
     setFilesSearch(value);
@@ -58,13 +73,21 @@ export function AppShell({ children }: AppShellProps) {
     (pathname === "/" ? "Connect | MediaFlow" : "MediaFlow");
   const searchIsFiles =
     pathname === "/resourcelib/files" || pathname === "/medialib/files";
-  const searchContext = useMemo(
+  const searchIsStorage = pathname === "/storage";
+  const filesSearchContext = useMemo(
     () => ({
       query: filesSearch,
       setQuery: setFilesSearchValue,
       subscribeToQueryChange,
     }),
     [filesSearch, setFilesSearchValue, subscribeToQueryChange],
+  );
+  const storageSearchContext = useMemo(
+    () => ({
+      query: storageSearch,
+      setQuery: setStorageSearch,
+    }),
+    [storageSearch],
   );
 
   useEffect(() => {
@@ -126,11 +149,26 @@ export function AppShell({ children }: AppShellProps) {
             <Icon name="search" />
             <input
               type="search"
-              aria-label="搜索文件、文件夹或媒体库"
-              placeholder="搜索文件、文件夹或媒体库..."
-              value={searchIsFiles ? filesSearch : ""}
-              onChange={(event) => setFilesSearch(event.target.value)}
-              readOnly={!searchIsFiles}
+              aria-label={
+                searchIsStorage ? "搜索存储、路径" : "搜索文件、文件夹或媒体库"
+              }
+              placeholder={
+                searchIsStorage
+                  ? "搜索存储、路径..."
+                  : "搜索文件、文件夹或媒体库..."
+              }
+              value={
+                searchIsFiles
+                  ? filesSearch
+                  : searchIsStorage
+                    ? storageSearch
+                    : ""
+              }
+              onChange={(event) => {
+                if (searchIsStorage) setStorageSearch(event.target.value);
+                else setFilesSearch(event.target.value);
+              }}
+              readOnly={!searchIsFiles && !searchIsStorage}
             />
           </div>
           <div className="mf-shell-actions">
@@ -149,8 +187,10 @@ export function AppShell({ children }: AppShellProps) {
           {destination ? (
             <p className="mf-page-context">{destination.label}</p>
           ) : null}
-          <FilesSearchContext.Provider value={searchContext}>
-            {children}
+          <FilesSearchContext.Provider value={filesSearchContext}>
+            <StorageSearchContext.Provider value={storageSearchContext}>
+              {children}
+            </StorageSearchContext.Provider>
           </FilesSearchContext.Provider>
         </main>
       </div>

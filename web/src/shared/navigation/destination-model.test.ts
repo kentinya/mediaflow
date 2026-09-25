@@ -17,6 +17,7 @@ describe("destination model", () => {
       "Operations",
       "Review & Recovery",
       "Configuration",
+      "Storage Management",
     ]);
     expect(
       destinations.filter((item) => item.availability === "migration"),

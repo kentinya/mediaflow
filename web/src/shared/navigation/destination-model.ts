@@ -54,6 +54,15 @@ const destinationData = [
       "Managed configuration administration is not yet migrated to this V2 surface.",
     v1Path: "/ui" as const,
   },
+  {
+    id: "storage-management",
+    label: "Storage Management",
+    path: "/storage",
+    title: "Storage Management | MediaFlow",
+    availability: "implemented" as const,
+    description:
+      "Inspect configured Storage locations, their library references and run bounded read-only diagnostics.",
+  },
 ] as const;
 
 /**
@@ -374,9 +383,9 @@ export const shellDestinations: readonly ShellDestination[] = [
     id: "storage",
     label: "存储管理",
     ariaLabel: "Storage management",
-    path: "/configuration",
+    path: "/storage",
     icon: "storage",
-    isActive: () => false,
+    isActive: (pathname) => pathname === "/storage",
   },
   {
     id: "rules",
