@@ -275,6 +275,35 @@ class MediaLibraryActivationTests(unittest.TestCase):
                 service.active().document["mediaLibraries"][0]["name"], "Edited Movies"
             )
 
+    def test_edit_projection_uses_revision_sequence_after_multiple_activations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, _objects, _active, _runtime, api = self._active_api(root)
+            for library_id in ("archive", "vault"):
+                self._save_media_library(api, library_id)
+            active = service.active()
+            self.assertNotEqual(active.version, active.revision_sequence)
+            status, projection = request(api, "/api/v1/media-libraries/movies/edit")
+            self.assertEqual(status, 200, projection)
+            self.assertEqual(projection["active"]["revisionSequence"], active.revision_sequence)
+            status, edited = request(
+                api,
+                "/api/v1/media-libraries/movies",
+                method="PUT",
+                body={
+                    "mediaLibraryId": "movies",
+                    "name": "Sequence-safe Movies",
+                    "enabled": True,
+                    "storageId": "media-target",
+                    "rootPath": "Movies",
+                    "expectedRevisionId": projection["active"]["revisionId"],
+                    "expectedVersion": projection["active"]["revisionSequence"],
+                    "expectedDigest": projection["active"]["digest"],
+                },
+            )
+            self.assertEqual(status, 200, edited)
+            self.assertEqual(edited["mediaLibrary"]["name"], "Sequence-safe Movies")
+
     def test_success_publishes_one_new_active_without_storage_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

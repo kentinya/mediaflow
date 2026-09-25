@@ -87,6 +87,47 @@ afterEach(() => {
 });
 
 describe("AddMediaLibraryDrawer", () => {
+  it("prefills edit values, locks the ID and uses save-and-activate", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn<(candidate: SaveMediaLibraryOptions) => void>();
+    renderWithQuery(
+      <AddMediaLibraryDrawer
+        open
+        editing
+        initial={{
+          mediaLibraryId: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        }}
+        storages={storages}
+        onClose={vi.fn()}
+        onSave={onSave}
+        saving={false}
+        saveError={null}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "编辑媒体库" })).toBeVisible();
+    expect(screen.getByLabelText("媒体库 ID *")).toBeDisabled();
+    expect(screen.getByLabelText("媒体库 ID *")).toHaveValue("movies");
+    expect(screen.getByLabelText("名称 *")).toHaveValue("电影库");
+    await user.clear(screen.getByLabelText("名称 *"));
+    await user.type(screen.getByLabelText("名称 *"), "新电影库");
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    expect(screen.getByLabelText("Storage *")).toHaveValue("cloud-1");
+    expect(screen.getByLabelText("媒体库根路径 *")).toHaveValue("Media/Movies");
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByRole("button", { name: "保存并激活" }));
+    expect(onSave).toHaveBeenCalledWith({
+      mediaLibraryId: "movies",
+      name: "新电影库",
+      enabled: true,
+      storageId: "cloud-1",
+      rootPath: "Media/Movies",
+    });
+  });
+
   it("completes the three steps and submits exactly one bounded candidate", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn<(candidate: SaveMediaLibraryOptions) => void>();

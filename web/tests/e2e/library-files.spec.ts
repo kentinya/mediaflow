@@ -77,6 +77,125 @@ test("shared shell keeps Files usable at the supported narrow viewport", async (
     .toBe(true);
 });
 
+test("ResourceLibrary edit is prefilled, immutable-ID, recoverable and atomically activated", async ({
+  page,
+}) => {
+  await page.request.post("/__test__/reset-resource-library");
+  const puts: Array<Record<string, unknown>> = [];
+  page.on("request", async (request) => {
+    if (
+      request.method() === "PUT" &&
+      request.url().includes("/api/v1/resource-libraries/resources")
+    ) {
+      puts.push(request.postDataJSON() as Record<string, unknown>);
+    }
+  });
+  await openFiles(page);
+  await page.getByRole("button", { name: "资源库操作 Resources" }).click();
+  await page.getByRole("menuitem", { name: "编辑资源库" }).click();
+  const drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByLabel("资源库 ID *")).toBeDisabled();
+  await expect(drawer.getByLabel("资源库 ID *")).toHaveValue("resources");
+  await expect(drawer.getByLabel("名称 *")).toHaveValue("Resources");
+  await drawer.getByLabel("名称 *").fill("Edited Resources");
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await expect(drawer.getByLabel("资源库根路径 *")).toHaveValue("");
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await expect(
+    drawer.getByRole("button", { name: "保存并激活" }),
+  ).toBeVisible();
+  await drawer.screenshot({
+    path: "test-results/resource-library-edit-drawer.png",
+  });
+  await drawer.getByRole("button", { name: "保存并激活" }).click();
+  await expect(drawer).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Edited Resources", exact: true }),
+  ).toBeVisible();
+  expect(puts).toHaveLength(1);
+  expect(puts[0]).toMatchObject({
+    resourceLibraryId: "resources",
+    expectedVersion: 3,
+  });
+});
+
+test("ResourceLibrary edit projection failure is visible and never retried automatically", async ({
+  page,
+}) => {
+  await page.request.post(
+    "/__test__/reset-resource-library?editProjectionFail=1",
+  );
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/resource-libraries/resources/edit")) {
+      reads.push(request.url());
+    }
+  });
+  await openFiles(page);
+  await page.getByRole("button", { name: "资源库操作 Resources" }).click();
+  await page.getByRole("menuitem", { name: "编辑资源库" }).click();
+  await expect(page.getByRole("alert")).toContainText("未执行任何更改");
+  await expect(
+    page.getByRole("button", { name: "刷新 Active 状态" }),
+  ).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(reads).toHaveLength(1);
+  await expect(
+    page.getByRole("complementary", { name: "编辑资源库" }),
+  ).toHaveCount(0);
+});
+
+test("ResourceLibrary edit save failure retains input and disable offers configuration recovery", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 760, height: 900 });
+  await page.request.post("/__test__/reset-resource-library?editSaveFail=1");
+  let puts = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      request.url().includes("/resource-libraries/resources")
+    ) {
+      puts += 1;
+    }
+  });
+  await openFiles(page);
+  const trigger = page.getByRole("button", { name: "资源库操作 Resources" });
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "编辑资源库" }).click();
+  let drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  await drawer.getByLabel("名称 *").fill("Retained Resource");
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "保存并激活" }).click();
+  await expect(drawer.getByRole("alert")).toContainText("Active 配置已变化");
+  await expect(drawer.getByText("Retained Resource")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(puts).toBe(1);
+  await drawer.getByRole("button", { name: "取消" }).click();
+  await expect(trigger).toBeFocused();
+
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "编辑资源库" }).click();
+  drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  await drawer.getByLabel("状态").uncheck();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "保存并激活" }).click();
+  await expect(page.getByText(/当前为停用状态/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "前往配置启用" }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+});
+
 test("Files route rejects limited principals without leaking the token", async ({
   page,
 }) => {

@@ -100,6 +100,46 @@ function setFilesRouteState(libraryId: string): void {
 }
 
 describe("AddResourceLibraryDrawer", () => {
+  it("prefills edit fields, keeps ID immutable and submits save-and-activate", async () => {
+    const user = userEvent.setup();
+    const onSave = vi.fn<(candidate: SaveResourceLibraryOptions) => void>();
+    renderDrawer(
+      <AddResourceLibraryDrawer
+        open
+        editing
+        initial={{
+          resourceLibraryId: "source",
+          name: "Source",
+          enabled: true,
+          storageId: "local-1",
+          storagePath: "incoming",
+        }}
+        storages={storages}
+        onClose={vi.fn()}
+        onSave={onSave}
+        saving={false}
+        saveError={null}
+      />,
+    );
+    expect(screen.getByRole("heading", { name: "编辑资源库" })).toBeVisible();
+    expect(screen.getByLabelText("资源库 ID *")).toBeDisabled();
+    expect(screen.getByLabelText("资源库 ID *")).toHaveValue("source");
+    expect(screen.getByLabelText("名称 *")).toHaveValue("Source");
+    await user.clear(screen.getByLabelText("名称 *"));
+    await user.type(screen.getByLabelText("名称 *"), "Edited Source");
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    expect(screen.getByLabelText("资源库根路径 *")).toHaveValue("incoming");
+    await user.click(screen.getByRole("button", { name: "下一步" }));
+    await user.click(screen.getByRole("button", { name: "保存并激活" }));
+    expect(onSave).toHaveBeenCalledWith({
+      resourceLibraryId: "source",
+      name: "Edited Source",
+      enabled: true,
+      storageId: "local-1",
+      storagePath: "incoming",
+    });
+  });
+
   it("keeps step validation ordered and submits the bounded candidate once", async () => {
     const user = userEvent.setup();
     const onSave = vi.fn<(candidate: SaveResourceLibraryOptions) => void>();

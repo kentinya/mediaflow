@@ -124,6 +124,107 @@ test("the Add drawer stays closed on normal entry and reload", async ({
   await expect(page.getByRole("table")).toBeVisible();
 });
 
+test("MediaLibrary edit preloads exact Active values and activates one immutable-ID update", async ({
+  page,
+}) => {
+  const puts: Array<Record<string, unknown>> = [];
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      request.url().includes("/api/v1/media-libraries/movies")
+    ) {
+      puts.push(request.postDataJSON() as Record<string, unknown>);
+    }
+  });
+  await openMediaLibrary(page);
+  await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
+  await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
+  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByLabel("媒体库 ID *")).toBeDisabled();
+  await expect(drawer.getByLabel("媒体库 ID *")).toHaveValue("movies");
+  await drawer.getByLabel("名称 *").fill("编辑后的电影库");
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByLabel("Storage *").selectOption("remote-media");
+  await drawer.getByLabel("媒体库根路径 *").fill("Media/Edited");
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.screenshot({
+    path: "test-results/media-library-edit-drawer.png",
+  });
+  await drawer.getByRole("button", { name: "保存并激活" }).click();
+  await expect(drawer).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "编辑后的电影库", exact: true }),
+  ).toBeVisible();
+  expect(puts).toHaveLength(1);
+  expect(puts[0]).toMatchObject({
+    mediaLibraryId: "movies",
+    expectedVersion: 3,
+    rootPath: "Media/Edited",
+  });
+});
+
+test("MediaLibrary edit projection failure remains visible without automatic retry", async ({
+  page,
+}) => {
+  await resetMediaLibrary(page, "?editProjectionFail=1");
+  const reads: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().endsWith("/media-libraries/movies/edit")) {
+      reads.push(request.url());
+    }
+  });
+  await openMediaLibrary(page);
+  await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
+  await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
+  await expect(page.getByRole("alert")).toContainText("未执行任何更改");
+  await expect(
+    page.getByRole("button", { name: "刷新 Active 状态" }),
+  ).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(reads).toHaveLength(1);
+});
+
+test("MediaLibrary edit save failure retains values, avoids replay and returns focus", async ({
+  page,
+}) => {
+  await resetMediaLibrary(page, "?editSaveFail=1");
+  await page.setViewportSize({ width: 760, height: 900 });
+  let puts = 0;
+  page.on("request", (request) => {
+    if (
+      request.method() === "PUT" &&
+      request.url().includes("/media-libraries/movies")
+    ) {
+      puts += 1;
+    }
+  });
+  await openMediaLibrary(page);
+  const trigger = page.getByRole("button", {
+    name: "媒体库操作 115网盘",
+  });
+  await trigger.click();
+  await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
+  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  await drawer.getByLabel("名称 *").fill("保留的媒体库名称");
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "保存并激活" }).click();
+  await expect(drawer.getByRole("alert")).toContainText("Active 配置已变化");
+  await expect(drawer.getByText("保留的媒体库名称")).toBeVisible();
+  await page.waitForTimeout(500);
+  expect(puts).toBe(1);
+  await drawer.getByRole("button", { name: "取消" }).click();
+  await expect(trigger).toBeFocused();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth + 1,
+      ),
+    )
+    .toBe(true);
+});
+
 test("an enabled Save becomes the exact Active library, is selected and browseable", async ({
   page,
 }) => {

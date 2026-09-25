@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchMediaLibraryRemovalPreview,
+  fetchMediaLibraryEdit,
+  editMediaLibrary,
   removeMediaLibrary,
   saveMediaLibrary,
 } from "./api-client";
@@ -403,5 +405,58 @@ describe("removeMediaLibrary", () => {
     const result = await removeMediaLibrary(TOKEN, "movies", expected);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("malformed_response");
+  });
+});
+
+describe("MediaLibrary edit API", () => {
+  it("uses revisionSequence when mutable version differs", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({
+        mediaLibrary: {
+          id: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "cloud-1",
+          rootPath: "Media/Movies",
+        },
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+        sideEffects: "none",
+      }),
+    );
+    const projection = await fetchMediaLibraryEdit(TOKEN, "movies");
+    expect(projection.ok).toBe(true);
+    if (!projection.ok) return;
+    expect(projection.model.activeVersion).toBe(3);
+    fetchMock.mockImplementationOnce(async () => jsonResponse(savePayload()));
+    await editMediaLibrary(TOKEN, {
+      ...projection.model.library,
+      name: "新电影库",
+      expectedRevisionId: projection.model.activeRevisionId,
+      expectedVersion: projection.model.activeVersion,
+      expectedDigest: projection.model.activeDigest,
+    });
+    const [url, init] = fetchMock.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("/api/v1/media-libraries/movies");
+    expect(init.method).toBe("PUT");
+    expect(JSON.parse(String(init.body))).toMatchObject({
+      expectedVersion: 3,
+      expectedRevisionId: "rev-3",
+      expectedDigest: "digest-3",
+    });
+  });
+
+  it("does not retry an unknown projection outcome", async () => {
+    const fetchMock = stubFetch(async () => {
+      throw new TypeError("offline");
+    });
+    const result = await fetchMediaLibraryEdit(TOKEN, "movies");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("transport_unavailable");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

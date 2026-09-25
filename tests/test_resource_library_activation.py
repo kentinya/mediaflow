@@ -246,6 +246,41 @@ class ResourceLibraryActivationTests(unittest.TestCase):
                 service.active().document["resourceLibraries"][0]["name"], "Edited Source"
             )
 
+    def test_edit_projection_uses_revision_sequence_after_multiple_activations(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, _objects, _active, _runtime, api = self._active_api(root)
+            for library_id in ("second", "third"):
+                status, response = request(
+                    api,
+                    "/api/v1/resource-libraries",
+                    method="POST",
+                    body=self._save_body(resourceLibraryId=library_id),
+                )
+                self.assertEqual(status, 200, response)
+            active = service.active()
+            self.assertNotEqual(active.version, active.revision_sequence)
+            status, projection = request(api, "/api/v1/resource-libraries/source/edit")
+            self.assertEqual(status, 200, projection)
+            self.assertEqual(projection["active"]["revisionSequence"], active.revision_sequence)
+            status, edited = request(
+                api,
+                "/api/v1/resource-libraries/source",
+                method="PUT",
+                body={
+                    "resourceLibraryId": "source",
+                    "name": "Sequence-safe Source",
+                    "enabled": True,
+                    "storageId": "source-storage",
+                    "storagePath": "incoming",
+                    "expectedRevisionId": projection["active"]["revisionId"],
+                    "expectedVersion": projection["active"]["revisionSequence"],
+                    "expectedDigest": projection["active"]["digest"],
+                },
+            )
+            self.assertEqual(status, 200, edited)
+            self.assertEqual(edited["resourceLibrary"]["name"], "Sequence-safe Source")
+
     def test_success_publishes_one_new_active_runtime_without_storage_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

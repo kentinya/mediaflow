@@ -589,6 +589,10 @@ function mediaLibraryState(session) {
     value = {
       // The candidate the currently saved Active revision holds, or null.
       saved: null,
+      edited: new Map(),
+      editProjectionFail: false,
+      editSaveFailOnce: false,
+      editSaveFailed: false,
       // One deterministic Save admission failure for the failure journey.
       failOnce: false,
       failed: false,
@@ -641,10 +645,11 @@ function mediaLibraryState(session) {
 
 /** The Active revision identity the MediaLibrary surface currently exposes. */
 function mediaLibraryActive(state) {
-  if (state.saved !== null) {
+  if (state.saved !== null || state.edited.size > 0) {
     return {
       revisionId: "rev-e2e-2",
       version: 2,
+      revisionSequence: 3,
       digest: "digest-e2e-2",
     };
   }
@@ -653,13 +658,16 @@ function mediaLibraryActive(state) {
 
 /** Enabled MediaLibrary cards the page may browse in this session. */
 function mediaLibraryCards(state) {
-  const cards = MEDIA_LIBRARIES.filter((item) => item.enabled).map((item) => ({
-    id: item.id,
-    name: item.name,
-    enabled: true,
-    rootPath: item.rootPath,
-    storage: item.storage,
-  }));
+  const cards = MEDIA_LIBRARIES.filter((item) => item.enabled)
+    .map((item) => state.edited.get(item.id) ?? item)
+    .filter((item) => item.enabled)
+    .map((item) => ({
+      id: item.id,
+      name: item.name,
+      enabled: true,
+      rootPath: item.rootPath,
+      storage: item.storage,
+    }));
   if (
     state.saved !== null &&
     !state.removedIds.includes(state.saved.id) &&
@@ -1128,6 +1136,10 @@ function resourceLibraryState(session) {
   if (value === undefined) {
     value = {
       saved: false,
+      edited: new Map(),
+      editProjectionFail: false,
+      editSaveFailOnce: false,
+      editSaveFailed: false,
       failOnce: false,
       failed: false,
       candidate: null,
@@ -1166,6 +1178,7 @@ function resourceLibrarySystemStatus(session) {
     mediaState.saved !== null || mediaState.removedIds.length > 0;
   if (
     !state.saved &&
+    state.edited.size === 0 &&
     state.extra.length === 0 &&
     !state.emptied &&
     !mediaTouched
@@ -1173,6 +1186,9 @@ function resourceLibrarySystemStatus(session) {
     return SYSTEM_STATUS;
   }
   const document = JSON.parse(JSON.stringify(SYSTEM_STATUS));
+  document.resource_libraries.items = document.resource_libraries.items
+    .map((item) => state.edited.get(item.id) ?? item)
+    .filter((item) => item.enabled !== false);
   if (mediaTouched) {
     const active = mediaLibraryActive(mediaState);
     document.system.configuration_snapshot_id = active.revisionId;
@@ -6081,6 +6097,41 @@ const server = createServer(async (req, res) => {
   const removalPreviewMatch = url.pathname.match(
     /^\/api\/v1\/resource-libraries\/([^/]+)\/removal-preview$/,
   );
+  const resourceEditMatch = url.pathname.match(
+    /^\/api\/v1\/resource-libraries\/([^/]+)\/edit$/,
+  );
+  if (resourceEditMatch && req.method === "GET") {
+    const state = resourceLibraryState(session);
+    if (state.editProjectionFail) {
+      sendJson(res, 503, { error: { code: "service_unavailable" } });
+      return;
+    }
+    const id = decodeURIComponent(resourceEditMatch[1]);
+    const item = resourceLibrarySystemStatus(
+      session,
+    ).resource_libraries.items.find((value) => value.id === id);
+    if (!item) {
+      sendJson(res, 404, { error: { code: "resource_library_not_found" } });
+      return;
+    }
+    sendJson(res, 200, {
+      resourceLibrary: {
+        id: item.id,
+        name: item.name,
+        enabled: item.enabled,
+        storageId: item.storage_id,
+        storagePath: item.root_path,
+      },
+      active: {
+        revisionId: "rev-e2e-2",
+        version: 2,
+        revisionSequence: 3,
+        digest: "digest-e2e-2",
+      },
+      sideEffects: "none",
+    });
+    return;
+  }
   if (removalPreviewMatch && req.method === "GET") {
     if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
@@ -6101,6 +6152,51 @@ const server = createServer(async (req, res) => {
   const removalMatch = url.pathname.match(
     /^\/api\/v1\/resource-libraries\/([^/]+)$/,
   );
+  if (removalMatch && req.method === "PUT") {
+    const state = resourceLibraryState(session);
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const fields = parsed.document;
+    state.commandLog.push({ command: "edit", id: fields.resourceLibraryId });
+    if (state.editSaveFailOnce && !state.editSaveFailed) {
+      state.editSaveFailed = true;
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    if (
+      fields.resourceLibraryId !== decodeURIComponent(removalMatch[1]) ||
+      fields.expectedRevisionId !== "rev-e2e-2" ||
+      fields.expectedVersion !== 3 ||
+      fields.expectedDigest !== "digest-e2e-2"
+    ) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    state.edited.set(fields.resourceLibraryId, {
+      id: fields.resourceLibraryId,
+      name: fields.name,
+      storage_id: fields.storageId,
+      root_path: fields.storagePath,
+      enabled: fields.enabled,
+    });
+    sendJson(res, 200, {
+      resourceLibrary: {
+        id: fields.resourceLibraryId,
+        name: fields.name,
+        storageId: fields.storageId,
+        storagePath: fields.storagePath,
+        enabled: fields.enabled,
+      },
+      active: {
+        revisionId: "rev-e2e-3",
+        status: "active",
+        version: 2,
+        digest: "digest-e2e-3",
+      },
+      sideEffects: "configuration_only",
+    });
+    return;
+  }
   if (removalMatch && req.method === "GET") {
     if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
@@ -6343,6 +6439,40 @@ const server = createServer(async (req, res) => {
   const mediaRemovalPreviewMatch = url.pathname.match(
     /^\/api\/v1\/media-libraries\/([^/]+)\/removal-preview$/,
   );
+  const mediaEditMatch = url.pathname.match(
+    /^\/api\/v1\/media-libraries\/([^/]+)\/edit$/,
+  );
+  if (mediaEditMatch && req.method === "GET") {
+    const state = mediaLibraryState(session);
+    if (state.editProjectionFail) {
+      sendJson(res, 503, { error: { code: "service_unavailable" } });
+      return;
+    }
+    const id = decodeURIComponent(mediaEditMatch[1]);
+    const original = MEDIA_LIBRARIES.find((item) => item.id === id);
+    const item = state.edited.get(id) ?? original;
+    if (!item) {
+      sendJson(res, 404, { error: { code: "media_library_not_found" } });
+      return;
+    }
+    sendJson(res, 200, {
+      mediaLibrary: {
+        id: item.id,
+        name: item.name,
+        enabled: item.enabled,
+        storageId: item.storage.id,
+        rootPath: item.rootPath,
+      },
+      active: {
+        revisionId: "rev-e2e-2",
+        version: 2,
+        revisionSequence: 3,
+        digest: "digest-e2e-2",
+      },
+      sideEffects: "none",
+    });
+    return;
+  }
   if (mediaRemovalPreviewMatch && req.method === "GET") {
     if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
@@ -6363,6 +6493,63 @@ const server = createServer(async (req, res) => {
   const mediaRemovalMatch = url.pathname.match(
     /^\/api\/v1\/media-libraries\/([^/]+)$/,
   );
+  if (mediaRemovalMatch && req.method === "PUT") {
+    const state = mediaLibraryState(session);
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const fields = parsed.document;
+    state.mutationLog.push({ command: "edit", id: fields.mediaLibraryId });
+    if (state.editSaveFailOnce && !state.editSaveFailed) {
+      state.editSaveFailed = true;
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    if (
+      fields.mediaLibraryId !== decodeURIComponent(mediaRemovalMatch[1]) ||
+      fields.expectedRevisionId !== "rev-e2e-2" ||
+      fields.expectedVersion !== 3 ||
+      fields.expectedDigest !== "digest-e2e-2"
+    ) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    const original = MEDIA_LIBRARIES.find(
+      (item) => item.id === fields.mediaLibraryId,
+    );
+    state.edited.set(fields.mediaLibraryId, {
+      ...original,
+      id: fields.mediaLibraryId,
+      name: fields.name,
+      enabled: fields.enabled,
+      rootPath: fields.rootPath,
+      storage:
+        MEDIA_LIBRARIES.find((item) => item.storage.id === fields.storageId)
+          ?.storage ?? original.storage,
+    });
+    sendJson(res, 200, {
+      mediaLibrary: {
+        id: fields.mediaLibraryId,
+        name: fields.name,
+        storageId: fields.storageId,
+        rootPath: fields.rootPath,
+        enabled: fields.enabled,
+      },
+      active: {
+        revisionId: "rev-e2e-3",
+        status: "active",
+        version: 2,
+        digest: "digest-e2e-3",
+      },
+      configuration: {
+        authority: "MANAGED",
+        revisionId: "rev-e2e-3",
+        version: 2,
+        digest: "digest-e2e-3",
+      },
+      sideEffects: "configuration_only",
+    });
+    return;
+  }
   if (mediaRemovalMatch && req.method === "DELETE") {
     if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
       sendJson(res, 401, {
@@ -10943,6 +11130,10 @@ const server = createServer(async (req, res) => {
     const libraries = Number(url.searchParams.get("libraries") ?? "0");
     RESOURCE_LIBRARY_STATES.set(sessionId, {
       saved: false,
+      edited: new Map(),
+      editProjectionFail: url.searchParams.get("editProjectionFail") === "1",
+      editSaveFailOnce: url.searchParams.get("editSaveFail") === "1",
+      editSaveFailed: false,
       failOnce: url.searchParams.get("failOnce") === "1",
       failed: false,
       candidate: null,
@@ -10983,6 +11174,10 @@ const server = createServer(async (req, res) => {
     const references = url.searchParams.getAll("referenced");
     MEDIA_LIBRARY_STATES.set(sessionId, {
       saved: null,
+      edited: new Map(),
+      editProjectionFail: url.searchParams.get("editProjectionFail") === "1",
+      editSaveFailOnce: url.searchParams.get("editSaveFail") === "1",
+      editSaveFailed: false,
       failOnce: url.searchParams.get("failOnce") === "1",
       failed: false,
       removedIds: [],
