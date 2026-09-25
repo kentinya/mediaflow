@@ -54,7 +54,11 @@ const inventoryPayload = {
     },
   ],
   total: 1,
+  matched: 1,
   truncated: false,
+  returned: 1,
+  hasMore: false,
+  nextAfter: null,
   families: { local: 1 },
   canManage: true,
 };
@@ -86,6 +90,46 @@ describe("Storage management API", () => {
     expect(url).toBe("/api/v1/operations/storage-management/inventory");
     expect((init.headers as Record<string, string>).Authorization).toBe(
       "Bearer inventory-token",
+    );
+  });
+
+  it("sends the bounded search, provider filter and continuation as a query", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(inventoryPayload));
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("inventory-token");
+    // Search and the provider filter are applied by the backend over the
+    // complete Active object set, so an over-limit configuration stays
+    // findable; the cursor is the explicit bounded continuation.
+    await fetchStorageInventory("inventory-token", {
+      query: "  r2.example  ",
+      family: "s3",
+      after: "r2-media",
+    });
+    const [url] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
+    expect(url).toBe(
+      "/api/v1/operations/storage-management/inventory" +
+        "?q=r2.example&family=s3&after=r2-media",
+    );
+    // An empty selection keeps the exact original request path.
+    fetchMock.mockClear();
+    await fetchStorageInventory("inventory-token", {});
+    const [plain] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
+    expect(plain).toBe("/api/v1/operations/storage-management/inventory");
+  });
+
+  it("clamps the bounded page limit and drops unset optional fields", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse(inventoryPayload));
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("inventory-token");
+    await fetchStorageInventory("inventory-token", {
+      query: "   ",
+      family: null,
+      limit: 1000,
+      after: "",
+    });
+    const [url] = vi.mocked(fetchMock).mock.calls[0] as unknown as [string];
+    expect(url).toBe(
+      "/api/v1/operations/storage-management/inventory?limit=100",
     );
   });
 

@@ -134,6 +134,76 @@ test.describe("Storage management", () => {
     ).toBe(true);
   });
 
+  test("legal over-limit inventory stays fully findable and inspects beyond the page", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?overLimit=1");
+    await connect(page);
+    await openStorageManagement(page);
+
+    // Provider cards count every configured object, not the first page: 102
+    // Local out of 105 configured, mirroring the real backend contract.
+    const cards = page.getByRole("list", { name: "存储类型汇总" });
+    await expect(cards.getByText("本地存储")).toBeVisible();
+    await expect(
+      cards.locator("li", { hasText: "本地存储" }).getByText("102"),
+    ).toBeVisible();
+    await expect(
+      cards.locator("li", { hasText: "SMB" }).getByText("1"),
+    ).toBeVisible();
+
+    // Truncation is disclosed honestly instead of implying a complete list.
+    await expect(
+      page.getByText(/当前显示 100 \/ 105 个匹配的存储/),
+    ).toBeVisible();
+    await expect(page.getByText(/Active 配置中共有 105/)).toBeVisible();
+
+    // A Storage beyond the first bounded page is still findable through the
+    // shared top-bar search.
+    const search = page.getByRole("searchbox", { name: "搜索存储、路径" });
+    await search.fill("nas-beyond-page");
+    await expect(
+      page.getByRole("row").filter({ hasText: "NAS 后续页" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("row").filter({ hasText: "本地存储 000" }),
+    ).toHaveCount(0);
+
+    // The provider filter reaches beyond the page too, and states how many
+    // matching rows exist overall.
+    await search.fill("");
+    await page.getByRole("button", { name: /S3 \/ R2/ }).click();
+    await expect(
+      page.getByRole("row").filter({ hasText: "R2 后续页" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("row").filter({ hasText: "NAS 后续页" }),
+    ).toHaveCount(0);
+
+    // Explicit bounded continuation reaches the last configured Storage,
+    // which no page search term will surface by name.
+    await page.getByRole("button", { name: "全部类型" }).click();
+    await page.getByRole("button", { name: "继续显示更多" }).click();
+    await expect(
+      page.getByRole("row").filter({ hasText: "OpenList 后续页" }),
+    ).toBeVisible();
+
+    // The continuation page is the complete remaining set, so the truncation
+    // disclosure honestly disappears.
+    await expect(
+      page.getByText(/当前显示 100 \/ 105 个匹配的存储/),
+    ).toHaveCount(0);
+
+    // A Storage found only through search is inspectable in full.
+    await search.fill("openlist-beyond-page");
+    await viewRow(page, "OpenList 后续页").click();
+    const drawer = page.getByRole("complementary", {
+      name: "存储详情 OpenList 后续页",
+    });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByText("openlist-beyond-page")).toBeVisible();
+  });
+
   test("search matches name/ID/type/location from the shared top bar", async ({
     page,
   }) => {

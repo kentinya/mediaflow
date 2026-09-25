@@ -5560,6 +5560,10 @@ function storageState(session) {
       // Set by /__test__/reset-storage for deterministic failure journeys.
       failCheck: false,
       noActive: false,
+      // A legal over-limit Active configuration: more Storage objects than one
+      // bounded page, mirroring the real backend contract proved by
+      // tests/test_v2_storage_operations.py.
+      overLimit: false,
     };
     STORAGE_STATES.set(key, value);
   }
@@ -5668,7 +5672,163 @@ function storageDetailAction(storage, canManage) {
   };
 }
 
-function storageInventoryDocument(state, canManage) {
+/**
+ * A legal over-limit Active configuration: 105 Storage objects where 102 are
+ * Local. One bounded page can hold only 100, so the operator must be able to
+ * find the remainder through search, the provider filter or explicit
+ * continuation. Values are synthetic fixtures, never product truth.
+ */
+function storageOverLimitFixture() {
+  return [
+    ...Array.from({ length: 102 }, (_value, index) => ({
+      id: `local-${String(index).padStart(3, "0")}`,
+      name: `本地存储 ${String(index).padStart(3, "0")}`,
+      type: "local",
+      family: "local",
+      enabled: true,
+      readOnly: false,
+      location: { kind: "local", rootPath: `/media/incoming/${index}` },
+      declaredCapabilities: {
+        can_move: true,
+        can_copy: true,
+        can_delete: true,
+        can_hard_link: true,
+        can_soft_link: false,
+      },
+      secretReadiness: [],
+      references: {
+        total: 0,
+        items: [],
+        truncated: false,
+        resourceLibraries: 0,
+        mediaLibraries: 0,
+        countedInBreakdown: 0,
+      },
+    })),
+    {
+      id: "nas-beyond-page",
+      name: "NAS 后续页",
+      type: "smb",
+      family: "smb",
+      enabled: true,
+      readOnly: false,
+      location: {
+        kind: "remote",
+        rootPath: "media",
+        host: "nas-beyond.example",
+        share: "media",
+      },
+      declaredCapabilities: {
+        can_move: true,
+        can_copy: true,
+        can_delete: true,
+        can_hard_link: false,
+        can_soft_link: false,
+      },
+      secretReadiness: [],
+      references: {
+        total: 0,
+        items: [],
+        truncated: false,
+        resourceLibraries: 0,
+        mediaLibraries: 0,
+        countedInBreakdown: 0,
+      },
+    },
+    {
+      id: "r2-beyond-page",
+      name: "R2 后续页",
+      type: "r2",
+      family: "s3",
+      enabled: true,
+      readOnly: true,
+      location: {
+        kind: "remote",
+        rootPath: "media",
+        bucket: "media",
+        endpoint: "https://r2-beyond.example",
+      },
+      declaredCapabilities: {
+        can_move: false,
+        can_copy: false,
+        can_delete: false,
+        can_hard_link: false,
+        can_soft_link: false,
+      },
+      secretReadiness: [],
+      references: {
+        total: 0,
+        items: [],
+        truncated: false,
+        resourceLibraries: 0,
+        mediaLibraries: 0,
+        countedInBreakdown: 0,
+      },
+    },
+    {
+      id: "openlist-beyond-page",
+      name: "OpenList 后续页",
+      type: "openlist",
+      family: "openlist",
+      enabled: true,
+      readOnly: false,
+      location: { kind: "remote", rootPath: "/Media/later" },
+      declaredCapabilities: {
+        can_move: true,
+        can_copy: true,
+        can_delete: true,
+        can_hard_link: false,
+        can_soft_link: false,
+      },
+      secretReadiness: [],
+      references: {
+        total: 0,
+        items: [],
+        truncated: false,
+        resourceLibraries: 0,
+        mediaLibraries: 0,
+        countedInBreakdown: 0,
+      },
+    },
+  ];
+}
+
+const STORAGE_INVENTORY_PAGE_LIMIT = 100;
+
+/** The configured Storage set for this request's session. */
+function storageFixture(state) {
+  return state.overLimit ? storageOverLimitFixture() : STORAGE_FIXTURE;
+}
+
+/** Server-side search over the complete Active set, exactly like the API. */
+function storageInventoryMatches(storage, query, family) {
+  if (family !== null && storage.family !== family) {
+    return false;
+  }
+  const needle = query.trim().toLowerCase();
+  if (needle === "") {
+    return true;
+  }
+  const location = storage.location ?? {};
+  const haystacks = [
+    storage.name,
+    storage.id,
+    storage.type,
+    location.rootPath ?? "",
+    location.host ?? "",
+    location.share ?? "",
+    location.bucket ?? "",
+    location.endpoint ?? "",
+    location.region ?? "",
+  ];
+  return haystacks.some((value) =>
+    String(value ?? "")
+      .toLowerCase()
+      .includes(needle),
+  );
+}
+
+function storageInventoryDocument(state, canManage, search) {
   if (state.noActive) {
     return {
       available: false,
@@ -5677,8 +5837,14 @@ function storageInventoryDocument(state, canManage) {
       active: null,
       items: [],
       total: 0,
+      matched: 0,
       truncated: false,
+      returned: 0,
+      hasMore: false,
+      nextAfter: null,
       families: {},
+      query: search.query,
+      family: search.family,
       canManage,
       actions: {
         check: {
@@ -5695,15 +5861,35 @@ function storageInventoryDocument(state, canManage) {
       },
     };
   }
+  const fixture = storageFixture(state);
+  // Provider counts always describe the complete Active object set, never one
+  // bounded page.
+  const families = storageFamilyCount(fixture);
+  const matched = fixture.filter((storage) =>
+    storageInventoryMatches(storage, search.query, search.family),
+  );
+  const remaining =
+    search.after === null
+      ? matched
+      : matched.filter((storage) => storage.id > search.after);
+  const window = remaining.slice(0, STORAGE_INVENTORY_PAGE_LIMIT);
+  const hasMore = remaining.length > window.length;
   return {
     available: true,
     reason: null,
     authority: "MANAGED",
     active: state.active,
-    items: STORAGE_FIXTURE.map((storage) => storagePublicItem(storage, state)),
-    total: STORAGE_FIXTURE.length,
-    truncated: false,
-    families: storageFamilyCount(STORAGE_FIXTURE),
+    items: window.map((storage) => storagePublicItem(storage, state)),
+    total: fixture.length,
+    matched: matched.length,
+    truncated: hasMore,
+    returned: window.length,
+    hasMore,
+    nextAfter:
+      hasMore && window.length > 0 ? window[window.length - 1].id : null,
+    families,
+    query: search.query,
+    family: search.family,
     canManage,
     actions: {
       check: {
@@ -5829,16 +6015,49 @@ const server = createServer(async (req, res) => {
         sendJson(res, 405, { error: { code: "method_not_allowed" } });
         return;
       }
+      // Only the advertised bounded operator fields are accepted once each;
+      // an unsupported or repeated field is rejected instead of silently
+      // ignored, exactly like the real API.
+      const single = (name) => url.searchParams.getAll(name);
+      const supported = ["q", "family", "limit", "after"];
+      const searched = supported.filter((name) => single(name).length > 0);
+      if (
+        searched.some((name) => single(name).length !== 1) ||
+        [...url.searchParams.keys()].some((name) => !supported.includes(name))
+      ) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const family = single("family")[0] ?? null;
+      if (
+        family !== null &&
+        !["local", "smb", "openlist", "s3", "other"].includes(family)
+      ) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const limit = single("limit")[0];
+      if (
+        limit !== undefined &&
+        (!/^\d+$/.test(limit) || Number(limit) < 1 || Number(limit) > 100)
+      ) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
       sendJson(
         res,
         200,
-        storageInventoryDocument(state, permissions.canManage),
+        storageInventoryDocument(state, permissions.canManage, {
+          query: single("q")[0] ?? "",
+          family,
+          after: single("after")[0] ?? null,
+        }),
       );
       return;
     }
     const matchedStorageRoute = storageDetailMatch ?? storageCheckMatch;
     const storageId = decodeURIComponent(matchedStorageRoute[1]);
-    const storage = STORAGE_FIXTURE.find((item) => item.id === storageId);
+    const storage = storageFixture(state).find((item) => item.id === storageId);
     if (storage === undefined) {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
@@ -11834,6 +12053,7 @@ const server = createServer(async (req, res) => {
       checks: new Map(),
       failCheck: params.get("failCheck") === "1",
       noActive: params.get("noActive") === "1",
+      overLimit: params.get("overLimit") === "1",
     });
     res.setHeader(
       "Set-Cookie",

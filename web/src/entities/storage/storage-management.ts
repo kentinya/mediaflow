@@ -83,8 +83,19 @@ export interface StorageInventoryModel {
   readonly authority: string | null;
   readonly active: StorageActiveIdentity | null;
   readonly items: readonly StorageInventoryItem[];
+  /** Every Storage configured in the exact Active snapshot. */
   readonly total: number;
+  /** How many configured Storages match the current search/filter. */
+  readonly matched: number;
+  /** True when the returned page is not the complete matching inventory. */
   readonly truncated: boolean;
+  /** Number of rows in this page (`items.length`). */
+  readonly returned: number;
+  /** True when a bounded continuation can still return more matching rows. */
+  readonly hasMore: boolean;
+  /** Stable ID cursor for the next bounded page, when `hasMore`. */
+  readonly nextAfter: string | null;
+  /** Provider counts derived from the complete Active object set. */
   readonly families: Readonly<Record<string, number>>;
   readonly canManage: boolean;
 }
@@ -296,6 +307,7 @@ export function normalizeStorageInventory(
       families[key] = normalizeBoundedCount(value, `inventory.families.${key}`);
     }
     const total = normalizeBoundedCount(source.total, "inventory.total");
+    const matched = normalizeBoundedCount(source.matched, "inventory.matched");
     if (total > MAX_INVENTORY_ITEMS * 10) {
       fail("inventory.total");
     }
@@ -309,6 +321,29 @@ export function normalizeStorageInventory(
       normalizeStorageItem,
     );
     const truncated = normalizeBoolean(source.truncated, "inventory.truncated");
+    const returned = normalizeBoundedCount(
+      source.returned,
+      "inventory.returned",
+    );
+    const hasMore = normalizeBoolean(source.hasMore, "inventory.hasMore");
+    const nextAfter =
+      source.nextAfter === null || source.nextAfter === undefined
+        ? null
+        : normalizeBoundedText(source.nextAfter, "inventory.nextAfter", 64);
+    if (returned !== items.length) {
+      fail("inventory.returned");
+    }
+    if (available && hasMore !== (nextAfter !== null)) {
+      // A continuation must advertise exactly the cursor that continues it,
+      // so a bounded page can never silently become the whole inventory.
+      fail("inventory.nextAfter");
+    }
+    if (available && truncated !== hasMore) {
+      fail("inventory.truncated");
+    }
+    if (available && matched < items.length) {
+      fail("inventory.matched");
+    }
     if (available) {
       if (
         authority !== "MANAGED" ||
@@ -327,7 +362,11 @@ export function normalizeStorageInventory(
       active: normalizeActiveIdentity(source.active),
       items,
       total,
+      matched,
       truncated,
+      returned,
+      hasMore,
+      nextAfter,
       families,
       canManage,
     };

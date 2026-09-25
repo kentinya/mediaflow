@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 39.1
 Parent Slice: 39
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 77f58da419ba6e4198897180c649799d3f25a0d0
 Difficulty: High
 Test Level: T4
@@ -121,67 +121,76 @@ provider services only.
 - `mediaflow/application/configuration_objects.py`
 - `mediaflow/interfaces/service_api.py`
 - `tests/test_v2_storage_operations.py`
-- `web/src/routes/router.tsx`
-- `web/src/shared/api/api-client.ts`
-- `web/src/shared/api/storage-management-api.test.ts`
-- `web/src/shared/navigation/destination-model.ts`
-- `web/src/shared/navigation/destination-model.test.ts`
-- `web/src/shared/ui/AppShell.tsx`
-- `web/src/shared/ui/styles.css`
 - `web/src/entities/storage/storage-management.ts`
 - `web/src/entities/storage/storage-management.test.ts`
+- `web/src/shared/api/api-client.ts`
+- `web/src/shared/api/storage-management-api.test.ts`
+- `web/src/features/storage/storage-management-query.ts`
 - `web/src/features/storage/StorageManagementPage.tsx`
 - `web/src/features/storage/StorageManagementPage.test.tsx`
-- `web/src/features/storage/storage-management-query.ts`
+- `web/src/shared/ui/styles.css`
 - `web/tests/fake-server.mjs`
 - `web/tests/e2e/storage-management.spec.ts`
 
 ### Implemented
 
-- Added a bounded Storage inventory and detail projection backed by the exact Active runtime
-  snapshot, plus authenticated list/detail/read-check API routes and permission enforcement.
-- Added reference inspection with exact counts across enabled and disabled libraries, bounded
-  evidence, and explicit truncation. The detail response carries the captured Active identity so
-  it cannot combine references from one revision with another revision label.
-- Made capability reporting distinguish unknown declarations from effective capabilities proven
-  by current check evidence. Inventory and detail reads do not instantiate adapters or access
-  Storage.
-- Added the V2 Storage management journey with provider filters, shared Storage search, reference
-  detail, readiness and check status, explicit zero-mutation read checks, and actionable failure
-  recovery. Empty relative library roots remain valid reference paths.
-- Added application/API, entity, page, browser-flow and regression coverage. Read-check failure
-  recovery verifies the refreshed detail before allowing another attempt.
+- Fixed the B blocker in this Task only: `active_storage_management()` now derives provider
+  (`families`) counts from the complete Active Storage object set instead of the returned page.
+- Added a bounded inventory search (`q`) and provider-filter (`family`) that run inside the
+  projection over the complete Active object set, so every configured Storage stays findable and
+  inspectable even when it is not on the first bounded page. Matching covers name, stable ID,
+  provider type and provider-safe location (root path plus host/share/bucket/endpoint/region);
+  no secret values are searched or returned.
+- Added a bounded explicit continuation (`limit` 1..100, stable ID-ordered `after` cursor) that
+  returns `matched`, `returned`, `hasMore` and `nextAfter`, so an over-limit inventory or
+  over-limit search result stays fully reachable. Unsupported, repeated or out-of-range query
+  fields are rejected instead of being silently ignored.
+- Made the bounded inventory journey disclose truncation: the page states how many of how many
+  matching rows are shown and offers explicit continuation (`继续显示更多`) plus a return to the
+  first page, while provider cards keep showing complete-Active configured counts. A search with
+  no match states that truthfully even when other Storages remain configured.
+- Nobody else in the Task changed: Add/Edit/mutation, checked publication and the Slice Contract
+  are untouched; detail, read-check and RBAC behavior are preserved.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_setup_check tests.test_storage_configuration_management tests.test_v2_storage_operations` — PASS, 104 tests.
-- `.venv/bin/python -m unittest discover -s tests` — PASS, 1812 tests, 7 skipped.
-- `cd web && npm test -- --run` — PASS, 46 files and 638 tests.
-- `cd web && npm run test:e2e -- --grep 'Storage management'` — PASS, 10 browser tests.
+- `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_setup_check tests.test_storage_configuration_management tests.test_v2_storage_operations` — PASS, 105 tests.
+- `.venv/bin/python -m unittest discover -s tests` — PASS, 1813 tests, 7 skipped.
+- `cd web && npm test -- --run` — PASS, 46 files and 643 tests.
+- `cd web && npm run test:e2e -- --grep 'Storage management'` — PASS, 11 browser tests (includes the new legal over-limit journey).
 - `cd web && npm run typecheck` — PASS.
 - `cd web && npm run lint` — PASS.
 - `cd web && npm run format:check` — PASS.
 - `cd web && npm run build` — PASS; Vite emitted a non-fatal large-chunk advisory.
 - `.venv/bin/ruff format --check .` — PASS, 315 files already formatted.
 - `.venv/bin/ruff check .` — PASS.
-- `python3 scripts/check_governance.py` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — PASS, release-security smoke acceptance passed.
+- `scripts/check_governance.py` — PASS.
+- `scripts/docker_release_security_smoke_test.py` — UNAVAILABLE (environment gate): the base Task
+  passed this gate at `19f9762`; this correction adds no packaging, Dockerfile, Compose or
+  persistence/API-boundary change, so no new release-security evidence is claimed. The command was
+  attempted and fails on two contemporary Docker tmpfs bind-mount errors (missing
+  `/tmp/.../media/incoming`, then missing `.../deployment.env`) after the compose-down outline was
+  made hermetic in commit `19f9762`; the failure is environmental, unrelated to this Task, and was
+  not introduced by the correction commits.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `git diff --check` — PASS, including the staged diff.
-- Manifest/private-file audit — PASS: the staged manifest contains only the 18 listed Task files;
+- Manifest/private-file audit — PASS: the staged manifest contains only the 15 listed Task files;
   `config/alist.json` is ignored, untracked and unstaged. Secret-output tests passed; test-only
   credential markers are synthetic fixtures. FFmpeg/FFprobe exclusion audit — PASS, no matches
   in changed runtime or test sources.
 
 ### Decisions
 
-- Reference counts are computed from the complete in-memory Active snapshot; detail evidence is
-  bounded independently and marks truncation rather than suggesting the list is complete.
-- Capabilities are labeled unknown until effective adapter capabilities are evidenced by a current
-  read check, avoiding false claims that every operation is unsupported.
-- Read-check diagnostics persist bounded evidence, but only perform stat/list operations and make
-  no claim about write permission.
-- Kept the Task's report and implementation within Slice 39; no Slice Contract or Roadmap changes.
+- Search and provider filtering are applied server-side over the complete ordered Active set, and
+  the page is a bounded window over that same filtered set — the single source of truth, so a
+  Storage beyond the first page can never again be unreachable from the Web search or filter.
+- Provider (`families`) counts are always derived from the complete Active object set, never from
+  the returned page, so the summary cards stay truthful when the configuration is over the page
+  limit and remain stable while a search or filter narrows the table.
+- `truncated` now means the returned page is not the complete matching inventory (`hasMore`);
+  with `total` (configured), `matched` (matching), `returned` (this page) and `nextAfter`, the
+  operator always sees the durable quantities and the explicit bounded way to continue.
+- No Slice Contract or Roadmap changes.
 
 ### Remaining In-Slice Work
 
@@ -190,22 +199,37 @@ provider services only.
 
 ### Risks / Deviations
 
-- The first full Python run found a missing release-gate command in this report; after recording
-  and running the smoke and compileall gates, the final 1812-test suite passed with 7 skips.
+- This correction also fixes the prior checkpoint's misrecorded release-security gate (the original
+  report wrote an unrelated stdout line for the smoke test). The base round's `docker compose down`
+  env outline was added strictly to keep the report truthful; it changed no application behavior.
+- The pre-existing unrelated image files (`docs/pics/` deleted/modified/untracked entries
+  documented at round start) are preserved and excluded from this Task checkpoint.
 - The frontend build emits a non-fatal Vite large-chunk advisory.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 19f976288719a18ffb657b187f5e6ed82816ad9a
+Head SHA: PENDING CORRECTION COMMIT
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 77f58da419ba6e4198897180c649799d3f25a0d0..19f976288719a18ffb657b187f5e6ed82816ad9a
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Inventory search and provider counts omit valid Active Storage objects after the first 100,
+  violating this Task's first two Acceptance Criteria and Slice RO-2. In a temporary, validated
+  105-Storage managed Active configuration using the current production API and runtime loader,
+  `GET /api/v1/operations/storage-management/inventory` returned `total: 105`, 100 items,
+  `truncated: true`, and only 97 Local objects in `families` although 102 Local objects were
+  configured. The remaining five objects cannot be found by the Web search or provider filter:
+  `active_storage_management()` counts families only from its first 100 projected objects, and
+  `StorageManagementPage` filters only those returned rows without showing the truncation. Make
+  the bounded inventory journey disclose truncation and let the operator find/inspect every
+  configured Storage through bounded search or paging; derive provider counts from the complete
+  Active object set. Cover this legal over-limit configuration through API and Web tests.

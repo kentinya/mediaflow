@@ -4957,6 +4957,7 @@ import {
   normalizeStorageInventory,
   type StorageCheckResultModel,
   type StorageDetailModel,
+  type StorageFamily,
   type StorageInventoryModel,
 } from "../../entities/storage/storage-management";
 
@@ -4985,13 +4986,56 @@ export class StorageManagementApiError extends ApiReadError {
 
 const STORAGE_BASE = "/api/v1/operations/storage-management";
 
+/** The bounded, server-applied Storage inventory search/filter/page request. */
+export interface StorageInventoryQuery {
+  readonly query?: string;
+  readonly family?: StorageFamily | null;
+  readonly limit?: number;
+  readonly after?: string | null;
+}
+
+/** Build the bounded inventory query string; unset fields are simply absent. */
+function storageInventoryPath(options: StorageInventoryQuery): string {
+  const params = new URLSearchParams();
+  const query = options.query?.trim() ?? "";
+  if (query !== "") {
+    params.set("q", query.slice(0, 256));
+  }
+  if (options.family !== undefined && options.family !== null) {
+    params.set("family", options.family);
+  }
+  if (options.limit !== undefined) {
+    const limit = Math.max(1, Math.min(Math.trunc(options.limit), 100));
+    params.set("limit", String(limit));
+  }
+  if (
+    options.after !== undefined &&
+    options.after !== null &&
+    options.after !== ""
+  ) {
+    params.set("after", options.after);
+  }
+  const encoded = params.toString();
+  return encoded === ""
+    ? `${STORAGE_BASE}/inventory`
+    : `${STORAGE_BASE}/inventory?${encoded}`;
+}
+
+/**
+ * Read one bounded page of the exact-Active Storage inventory.
+ *
+ * Search and provider filtering are applied by the backend over the complete
+ * Active object set, so a configuration with more Storage objects than one
+ * page never hides a configured Storage from the operator's search.
+ */
 export async function fetchStorageInventory(
   token: string | null,
+  options: StorageInventoryQuery = {},
   fetchImpl: FetchLike = fetch,
 ): Promise<StorageInventoryModel> {
   let response: Response;
   try {
-    response = await fetchImpl(`${STORAGE_BASE}/inventory`, {
+    response = await fetchImpl(storageInventoryPath(options), {
       method: "GET",
       headers: operationsHeaders(token),
     });

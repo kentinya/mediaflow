@@ -82,7 +82,11 @@ const inventoryPayload = {
     },
   ],
   total: 2,
+  matched: 2,
   truncated: false,
+  returned: 2,
+  hasMore: false,
+  nextAfter: null,
   families: { local: 1, s3: 1 },
   canManage: true,
 };
@@ -120,6 +124,12 @@ describe("normalizeStorageInventory", () => {
       state: "SET",
     });
     expect(model.families).toEqual({ local: 1, s3: 1 });
+    expect(model.total).toBe(2);
+    expect(model.matched).toBe(2);
+    expect(model.returned).toBe(2);
+    expect(model.truncated).toBe(false);
+    expect(model.hasMore).toBe(false);
+    expect(model.nextAfter).toBeNull();
     expect(model.canManage).toBe(true);
   });
 
@@ -141,7 +151,11 @@ describe("normalizeStorageInventory", () => {
       active: null,
       items: [],
       total: 0,
+      matched: 0,
       truncated: false,
+      returned: 0,
+      hasMore: false,
+      nextAfter: null,
       families: {},
       canManage: false,
     });
@@ -149,6 +163,71 @@ describe("normalizeStorageInventory", () => {
     expect(model.reason).toBe("no_active");
     expect(model.items).toEqual([]);
     expect(model.active).toBeNull();
+  });
+
+  it("models an over-limit page with honest truncation and a cursor", () => {
+    // A legal over-limit Active configuration: the provider counts describe
+    // every configured object while the page is bounded, and the cursor is
+    // the explicit bounded way to keep inspecting the rest.
+    const model = normalizeStorageInventory({
+      ...inventoryPayload,
+      total: 105,
+      matched: 105,
+      truncated: true,
+      returned: 2,
+      hasMore: true,
+      nextAfter: "r2-media",
+      families: { local: 102, smb: 1, openlist: 1, s3: 1 },
+    });
+    expect(model.total).toBe(105);
+    expect(model.returned).toBe(2);
+    expect(model.truncated).toBe(true);
+    expect(model.hasMore).toBe(true);
+    expect(model.nextAfter).toBe("r2-media");
+    // Provider counts are the complete Active counts, not the page counts.
+    expect(model.families).toEqual({
+      local: 102,
+      smb: 1,
+      openlist: 1,
+      s3: 1,
+    });
+  });
+
+  it("rejects an inventory that hides truncation or its continuation", () => {
+    // A bounded page claiming to be complete would silently hide a
+    // configured Storage, so the shape is rejected as malformed.
+    expect(() =>
+      normalizeStorageInventory({
+        ...inventoryPayload,
+        total: 105,
+        matched: 105,
+        truncated: false,
+        returned: 2,
+        hasMore: true,
+        nextAfter: "r2-media",
+      }),
+    ).toThrow();
+    expect(() =>
+      normalizeStorageInventory({
+        ...inventoryPayload,
+        truncated: true,
+        hasMore: false,
+        nextAfter: null,
+      }),
+    ).toThrow();
+    expect(() =>
+      normalizeStorageInventory({
+        ...inventoryPayload,
+        returned: 5,
+      }),
+    ).toThrow();
+    expect(() =>
+      normalizeStorageInventory({
+        ...inventoryPayload,
+        hasMore: true,
+        nextAfter: null,
+      }),
+    ).toThrow();
   });
 
   it("keeps unavailable adapter declarations distinct from false capabilities", () => {

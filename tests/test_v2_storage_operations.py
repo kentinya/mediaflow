@@ -25,6 +25,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import quote
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -400,12 +401,243 @@ class StorageOperationsJourney(unittest.TestCase):
 
     def test_inventory_rejects_methods_queries_and_unknown_routes(self) -> None:
         self.assertEqual(_request(self.api, INVENTORY_ROUTE, method="POST")[0], 405)
-        status, denied = _request(self.api, INVENTORY_ROUTE, query="limit=10", token=VIEWER_TOKEN)
-        self.assertEqual(status, 400)
+        # The bounded query accepts only the advertised operator fields; a
+        # repeated or unsupported field is rejected rather than silently
+        # ignored, so the Web can never believe it filtered a complete
+        # inventory when it did not.
+        for bad_query in (
+            "unknown=1",
+            "limit=10&limit=20",
+            "family=not-a-family",
+            "family=local&family=s3",
+            "limit=0",
+            "limit=101",
+            "limit=ten",
+        ):
+            status, denied = _request(
+                self.api, INVENTORY_ROUTE, query=bad_query, token=VIEWER_TOKEN
+            )
+            self.assertEqual(status, 400, bad_query)
+            self.assertEqual(denied["error"]["code"], "invalid_request", bad_query)
         self.assertEqual(
             _request(self.api, "/api/v1/operations/storage-management", token=VIEWER_TOKEN)[0],
             404,
         )
+
+    def test_inventory_search_filter_and_paging_cover_a_legal_over_limit_active(self) -> None:
+        """A legal over-limit Active configuration stays fully inspectable.
+
+        The Task's first two Acceptance Criteria and Slice RO-2 require that
+        every configured Storage remains findable. This drives 105 Active
+        Storage objects through the real API and runtime loader: provider
+        counts must describe the complete Active object set, bounded search
+        must find an object beyond the first page, and explicit continuation
+        must reach the last configured object.
+        """
+
+        directory = tempfile.TemporaryDirectory()
+        try:
+            root = Path(directory.name)
+            document = _document(root)
+            document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
+            document["storages"] = [
+                {
+                    "id": f"local-{index:03d}",
+                    "name": f"Local {index:03d}",
+                    "type": "local",
+                    "rootPath": str(root / f"local/{index:03d}"),
+                    "readOnly": False,
+                    "enabled": True,
+                }
+                for index in range(100)
+            ] + [
+                {
+                    "id": "smb-late",
+                    "name": "Late SMB",
+                    "type": "smb",
+                    "rootPath": "media",
+                    "readOnly": False,
+                    "enabled": True,
+                    "options": {
+                        "host": "late.example",
+                        "share": "media",
+                        "usernameEnv": "MF_STORAGE_SMB_USER",
+                        "passwordEnv": "MF_STORAGE_SMB_PASSWORD",
+                    },
+                },
+                {
+                    "id": "r2-late",
+                    "name": "Late R2",
+                    "type": "r2",
+                    "rootPath": "media",
+                    "readOnly": True,
+                    "enabled": True,
+                    "options": {
+                        "bucket": "media",
+                        "endpoint": "https://late.example",
+                        "accessKeyEnv": "MF_STORAGE_R2_ACCESS",
+                        "secretKeyEnv": "MF_STORAGE_R2_SECRET",
+                    },
+                },
+                {
+                    "id": "openlist-late",
+                    "name": "Late OpenList",
+                    "type": "openlist",
+                    "rootPath": "Media",
+                    "readOnly": False,
+                    "enabled": True,
+                    "options": {
+                        "baseUrl": "https://late.example",
+                        "tokenEnv": "MF_STORAGE_OPENLIST_TOKEN",
+                    },
+                },
+                {
+                    "id": "s3-late",
+                    "name": "Late S3",
+                    "type": "s3-compatible",
+                    "rootPath": "media",
+                    "readOnly": False,
+                    "enabled": True,
+                    "options": {
+                        "bucket": "media",
+                        "endpoint": "https://late.example",
+                        "accessKeyEnv": "MF_STORAGE_R2_ACCESS",
+                        "secretKeyEnv": "MF_STORAGE_R2_SECRET",
+                    },
+                },
+                {
+                    "id": "zzz-last",
+                    "name": "ZZZ last configured",
+                    "type": "local",
+                    "rootPath": str(root / "local/last"),
+                    "readOnly": False,
+                    "enabled": True,
+                },
+            ]
+            document["resourceLibraries"][0]["storageId"] = "local-000"
+            for library in document["mediaLibraries"]:
+                library["storageId"] = "smb-late"
+            repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+            configuration = ManagedConfigurationService(
+                repository,
+                bootstrap_database_path=str(root / "runtime.sqlite3"),
+            )
+            objects = ConfigurationObjectService(configuration)
+            draft = configuration.import_draft(document, actor="bootstrap")
+            validated = configuration.validate(draft.revision_id, actor="bootstrap")
+            self.assertEqual(validated.validation_errors, ())
+            configuration.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="bootstrap",
+            )
+            task_repository = SQLiteTaskRepository(str(root / "runtime.sqlite3"))
+            api = MediaFlowApi(
+                task_repository,
+                None,
+                principals=(
+                    ResolvedApiPrincipal(ADMIN_TOKEN, ADMIN_TOKEN, frozenset(ApiPermission)),
+                    ResolvedApiPrincipal(
+                        VIEWER_TOKEN, VIEWER_TOKEN, frozenset({ApiPermission.READ})
+                    ),
+                ),
+                configuration_service=configuration,
+            )
+            try:
+                status, inventory = _request(api, INVENTORY_ROUTE)
+                self.assertEqual(status, 200)
+                self.assertEqual(inventory["total"], 105)
+                self.assertEqual(len(inventory["items"]), 100)
+                self.assertTrue(inventory["truncated"])
+                self.assertTrue(inventory["hasMore"])
+                self.assertEqual(inventory["returned"], 100)
+                # Provider counts describe every configured object, not the
+                # first bounded page.
+                self.assertEqual(
+                    inventory["families"],
+                    {"local": 101, "smb": 1, "openlist": 1, "s3": 2},
+                )
+                self.assertEqual(
+                    sum(inventory["families"].values()),
+                    inventory["total"],
+                )
+                # A Storage beyond the first page is still found by bounded
+                # search on name, ID, type and provider-safe location.
+                for term, expected in (
+                    ("zzz-last", ["zzz-last"]),
+                    ("ZZZ last", ["zzz-last"]),
+                    # Provider-safe location coordinates stay searchable only
+                    # where the projection actually shows them; OpenList keeps
+                    # its logical root because no provider coordinate is exposed.
+                    ("late.example", ["r2-late", "s3-late", "smb-late"]),
+                    ("Late OpenList", ["openlist-late"]),
+                    ("late SMB", ["smb-late"]),
+                    ("s3-compatible", ["s3-late"]),
+                ):
+                    status, found = _request(api, INVENTORY_ROUTE, query=f"q={quote(term)}")
+                    self.assertEqual(status, 200, term)
+                    self.assertEqual(
+                        [item["id"] for item in found["items"]],
+                        expected,
+                        term,
+                    )
+                # The provider filter also reaches objects beyond page one and
+                # reports every family count from the complete object set.
+                status, family_page = _request(api, INVENTORY_ROUTE, query="family=local&limit=2")
+                self.assertEqual(status, 200)
+                self.assertEqual(
+                    [item["id"] for item in family_page["items"]],
+                    ["local-000", "local-001"],
+                )
+                self.assertEqual(family_page["matched"], 101)
+                self.assertTrue(family_page["truncated"])
+                self.assertTrue(family_page["hasMore"])
+                self.assertEqual(
+                    family_page["families"],
+                    {"local": 101, "smb": 1, "openlist": 1, "s3": 2},
+                )
+                # Explicit bounded continuation reaches the last configured
+                # Storage, so a page limit never hides a valid Active object.
+                cursor = inventory["nextAfter"]
+                self.assertEqual(cursor, "local-099")
+                seen = {item["id"] for item in inventory["items"]}
+                for _page in range(10):
+                    status, page = _request(
+                        api, INVENTORY_ROUTE, query=f"after={quote(str(cursor))}"
+                    )
+                    self.assertEqual(status, 200)
+                    seen.update(item["id"] for item in page["items"])
+                    if not page["hasMore"]:
+                        break
+                    cursor = page["nextAfter"]
+                self.assertIn("zzz-last", seen)
+                self.assertIn("smb-late", seen)
+                self.assertIn("r2-late", seen)
+                self.assertIn("openlist-late", seen)
+                self.assertIn("s3-late", seen)
+                self.assertEqual(len(seen), 105)
+                self.assertEqual(seen, {str(item.get("id")) for item in document["storages"]})
+                # A search with no match states that truthfully instead of
+                # showing a partial page.
+                status, empty = _request(api, INVENTORY_ROUTE, query="q=no-such-storage")
+                self.assertEqual(status, 200)
+                self.assertEqual(empty["items"], [])
+                self.assertEqual(empty["matched"], 0)
+                self.assertFalse(empty["truncated"])
+                self.assertFalse(empty["hasMore"])
+                self.assertIsNone(empty["nextAfter"])
+                self.assertEqual(empty["total"], 105)
+                _assert_document_clean(inventory)
+                _assert_document_clean(family_page)
+                # The over-limit inventory read stays a zero-mutation,
+                # zero-Storage-read configuration projection.
+                self.assertEqual(set(self.nas.mutation_calls.values()), {0})
+            finally:
+                objects._setup_check_executor.shutdown(wait=True)
+                task_repository.close()
+                repository.close()
+        finally:
+            directory.cleanup()
 
     def test_inventory_without_active_and_setup_authority_is_not_an_empty_list(self) -> None:
         self.configuration_repository.close()

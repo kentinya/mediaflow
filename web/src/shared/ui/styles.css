@@ -3227,6 +3227,25 @@ button.mf-grid-button {
   font-size: 0.78rem;
 }
 
+/* Truthful bounded-inventory disclosure: an over-limit Active configuration
+   states how many of how many are shown and offers explicit continuation. */
+.mf-storage-scope-note {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.85rem;
+}
+
+.mf-storage-scope-note p {
+  margin: 0 0 8px;
+}
+
+.mf-storage-scope-note .mf-actions {
+  flex-wrap: wrap;
+}
+
 .mf-storage-detail-section {
   padding: 10px 0;
   border-bottom: 1px solid var(--line);
