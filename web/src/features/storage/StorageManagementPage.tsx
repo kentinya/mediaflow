@@ -642,10 +642,24 @@ export function StorageManagementPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const { query: searchQuery } = useStorageSearch();
+  const trimmedQuery = searchQuery.trim();
   const [familyFilter, setFamilyFilter] = useState<StorageFamily | null>(null);
   // Explicit continuation through the stable ID cursor the server returns;
-  // cleared whenever search or the provider filter changes.
+  // cleared whenever search or the provider filter changes. The shared
+  // top-bar search lives outside this component, so a new search must reset
+  // the page window synchronously during render: otherwise the next request
+  // would combine the new query with the stale cursor (for example
+  // `?q=local-000&after=local-099`) and falsely report that a configured
+  // Storage does not exist.
   const [afterCursor, setAfterCursor] = useState<string | null>(null);
+  const [pageBasis, setPageBasis] = useState<{
+    readonly query: string;
+    readonly family: StorageFamily | null;
+  }>({ query: trimmedQuery, family: null });
+  if (pageBasis.query !== trimmedQuery || pageBasis.family !== familyFilter) {
+    setPageBasis({ query: trimmedQuery, family: familyFilter });
+    setAfterCursor(null);
+  }
   const [detailId, setDetailId] = useState<string | null>(null);
   // A rejected or undelivered read-check attempt blocks another attempt until
   // the operator explicitly verifies current state (AC: unknown result is
@@ -654,13 +668,24 @@ export function StorageManagementPage() {
 
   // Search and the provider filter are applied by the backend over the
   // complete Active object set, not over one already-truncated page.
+  // `effectiveAfter` is the page window for the *current* search/filter
+  // basis: when the shared top-bar search (which lives outside this
+  // component) changes, the stale continuation cursor must not leak into the
+  // next request. The render-phase `pageBasis` sync below persists the reset
+  // for subsequent renders; this derived value guarantees the very next
+  // query already drops the stale cursor instead of requesting e.g.
+  // `?q=local-000&after=local-099` and falsely reporting no match.
+  const effectiveAfter =
+    pageBasis.query !== trimmedQuery || pageBasis.family !== familyFilter
+      ? null
+      : afterCursor;
   const selection = useMemo<InventorySelection>(
     () => ({
-      query: searchQuery.trim(),
+      query: trimmedQuery,
       family: familyFilter,
-      after: afterCursor,
+      after: effectiveAfter,
     }),
-    [searchQuery, familyFilter, afterCursor],
+    [trimmedQuery, familyFilter, effectiveAfter],
   );
   const inventoryQuery = useQuery(
     storageInventoryQueryOptions(token, selection),
