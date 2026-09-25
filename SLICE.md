@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
 Implementation Head: NOT SET
-Contract Revision: 2026-09-25 A initial activation — V2 Storage management journey
+Contract Revision: 2026-09-25 A user correction — Storage notes excluded
 ```
 
 Slice 38 is `PASS / CLOSED`. Its Base, Implementation Head, Closure Packet and A Final Review are
@@ -36,6 +36,9 @@ Active configuration or changing media contents.
   shell, page title/subtitle, provider summary cards, Storage table, and right-side four-step
   Add/Edit drawer. The screenshot's values are synthetic and must never be hardcoded as runtime
   data or used as acceptance counts.
+- The user's correction overrides the image: Storage has no notes field. Do not add notes input,
+  display, persistence or search. The top search placeholder is `搜索存储、路径...`; the image's
+  reference to `备注` is incorrect and is not an implementation requirement.
 - Compose the page from the existing Managed Configuration and `ConfigurationObjectService`
   authority. The page must not create a second Storage repository, adapter registry, or Active
   source of truth.
@@ -106,9 +109,8 @@ focus, and expose accessible names and deterministic empty/loading/error states.
   prefilled from one exact Active object; the ID is visible and read-only. Cancel, close and Escape
   restore focus where practical; failed submission retains correctable values.
 - Typed provider forms for Local, SMB, OpenList, S3, R2 and S3-compatible settings, plus common
-  enabled/read-only, timeout, retry/concurrency, root and bounded notes/configuration metadata where
-  the canonical object supports them. Provider credentials are entered as approved secret
-  references, never as values returned by the API.
+  enabled/read-only, root and supported timeout/retry/concurrency settings. Provider credentials
+  are entered as approved secret references, never as values returned by the API.
 - Bounded reference inspection for libraries that use a Storage. The normal table may show counts;
   details must identify the affected dependents sufficiently for a safe repoint/remove decision.
 - Read-only Connection/Read check status, evidence currentness and safe retry/recovery. A check never
@@ -132,7 +134,7 @@ reference image are not runtime literals.
 ### RO-2 — Truthful bounded Storage inventory and explanation
 
 An authenticated viewer can list enabled and, where permitted, disabled Storage objects in stable
-order, search by name/ID/type/location/notes, filter by provider family, inspect exact bounded
+order, search by name/ID/type/location, filter by provider family, inspect exact bounded
 configuration status and see which ResourceLibraries and MediaLibraries reference each object.
 Local roots are execution-environment paths under backend confinement; remote roots are logical
 provider-relative paths. The projection redacts credentials, authorization headers, cookies,
@@ -143,8 +145,8 @@ does not require a Storage read merely to render the configuration list.
 
 The Add/Edit drawer captures the complete supported Storage object without JSON-only editing:
 identity/name/type, Local or remote root, provider fields, approved secret references, enabled and
-read-only state, timeout/retry/concurrency settings and bounded notes if present in the canonical
-model. IDs satisfy the backend identifier rule and are immutable after creation. Provider forms
+read-only state and supported timeout/retry/concurrency settings. Storage has no notes field.
+IDs satisfy the backend identifier rule and are immutable after creation. Provider forms
 show only fields valid for the selected type while preserving unexposed existing options on edit.
 
 Save binds to the exact Active revision used to open the form, validates the complete dependency
@@ -225,6 +227,8 @@ retain mutation authority.
 
 ## Explicitly Deferred / Excluded
 
+- Storage notes input, display, persistence and search are excluded by the user's correction, not
+  deferred to a later Task or Slice.
 - Mutation-based Storage write/capability probes, probe cleanup, test-object retention and recovery
   after an uncertain probe. This Slice deliberately delivers only zero-mutation Connection/Read
   checks; a future capability-diagnostics Slice must design the explicit mutation authority first.
@@ -250,7 +254,7 @@ retain mutation authority.
 |---|---|
 | AC-1 | `/ui-v2/storage` is a real authenticated route with the shared light shell, correct active navigation, search/filter state, synthetic-data-independent summary cards and responsive drawer/table composition. |
 | AC-2 | Storage inventory and detail projections are bounded, deterministic, reference-aware, provider-safe and secret-free; Local/remote path identity and authority are not confused. |
-| AC-3 | All six supported Storage configurations can be added and edited through typed provider forms; ID immutability, field preservation, validation and approved secret references are enforced by API and Web. |
+| AC-3 | All six supported Storage configurations can be added and edited through typed provider forms; ID immutability, field preservation, validation and approved secret references are enforced by API and Web. Storage forms, API configuration and search omit notes, and the search placeholder is `搜索存储、路径...`. |
 | AC-4 | Successful Add/Edit/copy/enable/disable publishes an actual checked Active successor; stale/invalid/denied/evidence/runtime failures preserve prior Active, current Storage and correctable input. |
 | AC-5 | Referenced Storage removal/disable is blocked or explained with current dependents; unreferenced configuration removal never touches physical content and unknown results are not replayed. |
 | AC-6 | Explicit zero-mutation Connection/Read checks show current/bounded evidence, provider-safe errors and recovery; no read check claims write capability and no write probe appears in this Slice. |
