@@ -97,6 +97,7 @@ export function CardActionMenu({
   libraryName,
   triggerLabel,
   onRemoveRequest,
+  onEditRequest,
   disabled,
   removeLabel = "删除资源库",
 }: {
@@ -104,6 +105,7 @@ export function CardActionMenu({
   readonly libraryName: string;
   readonly triggerLabel: string;
   readonly onRemoveRequest: (libraryId: string) => void;
+  readonly onEditRequest?: (libraryId: string) => void;
   readonly disabled?: boolean;
   readonly removeLabel?: string;
 }) {
@@ -135,6 +137,20 @@ export function CardActionMenu({
           role="menu"
           aria-label={`资源库操作 ${libraryName}`}
         >
+          {onEditRequest && (
+            <button
+              type="button"
+              role="menuitem"
+              className="mf-card-menu-item"
+              onClick={() => {
+                close();
+                onEditRequest(libraryId);
+              }}
+            >
+              <Icon name="settings" />
+              编辑{libraryName}
+            </button>
+          )}
           <button
             type="button"
             role="menuitem"
@@ -159,6 +175,7 @@ function LibraryCard({
   selected,
   onLibraryChange,
   onRemoveRequest,
+  onEditRequest,
   removalDisabled,
   iconName,
   actionLabel,
@@ -168,6 +185,7 @@ function LibraryCard({
   readonly selected: boolean;
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveRequest: (libraryId: string) => void;
+  readonly onEditRequest?: (libraryId: string) => void;
   readonly removalDisabled: boolean;
   readonly iconName: IconName;
   readonly actionLabel: string;
@@ -204,6 +222,7 @@ function LibraryCard({
           libraryName={label}
           triggerLabel={`${actionLabel}操作 ${label}`}
           onRemoveRequest={onRemoveRequest}
+          onEditRequest={onEditRequest}
           disabled={removalDisabled}
           removeLabel={removeLabel}
         />
@@ -218,6 +237,7 @@ export function LibraryCardStrip({
   rootPath,
   onLibraryChange,
   onRemoveRequest,
+  onEditRequest,
   removalBusy,
   iconName,
   actionLabel,
@@ -228,6 +248,7 @@ export function LibraryCardStrip({
   readonly rootPath: string;
   readonly onLibraryChange: (id: string) => void;
   readonly onRemoveRequest: (libraryId: string) => void;
+  readonly onEditRequest?: (libraryId: string) => void;
   readonly removalBusy: boolean;
   readonly iconName?: IconName;
   readonly actionLabel?: string;
@@ -295,6 +316,7 @@ export function LibraryCardStrip({
               closeMore();
             }}
             onRemoveRequest={onRemoveRequest}
+            onEditRequest={onEditRequest}
             removalDisabled={removalBusy}
             iconName={cardIcon}
             actionLabel={menuLabel}

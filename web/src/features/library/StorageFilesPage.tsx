@@ -46,6 +46,8 @@ import {
   fetchTextFile,
   removeResourceLibrary,
   saveResourceLibrary,
+  fetchResourceLibraryEdit,
+  editResourceLibrary,
   submitDirectFileCommand,
   submitFilesOrganizeIntent,
   submitTransfer,
@@ -291,6 +293,19 @@ function updateLibraryRouteState(libraryId: string): void {
   const search = new URLSearchParams(window.location.search);
   if (libraryId === "") search.delete("resourceLibraryId");
   else search.set("resourceLibraryId", libraryId);
+  const query = search.toString();
+  window.history.replaceState(
+    null,
+    "",
+    window.location.pathname + (query === "" ? "" : `?${query}`),
+  );
+}
+
+function updateDirectoryRouteState(relativePath: string): void {
+  if (typeof window === "undefined") return;
+  const search = new URLSearchParams(window.location.search);
+  if (relativePath === "") search.delete("path");
+  else search.set("path", relativePath);
   const query = search.toString();
   window.history.replaceState(
     null,
@@ -1509,6 +1524,8 @@ export function AddResourceLibraryDrawer({
   onSave,
   saving,
   saveError,
+  initial,
+  editing = false,
 }: {
   readonly open: boolean;
   readonly storages: readonly SystemStorage[];
@@ -1516,13 +1533,21 @@ export function AddResourceLibraryDrawer({
   readonly onSave: (candidate: SaveResourceLibraryOptions) => void;
   readonly saving: boolean;
   readonly saveError: string | null;
+  readonly initial?: SaveResourceLibraryOptions;
+  readonly editing?: boolean;
 }) {
   const [step, setStep] = useState(1);
-  const [name, setName] = useState("");
-  const [resourceId, setResourceId] = useState("");
-  const [storageId, setStorageId] = useState(storages[0]?.id ?? "");
-  const [rootPath, setRootPath] = useState("media/incoming");
-  const [enabled, setEnabled] = useState(true);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [resourceId, setResourceId] = useState(
+    initial?.resourceLibraryId ?? "",
+  );
+  const [storageId, setStorageId] = useState(
+    initial?.storageId ?? storages[0]?.id ?? "",
+  );
+  const [rootPath, setRootPath] = useState(
+    initial?.storagePath ?? "media/incoming",
+  );
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [validationError, setValidationError] = useState<string | null>(null);
   const selectedStorageId = storages.some((storage) => storage.id === storageId)
     ? storageId
@@ -1601,10 +1626,13 @@ export function AddResourceLibraryDrawer({
     selectedStorage?.name ??
     (selectedStorageId === "" ? "未选择" : selectedStorageId);
   return (
-    <aside className="mf-files-drawer" aria-label="添加资源库">
+    <aside
+      className="mf-files-drawer"
+      aria-label={editing ? "编辑资源库" : "添加资源库"}
+    >
       <div className="mf-files-drawer-header">
         <div>
-          <h2>添加资源库</h2>
+          <h2>{editing ? "编辑资源库" : "添加资源库"}</h2>
         </div>
         <button
           type="button"
@@ -1664,6 +1692,7 @@ export function AddResourceLibraryDrawer({
               placeholder="例如：source"
               maxLength={64}
               value={resourceId}
+              disabled={editing}
               onChange={(event) => {
                 setValidationError(null);
                 setResourceId(event.target.value);
@@ -1779,7 +1808,7 @@ export function AddResourceLibraryDrawer({
             disabled={saving}
             aria-busy={saving}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
           </button>
         )}
       </div>
@@ -1816,6 +1845,17 @@ export function StorageFilesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [editInitial, setEditInitial] = useState<
+    SaveResourceLibraryOptions | undefined
+  >();
+  const [editExpected, setEditExpected] = useState<
+    | {
+        readonly expectedRevisionId: string;
+        readonly expectedVersion: number;
+        readonly expectedDigest: string;
+      }
+    | undefined
+  >();
   const [dialog, setDialog] = useState<FilesDialog>(null);
   const [commandError, setCommandError] = useState<string | null>(null);
   const [commandResult, setCommandResult] =
@@ -1992,11 +2032,15 @@ export function StorageFilesPage() {
   const openDrawer = (invokerId: string) => {
     setDrawerInvokerId(invokerId);
     setSaveError(null);
+    setEditInitial(undefined);
+    setEditExpected(undefined);
     setDrawerOpen(true);
   };
 
   const closeDrawer = () => {
     setSaveError(null);
+    setEditInitial(undefined);
+    setEditExpected(undefined);
     setDrawerOpen(false);
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
@@ -2005,9 +2049,12 @@ export function StorageFilesPage() {
 
   const saveLibraryMutation = useMutation({
     mutationFn: (candidate: SaveResourceLibraryOptions) =>
-      saveResourceLibrary(token, candidate),
+      editExpected &&
+      editInitial?.resourceLibraryId === candidate.resourceLibraryId
+        ? editResourceLibrary(token, { ...candidate, ...editExpected })
+        : saveResourceLibrary(token, candidate),
     retry: false,
-    onSuccess: (result) => {
+    onSuccess: (result, candidate) => {
       if (!result.ok) {
         const failure = resourceLibrarySaveFailure(result.code, result.details);
         setSaveError(failure.message);
@@ -2018,15 +2065,25 @@ export function StorageFilesPage() {
         return;
       }
       setSaveError(null);
+      setEditInitial(undefined);
+      setEditExpected(undefined);
       setDrawerOpen(false);
       const savedId = result.model.enabled ? result.model.id : "";
       setSelectedLibraryId(savedId);
       setInvalidPath(false);
-      setPath("");
-      setVisitedDirectories([]);
-      setKnownDirectoryPaths([]);
+      const bindingChanged =
+        editInitial !== undefined &&
+        (editInitial.storageId !== candidate.storageId ||
+          editInitial.storagePath !== candidate.storagePath);
+      const nextPath = result.model.enabled && !bindingChanged ? path : "";
+      setPath(nextPath);
+      if (bindingChanged || !result.model.enabled) {
+        setVisitedDirectories([]);
+        setKnownDirectoryPaths([]);
+      }
       resetBrowseState();
       updateLibraryRouteState(savedId);
+      updateDirectoryRouteState(nextPath);
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
@@ -2038,6 +2095,23 @@ export function StorageFilesPage() {
       void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
     },
   });
+
+  const openResourceLibraryEdit = async (id: string) => {
+    setSaveError(null);
+    const result = await fetchResourceLibraryEdit(token, id);
+    if (!result.ok) {
+      setSaveError("编辑失败：无法读取当前 Active 配置，请刷新后重试。");
+      return;
+    }
+    setEditInitial(result.model.library);
+    setEditExpected({
+      expectedRevisionId: result.model.activeRevisionId,
+      expectedVersion: result.model.activeVersion,
+      expectedDigest: result.model.activeDigest,
+    });
+    setDrawerInvokerId(null);
+    setDrawerOpen(true);
+  };
 
   // Rename/Delete success must clear or remap exactly the affected selection
   // and directory-tree state; unrelated sibling selections stay independent.
@@ -2517,6 +2591,7 @@ export function StorageFilesPage() {
               rootPath={currentLibrary.rootPath}
               onLibraryChange={changeLibrary}
               onRemoveRequest={requestRemoval}
+              onEditRequest={(id) => void openResourceLibraryEdit(id)}
               removalBusy={removalMutation.isPending}
             />
           );
@@ -2758,6 +2833,7 @@ export function StorageFilesPage() {
           saveLibraryMutation.isPending ||
           saveError !== null) && (
           <AddResourceLibraryDrawer
+            key={editInitial?.resourceLibraryId ?? "new"}
             open={drawerOpen}
             storages={eligibleStorages}
             onClose={closeDrawer}
@@ -2767,6 +2843,8 @@ export function StorageFilesPage() {
             }}
             saving={saveLibraryMutation.isPending}
             saveError={saveError}
+            initial={editInitial}
+            editing={editInitial !== undefined}
           />
         )}
       {dialog?.kind === "create_folder" && (

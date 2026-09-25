@@ -52,6 +52,8 @@ import {
   fetchMediaLibraryTextFile,
   removeMediaLibrary,
   saveMediaLibrary,
+  fetchMediaLibraryEdit,
+  editMediaLibrary,
   submitMediaLibraryDirectCommand,
   submitMediaLibraryTransfer,
   type AutomationMutationFailureDetails,
@@ -1356,6 +1358,8 @@ export function AddMediaLibraryDrawer({
   onSave,
   saving,
   saveError,
+  initial,
+  editing = false,
 }: {
   readonly open: boolean;
   readonly storages: readonly SystemStorage[];
@@ -1363,13 +1367,19 @@ export function AddMediaLibraryDrawer({
   readonly onSave: (candidate: SaveMediaLibraryOptions) => void;
   readonly saving: boolean;
   readonly saveError: string | null;
+  readonly initial?: SaveMediaLibraryOptions;
+  readonly editing?: boolean;
 }) {
   const [step, setStep] = useState(1);
-  const [name, setName] = useState("");
-  const [mediaLibraryId, setMediaLibraryId] = useState("");
-  const [storageId, setStorageId] = useState(storages[0]?.id ?? "");
-  const [rootPath, setRootPath] = useState("media");
-  const [enabled, setEnabled] = useState(true);
+  const [name, setName] = useState(initial?.name ?? "");
+  const [mediaLibraryId, setMediaLibraryId] = useState(
+    initial?.mediaLibraryId ?? "",
+  );
+  const [storageId, setStorageId] = useState(
+    initial?.storageId ?? storages[0]?.id ?? "",
+  );
+  const [rootPath, setRootPath] = useState(initial?.rootPath ?? "media");
+  const [enabled, setEnabled] = useState(initial?.enabled ?? true);
   const [validationError, setValidationError] = useState<string | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const selectedStorageId = storages.some((storage) => storage.id === storageId)
@@ -1464,10 +1474,13 @@ export function AddMediaLibraryDrawer({
     selectedStorage?.name ??
     (selectedStorageId === "" ? "未选择" : selectedStorageId);
   return (
-    <aside className="mf-files-drawer" aria-label="添加媒体库">
+    <aside
+      className="mf-files-drawer"
+      aria-label={editing ? "编辑媒体库" : "添加媒体库"}
+    >
       <div className="mf-files-drawer-header">
         <div>
-          <h2>添加媒体库</h2>
+          <h2>{editing ? "编辑媒体库" : "添加媒体库"}</h2>
         </div>
         <button
           type="button"
@@ -1528,6 +1541,7 @@ export function AddMediaLibraryDrawer({
               placeholder="例如：movies"
               maxLength={64}
               value={mediaLibraryId}
+              disabled={editing}
               onChange={(event) => {
                 setValidationError(null);
                 setMediaLibraryId(event.target.value);
@@ -1652,7 +1666,7 @@ export function AddMediaLibraryDrawer({
             disabled={saving}
             aria-busy={saving}
           >
-            {saving ? "保存中…" : "保存"}
+            {saving ? "保存中…" : editing ? "保存并激活" : "保存"}
           </button>
         )}
       </div>
@@ -1873,6 +1887,17 @@ export function MediaLibraryFilesPage() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerInvokerId, setDrawerInvokerId] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [editInitial, setEditInitial] = useState<
+    SaveMediaLibraryOptions | undefined
+  >();
+  const [editExpected, setEditExpected] = useState<
+    | {
+        readonly expectedRevisionId: string;
+        readonly expectedVersion: number;
+        readonly expectedDigest: string;
+      }
+    | undefined
+  >();
   const [saveNotice, setSaveNotice] = useState<string | null>(null);
   const [removalDialogId, setRemovalDialogId] = useState<string | null>(null);
   const [removalError, setRemovalError] = useState<string | null>(null);
@@ -2026,10 +2051,14 @@ export function MediaLibraryFilesPage() {
     setDrawerInvokerId(invokerId);
     setSaveError(null);
     setSaveNotice(null);
+    setEditInitial(undefined);
+    setEditExpected(undefined);
     setDrawerOpen(true);
   };
   const closeDrawer = () => {
     setSaveError(null);
+    setEditInitial(undefined);
+    setEditExpected(undefined);
     setDrawerOpen(false);
     if (drawerInvokerId !== null) {
       document.getElementById(drawerInvokerId)?.focus();
@@ -2044,10 +2073,12 @@ export function MediaLibraryFilesPage() {
   // is never auto-retried: an unknown transport outcome leaves the candidate
   // unconfirmed, and only an authoritative refresh decides the next step.
   const saveMediaLibraryMutation = useMutation({
-    mutationFn: (candidate: SaveMediaLibraryOptions) =>
-      saveMediaLibrary(token, candidate),
+    mutationFn: (input: SaveMediaLibraryOptions) =>
+      editExpected && editInitial?.mediaLibraryId === input.mediaLibraryId
+        ? editMediaLibrary(token, { ...input, ...editExpected })
+        : saveMediaLibrary(token, input),
     retry: false,
-    onSuccess: (result) => {
+    onSuccess: (result, candidate) => {
       if (!result.ok) {
         const failure = mediaLibrarySaveFailure(result.code, result.details);
         setSaveError(failure.message);
@@ -2058,6 +2089,8 @@ export function MediaLibraryFilesPage() {
         return;
       }
       setSaveError(null);
+      setEditInitial(undefined);
+      setEditExpected(undefined);
       setDrawerOpen(false);
       if (drawerInvokerId !== null) {
         document.getElementById(drawerInvokerId)?.focus();
@@ -2066,11 +2099,18 @@ export function MediaLibraryFilesPage() {
       const savedId = enabled ? result.model.id : "";
       setSelectedLibraryId(savedId);
       setInvalidPath(false);
-      setPath("");
-      setVisitedDirectories([]);
-      setKnownDirectoryPaths([]);
+      const bindingChanged =
+        editInitial !== undefined &&
+        (editInitial.storageId !== candidate.storageId ||
+          editInitial.rootPath !== candidate.rootPath);
+      const nextPath = enabled && !bindingChanged ? path : "";
+      setPath(nextPath);
+      if (bindingChanged || !enabled) {
+        setVisitedDirectories([]);
+        setKnownDirectoryPaths([]);
+      }
       resetBrowseState();
-      syncLibraryRouteState(savedId, "");
+      syncLibraryRouteState(savedId, nextPath);
       setSaveNotice(
         enabled
           ? null
@@ -2087,6 +2127,23 @@ export function MediaLibraryFilesPage() {
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
     },
   });
+
+  const openMediaLibraryEdit = async (id: string) => {
+    setSaveError(null);
+    const result = await fetchMediaLibraryEdit(token, id);
+    if (!result.ok) {
+      setSaveError("编辑失败：无法读取当前 Active 配置，请刷新后重试。");
+      return;
+    }
+    setEditInitial(result.model.library);
+    setEditExpected({
+      expectedRevisionId: result.model.activeRevisionId,
+      expectedVersion: result.model.activeVersion,
+      expectedDigest: result.model.activeDigest,
+    });
+    setDrawerInvokerId(null);
+    setDrawerOpen(true);
+  };
 
   // The removal preview is read against the exact Active revision; the
   // confirmation binds that same revision/version/digest and library id, so a
@@ -2633,6 +2690,7 @@ export function MediaLibraryFilesPage() {
                 rootPath={currentLibrary.rootPath}
                 onLibraryChange={changeLibrary}
                 onRemoveRequest={requestRemoval}
+                onEditRequest={(id) => void openMediaLibraryEdit(id)}
                 removalBusy={removalMutation.isPending}
                 iconName="library"
                 actionLabel="媒体库"
@@ -3008,6 +3066,7 @@ export function MediaLibraryFilesPage() {
           saveMediaLibraryMutation.isPending ||
           saveError !== null) && (
           <AddMediaLibraryDrawer
+            key={editInitial?.mediaLibraryId ?? "new"}
             open={drawerOpen}
             storages={eligibleStorages}
             onClose={closeDrawer}
@@ -3017,6 +3076,8 @@ export function MediaLibraryFilesPage() {
             }}
             saving={saveMediaLibraryMutation.isPending}
             saveError={saveError}
+            initial={editInitial}
+            editing={editInitial !== undefined}
           />
         )}
       {removalDialogId !== null && (

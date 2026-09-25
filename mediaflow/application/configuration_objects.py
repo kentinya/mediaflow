@@ -569,6 +569,10 @@ class ConfigurationObjectService:
         *,
         actor: str,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        expected_revision_id: str | None = None,
+        expected_version: int | None = None,
+        expected_digest: str | None = None,
+        edit: bool = False,
     ) -> ManagedConfigurationRevision:
         """Save one Files-page ResourceLibrary candidate as a managed successor.
 
@@ -627,6 +631,17 @@ class ConfigurationObjectService:
                 reason="active_missing",
             )
         self._managed.verify_integrity(active)
+        if edit and (
+            expected_revision_id != active.revision_id
+            or expected_version != (active.revision_sequence or active.version)
+            or expected_digest != active.digest
+        ):
+            raise ConfigurationVersionConflict(
+                "ResourceLibrary edit is stale; refresh the Active configuration before saving",
+                revision_id=active.revision_id,
+                current_version=active.revision_sequence or active.version,
+                current_digest=active.digest,
+            )
 
         storage_values = {
             str(item.get("id")): item
@@ -653,7 +668,10 @@ class ConfigurationObjectService:
 
         current_resources = self._canonical_objects(active.document, "resourceLibraries")
         resource_id = str(normalized["id"])
-        if any(item.get("id") == resource_id for item in current_resources):
+        current_resource = next(
+            (item for item in current_resources if item.get("id") == resource_id), None
+        )
+        if current_resource is not None and not edit:
             raise ResourceLibrarySaveError(
                 "resource_library_duplicate",
                 "the ResourceLibrary ID already exists in the current Active configuration",
@@ -662,6 +680,19 @@ class ConfigurationObjectService:
                 next_action="choose a different ResourceLibrary ID, then retry",
             )
 
+        if edit and current_resource is None:
+            raise ResourceLibrarySaveError(
+                "resource_library_not_found",
+                "the ResourceLibrary is not present in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="refresh Active state and choose an existing ResourceLibrary",
+            )
+        if edit and current_resource is not None:
+            normalized = self._normalize(
+                ConfigurationObjectKind.RESOURCE_LIBRARY,
+                {**current_resource, **normalized},
+            )
         try:
             draft = self._managed.create_successor_draft(
                 actor=actor,
@@ -686,11 +717,13 @@ class ConfigurationObjectService:
             edited = self.mutate(
                 draft.revision_id,
                 ConfigurationObjectKind.RESOURCE_LIBRARY,
-                object_id=None,
+                object_id=resource_id if edit else None,
                 value=normalized,
                 expected_version=draft.version,
                 actor=actor,
-                audit_action="files_resource_library_save",
+                audit_action="files_resource_library_edit"
+                if edit
+                else "files_resource_library_save",
                 audit_metadata={"surface": "files", "candidate": normalized},
             )
         except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
@@ -952,6 +985,22 @@ class ConfigurationObjectService:
             "sideEffects": "none",
         }
 
+    def resource_library_edit_projection(self, resource_library_id: str) -> dict[str, object]:
+        active = self._managed.active()
+        if active is None:
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists", reason="active_missing"
+            )
+        self._managed.verify_integrity(active)
+        library = self._active_resource_library(active, resource_library_id)
+        return {
+            "resourceLibrary": {
+                key: library.get(key) for key in self._RESOURCE_LIBRARY_SAVE_FIELDS
+            },
+            "active": active.summary(),
+            "sideEffects": "none",
+        }
+
     def remove_resource_library(
         self,
         resource_library_id: str,
@@ -1187,6 +1236,10 @@ class ConfigurationObjectService:
         *,
         actor: str,
         before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        expected_revision_id: str | None = None,
+        expected_version: int | None = None,
+        expected_digest: str | None = None,
+        edit: bool = False,
     ) -> ManagedConfigurationRevision:
         """Save one MediaLibrary-page candidate as a managed successor.
 
@@ -1243,6 +1296,17 @@ class ConfigurationObjectService:
                 reason="active_missing",
             )
         self._managed.verify_integrity(active)
+        if edit and (
+            expected_revision_id != active.revision_id
+            or expected_version != (active.revision_sequence or active.version)
+            or expected_digest != active.digest
+        ):
+            raise ConfigurationVersionConflict(
+                "MediaLibrary edit is stale; refresh the Active configuration before saving",
+                revision_id=active.revision_id,
+                current_version=active.revision_sequence or active.version,
+                current_digest=active.digest,
+            )
 
         storage_values = {
             str(item.get("id")): item
@@ -1269,13 +1333,29 @@ class ConfigurationObjectService:
 
         current_libraries = self._canonical_objects(active.document, "mediaLibraries")
         media_id = str(normalized["id"])
-        if any(item.get("id") == media_id for item in current_libraries):
+        current_library = next(
+            (item for item in current_libraries if item.get("id") == media_id), None
+        )
+        if current_library is not None and not edit:
             raise ResourceLibrarySaveError(
                 "media_library_duplicate",
                 "the MediaLibrary ID already exists in the current Active configuration",
                 durable_state="active_preserved",
                 side_effects="none",
                 next_action="choose a different MediaLibrary ID, then retry",
+            )
+        if edit and current_library is None:
+            raise ResourceLibrarySaveError(
+                "media_library_not_found",
+                "the MediaLibrary is not present in the current Active configuration",
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="refresh Active state and choose an existing MediaLibrary",
+            )
+        if edit and current_library is not None:
+            normalized = self._normalize(
+                ConfigurationObjectKind.MEDIA_LIBRARY,
+                {**current_library, **normalized},
             )
         try:
             draft = self._managed.create_successor_draft(
@@ -1301,11 +1381,11 @@ class ConfigurationObjectService:
             edited = self.mutate(
                 draft.revision_id,
                 ConfigurationObjectKind.MEDIA_LIBRARY,
-                object_id=None,
+                object_id=media_id if edit else None,
                 value=normalized,
                 expected_version=draft.version,
                 actor=actor,
-                audit_action="media_library_save",
+                audit_action="media_library_edit" if edit else "media_library_save",
                 audit_metadata={"surface": "media", "candidate": normalized},
             )
         except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
@@ -1426,6 +1506,20 @@ class ConfigurationObjectService:
                 "enabled": storage.get("enabled", True),
             },
             "references": references.document(),
+            "active": active.summary(),
+            "sideEffects": "none",
+        }
+
+    def media_library_edit_projection(self, media_library_id: str) -> dict[str, object]:
+        active = self._managed.active()
+        if active is None:
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists", reason="active_missing"
+            )
+        self._managed.verify_integrity(active)
+        library = self._active_media_library(active, media_library_id)
+        return {
+            "mediaLibrary": {key: library.get(key) for key in self._MEDIA_LIBRARY_SAVE_FIELDS},
             "active": active.summary(),
             "sideEffects": "none",
         }
