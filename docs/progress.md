@@ -9,14 +9,15 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 38 — **MediaLibrary Files Workspace and Route Separation** —
-is ACTIVE under [`SLICE.md`](../SLICE.md). On 2026-09-25 A expanded its unreviewed Contract to add
-focused ResourceLibrary/MediaLibrary page-local editing with checked atomic activation; the current
-implementation Task authority is root [`TASK.md`](../TASK.md). The prior B Closure Packet through
-`1ae0531212c1c5c585cc2970c03f9996c1eba949` remains historical and was not A-reviewed. Slice 37
+is `PASS / CLOSED` under [`SLICE.md`](../SLICE.md) after A's 2026-09-25 review from Base
+`9e801ae4485bc95d714a8902bf45bf37896fbc2a` through Implementation Head
+`7d4503e45dc3aa79628ed0d98e887167e1e7c529`. The reviewed delivery includes focused
+ResourceLibrary/MediaLibrary page-local editing with checked atomic activation. There is no active
+implementation Task; A selects the next large Slice in a later planning turn. Slice 37
 remains `PASS / CLOSED` after A's 2026-09-23 review through
 `aa54854c442d117c7eb23ae9800045c423db1368`; its complete Contract/final review is retained at
-`9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git. This pointer is not a closure entry or
-a claim of Slice 38 implementation.
+`9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git. This pointer records current
+post-closure state and is not a Task history log.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`
@@ -43,6 +44,22 @@ legal action at that historical checkpoint was A selecting the next large Slice.
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
+
+### Slice 38 — MediaLibrary Files Workspace and Route Separation
+
+```text
+Status: PASS / CLOSED
+Base: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
+Implementation Head: 7d4503e45dc3aa79628ed0d98e887167e1e7c529
+A Final Review: PASS / CLOSED — 2026-09-25
+```
+
+Delivered separate MediaLibrary and ResourceLibrary Files routes, live MediaLibrary browsing,
+bounded common file maintenance and transfer recovery, reference-aligned presentation and
+symmetric exact-Active page-local library editing with checked atomic activation. Deferred scope
+remains card statistics/capacity/placeholders, thumbnails, MediaLibrary Scan/Preview/Organize,
+browser Upload/Download, cross-kind direct transfers, transfer Replace mode, ID migration, broad
+configuration redesign, V1 cutover, universal rollback and automatic uncertain replay.
 
 ### Slice 37 — Files Workspace, Common File Management and V2 Shell
 
@@ -277,6 +294,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 38 — MediaLibrary Files Workspace and Route Separation | PASS / CLOSED | `9e801ae4485bc95d714a8902bf45bf37896fbc2a` | `7d4503e45dc3aa79628ed0d98e887167e1e7c529` | A Final Review PASS / CLOSED — 2026-09-25 | Separate MediaLibrary and ResourceLibrary Files routes, live MediaLibrary browsing, bounded common maintenance and transfer recovery, reference-aligned presentation, and symmetric exact-Active page-local library editing with checked atomic activation | Card statistics/capacity/placeholders, thumbnails, MediaLibrary Scan/Preview/Organize, browser Upload/Download, cross-kind direct transfers, transfer Replace mode, ID migration, broad configuration redesign, V1 cutover, universal rollback and automatic uncertain replay |
 | 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `aa54854c442d117c7eb23ae9800045c423db1368` | A Final Review PASS / CLOSED — 2026-09-23 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, truthful refresh/presentation, exact Storage path identity, multi-item Organize continuation and RecognitionType-driven Web policy binding | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
 | 33 — Operations Workspace | PASS / CLOSED | `827c36b410687e41b1da53ba6475d8c03a47dbfd` | `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08` | A Final Review PASS / CLOSED — 2026-09-13 | Actionable Dashboard, durable Tasks/Jobs and controls, bounded Scan/Preview, Web-native exact manual Organize, Automation operation and Webhook delivery operation, typed Preview safety projection, and resident Worker pinned-source revalidation | Slices 34–36 Review/Recovery, Configuration, parity/accessibility/cutover and other Contract deferrals |
 | 32 — Library & Files Experience | PASS / CLOSED | `76de3f60e223131a8b7db97a566d0ceaadd9b2a0` | `ad8ba3b272e683ab2bb1627b4df8f60aa49d6e99` | A Final Review PASS / CLOSED — 2026-09-10 | Distinct bounded Active Storage and FileIndex journeys, stable catalog paging, strict detail/evidence and safe physical/indexed context | Slices 33–36 Operations/Review/Configuration/parity/cutover and other Contract deferrals |

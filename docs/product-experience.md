@@ -265,9 +265,9 @@ Storage or create work merely by viewing it.
 - **Recovery:** correct only the reported blocker and submit the same bounded form again; no
   partially activated configuration or silent fallback is exposed.
 
-### TARGET — Edit ResourceLibrary or MediaLibrary from its browse card
+### CURRENT — Edit ResourceLibrary or MediaLibrary from its browse card
 
-This focused journey is part of active Slice 38 and is not a claim about the current implementation.
+Slice 38 delivered this focused journey through the shared managed configuration authority.
 
 - **Goal:** correct an existing library's ordinary configuration and make the validated result the
   runtime Active configuration without entering the general Draft editor.
@@ -660,9 +660,9 @@ replacement shell. Slice 37 is PASS / CLOSED at Base
 
 ## CURRENT — MediaLibrary files and separate ResourceLibrary navigation
 
-The MediaLibrary workspace, separated ResourceLibrary Files route, common commands and configuration
-create/removal baseline are delivered through the current recorded Slice 38 implementation head.
-Focused page-local editing described earlier remains the active target and is not yet claimed here.
+The MediaLibrary workspace, separated ResourceLibrary Files route, common commands, configuration
+create/removal baseline and symmetric page-local editing are delivered through the reviewed Slice 38
+Implementation Head.
 
 - **Goal:** maintain files stored below a configured MediaLibrary root, while retaining the complete
   ResourceLibrary Files/Organize journey.
