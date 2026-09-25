@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 39.1
 Parent Slice: 39
-Status: READY FOR B REVIEW
+Status: PASS
 Task Base: 77f58da419ba6e4198897180c649799d3f25a0d0
 Difficulty: High
 Test Level: T4
@@ -196,21 +196,15 @@ Head SHA: 3f331fb7dc16cb8fc5f012323f8ff05a22abbb0c
 ## B Review Result
 
 ```text
-Reviewed: 77f58da419ba6e4198897180c649799d3f25a0d0..733c4a32eae020ffabeac45ad4e05c1bae681ab3
-Decision: FIX REQUIRED
+Reviewed: 77f58da419ba6e4198897180c649799d3f25a0d0..50642cd19da9da35197e6e54dcc6fe277003a3f3
+Decision: PASS
 Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Next: NEXT TASK
 ```
 
-- Searching after inventory continuation can falsely report that a configured Storage does not
-  exist, violating this Task's first two Acceptance Criteria and Slice RO-2. With the committed
-  105-Storage browser fixture, I opened `/ui-v2/storage`, clicked `继续显示更多`, then searched for
-  `local-000` in the shared top bar. The actual request was
-  `GET /api/v1/operations/storage-management/inventory?q=local-000&after=local-099`;
-  the API reported `matched: 1, returned: 0`, while Web displayed `没有匹配搜索或筛选条件的存储`.
-  The current production API reproduced the same result with a validated 105-Storage managed
-  Active configuration in a temporary database: after the first page, searching its earlier
-  `local-source` with the returned cursor gave `matched: 1, returned: 0`.
-  `StorageManagementPage` resets `afterCursor` on provider-filter changes but retains it when
-  search changes. Reset the page window when a new search starts and cover search for an earlier
-  configured Storage after continuation in the browser journey.
+The Base..Head diff contains the bounded Active inventory, reference and read-check API/Web journey
+and the correction that clears the continuation cursor when search changes. B reran the full Python
+regression (1813 tests, 7 skipped, PASS), Web unit suite (643 PASS), Storage browser suite (11 PASS),
+typecheck, lint, format, build, Ruff, compileall and governance (all PASS). The earlier release-gate
+documentation assertion also passes at the reviewed Head. The remaining Add/Edit and configuration
+mutation outcomes belong to subsequent Task(s); no current Task blocker remains.
