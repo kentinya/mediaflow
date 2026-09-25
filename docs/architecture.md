@@ -48,7 +48,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 32 — Library & Files Experience
     → Slice 33 — Operations Workspace
     → Slice 37 — Files Workspace, Common File Management and V2 Shell
-    → Slice 38 — MediaLibrary Files Workspace and Route Separation (ACTIVE)
+    → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -122,7 +122,7 @@ RecognitionType under the pinned snapshot, while preserving type identity and fa
 unavailable mapping. Non-Files business-surface migrations and final cutover remain outside the
 closed Slice; existing non-Files route behavior is retained inside the replacement shell. Slice 38
 has delivered its MediaLibrary route/browse/command baseline through the recorded implementation
-head, while page-local ResourceLibrary/MediaLibrary editing remains an ACTIVE target below.
+head, including page-local ResourceLibrary/MediaLibrary editing.
 
 V1 keeps the environment-owned API-principal Bearer-token authentication model and explicit RBAC.
 It does not provide a built-in username/password database, cookie session, OIDC or implicit
@@ -469,15 +469,15 @@ snapshot and revision binding, memory-only Bearer/RBAC, explicit mutation intent
 uncertain replay and OrganizerExecutor-only Storage mutation. Its accepted behavior remains
 historical and unchanged.
 
-## Slice 38 architecture — delivered baseline and active target
+## Slice 38 architecture — CURRENT delivered capability
 
 ### MediaLibrary file management and route separation
 
 The delivered Slice 38 baseline exposes ResourceLibrary Files at `/ui-v2/resourcelib/files` and
 MediaLibrary at `/ui-v2/medialib/files`; the old `/ui-v2/library/files` and `/ui-v2/library`
 registrations use bounded route recovery. Media-scoped browse, direct commands and transfers resolve
-MediaLibrary authority independently of ResourceLibrary authority. The active target in this
-section is focused page-local editing for both library kinds.
+MediaLibrary authority independently of ResourceLibrary authority. The delivered page-local edit
+journey covers both library kinds.
 
 Both pages reuse the shared shell and suitable presentation/command mechanisms. Each owns its
 library selection, query/navigation state, form and allowed actions. The MediaLibrary path is:

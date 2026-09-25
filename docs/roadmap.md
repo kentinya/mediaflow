@@ -23,7 +23,7 @@ only in [the development workflow](development-workflow.md).
 | 32 — Library & Files Experience | Migrate bounded Storage Files and FileIndex discovery/detail journeys with their existing read-only and authority boundaries | PASS / CLOSED | 31 |
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
 | 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit, organize continuation and post-mutation reconciliation without introducing a second authority; remove the direct browser Upload/Download vertical; correct formal classification `library/path` destination parity with CLI; repair stale ResourceLibrary directory-tree state after Files refresh; make the manual Organize editor derive downstream policies from RecognitionType | PASS / CLOSED | 33 and existing Files foundation |
-| 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library create/edit/remove and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving and extending the Files journey with checked ResourceLibrary/MediaLibrary editing | ACTIVE | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
+| 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library create/edit/remove and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving and extending the Files journey with checked ResourceLibrary/MediaLibrary editing | PASS / CLOSED | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
 
 ## Current boundary
 
@@ -50,8 +50,8 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 ## V2 program boundary
 
-V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 and
-37 are
+V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33, 37
+and 38 are
 closed historical capabilities. The previously planned Slice 34, Slice 35 and Slice 36 boundaries
 were retired from the current Roadmap on 2026-09-14; their historical references remain in Git and
 are not current work commitments. Slice 37's post-reactivation closure, finalized by A on 2026-09-23,
@@ -62,15 +62,13 @@ exact Storage path identity. The final 2026-09-23 correction review also confirm
 Organize Web editor derives and locks NamingPolicy, ClassificationPolicy and OrganizePolicy from
 the selected RecognitionType under the pinned snapshot. Both post-closure correction loops remained
 within the original Slice boundary and preserved the existing live Storage authority and non-Files
-business boundaries. Slice 38 is ACTIVE for MediaLibrary file management and the necessary
+business boundaries. Slice 38 is PASS / CLOSED for MediaLibrary file management and the necessary
 route separation. Its canonical image is `docs/pics/媒体库页.png`, with card statistics and file
-thumbnails explicitly excluded. It moves Files to `/ui-v2/resourcelib/files`, adds MediaLibrary at
+thumbnails explicitly excluded. It moved Files to `/ui-v2/resourcelib/files`, added MediaLibrary at
 `/ui-v2/medialib/files` and retires both old Library routes while retaining Files/Organize behavior.
-The route/browse/command baseline is implemented through the recorded Slice Head. The 2026-09-25 A
-scope expansion additionally adds selected-card editing for both ResourceLibrary and
-MediaLibrary: immutable ID, focused field editing, exact-Active optimistic concurrency, checked
-activation and zero Storage-content migration. The prior B Closure Packet remains historical and A
-Final Review has not occurred; only the editing expansion remains an unimplemented scope claim.
+The reviewed Slice Head includes selected-card editing for both ResourceLibrary and MediaLibrary:
+immutable ID, focused field editing, exact-Active optimistic concurrency, checked activation and
+zero Storage-content migration. A's Final Review is PASS / CLOSED on 2026-09-25.
 User experience remains the primary product-design and acceptance criterion, while correctness,
 RBAC, audit, data integrity, ResourceLibrary confinement and OrganizerExecutor-only mutation remain
 mandatory. Slice 30 is `PASS / CLOSED` at Base

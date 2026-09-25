@@ -11,11 +11,11 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 37 — Files Workspace, Common File Management and V2 Shell — PASS / CLOSED
-Slice 37 Base: b507edba167f5af3af8c53bfcf1417ba4fefddf4
-Slice 37 Implementation Head: aa54854c442d117c7eb23ae9800045c423db1368
-Slice 37 A Final Review: PASS / CLOSED — 2026-09-23
-Active large Slice: Slice 38 — MediaLibrary Files Workspace and Route Separation — ACTIVE
+Most recently closed large Slice: Slice 38 — MediaLibrary Files Workspace and Route Separation — PASS / CLOSED
+Slice 38 Base: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
+Slice 38 Implementation Head: 7d4503e45dc3aa79628ed0d98e887167e1e7c529
+Slice 38 A Final Review: PASS / CLOSED — 2026-09-25
+Next large Slice: A selects the next large Slice
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
@@ -25,9 +25,10 @@ are retired from the current Roadmap; their historical references remain histori
 the stable requirements layer. The stable common-file-management target retains its broader future
 capability set; the current Slice 37 delivery boundary explicitly excludes direct browser
 Upload/Download and does not claim those surfaces as delivered.
-Slice 38 has implemented the MediaLibrary workspace and route-separation baseline through its
-recorded implementation head. Its active 2026-09-25 expansion adds the focused page-local editing
-requirements below; those editing requirements are not yet a claim of implementation.
+Slice 38 has implemented the MediaLibrary workspace, route-separation baseline and focused
+page-local editing requirements through its reviewed implementation head. The stable requirements
+below describe the delivered authority and journey boundaries; future Slice contracts still own
+any further refinement.
 
 ## Stable V2 requirements
 
@@ -51,7 +52,7 @@ requirements below; those editing requirements are not yet a claim of implementa
 | V2-DEPLOY-001 | Production remains operable without a Node runtime server. | Node may build the frontend, while the existing Python/MediaFlow application serves the built static assets and API. |
 | V2-MIG-003 | Final V1 UI retirement requires explicit parity and cutover acceptance. | `/ui` is not removed merely because a V2 route or partial migration exists; parity, accessibility and migration evidence are required first. |
 
-## MediaLibrary requirements — delivered baseline plus active editing target
+## MediaLibrary requirements — delivered baseline and editing
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
@@ -134,5 +135,5 @@ boundaries are.
   execution authority. Focused backend behavior for direct file commands, ResourceLibrary
   save/activation and post-mutation reconciliation is part of the confirmed Files journey.
 - Under the closed Slice 37 visual boundary, non-Files business features and routes were preserved
-  while their shared shell changed. Slice 38's explicit MediaLibrary TARGET requirements above now
+  while their shared shell changed. Slice 38's explicit MediaLibrary requirements above now
   authorize that page and its route integration while preserving the Files body.
