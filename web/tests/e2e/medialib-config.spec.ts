@@ -156,6 +156,9 @@ test("MediaLibrary edit preloads exact Active values and activates one immutable
   await expect(
     page.getByRole("button", { name: "编辑后的电影库", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "媒体库操作 编辑后的电影库" }),
+  ).toBeFocused();
   expect(puts).toHaveLength(1);
   expect(puts[0]).toMatchObject({
     mediaLibraryId: "movies",
@@ -183,6 +186,37 @@ test("MediaLibrary edit projection failure remains visible without automatic ret
   ).toBeVisible();
   await page.waitForTimeout(500);
   expect(reads).toHaveLength(1);
+});
+
+test("MediaLibrary edit does not replace an exact-Active Storage with cached status", async ({
+  page,
+}) => {
+  await resetMediaLibrary(page, "?editStorage=active-new-storage");
+  await openMediaLibrary(page);
+  await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
+  await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
+  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await expect(drawer.getByLabel("Storage *")).toHaveValue(
+    "active-new-storage",
+  );
+  await expect(
+    drawer.getByLabel("Storage *").locator("option:checked"),
+  ).toHaveText(/Active New Storage/);
+  await expect(drawer.getByLabel("Storage *")).not.toHaveValue("local-media");
+});
+
+test("MediaLibrary edit fails visibly when the exact Storage binding is unrepresentable", async ({
+  page,
+}) => {
+  await resetMediaLibrary(page, "?editStorageMissing=1");
+  await openMediaLibrary(page);
+  await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
+  await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
+  await expect(page.getByRole("alert")).toContainText("无法在编辑表单中表示");
+  await expect(
+    page.getByRole("complementary", { name: "编辑媒体库" }),
+  ).toHaveCount(0);
 });
 
 test("MediaLibrary edit save failure retains values, avoids replay and returns focus", async ({
@@ -223,6 +257,26 @@ test("MediaLibrary edit save failure retains values, avoids replay and returns f
       ),
     )
     .toBe(true);
+});
+
+test("disabling a MediaLibrary edit focuses the configuration recovery handoff", async ({
+  page,
+}) => {
+  await openMediaLibrary(page);
+  await page.getByRole("button", { name: "媒体库操作 115网盘" }).click();
+  await page.getByRole("menuitem", { name: "编辑媒体库" }).click();
+  const drawer = page.getByRole("complementary", { name: "编辑媒体库" });
+  await drawer.getByLabel("状态").uncheck();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "保存并激活" }).click();
+  await expect(drawer).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "前往配置启用" }),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "115网盘", exact: true }),
+  ).toHaveCount(0);
 });
 
 test("an enabled Save becomes the exact Active library, is selected and browseable", async ({

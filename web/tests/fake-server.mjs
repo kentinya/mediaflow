@@ -593,6 +593,9 @@ function mediaLibraryState(session) {
       editProjectionFail: false,
       editSaveFailOnce: false,
       editSaveFailed: false,
+      editStorageId: null,
+      editStorageUnrepresentable: false,
+      editStorageId: null,
       // One deterministic Save admission failure for the failure journey.
       failOnce: false,
       failed: false,
@@ -6114,14 +6117,31 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "resource_library_not_found" } });
       return;
     }
+    const editStorageId = state.editStorageUnrepresentable
+      ? "missing-active-storage"
+      : (state.editStorageId ?? item.storage_id);
     sendJson(res, 200, {
       resourceLibrary: {
         id: item.id,
         name: item.name,
         enabled: item.enabled,
-        storageId: item.storage_id,
+        storageId: editStorageId,
         storagePath: item.root_path,
       },
+      storages: state.editStorageUnrepresentable
+        ? []
+        : [
+            {
+              id: editStorageId,
+              name:
+                editStorageId === "active-new-storage"
+                  ? "Active New Storage"
+                  : "Local media",
+              type: "local",
+              readOnly: false,
+              enabled: true,
+            },
+          ],
       active: {
         revisionId: "rev-e2e-2",
         version: 2,
@@ -6455,14 +6475,49 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "media_library_not_found" } });
       return;
     }
+    const editStorage = state.editStorageUnrepresentable
+      ? {
+          id: "missing-active-storage",
+          name: "Missing Active Storage",
+          type: "openlist",
+          read_only: false,
+          enabled: true,
+        }
+      : state.editStorageId === "active-new-storage"
+        ? {
+            id: "active-new-storage",
+            name: "Active New Storage",
+            type: "openlist",
+            read_only: false,
+            enabled: true,
+          }
+        : item.storage;
     sendJson(res, 200, {
       mediaLibrary: {
         id: item.id,
         name: item.name,
         enabled: item.enabled,
-        storageId: item.storage.id,
+        storageId: editStorage.id,
         rootPath: item.rootPath,
       },
+      storages: state.editStorageUnrepresentable
+        ? []
+        : [
+            {
+              id: editStorage.id,
+              name: editStorage.name,
+              type: editStorage.type,
+              readOnly: editStorage.read_only,
+              enabled: true,
+            },
+            {
+              id: "remote-media",
+              name: "Remote media",
+              type: "openlist",
+              readOnly: false,
+              enabled: true,
+            },
+          ],
       active: {
         revisionId: "rev-e2e-2",
         version: 2,
@@ -11134,6 +11189,9 @@ const server = createServer(async (req, res) => {
       editProjectionFail: url.searchParams.get("editProjectionFail") === "1",
       editSaveFailOnce: url.searchParams.get("editSaveFail") === "1",
       editSaveFailed: false,
+      editStorageId: url.searchParams.get("editStorage"),
+      editStorageUnrepresentable:
+        url.searchParams.get("editStorageMissing") === "1",
       failOnce: url.searchParams.get("failOnce") === "1",
       failed: false,
       candidate: null,
@@ -11178,6 +11236,9 @@ const server = createServer(async (req, res) => {
       editProjectionFail: url.searchParams.get("editProjectionFail") === "1",
       editSaveFailOnce: url.searchParams.get("editSaveFail") === "1",
       editSaveFailed: false,
+      editStorageId: url.searchParams.get("editStorage"),
+      editStorageUnrepresentable:
+        url.searchParams.get("editStorageMissing") === "1",
       failOnce: url.searchParams.get("failOnce") === "1",
       failed: false,
       removedIds: [],

@@ -14,6 +14,7 @@ import {
 } from "../../entities/dashboard/dashboard";
 import {
   normalizeSystemStatus,
+  type SystemStorage,
   type SystemStatusModel,
 } from "../../entities/library/system-status";
 import {
@@ -2430,6 +2431,7 @@ export async function saveResourceLibrary(
 
 export interface LibraryEditProjection<T> {
   readonly library: T;
+  readonly storages: readonly SystemStorage[];
   readonly activeRevisionId: string;
   readonly activeVersion: number;
   readonly activeDigest: string;
@@ -2462,11 +2464,34 @@ async function fetchLibraryEditProjection<T>(
   try {
     const source = (await response.json()) as Record<string, unknown>;
     const active = source.active as Record<string, unknown>;
+    if (!Array.isArray(source.storages)) {
+      throw new Error("missing edit Storage projection");
+    }
+    const storages = source.storages.map((value) => {
+      const storage = value as Record<string, unknown>;
+      if (
+        typeof storage.id !== "string" ||
+        typeof storage.name !== "string" ||
+        typeof storage.type !== "string" ||
+        typeof storage.readOnly !== "boolean" ||
+        storage.enabled !== true
+      ) {
+        throw new Error("invalid edit Storage projection");
+      }
+      return {
+        id: storage.id,
+        name: storage.name,
+        type: storage.type,
+        readOnly: storage.readOnly,
+        enabled: true,
+      } satisfies SystemStorage;
+    });
     return {
       ok: true,
       status: response.status,
       model: {
         library: normalize(source[key]),
+        storages,
         activeRevisionId: String(active.revisionId),
         activeVersion: Number(active.revisionSequence),
         activeDigest: String(active.digest),

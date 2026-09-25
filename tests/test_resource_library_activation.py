@@ -217,6 +217,10 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             status, projection = request(api, "/api/v1/resource-libraries/source/edit")
             self.assertEqual(status, 200, projection)
             expected = projection["active"]
+            self.assertEqual(
+                [item["id"] for item in projection["storages"]],
+                ["source-storage", "media-target"],
+            )
             body = {
                 "resourceLibraryId": "source",
                 "name": "Edited Source",
@@ -263,6 +267,7 @@ class ResourceLibraryActivationTests(unittest.TestCase):
             status, projection = request(api, "/api/v1/resource-libraries/source/edit")
             self.assertEqual(status, 200, projection)
             self.assertEqual(projection["active"]["revisionSequence"], active.revision_sequence)
+            self.assertTrue(all(item["enabled"] for item in projection["storages"]))
             status, edited = request(
                 api,
                 "/api/v1/resource-libraries/source",

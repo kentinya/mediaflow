@@ -997,9 +997,26 @@ class ConfigurationObjectService:
             "resourceLibrary": {
                 key: library.get(key) for key in self._RESOURCE_LIBRARY_SAVE_FIELDS
             },
+            "storages": self._edit_storage_projection(active),
             "active": active.summary(),
             "sideEffects": "none",
         }
+
+    @classmethod
+    def _edit_storage_projection(
+        cls, active: ManagedConfigurationRevision
+    ) -> list[dict[str, object]]:
+        return [
+            {
+                "id": storage.get("id"),
+                "name": storage.get("name"),
+                "type": storage.get("type"),
+                "readOnly": storage.get("readOnly", False),
+                "enabled": True,
+            }
+            for storage in cls._canonical_objects(active.document, "storages")
+            if storage.get("enabled", True) is not False
+        ]
 
     def remove_resource_library(
         self,
@@ -1520,6 +1537,7 @@ class ConfigurationObjectService:
         library = self._active_media_library(active, media_library_id)
         return {
             "mediaLibrary": {key: library.get(key) for key in self._MEDIA_LIBRARY_SAVE_FIELDS},
+            "storages": self._edit_storage_projection(active),
             "active": active.summary(),
             "sideEffects": "none",
         }

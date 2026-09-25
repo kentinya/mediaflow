@@ -1892,6 +1892,9 @@ export function MediaLibraryFilesPage() {
   const [editInitial, setEditInitial] = useState<
     SaveMediaLibraryOptions | undefined
   >();
+  const [editStorages, setEditStorages] = useState<
+    readonly SystemStorage[] | undefined
+  >();
   const [editExpected, setEditExpected] = useState<
     | {
         readonly expectedRevisionId: string;
@@ -2055,12 +2058,14 @@ export function MediaLibraryFilesPage() {
     setEditLoadError(null);
     setSaveNotice(null);
     setEditInitial(undefined);
+    setEditStorages(undefined);
     setEditExpected(undefined);
     setDrawerOpen(true);
   };
   const closeDrawer = () => {
     setSaveError(null);
     setEditInitial(undefined);
+    setEditStorages(undefined);
     setEditExpected(undefined);
     setDrawerOpen(false);
     if (drawerInvokerId !== null) {
@@ -2095,7 +2100,10 @@ export function MediaLibraryFilesPage() {
         return;
       }
       setSaveError(null);
+      const wasEditing = editInitial !== undefined;
+      const editInvoker = editDrawerInvokerRef.current;
       setEditInitial(undefined);
+      setEditStorages(undefined);
       setEditExpected(undefined);
       setDrawerOpen(false);
       if (drawerInvokerId !== null) {
@@ -2122,6 +2130,16 @@ export function MediaLibraryFilesPage() {
           ? null
           : `媒体库“${result.model.name}”已保存，但当前为停用状态：不会出现在媒体库列表中，也无法浏览其中的文件；Storage 中的文件未被改动。可在配置页面启用后再来浏览。`,
       );
+      if (wasEditing) {
+        requestAnimationFrame(() => {
+          if (enabled && editInvoker?.isConnected) {
+            editInvoker.focus();
+          } else {
+            document.getElementById("mf-media-library-enable-handoff")?.focus();
+          }
+        });
+      }
+      editDrawerInvokerRef.current = null;
       void queryClient.invalidateQueries({ queryKey: ["media-libraries"] });
       void queryClient.invalidateQueries({ queryKey: ["system-status"] });
     },
@@ -2150,7 +2168,18 @@ export function MediaLibraryFilesPage() {
       );
       return;
     }
+    if (
+      !result.model.storages.some(
+        (storage) => storage.id === result.model.library.storageId,
+      )
+    ) {
+      setEditLoadError(
+        "当前 Active 媒体库绑定的 Storage 无法在编辑表单中表示，未执行任何更改。请刷新或修复 Active 配置后重试。",
+      );
+      return;
+    }
     setEditInitial(result.model.library);
+    setEditStorages(result.model.storages);
     setEditExpected({
       expectedRevisionId: result.model.activeRevisionId,
       expectedVersion: result.model.activeVersion,
@@ -2654,6 +2683,7 @@ export function MediaLibraryFilesPage() {
               type="button"
               className="mf-link-button"
               onClick={() => navigate({ to: "/configuration" })}
+              id="mf-media-library-enable-handoff"
             >
               前往配置启用
             </button>
@@ -3111,7 +3141,11 @@ export function MediaLibraryFilesPage() {
           <AddMediaLibraryDrawer
             key={editInitial?.mediaLibraryId ?? "new"}
             open={drawerOpen}
-            storages={eligibleStorages}
+            storages={
+              editInitial === undefined
+                ? eligibleStorages
+                : (editStorages ?? [])
+            }
             onClose={closeDrawer}
             onSave={(candidate) => {
               setSaveError(null);
