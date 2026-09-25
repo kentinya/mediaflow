@@ -2428,6 +2428,98 @@ export async function saveResourceLibrary(
   );
 }
 
+export interface LibraryEditProjection<T> {
+  readonly library: T;
+  readonly activeRevisionId: string;
+  readonly activeVersion: number;
+  readonly activeDigest: string;
+}
+
+async function fetchLibraryEditProjection<T>(
+  token: string | null,
+  path: string,
+  fetchImpl: FetchLike,
+  key: string,
+  normalize: (value: unknown) => T,
+): Promise<AutomationMutationResult<LibraryEditProjection<T>>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(path, {
+      headers: directFilesReadHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" ? envelope.code : "request_rejected",
+    };
+  }
+  try {
+    const source = (await response.json()) as Record<string, unknown>;
+    const active = source.active as Record<string, unknown>;
+    return {
+      ok: true,
+      status: response.status,
+      model: {
+        library: normalize(source[key]),
+        activeRevisionId: String(active.revisionId),
+        activeVersion: Number(active.version),
+        activeDigest: String(active.digest),
+      },
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export function fetchResourceLibraryEdit(
+  token: string | null,
+  id: string,
+  fetchImpl: FetchLike = fetch,
+) {
+  return fetchLibraryEditProjection(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(id)}/edit`,
+    fetchImpl,
+    "resourceLibrary",
+    (value) => {
+      const item = value as Record<string, unknown>;
+      return {
+        resourceLibraryId: String(item.id),
+        name: String(item.name),
+        enabled: item.enabled === true,
+        storageId: String(item.storageId),
+        storagePath:
+          typeof item.storagePath === "string" ? item.storagePath : "",
+      } satisfies SaveResourceLibraryOptions;
+    },
+  );
+}
+
+export function editResourceLibrary(
+  token: string | null,
+  options: SaveResourceLibraryOptions & {
+    readonly expectedRevisionId: string;
+    readonly expectedVersion: number;
+    readonly expectedDigest: string;
+  },
+  fetchImpl: FetchLike = fetch,
+) {
+  return submitAutomationMutation(
+    token,
+    "PUT",
+    `/api/v1/resource-libraries/${encodeURIComponent(options.resourceLibraryId)}`,
+    { ...options },
+    normalizeResourceLibrarySave,
+    fetchImpl,
+  );
+}
+
 export type DirectFileCommandOptions =
   | {
       readonly operation: "create_directory";
@@ -3526,6 +3618,48 @@ export async function saveMediaLibrary(
       storageId: options.storageId,
       rootPath: options.rootPath,
     },
+    normalizeMediaLibrarySave,
+    fetchImpl,
+  );
+}
+
+export function fetchMediaLibraryEdit(
+  token: string | null,
+  id: string,
+  fetchImpl: FetchLike = fetch,
+) {
+  return fetchLibraryEditProjection(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(id)}/edit`,
+    fetchImpl,
+    "mediaLibrary",
+    (value) => {
+      const item = value as Record<string, unknown>;
+      return {
+        mediaLibraryId: String(item.id),
+        name: String(item.name),
+        enabled: item.enabled === true,
+        storageId: String(item.storageId),
+        rootPath: typeof item.rootPath === "string" ? item.rootPath : "",
+      } satisfies SaveMediaLibraryOptions;
+    },
+  );
+}
+
+export function editMediaLibrary(
+  token: string | null,
+  options: SaveMediaLibraryOptions & {
+    readonly expectedRevisionId: string;
+    readonly expectedVersion: number;
+    readonly expectedDigest: string;
+  },
+  fetchImpl: FetchLike = fetch,
+) {
+  return submitAutomationMutation(
+    token,
+    "PUT",
+    `/api/v1/media-libraries/${encodeURIComponent(options.mediaLibraryId)}`,
+    { ...options },
     normalizeMediaLibrarySave,
     fetchImpl,
   );

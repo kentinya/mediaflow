@@ -4126,6 +4126,110 @@ class MediaFlowApi:
                 "open the successor Draft, edit configuration objects, validate, and activate"
             )
             return self._response(start_response, 201, response)
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4] == "edit"
+            and method == "GET"
+        ):
+            self._require_empty_query(environ, "ResourceLibrary edit projection")
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._configuration_objects.resource_library_edit_projection(parts[3]),
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "resource-libraries"] and method == "PUT":
+            self._require_empty_query(environ, "ResourceLibrary edit")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {
+                "resourceLibraryId",
+                "name",
+                "enabled",
+                "storageId",
+                "storagePath",
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+            }
+            if set(document) != allowed or document["resourceLibraryId"] != parts[3]:
+                raise ValueError(
+                    "ResourceLibrary edit requires immutable matching ID and Active identity"
+                )
+            candidate = {
+                "id": parts[3],
+                "name": document["name"],
+                "enabled": document["enabled"],
+                "storageId": document["storageId"],
+                "storagePath": document["storagePath"],
+            }
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                self._refresh_configuration_binding_locked()
+                try:
+                    revision = self._configuration_objects.save_resource_library(
+                        candidate,
+                        actor=principal.principal_id,
+                        before_publish=lambda rev: prepared.append(
+                            self._prepare_runtime_binding_for_revision(rev)
+                        ),
+                        expected_revision_id=document["expectedRevisionId"],
+                        expected_version=document["expectedVersion"],
+                        expected_digest=document["expectedDigest"],
+                        edit=True,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "resource_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                    )
+                self._publish_runtime_binding(prepared[0])
+            resource = next(
+                item
+                for item in self._configuration_objects._canonical_objects(
+                    revision.document, "resourceLibraries"
+                )
+                if item.get("id") == parts[3]
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "resourceLibrary": {
+                        key: resource.get(key)
+                        for key in ("id", "name", "storageId", "storagePath", "enabled")
+                    },
+                    "active": revision.summary(),
+                    "configuration": {
+                        "authority": "MANAGED",
+                        "revisionId": revision.revision_id,
+                        "version": revision.version,
+                        "digest": revision.digest,
+                    },
+                    "sideEffects": "configuration_only",
+                },
+            )
         if parts == ["api", "v1", "resource-libraries"] and method == "POST":
             self._require_empty_query(environ, "Files ResourceLibrary Save")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -4320,6 +4424,110 @@ class MediaFlowApi:
                     "nextAction": (
                         "refresh the Active ResourceLibrary list and select another enabled library"
                     ),
+                },
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4] == "edit"
+            and method == "GET"
+        ):
+            self._require_empty_query(environ, "MediaLibrary edit projection")
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._configuration_objects.media_library_edit_projection(parts[3]),
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "media-libraries"] and method == "PUT":
+            self._require_empty_query(environ, "MediaLibrary edit")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {
+                "mediaLibraryId",
+                "name",
+                "enabled",
+                "storageId",
+                "rootPath",
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+            }
+            if set(document) != allowed or document["mediaLibraryId"] != parts[3]:
+                raise ValueError(
+                    "MediaLibrary edit requires immutable matching ID and Active identity"
+                )
+            candidate = {
+                "id": parts[3],
+                "name": document["name"],
+                "enabled": document["enabled"],
+                "storageId": document["storageId"],
+                "rootPath": document["rootPath"],
+            }
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                self._refresh_configuration_binding_locked()
+                try:
+                    revision = self._configuration_objects.save_media_library(
+                        candidate,
+                        actor=principal.principal_id,
+                        before_publish=lambda rev: prepared.append(
+                            self._prepare_runtime_binding_for_revision(rev)
+                        ),
+                        expected_revision_id=document["expectedRevisionId"],
+                        expected_version=document["expectedVersion"],
+                        expected_digest=document["expectedDigest"],
+                        edit=True,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "media_library_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                    )
+                self._publish_runtime_binding(prepared[0])
+            library = next(
+                item
+                for item in self._configuration_objects._canonical_objects(
+                    revision.document, "mediaLibraries"
+                )
+                if item.get("id") == parts[3]
+            )
+            return self._response(
+                start_response,
+                200,
+                {
+                    "mediaLibrary": {
+                        key: library.get(key)
+                        for key in ("id", "name", "storageId", "rootPath", "enabled")
+                    },
+                    "active": revision.summary(),
+                    "configuration": {
+                        "authority": "MANAGED",
+                        "revisionId": revision.revision_id,
+                        "version": revision.version,
+                        "digest": revision.digest,
+                    },
+                    "sideEffects": "configuration_only",
                 },
             )
         if parts == ["api", "v1", "media-libraries"] and method == "POST":

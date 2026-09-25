@@ -209,6 +209,43 @@ class ResourceLibraryActivationTests(unittest.TestCase):
         body.update(overrides)
         return body
 
+    def test_edit_preserves_unexposed_fields_and_stale_writer_cannot_publish(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, _objects, _active, _runtime, api = self._active_api(root)
+            before = service.active().document["resourceLibraries"][0]
+            status, projection = request(api, "/api/v1/resource-libraries/source/edit")
+            self.assertEqual(status, 200, projection)
+            expected = projection["active"]
+            body = {
+                "resourceLibraryId": "source",
+                "name": "Edited Source",
+                "enabled": True,
+                "storageId": "source-storage",
+                "storagePath": "incoming",
+                "expectedRevisionId": expected["revisionId"],
+                "expectedVersion": expected["version"],
+                "expectedDigest": expected["digest"],
+            }
+            status, edited = request(
+                api, "/api/v1/resource-libraries/source", method="PUT", body=body
+            )
+            self.assertEqual(status, 200, edited)
+            after = service.active().document["resourceLibraries"][0]
+            self.assertEqual(after["name"], "Edited Source")
+            self.assertEqual(after.get("extensions"), before.get("extensions"))
+            stale_status, stale = request(
+                api,
+                "/api/v1/resource-libraries/source",
+                method="PUT",
+                body={**body, "name": "Stale overwrite"},
+            )
+            self.assertEqual(stale_status, 409, stale)
+            self.assertEqual(stale["error"]["code"], "configuration_version_conflict")
+            self.assertEqual(
+                service.active().document["resourceLibraries"][0]["name"], "Edited Source"
+            )
+
     def test_success_publishes_one_new_active_runtime_without_storage_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

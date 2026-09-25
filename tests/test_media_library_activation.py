@@ -242,6 +242,39 @@ class MediaLibraryActivationTests(unittest.TestCase):
 
     # @@SAVE_TESTS@@
 
+    def test_edit_projection_updates_by_immutable_id_and_rejects_stale_writer(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _repository, service, _objects, _active, _runtime, api = self._active_api(root)
+            status, projection = request(api, "/api/v1/media-libraries/movies/edit")
+            self.assertEqual(status, 200, projection)
+            expected = projection["active"]
+            body = {
+                "mediaLibraryId": "movies",
+                "name": "Edited Movies",
+                "enabled": True,
+                "storageId": "media-target",
+                "rootPath": "Movies",
+                "expectedRevisionId": expected["revisionId"],
+                "expectedVersion": expected["version"],
+                "expectedDigest": expected["digest"],
+            }
+            status, edited = request(api, "/api/v1/media-libraries/movies", method="PUT", body=body)
+            self.assertEqual(status, 200, edited)
+            self.assertEqual(edited["mediaLibrary"]["name"], "Edited Movies")
+            self.assertEqual(service.active().document["mediaLibraries"][0]["id"], "movies")
+            stale_status, stale = request(
+                api,
+                "/api/v1/media-libraries/movies",
+                method="PUT",
+                body={**body, "name": "Stale overwrite"},
+            )
+            self.assertEqual(stale_status, 409, stale)
+            self.assertEqual(stale["error"]["code"], "configuration_version_conflict")
+            self.assertEqual(
+                service.active().document["mediaLibraries"][0]["name"], "Edited Movies"
+            )
+
     def test_success_publishes_one_new_active_without_storage_mutation(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
