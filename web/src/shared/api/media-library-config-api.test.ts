@@ -419,6 +419,15 @@ describe("MediaLibrary edit API", () => {
           storageId: "cloud-1",
           rootPath: "Media/Movies",
         },
+        storages: [
+          {
+            id: "media-cloud-1",
+            name: "115 Storage",
+            type: "openlist",
+            readOnly: false,
+            enabled: true,
+          },
+        ],
         active: {
           revisionId: "rev-3",
           version: 2,
@@ -432,6 +441,7 @@ describe("MediaLibrary edit API", () => {
     expect(projection.ok).toBe(true);
     if (!projection.ok) return;
     expect(projection.model.activeVersion).toBe(3);
+    expect(projection.model.storages[0]?.id).toBe("media-cloud-1");
     fetchMock.mockImplementationOnce(async () => jsonResponse(savePayload()));
     await editMediaLibrary(TOKEN, {
       ...projection.model.library,
@@ -458,5 +468,32 @@ describe("MediaLibrary edit API", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.code).toBe("transport_unavailable");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the exact Active Storage projection is malformed", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        mediaLibrary: {
+          id: "movies",
+          name: "电影库",
+          enabled: true,
+          storageId: "active-new-storage",
+          rootPath: "Media/Movies",
+        },
+        storages: [],
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+      }),
+    );
+    const result = await fetchMediaLibraryEdit(TOKEN, "movies");
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.model.storages).toEqual([]);
+      expect(result.model.library.storageId).toBe("active-new-storage");
+    }
   });
 });

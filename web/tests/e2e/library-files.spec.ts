@@ -113,6 +113,9 @@ test("ResourceLibrary edit is prefilled, immutable-ID, recoverable and atomicall
   await expect(
     page.getByRole("button", { name: "Edited Resources", exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "资源库操作 Edited Resources" }),
+  ).toBeFocused();
   expect(puts).toHaveLength(1);
   expect(puts[0]).toMatchObject({
     resourceLibraryId: "resources",
@@ -141,6 +144,41 @@ test("ResourceLibrary edit projection failure is visible and never retried autom
   ).toBeVisible();
   await page.waitForTimeout(500);
   expect(reads).toHaveLength(1);
+  await expect(
+    page.getByRole("complementary", { name: "编辑资源库" }),
+  ).toHaveCount(0);
+});
+
+test("ResourceLibrary edit uses Storage choices from the exact edit Active, not cached status", async ({
+  page,
+}) => {
+  await page.request.post(
+    "/__test__/reset-resource-library?editStorage=active-new-storage",
+  );
+  await openFiles(page);
+  await page.getByRole("button", { name: "资源库操作 Resources" }).click();
+  await page.getByRole("menuitem", { name: "编辑资源库" }).click();
+  const drawer = page.getByRole("complementary", { name: "编辑资源库" });
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await expect(drawer.getByLabel("Storage *")).toHaveValue(
+    "active-new-storage",
+  );
+  await expect(
+    drawer.getByLabel("Storage *").locator("option:checked"),
+  ).toHaveText(/Active New Storage/);
+  await expect(drawer.getByLabel("Storage *")).not.toHaveValue("local-media");
+});
+
+test("ResourceLibrary edit fails visibly when its exact Storage binding cannot be represented", async ({
+  page,
+}) => {
+  await page.request.post(
+    "/__test__/reset-resource-library?editStorageMissing=1",
+  );
+  await openFiles(page);
+  await page.getByRole("button", { name: "资源库操作 Resources" }).click();
+  await page.getByRole("menuitem", { name: "编辑资源库" }).click();
+  await expect(page.getByRole("alert")).toContainText("无法在编辑表单中表示");
   await expect(
     page.getByRole("complementary", { name: "编辑资源库" }),
   ).toHaveCount(0);
@@ -186,7 +224,7 @@ test("ResourceLibrary edit save failure retains input and disable offers configu
   await expect(page.getByText(/当前为停用状态/)).toBeVisible();
   await expect(
     page.getByRole("button", { name: "前往配置启用" }),
-  ).toBeVisible();
+  ).toBeFocused();
   await expect
     .poll(() =>
       page.evaluate(

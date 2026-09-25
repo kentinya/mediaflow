@@ -249,6 +249,10 @@ class MediaLibraryActivationTests(unittest.TestCase):
             status, projection = request(api, "/api/v1/media-libraries/movies/edit")
             self.assertEqual(status, 200, projection)
             expected = projection["active"]
+            self.assertEqual(
+                [item["id"] for item in projection["storages"]],
+                ["source-storage", "media-target"],
+            )
             body = {
                 "mediaLibraryId": "movies",
                 "name": "Edited Movies",
@@ -286,6 +290,7 @@ class MediaLibraryActivationTests(unittest.TestCase):
             status, projection = request(api, "/api/v1/media-libraries/movies/edit")
             self.assertEqual(status, 200, projection)
             self.assertEqual(projection["active"]["revisionSequence"], active.revision_sequence)
+            self.assertTrue(all(item["enabled"] for item in projection["storages"]))
             status, edited = request(
                 api,
                 "/api/v1/media-libraries/movies",

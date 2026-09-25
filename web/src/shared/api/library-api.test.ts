@@ -479,6 +479,15 @@ describe("ResourceLibrary edit API", () => {
           storageId: "local-1",
           storagePath: "incoming",
         },
+        storages: [
+          {
+            id: "active-new-storage",
+            name: "Active New Storage",
+            type: "local",
+            readOnly: false,
+            enabled: true,
+          },
+        ],
         active: {
           revisionId: "rev-3",
           version: 2,
@@ -492,6 +501,9 @@ describe("ResourceLibrary edit API", () => {
     expect(projection.ok).toBe(true);
     if (!projection.ok) return;
     expect(projection.model.activeVersion).toBe(3);
+    expect(projection.model.storages.map((storage) => storage.id)).toEqual([
+      "active-new-storage",
+    ]);
     fetchMock.mockImplementationOnce(async () =>
       jsonResponse({
         resourceLibrary: {
@@ -531,5 +543,31 @@ describe("ResourceLibrary edit API", () => {
       code: "transport_unavailable",
     });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the exact Active Storage choices are absent", async () => {
+    stubFetch(async () =>
+      jsonResponse({
+        resourceLibrary: {
+          id: "resources",
+          name: "Resources",
+          enabled: true,
+          storageId: "active-new-storage",
+          storagePath: "incoming",
+        },
+        active: {
+          revisionId: "rev-3",
+          version: 2,
+          revisionSequence: 3,
+          digest: "digest-3",
+        },
+      }),
+    );
+    const result = await fetchResourceLibraryEdit(TOKEN, "resources");
+    expect(result).toEqual({
+      ok: false,
+      status: 200,
+      code: "malformed_response",
+    });
   });
 });
