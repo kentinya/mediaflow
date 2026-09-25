@@ -12232,9 +12232,9 @@ class MediaFlowApi:
         if parts[3] == "storage-management" and len(parts) == 5 and parts[4] == "inventory":
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
-            self._require_empty_query(environ, "storage management inventory")
             self._require(principal, ApiPermission.READ)
-            return self._storage_inventory_operator_page(start_response, principal)
+            bounds = self._storage_inventory_query(environ)
+            return self._storage_inventory_operator_page(start_response, principal, bounds)
         if parts[3] == "storage-management" and len(parts) == 6 and parts[4] == "storage":
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -12278,8 +12278,40 @@ class MediaFlowApi:
             )
         return self._error(start_response, 404, "not_found", "route was not found")
 
+    _STORAGE_INVENTORY_FAMILIES = ("local", "smb", "openlist", "s3", "other")
+
+    @classmethod
+    def _storage_inventory_query(cls, environ: dict) -> dict[str, object]:
+        """Parse the bounded Storage inventory search/filter/paging query.
+
+        Only the three advertised operator fields are accepted once each; an
+        unsupported, repeated or oversized value is rejected instead of being
+        silently ignored, so the Web can never believe it filtered a complete
+        inventory when it did not.
+        """
+
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(query).difference({"q", "family", "limit", "after"}) or any(
+            len(value) != 1 for value in query.values()
+        ):
+            raise ValueError("Storage inventory query accepts q, family, limit and after once")
+        search = query.get("q", [""])[0]
+        if len(search) > 256 or "\0" in search:
+            raise ValueError("Storage inventory search must be at most 256 characters")
+        family = query.get("family", [None])[0] or None
+        if family is not None and family not in cls._STORAGE_INVENTORY_FAMILIES:
+            raise ValueError("Storage inventory family is not a supported provider family")
+        limit = cls._parse_bounded_limit(query.get("limit", ["100"])[0], "Storage inventory")
+        after = query.get("after", [None])[0]
+        if after is not None and (not after or len(after) > 64 or "\0" in after):
+            raise ValueError("Storage inventory cursor must be a bounded Storage ID")
+        return {"query": search, "family": family, "limit": limit, "after": after}
+
     def _storage_inventory_operator_page(
-        self, start_response: Callable, principal: ResolvedApiPrincipal
+        self,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+        bounds: dict[str, object] | None = None,
     ) -> None:
         if self._configuration_objects is None:
             return self._error(
@@ -12288,8 +12320,14 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
+        selection = bounds or {"query": "", "family": None, "limit": None, "after": None}
         try:
-            inventory = self._configuration_objects.active_storage_management()
+            inventory = self._configuration_objects.active_storage_management(
+                query=str(selection.get("query") or ""),
+                family=selection.get("family"),
+                limit=selection.get("limit"),
+                after=selection.get("after"),
+            )
         except Exception:
             return self._error(
                 start_response,
@@ -12306,7 +12344,11 @@ class MediaFlowApi:
                     **inventory,
                     "items": [],
                     "total": 0,
+                    "matched": 0,
                     "truncated": False,
+                    "returned": 0,
+                    "hasMore": False,
+                    "nextAfter": None,
                     "families": {},
                     "actions": {
                         "check": {

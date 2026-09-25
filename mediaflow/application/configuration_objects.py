@@ -6178,85 +6178,92 @@ class ConfigurationObjectService:
     _STORAGE_INVENTORY_LIMIT = 100
     _REFERENCE_DETAIL_LIMIT = 32
 
-    def active_storage_management(self) -> dict[str, object]:
+    def active_storage_management(
+        self,
+        *,
+        query: str = "",
+        family: str | None = None,
+        limit: int | None = None,
+        after: str | None = None,
+    ) -> dict[str, object]:
         """Return the bounded Storage inventory and authority from Active.
 
         The result distinguishes a healthy empty inventory from a missing or
         unreadable Active authority and from setup-only bootstrap authority:
         callers must never render those states as ``active`` lists.
+
+        An Active configuration may legally hold more Storage objects than one
+        bounded page. ``families`` therefore always counts every configured
+        object, never only the returned page, and the optional ``query`` /
+        ``family`` filter runs inside this projection so every configured
+        Storage stays findable and inspectable through bounded search or
+        paging. ``truncated`` describes the returned page; ``matched`` and
+        ``hasMore`` describe the filtered set, and the stable ID-ordered
+        ``nextAfter`` cursor continues it without implying that a bounded page
+        is the whole inventory.
         """
 
         active: ManagedConfigurationRevision | None
+        unavailable: dict[str, object] = {
+            "available": False,
+            "reason": "unavailable",
+            "authority": None,
+            "active": None,
+            "items": [],
+            "total": 0,
+            "matched": 0,
+            "truncated": False,
+            "families": {},
+            "returned": 0,
+            "hasMore": False,
+            "nextAfter": None,
+            "query": query,
+            "family": family,
+        }
         try:
             active = self._managed.active()
         except Exception:
-            return {
-                "available": False,
-                "reason": "unavailable",
-                "authority": None,
-                "active": None,
-                "items": [],
-                "total": 0,
-                "truncated": False,
-                "families": {},
-            }
+            return dict(unavailable)
         if active is None:
-            return {
-                "available": False,
-                "reason": "no_active",
-                "authority": None,
-                "active": None,
-                "items": [],
-                "total": 0,
-                "truncated": False,
-                "families": {},
-            }
+            return {**unavailable, "reason": "no_active"}
         try:
             self._managed.verify_integrity(active)
         except RuntimeSnapshotUnavailable:
-            return {
-                "available": False,
-                "reason": "unavailable",
-                "authority": None,
-                "active": None,
-                "items": [],
-                "total": 0,
-                "truncated": False,
-                "families": {},
-            }
+            return dict(unavailable)
         except Exception:
-            return {
-                "available": False,
-                "reason": "unavailable",
-                "authority": None,
-                "active": None,
-                "items": [],
-                "total": 0,
-                "truncated": False,
-                "families": {},
-            }
+            return dict(unavailable)
         try:
             values = self._canonical_objects(active.document, "storages")
         except Exception:
-            return {
-                "available": False,
-                "reason": "malformed",
-                "authority": None,
-                "active": None,
-                "items": [],
-                "total": 0,
-                "truncated": False,
-                "families": {},
-            }
+            return {**unavailable, "reason": "malformed"}
         ordered = sorted(values, key=lambda item: str(item.get("id", "")))
-        projected = [
-            self._active_storage_document(active, item)
-            for item in ordered[: self._STORAGE_INVENTORY_LIMIT]
-        ]
+        # Provider summary counts are derived from the complete Active object
+        # set so an over-limit configuration never reports a partial total.
         families: dict[str, int] = {}
-        for item in projected:
-            family = str(item.get("family"))
-            families[family] = families.get(family, 0) + 1
+        for item in ordered:
+            family_name = self._storage_provider_family(str(item.get("type", "")).lower())
+            families[family_name] = families.get(family_name, 0) + 1
+        filtered = [
+            item
+            for item in ordered
+            if self._storage_inventory_matches(item, query=query, family=family)
+        ]
+        page_limit = (
+            self._STORAGE_INVENTORY_LIMIT
+            if limit is None
+            else max(1, min(int(limit), self._STORAGE_INVENTORY_LIMIT))
+        )
+        # The page window slides over the deterministic ID order, so a legal
+        # over-limit inventory (or an over-limit search result) stays fully
+        # reachable through bounded continuation instead of being silently cut.
+        remaining = (
+            filtered
+            if after is None or after == ""
+            else [item for item in filtered if str(item.get("id", "")) > after]
+        )
+        window = remaining[:page_limit]
+        projected = [self._active_storage_document(active, item) for item in window]
+        has_more = len(remaining) > len(projected)
         return {
             "available": True,
             "reason": None,
@@ -6264,9 +6271,51 @@ class ConfigurationObjectService:
             "active": self._active_storage_identity(active),
             "items": projected,
             "total": len(ordered),
-            "truncated": len(ordered) > self._STORAGE_INVENTORY_LIMIT,
+            "matched": len(filtered),
+            # Truncation is disclosed whenever the returned page is not the
+            # complete matching inventory, so the operator is never led to
+            # believe that a bounded page is the whole configuration.
+            "truncated": has_more,
             "families": families,
+            "returned": len(projected),
+            "hasMore": has_more,
+            "nextAfter": (str(window[-1].get("id", "")) if has_more and window else None),
+            "query": query,
+            "family": family,
         }
+
+    @classmethod
+    def _storage_inventory_matches(
+        cls, item: Mapping[str, object], *, query: str, family: str | None
+    ) -> bool:
+        """Match one Active Storage against the bounded inventory search.
+
+        The matched fields are exactly the ones the operator can see in the
+        table and detail: name, stable ID, provider type and provider-safe
+        location (Local root or remote logical path and provider coordinates).
+        Nothing secret is ever searched or returned.
+        """
+
+        if (
+            family is not None
+            and cls._storage_provider_family(str(item.get("type", "")).lower()) != family
+        ):
+            return False
+        needle = query.strip().lower()
+        if not needle:
+            return True
+        haystacks = [
+            str(item.get("name") or item.get("id", "")),
+            str(item.get("id", "")),
+            str(item.get("type", "")),
+            str(item.get("rootPath", "") or ""),
+        ]
+        options = cls._storage_options(item)
+        for field in ("host", "share", "bucket", "endpoint", "region"):
+            candidate = options.get(field)
+            if isinstance(candidate, (str, int, float)):
+                haystacks.append(str(candidate))
+        return any(needle in value.lower() for value in haystacks)
 
     def active_storage_detail(self, storage_id: str) -> dict[str, object]:
         """Return one exact-Active Storage with bounded references and evidence.

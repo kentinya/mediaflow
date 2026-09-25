@@ -84,6 +84,40 @@ const STORAGE_R2 = {
   },
 };
 
+/**
+ * A valid Active Storage that only exists beyond the first bounded page of an
+ * over-limit configuration. The shared search and the provider filter must
+ * still reach it through the server-applied query.
+ */
+const STORAGE_BEYOND_PAGE = {
+  id: "local-beyond-page",
+  name: "Local beyond page",
+  type: "local",
+  family: "local",
+  enabled: true,
+  readOnly: false,
+  location: { kind: "local", rootPath: "/media/beyond-page" },
+  capabilities: {
+    can_move: true,
+    can_copy: true,
+    can_delete: true,
+    can_hard_link: true,
+    can_soft_link: false,
+  },
+  capabilitiesKnown: false,
+  writeCapabilitySource: "unknown",
+  writeCapabilityProbe: "not_run",
+  secretReadiness: [],
+  references: {
+    total: 0,
+    items: [],
+    truncated: false,
+    resourceLibraries: 0,
+    mediaLibraries: 0,
+    countedInBreakdown: 0,
+  },
+};
+
 function inventoryPayload(items: unknown[]): unknown {
   return {
     available: true,
@@ -97,13 +131,38 @@ function inventoryPayload(items: unknown[]): unknown {
     },
     items,
     total: items.length,
+    matched: items.length,
     truncated: false,
+    returned: items.length,
+    hasMore: false,
+    nextAfter: null,
     families: items.some(
       (item) => (item as { family?: string }).family === "s3",
     )
       ? { local: 1, s3: 1 }
       : { local: items.length },
     canManage: true,
+  };
+}
+
+const INVENTORY_PATH = "/api/v1/operations/storage-management/inventory";
+
+/** A legal over-limit Active inventory: one bounded page of six Local rows. */
+function overLimitInventoryPayload(): unknown {
+  const items = Array.from({ length: 4 }, (_value, index) => ({
+    ...STORAGE_LOCAL,
+    id: `local-${index}`,
+    name: `Local ${index}`,
+  }));
+  return {
+    ...(inventoryPayload(items) as Record<string, unknown>),
+    total: 105,
+    matched: 105,
+    returned: 4,
+    truncated: true,
+    hasMore: true,
+    nextAfter: "local-3",
+    families: { local: 102, smb: 1, openlist: 1, s3: 1 },
   };
 }
 
@@ -200,13 +259,21 @@ afterEach(() => {
 function stubInventory(items: unknown[]): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: string) => {
     const url = String(input);
-    if (url === "/api/v1/operations/storage-management/inventory") {
+    if (url.startsWith(INVENTORY_PATH)) {
       return jsonResponse(inventoryPayload(items));
     }
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
+}
+
+function lastInventoryUrl(fetchMock: ReturnType<typeof vi.fn>): string {
+  const calls = fetchMock.mock.calls as unknown as [string][];
+  const match = [...calls]
+    .reverse()
+    .find(([url]) => String(url).startsWith(INVENTORY_PATH));
+  return String(match?.[0] ?? "");
 }
 
 describe("Storage management journey", () => {
@@ -257,8 +324,55 @@ describe("Storage management journey", () => {
     expect(within(firstRow).getByRole("button", { name: "查看 Local source" }));
   });
 
-  it("searches by name/ID/type/location through the shared top bar", async () => {
-    stubInventory([STORAGE_LOCAL, STORAGE_R2]);
+  it("applies the shared top-bar search on the server side", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      const url = String(input);
+      if (url.startsWith(INVENTORY_PATH)) {
+        // The backend answers the search over the complete Active object set;
+        // this fake mirrors that contract, including a match that only exists
+        // beyond the first bounded page.
+        const query = new URL(url, "http://test").searchParams.get("q") ?? "";
+        const all: readonly (typeof STORAGE_LOCAL | typeof STORAGE_R2)[] = [
+          STORAGE_LOCAL,
+          STORAGE_R2,
+          STORAGE_BEYOND_PAGE,
+        ];
+        const haystack = (item: {
+          name: string;
+          id: string;
+          type: string;
+          location: {
+            rootPath?: string;
+            endpoint?: string;
+            host?: string;
+            bucket?: string;
+          };
+        }) =>
+          [
+            item.name,
+            item.id,
+            item.type,
+            item.location.rootPath ?? "",
+            item.location.endpoint ?? "",
+            item.location.host ?? "",
+            item.location.bucket ?? "",
+          ]
+            .join(" ")
+            .toLowerCase();
+        const items = all.filter((item) =>
+          haystack(item).includes(query.toLowerCase()),
+        );
+        return jsonResponse({
+          ...(inventoryPayload(items) as Record<string, unknown>),
+          total: 105,
+          matched: items.length,
+          returned: items.length,
+          families: { local: 102, smb: 1, openlist: 1, s3: 1 },
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
 
@@ -268,9 +382,12 @@ describe("Storage management journey", () => {
       name: "搜索存储、路径",
     }) as HTMLInputElement;
     expect(search).toHaveProperty("placeholder", "搜索存储、路径...");
-    // Location match: the R2 endpoint text reaches the row location cell.
+
+    // Location match narrows through the server-applied query, not a
+    // client-side filter of one already-truncated page.
     await userEvent.setup().type(search, "r2.example");
     await waitFor(() => {
+      expect(lastInventoryUrl(fetchMock)).toContain("q=r2.example");
       expect(screen.getAllByRole("row")).toHaveLength(2);
       expect(
         within(screen.getAllByRole("row")[1]).getByText("R2 media"),
@@ -278,15 +395,18 @@ describe("Storage management journey", () => {
     });
     // Search context stays separate from Files/MediaLibrary.
     expect(search.value).toBe("r2.example");
-    // Type/ID search matches too.
+
+    // A Storage that lives beyond the first bounded page is still findable.
     await userEvent.clear(search);
-    await userEvent.type(search, "local");
+    await userEvent.type(search, STORAGE_BEYOND_PAGE.id);
     await waitFor(() => {
-      expect(screen.getAllByRole("row")).toHaveLength(2);
       expect(
-        within(screen.getAllByRole("row")[1]).getByText("Local source"),
+        within(screen.getAllByRole("row")[1]).getByText(
+          STORAGE_BEYOND_PAGE.name,
+        ),
       ).toBeVisible();
     });
+
     // A term with no match is a truthful empty state, not an error.
     await userEvent.clear(search);
     await userEvent.type(search, "no-such-storage");
@@ -296,8 +416,84 @@ describe("Storage management journey", () => {
     expect(noMatch).toBeVisible();
   });
 
-  it("filters by provider family and returns to all types", async () => {
-    stubInventory([STORAGE_LOCAL, STORAGE_R2]);
+  it("discloses truncation and reaches every Storage through bounded paging", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      const url = String(input);
+      if (!url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }
+      const after = new URL(url, "http://test").searchParams.get("after");
+      if (after === null) {
+        return jsonResponse(overLimitInventoryPayload());
+      }
+      // The explicit continuation returns the last configured Storage.
+      const last = inventoryPayload([STORAGE_BEYOND_PAGE]) as Record<
+        string,
+        unknown
+      >;
+      return jsonResponse({
+        ...last,
+        total: 105,
+        matched: 1,
+        returned: 1,
+        nextAfter: null,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await screen.findByRole("heading", { name: "存储管理" });
+    await screen.findByRole("table");
+
+    // Provider cards count every configured object, not just this page.
+    const cards = screen.getByRole("list", { name: "存储类型汇总" });
+    expect(within(cards).getByText("本地存储").parentElement).toHaveTextContent(
+      "102",
+    );
+
+    // Truncation is disclosed honestly instead of implying a complete list.
+    const scopeNote = await screen.findByText(/当前显示 4 \/ 105 个匹配的存储/);
+    expect(scopeNote).toBeVisible();
+    expect(screen.getByText(/Active 配置中共有 105/)).toBeVisible();
+
+    // Explicit bounded continuation reaches the object beyond the page.
+    await userEvent.click(screen.getByRole("button", { name: "继续显示更多" }));
+    await waitFor(() => {
+      expect(lastInventoryUrl(fetchMock)).toContain("after=local-3");
+      expect(
+        within(screen.getAllByRole("row")[1]).getByText(
+          STORAGE_BEYOND_PAGE.name,
+        ),
+      ).toBeVisible();
+    });
+
+    // The continuation page is the complete remaining set, so the truncation
+    // disclosure honestly disappears instead of implying there is more.
+    await waitFor(() => {
+      expect(screen.queryByText(/当前显示 4 \/ 105 个匹配的存储/)).toBeNull();
+    });
+  });
+
+  it("applies the provider family filter on the server side", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      const url = String(input);
+      if (!url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }
+      const family = new URL(url, "http://test").searchParams.get("family");
+      const all = [STORAGE_LOCAL, STORAGE_R2];
+      const items =
+        family === null ? all : all.filter((item) => item.family === family);
+      return jsonResponse({
+        ...(inventoryPayload(items) as Record<string, unknown>),
+        total: 105,
+        matched: items.length,
+        returned: items.length,
+        families: { local: 102, smb: 1, openlist: 1, s3: 1 },
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
 
@@ -307,6 +503,7 @@ describe("Storage management journey", () => {
       .setup()
       .click(screen.getByRole("button", { name: /S3 \/ R2/ }));
     await waitFor(() => {
+      expect(lastInventoryUrl(fetchMock)).toContain("family=s3");
       expect(screen.getAllByRole("row")).toHaveLength(2);
       expect(
         within(screen.getAllByRole("row")[1]).getByText("R2 media"),
@@ -333,7 +530,7 @@ describe("Storage management journey", () => {
         expect(body).not.toHaveProperty("expectedDigest");
         return jsonResponse(CHECK_PASSED);
       }
-      if (url === "/api/v1/operations/storage-management/inventory") {
+      if (url.startsWith(INVENTORY_PATH)) {
         return jsonResponse(inventoryPayload([STORAGE_LOCAL]));
       }
       if (url.endsWith("/storage/local-source")) {
@@ -386,7 +583,11 @@ describe("Storage management journey", () => {
           active: null,
           items: [],
           total: 0,
+          matched: 0,
           truncated: false,
+          returned: 0,
+          hasMore: false,
+          nextAfter: null,
           families: {},
           canManage: false,
           actions: {
@@ -435,7 +636,7 @@ describe("Storage management journey", () => {
           operations: [],
         });
       }
-      if (url === "/api/v1/operations/storage-management/inventory") {
+      if (url.startsWith(INVENTORY_PATH)) {
         return jsonResponse(inventoryPayload([STORAGE_LOCAL]));
       }
       return jsonResponse(detailPayload(STORAGE_LOCAL));

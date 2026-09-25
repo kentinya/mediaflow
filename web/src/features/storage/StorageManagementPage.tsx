@@ -29,7 +29,10 @@ import {
   fetchStorageCheckRun,
   fetchStorageDetail,
 } from "../../shared/api/api-client";
-import { storageInventoryQueryOptions } from "./storage-management-query";
+import {
+  STORAGE_INVENTORY_QUERY_KEY,
+  storageInventoryQueryOptions,
+} from "./storage-management-query";
 
 const FAMILY_LABELS: Readonly<Record<string, string>> = {
   local: "本地存储",
@@ -116,15 +119,11 @@ interface StorageDetailSafeLocation {
   readonly region?: string;
 }
 
-function matchesSearch(item: StorageRowItem, query: string): boolean {
-  if (query === "") return true;
-  const lowered = query.toLowerCase();
-  return (
-    item.name.toLowerCase().includes(lowered) ||
-    item.id.toLowerCase().includes(lowered) ||
-    item.type.toLowerCase().includes(lowered) ||
-    locationLabel(item.location).toLowerCase().includes(lowered)
-  );
+/** How the shared top-bar search and provider cards are applied server-side. */
+interface InventorySelection {
+  readonly query: string;
+  readonly family: StorageFamily | null;
+  readonly after: string | null;
 }
 
 interface StorageRowItem {
@@ -158,7 +157,6 @@ function toRowItem(
     referencesTruncated: item.references.truncated,
   }));
 }
-
 function InventoryHeader({ canManage }: { readonly canManage: boolean }) {
   return (
     <header className="mf-files-header">
@@ -192,8 +190,8 @@ function ProviderCards({
   onSelect,
 }: {
   readonly families: Readonly<Record<string, number>>;
-  readonly selected: string | null;
-  readonly onSelect: (family: string | null) => void;
+  readonly selected: StorageFamily | null;
+  readonly onSelect: (family: StorageFamily | null) => void;
 }) {
   const ordered = [...STORAGE_FAMILIES, "other"].filter(
     (family) => (families[family] ?? 0) > 0,
@@ -215,7 +213,9 @@ function ProviderCards({
                   : "mf-storage-card"
               }
               aria-pressed={selectedState}
-              onClick={() => onSelect(selectedState ? null : family)}
+              onClick={() =>
+                onSelect(selectedState ? null : (family as StorageFamily))
+              }
             >
               <span className="mf-storage-card-icon" aria-hidden="true">
                 <Icon name={FAMILY_ICONS[family] ?? "storage"} />
@@ -242,6 +242,59 @@ function ProviderCards({
         </li>
       )}
     </ul>
+  );
+}
+
+/**
+ * Truthful bounded-inventory disclosure.
+ *
+ * The provider counts above always describe the complete Active object set.
+ * When the returned page is not the complete matching inventory, this states
+ * how many of how many are shown and offers explicit bounded continuation, so
+ * a configured Storage is never silently hidden by the page limit.
+ */
+function InventoryScopeNote({
+  data,
+  hasQuery,
+  onContinue,
+  onReset,
+}: {
+  readonly data: StorageInventoryModel;
+  readonly hasQuery: boolean;
+  readonly onContinue: () => void;
+  readonly onReset: () => void;
+}) {
+  if (!data.truncated) {
+    return null;
+  }
+  return (
+    <div className="mf-storage-scope-note" role="status">
+      <p>
+        当前显示 {data.returned} / {data.matched} 个匹配的存储
+        {hasQuery ? "(已应用搜索或筛选)" : ""};Active 配置中共有 {data.total}{" "}
+        个存储。未显示的存储仍可通过上方搜索、类型筛选或继续翻页查看。
+      </p>
+      <div className="mf-actions">
+        {data.hasMore && data.nextAfter !== null && (
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            onClick={onContinue}
+          >
+            继续显示更多
+          </button>
+        )}
+        {data.returned > 0 && (
+          <button
+            type="button"
+            className="mf-button mf-button-secondary"
+            onClick={onReset}
+          >
+            返回第一页
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -589,14 +642,29 @@ export function StorageManagementPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const { query: searchQuery } = useStorageSearch();
-  const [familyFilter, setFamilyFilter] = useState<string | null>(null);
+  const [familyFilter, setFamilyFilter] = useState<StorageFamily | null>(null);
+  // Explicit continuation through the stable ID cursor the server returns;
+  // cleared whenever search or the provider filter changes.
+  const [afterCursor, setAfterCursor] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
   // A rejected or undelivered read-check attempt blocks another attempt until
   // the operator explicitly verifies current state (AC: unknown result is
   // verified before another attempt).
   const [checkBlocked, setCheckBlocked] = useState<string | null>(null);
 
-  const inventoryQuery = useQuery(storageInventoryQueryOptions(token));
+  // Search and the provider filter are applied by the backend over the
+  // complete Active object set, not over one already-truncated page.
+  const selection = useMemo<InventorySelection>(
+    () => ({
+      query: searchQuery.trim(),
+      family: familyFilter,
+      after: afterCursor,
+    }),
+    [searchQuery, familyFilter, afterCursor],
+  );
+  const inventoryQuery = useQuery(
+    storageInventoryQueryOptions(token, selection),
+  );
 
   const checkMutation = useMutation({
     mutationFn: async ({
@@ -623,7 +691,7 @@ export function StorageManagementPage() {
       }
       // Refresh inventory/detail so latest-check evidence stays truthful.
       void queryClient.invalidateQueries({
-        queryKey: ["storage-management-inventory"],
+        queryKey: [STORAGE_INVENTORY_QUERY_KEY],
       });
       void queryClient.invalidateQueries({
         queryKey: ["storage-management-detail"],
@@ -642,15 +710,6 @@ export function StorageManagementPage() {
   const rows = useMemo(
     () => (inventory === null ? [] : toRowItem(inventory)),
     [inventory],
-  );
-  const filtered = useMemo(
-    () =>
-      rows.filter(
-        (item) =>
-          (familyFilter === null || item.family === familyFilter) &&
-          matchesSearch(item, searchQuery.trim()),
-      ),
-    [rows, familyFilter, searchQuery],
   );
 
   const runCheck = useCallback(
@@ -728,19 +787,30 @@ export function StorageManagementPage() {
               <ProviderCards
                 families={data.families}
                 selected={familyFilter}
-                onSelect={setFamilyFilter}
+                onSelect={(family) => {
+                  setAfterCursor(null);
+                  setFamilyFilter(family);
+                }}
               />
-              {filtered.length === 0 ? (
+              <InventoryScopeNote
+                data={data}
+                hasQuery={selection.query !== ""}
+                onContinue={() => setAfterCursor(data.nextAfter)}
+                onReset={() => setAfterCursor(null)}
+              />
+              {rows.length === 0 ? (
                 <StatusBanner variant="info" title="没有匹配的存储">
                   <p>
-                    {rows.length === 0
+                    {data.matched === 0 &&
+                    selection.query === "" &&
+                    familyFilter === null
                       ? "当前 Active 配置中没有存储对象。"
                       : "没有匹配搜索或筛选条件的存储。可以调整搜索或筛选。"}
                   </p>
                 </StatusBanner>
               ) : (
                 <InventoryTable
-                  items={filtered}
+                  items={rows}
                   onView={(id) => {
                     if (id !== detailId) {
                       setCheckBlocked(null);
