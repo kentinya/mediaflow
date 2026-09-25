@@ -9,7 +9,10 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 V2 remains active on `main`. Slice 38 — **MediaLibrary Files Workspace and Route Separation** —
-is ACTIVE under [`SLICE.md`](../SLICE.md), with no implementation Task assigned yet. Slice 37
+is ACTIVE under [`SLICE.md`](../SLICE.md). On 2026-09-25 A expanded its unreviewed Contract to add
+focused ResourceLibrary/MediaLibrary page-local editing with checked atomic activation; the current
+implementation Task authority is root [`TASK.md`](../TASK.md). The prior B Closure Packet through
+`1ae0531212c1c5c585cc2970c03f9996c1eba949` remains historical and was not A-reviewed. Slice 37
 remains `PASS / CLOSED` after A's 2026-09-23 review through
 `aa54854c442d117c7eb23ae9800045c423db1368`; its complete Contract/final review is retained at
 `9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git. This pointer is not a closure entry or

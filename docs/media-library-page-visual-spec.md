@@ -1,6 +1,6 @@
 # MediaLibrary Page Visual Specification
 
-Status: CURRENT TARGET — Slice 38; shared library-context parity added 2026-09-24
+Status: CURRENT TARGET — Slice 38; page-local library editing added 2026-09-25
 Canonical image: [媒体库页.png](pics/媒体库页.png)
 Reference size: `1536 x 1024`
 Target route: `/ui-v2/medialib/files`
@@ -27,7 +27,7 @@ shell and preserve the ResourceLibrary Files body and behavior.
 | Entry context menu | Right-click, Context Menu key or `Shift+F10` opens the applicable single-entry commands. Folder left click opens directly; no inline Open button. |
 | Grid | Same entries, selection and commands using type icons, without thumbnails/artwork. |
 | Paging | Existing supported bounded previous/next/cursor behavior; accurately labelled loaded/visible count, no fabricated full totals. |
-| Add drawer | Right-side white panel, close button, step rail, form and footer; `基本信息 → 存储位置 → 确认`. |
+| Add/Edit drawer | Right-side white panel, close button, step rail, form and footer; `基本信息 → 存储位置 → 确认`. |
 
 The desktop reference has an approximately `208 px` left rail, `58 px` top bar and a drawer
 beginning near `x=1142`. These guide composition, not pixel thresholds. Retain the light canvas,
@@ -67,8 +67,10 @@ display labels.
 
 ## Drawer and Configuration Actions
 
-Normal entry, reload and reconnect keep the drawer closed. Add opens/focuses the form. Close,
-Cancel and Escape restore focus to the invoking control where practical; failed save retains input.
+Normal entry, reload and reconnect keep the drawer closed. Add or selected-card Edit explicitly
+opens/focuses the form. Close, Cancel and Escape restore focus to the invoking control where
+practical; failed save retains input. Edit pre-fills the exact current Active object and renders ID
+read-only.
 
 1. **基本信息:** required name and `媒体库 ID`; lowercase letters/digits/hyphens; ID immutable
    after creation; enabled toggle with truthful hidden-from-browse/files-preserved explanation and
@@ -79,7 +81,9 @@ Cancel and Escape restore focus to the invoking control where practical; failed 
 3. **确认:** name, ID, enabled state, Storage and root; Back/Cancel/Save. One Save composes validation
    and actual activation. Pending/error/success must not label a draft Active.
 
-The selected card menu can remove configuration after confirmation, explaining that files remain.
+The selected card menu can edit configuration or remove it after confirmation. Edit saves and
+activates only after exact-Active concurrency, full validation, applicable read-only checks and
+runtime binding; Storage/root changes do not migrate contents. Removal explains that files remain.
 Blocking references have an existing configuration recovery route; no forced deletion or automatic
 policy rewrite.
 
@@ -97,7 +101,7 @@ available through Task/Operations after navigation/reconnection.
 
 ## Visual Acceptance
 
-Capture drawer-open step 1 and drawer-closed states at `1536 x 1024`, zoom `100%`, scale `1`
+Capture Add/Edit drawer-open step 1 and drawer-closed states at `1536 x 1024`, zoom `100%`, scale `1`
 with deterministic entries, plus narrow-screen and keyboard/focus evidence. Verify hierarchy,
 selection-bar position, five columns, context-menu entry, drawer and required functional states. Statistics/artwork
 removals are mandatory differences from the image. Font/glyph/spacing variation is acceptable when

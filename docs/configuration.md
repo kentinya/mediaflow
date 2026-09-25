@@ -105,6 +105,22 @@ runtime-load error rejects the save and keeps the previous Active runtime author
 ResourceLibrary must not be shown as saved when the activation command fails. The general
 Configuration page retains its explicit Draft/Validate/Activate journey.
 
+### Active Slice target: page-local library editing
+
+Slice 38 extends the same convenience boundary to focused editing of an existing ResourceLibrary or
+MediaLibrary from its browse card. This is target behavior until its active Task passes review.
+The edit form reads one exact Active object, keeps its ID immutable and may change only name,
+enabled state, Storage binding and the kind-specific relative root. The application must merge
+those fields into the complete existing object so scan/policy/directory-creation fields not exposed
+by the form are preserved.
+
+Final Save binds the read Active revision through optimistic concurrency, performs the complete
+validation and applicable checked evidence, prepares runtime binding and atomically publishes the
+successor. Validation, evidence, persistence, concurrency or runtime-load failure preserves the
+prior Active and correctable input. Storage/root changes are configuration-only: they never create,
+move, copy or delete the root or its contents, and already admitted work remains pinned to its
+original immutable snapshot.
+
 CLI equivalents are:
 
 ```bash

@@ -265,6 +265,32 @@ Storage or create work merely by viewing it.
 - **Recovery:** correct only the reported blocker and submit the same bounded form again; no
   partially activated configuration or silent fallback is exposed.
 
+### TARGET — Edit ResourceLibrary or MediaLibrary from its browse card
+
+This focused journey is part of active Slice 38 and is not a claim about the current implementation.
+
+- **Goal:** correct an existing library's ordinary configuration and make the validated result the
+  runtime Active configuration without entering the general Draft editor.
+- **Entry:** select a ResourceLibrary or MediaLibrary card, open its configuration menu and choose
+  `编辑资源库` or `编辑媒体库` beside the existing removal action.
+- **Visible state:** the three-step form is prefilled from one exact Active object. ID is visible but
+  read-only; name, enabled state, Storage and the kind-specific relative root are editable. The
+  confirmation step identifies Storage/root changes as configuration-only and does not imply file
+  movement.
+- **Action:** review the prefilled values, change only the required fields and choose `保存并激活`.
+  Revision/version/digest evidence remains backend-managed.
+- **Success:** the backend merges the focused fields without losing hidden object configuration,
+  completes validation and checked activation, and publishes one immutable Active successor. An
+  enabled edit refreshes the card and browse authority; a root/Storage change returns to that
+  library's root, while a name-only edit preserves a still-valid directory. A disabled result is
+  hidden truthfully with the existing configuration recovery handoff.
+- **Failure:** stale Active authority, invalid field/path, unavailable Storage/root, graph
+  dependency, permission, validation/evidence, persistence or runtime-binding failure leaves the
+  previous Active and Storage contents unchanged and keeps the entered values correctable.
+- **Recovery:** refresh a stale form before reapplying intended changes, correct the named blocker
+  and submit explicitly. Unknown outcomes are verified from current Active state and never
+  automatically replayed.
+
 ## FileIndex and Media
 
 ### Current
@@ -632,10 +658,11 @@ replacement shell. Slice 37 is PASS / CLOSED at Base
 `b507edba167f5af3af8c53bfcf1417ba4fefddf4` and Implementation Head
 `aa54854c442d117c7eb23ae9800045c423db1368`.
 
-## TARGET — MediaLibrary files and separate ResourceLibrary navigation
+## CURRENT — MediaLibrary files and separate ResourceLibrary navigation
 
-The MediaLibrary workspace is planned, not implemented. The current Library landing and Files
-route remain the implementation baseline until the new journey is delivered.
+The MediaLibrary workspace, separated ResourceLibrary Files route, common commands and configuration
+create/removal baseline are delivered through the current recorded Slice 38 implementation head.
+Focused page-local editing described earlier remains the active target and is not yet claimed here.
 
 - **Goal:** maintain files stored below a configured MediaLibrary root, while retaining the complete
   ResourceLibrary Files/Organize journey.
@@ -649,7 +676,7 @@ route remain the implementation baseline until the new journey is delivered.
   relative breadcrumbs, list/grid with type icons, physical file facts, selection, bounded paging
   and meaningful capability/error state remain. No card counts, capacity, statistics placeholder or
   file thumbnails are shown or collected.
-- **Action:** browse/search within the existing bounded semantics, refresh, add/remove a library
+- **Action:** browse/search within the existing bounded semantics, refresh, add/edit/remove a library
   configuration, create folder/text, rename one entry, copy/move, delete and edit supported bounded
   text. Copy/Move selects the current or another MediaLibrary on the same or another supported
   Storage. No MediaLibrary Organize, Scan/Preview, browser Upload/Download or arbitrary media editing.
@@ -665,11 +692,13 @@ route remain the implementation baseline until the new journey is delivered.
   follow per-item durable progress and only backend-advertised safe continuation. No unknown
   mutation is replayed on refresh/reconnect.
 
-The Add drawer is `基本信息 → 存储位置 → 确认` and opens only on explicit intent. One Save
-composes current managed validation, applicable read-only checks, atomic activation and runtime
-binding; any failure preserves prior Active. A disabled library is saved truthfully but hidden from
-normal browsing with a Web re-enable path. Configuration removal is reference-protected and never
-deletes physical files. It is distinct from explicit Delete of selected interior entries.
+The Add/Edit drawer is `基本信息 → 存储位置 → 确认` and opens only on explicit intent. Edit is
+prefilled from exact Active, keeps ID read-only and preserves unexposed fields. One Save composes
+current managed validation, applicable read-only checks, atomic activation and runtime binding; any
+failure preserves prior Active. A disabled library is saved truthfully but hidden from normal
+browsing with a Web re-enable path. Storage/root edits never migrate physical contents.
+Configuration removal is reference-protected and never deletes physical files. It is distinct from
+explicit Delete of selected interior entries.
 
 Per-file size, selected count/known size and bounded operation impact/progress remain visible where
 useful; they are not library-card statistics. Deleting or overwriting remains explicit, and
