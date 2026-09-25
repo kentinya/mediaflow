@@ -5599,6 +5599,8 @@ class ConfigurationObjectService:
         """Run one provider-neutral, read-only root check for an exact revision."""
 
         revision = self._managed.require(revision_id)
+        if revision.status is ManagedConfigurationStatus.ACTIVE:
+            return self._active_storage_check(revision, storage_id=storage_id, actor=actor)
         if revision.status not in {
             ManagedConfigurationStatus.DRAFT,
             ManagedConfigurationStatus.VALIDATED,
@@ -5619,6 +5621,132 @@ class ConfigurationObjectService:
                 current_digest=revision.digest,
                 durable_state="draft_and_prior_active_preserved",
                 next_action="reload the revision and explicitly rerun the read-only Storage check",
+            )
+        storage_value = next(
+            (
+                item
+                for item in self._canonical_objects(revision.document, "storages")
+                if item.get("id") == storage_id
+            ),
+            None,
+        )
+        if storage_value is None:
+            raise LookupError(f"Storage {storage_id!r} was not found in the revision")
+        storage_type = str(storage_value.get("type", "unknown")).lower() or "unknown"
+        options = self._storage_options(storage_value)
+        secret_readiness = tuple(
+            dict(entry) for entry in self._storage_secret_readiness(storage_type, options)
+        )
+        read_only = storage_value.get("readOnly", False) is True
+        progress = _StorageCheckProgress(
+            storage_id=storage_id,
+            storage_type=storage_type,
+            read_only=read_only,
+            secret_readiness=secret_readiness,
+        )
+        if storage_value.get("enabled", True) is False:
+            evidence = self._storage_check_failure(
+                revision,
+                actor,
+                progress,
+                "disabled",
+            )
+            return self._repository.save_storage_setup_check(evidence)
+        if any(entry["state"] == "UNSET" for entry in secret_readiness):
+            evidence = self._storage_check_failure(
+                revision,
+                actor,
+                progress,
+                "missing_secret",
+            )
+            return self._repository.save_storage_setup_check(evidence)
+        if not self._acquire_setup_check():
+            evidence = self._storage_check_failure(
+                revision,
+                actor,
+                progress,
+                "capacity_unavailable",
+            )
+            return self._repository.save_storage_setup_check(evidence)
+        started = time.monotonic()
+        try:
+            try:
+                future = self._setup_check_executor.submit(
+                    self._run_storage_check,
+                    revision,
+                    actor,
+                    storage_value,
+                    progress,
+                    started,
+                )
+            except Exception:
+                self._release_setup_check()
+                evidence = self._storage_check_failure(
+                    revision,
+                    actor,
+                    progress,
+                    "worker_unavailable",
+                    started=started,
+                )
+                return self._repository.save_storage_setup_check(evidence)
+            lease = _SetupCheckLease(self._release_setup_check)
+            future.add_done_callback(lambda _future: lease.worker_finished())
+            try:
+                try:
+                    remaining = max(
+                        0.0,
+                        started + self._setup_check_timeout_seconds - time.monotonic(),
+                    )
+                    evidence = future.result(timeout=remaining)
+                except FutureTimeoutError:
+                    evidence = self._storage_check_failure(
+                        revision,
+                        actor,
+                        progress,
+                        "timeout",
+                        started=started,
+                    )
+                except Exception:
+                    evidence = self._storage_check_failure(
+                        revision,
+                        actor,
+                        progress,
+                        "unknown",
+                        started=started,
+                    )
+                return self._repository.save_storage_setup_check(evidence)
+            finally:
+                lease.response_finished()
+        except Exception:
+            # Persistence failures are intentionally not converted into a fake
+            # passed/failed check.  The caller receives the repository failure and
+            # no unbounded adapter exception is returned through the API.
+            raise
+
+    def _active_storage_check(
+        self,
+        revision: ManagedConfigurationRevision,
+        *,
+        storage_id: str,
+        actor: str,
+    ) -> StorageSetupCheckEvidence:
+        """Run the bounded zero-mutation read check against the exact Active revision.
+
+        The Active runtime is immutable, so the check binds to its current
+        version/digest instead of accepting caller-supplied optimistic values;
+        a concurrent activation that swaps the Active pointer is rejected as a
+        stale authority rather than silently checked against new content.
+        """
+
+        current = self._managed.active()
+        if current is None or current.revision_id != revision.revision_id:
+            raise ConfigurationVersionConflict(
+                "Storage check requires the exact current Active revision; reload before checking",
+                revision_id=revision.revision_id,
+                current_version=(current.version if current is not None else None),
+                current_digest=current.digest if current is not None else None,
+                durable_state="active_preserved",
+                next_action="reload the Storage inventory and explicitly rerun the check",
             )
         storage_value = next(
             (
@@ -6037,6 +6165,344 @@ class ConfigurationObjectService:
             if evidence is None
             else self._storage_check_document_for_revision(revision, evidence)
         )
+
+    # ------------------------------------------------------------------
+    # V2 Storage management operator projection (Slice 39, Task 39.1)
+    #
+    # The projection composes the exact immutable Active revision consumed by
+    # runtime with the existing bounded reference evidence and Storage check
+    # documents. It performs zero Storage reads and zero mutation; the latest
+    # check document is diagnostic evidence, never configuration authority.
+    # ------------------------------------------------------------------
+
+    _STORAGE_INVENTORY_LIMIT = 100
+    _REFERENCE_DETAIL_LIMIT = 32
+
+    def active_storage_management(self) -> dict[str, object]:
+        """Return the bounded Storage inventory and authority from Active.
+
+        The result distinguishes a healthy empty inventory from a missing or
+        unreadable Active authority and from setup-only bootstrap authority:
+        callers must never render those states as ``active`` lists.
+        """
+
+        active: ManagedConfigurationRevision | None
+        try:
+            active = self._managed.active()
+        except Exception:
+            return {
+                "available": False,
+                "reason": "unavailable",
+                "authority": None,
+                "active": None,
+                "items": [],
+                "total": 0,
+                "truncated": False,
+                "families": {},
+            }
+        if active is None:
+            return {
+                "available": False,
+                "reason": "no_active",
+                "authority": None,
+                "active": None,
+                "items": [],
+                "total": 0,
+                "truncated": False,
+                "families": {},
+            }
+        try:
+            self._managed.verify_integrity(active)
+        except RuntimeSnapshotUnavailable:
+            return {
+                "available": False,
+                "reason": "unavailable",
+                "authority": None,
+                "active": None,
+                "items": [],
+                "total": 0,
+                "truncated": False,
+                "families": {},
+            }
+        except Exception:
+            return {
+                "available": False,
+                "reason": "unavailable",
+                "authority": None,
+                "active": None,
+                "items": [],
+                "total": 0,
+                "truncated": False,
+                "families": {},
+            }
+        try:
+            values = self._canonical_objects(active.document, "storages")
+        except Exception:
+            return {
+                "available": False,
+                "reason": "malformed",
+                "authority": None,
+                "active": None,
+                "items": [],
+                "total": 0,
+                "truncated": False,
+                "families": {},
+            }
+        ordered = sorted(values, key=lambda item: str(item.get("id", "")))
+        projected = [
+            self._active_storage_document(active, item)
+            for item in ordered[: self._STORAGE_INVENTORY_LIMIT]
+        ]
+        families: dict[str, int] = {}
+        for item in projected:
+            family = str(item.get("family"))
+            families[family] = families.get(family, 0) + 1
+        return {
+            "available": True,
+            "reason": None,
+            "authority": "MANAGED",
+            "active": self._active_storage_identity(active),
+            "items": projected,
+            "total": len(ordered),
+            "truncated": len(ordered) > self._STORAGE_INVENTORY_LIMIT,
+            "families": families,
+        }
+
+    def active_storage_detail(self, storage_id: str) -> dict[str, object]:
+        """Return one exact-Active Storage with bounded references and evidence.
+
+        The read binds to the Active revision that list projection used; a
+        later activation makes the evidence currentness stale rather than
+        substituting a newer revision behind the operator.
+        """
+
+        active = self._managed.active()
+        if active is None:
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        try:
+            values = self._canonical_objects(active.document, "storages")
+        except Exception as error:
+            raise RuntimeSnapshotUnavailable(
+                "Active configuration Storage section is unreadable",
+                revision_id=active.revision_id,
+                reason="snapshot_malformed",
+            ) from error
+        selected = next(
+            (item for item in values if item.get("id") == storage_id),
+            None,
+        )
+        if selected is None:
+            raise LookupError(f"storage {storage_id!r} was not found")
+        # The latest check binds to the one captured Active revision; a second
+        # repository read could combine the document with a newer revision.
+        getter = getattr(self._repository, "get_storage_setup_check", None)
+        evidence = getter(active.revision_id, storage_id) if getter is not None else None
+        document = self._active_storage_document(active, selected, evidence=evidence)
+        document["latestCheck"] = (
+            None
+            if evidence is None
+            else self._storage_check_document_for_revision(active, evidence)
+        )
+        return {
+            "storage": document,
+            "references": self._storage_reference_detail(active, storage_id),
+            "activeConfiguration": self._active_storage_identity(active),
+        }
+
+    @staticmethod
+    def _active_storage_identity(active: ManagedConfigurationRevision) -> dict[str, object]:
+        """Project one revision identity without its digest or document."""
+
+        return {
+            "revisionId": active.revision_id,
+            "version": active.version,
+            "revisionSequence": active.revision_sequence,
+            "status": active.status.value,
+        }
+
+    @classmethod
+    def _storage_provider_family(cls, storage_type: str) -> str:
+        return {
+            "local": "local",
+            "smb": "smb",
+            "openlist": "openlist",
+            "s3": "s3",
+            "r2": "s3",
+            "s3-compatible": "s3",
+        }.get(storage_type, "other")
+
+    def _active_storage_document(
+        self,
+        active: ManagedConfigurationRevision,
+        value: Mapping[str, object],
+        *,
+        evidence: StorageSetupCheckEvidence | None = None,
+    ) -> dict[str, object]:
+        """Project one Active Storage without secret values or raw options."""
+
+        storage_id = str(value.get("id", ""))
+        storage_type = str(value.get("type", "")).lower()
+        options = self._storage_options(value)
+        root_path = value.get("rootPath")
+        location = {
+            "kind": "remote" if storage_type != "local" else "local",
+            "rootPath": root_path if isinstance(root_path, str) else "",
+        }
+        if storage_type != "local":
+            # Remote roots are provider-relative logical paths. Provider
+            # coordinates (host/share/bucket/endpoint/region) stay bounded and
+            # credential-free; nothing host-wide is ever exposed.
+            for field in ("host", "share", "bucket", "endpoint", "region"):
+                candidate = options.get(field)
+                if isinstance(candidate, (str, int, float)) and str(candidate):
+                    location[field] = str(candidate)
+        capability_projection = self._storage_check_capability_document(
+            active,
+            storage_type,
+            storage_id,
+            evidence=evidence,
+        )
+        return {
+            "id": storage_id,
+            "name": str(value.get("name") or storage_id),
+            "type": storage_type,
+            "family": self._storage_provider_family(storage_type),
+            "enabled": value.get("enabled", True) is not False,
+            "readOnly": value.get("readOnly", False) is True,
+            "location": location,
+            "capabilities": capability_projection["capabilities"],
+            "capabilitiesKnown": capability_projection["known"],
+            "writeCapabilitySource": capability_projection["source"],
+            "writeCapabilityProbe": "not_run",
+            "secretReadiness": self._storage_secret_readiness(storage_type, options),
+            "references": self._storage_reference_document(active, storage_id),
+        }
+
+    def _storage_check_capability_document(
+        self,
+        active: ManagedConfigurationRevision,
+        storage_type: str,
+        storage_id: str,
+        *,
+        evidence: StorageSetupCheckEvidence | None = None,
+    ) -> dict[str, object]:
+        """Project a declared capability only when exact-Active evidence has it.
+
+        The inventory and detail reads never construct an adapter or touch
+        Storage. A read-check evidence record captures the adapter declaration
+        without performing a write probe. Before such evidence exists (or when
+        adapter construction failed before its declaration was observed), the
+        values below are placeholders guarded by ``known: false`` and the Web
+        renders the capability state as unknown.
+        """
+
+        empty = {key: False for key in StorageSetupCheckEvidence.CAPABILITY_FIELDS}
+        if evidence is None:
+            getter = getattr(self._repository, "get_storage_setup_check", None)
+            evidence = getter(active.revision_id, storage_id) if getter is not None else None
+        if evidence is not None and evidence.storage_type.lower() == storage_type:
+            projected = self._storage_check_document_for_revision(active, evidence)
+            if projected["current"] and evidence.attempted_operations:
+                return {
+                    "capabilities": dict(evidence.capabilities),
+                    "known": True,
+                    "source": "configured_storage_abstraction",
+                }
+        return {"capabilities": empty, "known": False, "source": "unknown"}
+
+    def _storage_reference_document(
+        self, active: ManagedConfigurationRevision, storage_id: str
+    ) -> dict[str, object]:
+        evidence = self._references_for(
+            ConfigurationObjectKind.STORAGE, storage_id, active.document
+        )
+        resource = 0
+        media = 0
+        for section, counter in (
+            ("resourceLibraries", "resource"),
+            ("mediaLibraries", "media"),
+        ):
+            if section not in active.document:
+                continue
+            for index, item in enumerate(self._canonical_objects(active.document, section)):
+                referenced_storage = self._required_reference_id(
+                    item,
+                    section=section,
+                    index=index,
+                    field="storageId",
+                )
+                if referenced_storage == storage_id:
+                    if counter == "resource":
+                        resource += 1
+                    else:
+                        media += 1
+        if resource + media != evidence.total:
+            raise RuntimeSnapshotUnavailable(
+                "Active configuration Storage references are inconsistent",
+                revision_id=active.revision_id,
+                reason="snapshot_malformed",
+            )
+        document = evidence.document()
+        document["resourceLibraries"] = resource
+        document["mediaLibraries"] = media
+        document["countedInBreakdown"] = resource + media
+        return document
+
+    def _storage_reference_detail(
+        self,
+        active: ManagedConfigurationRevision,
+        storage_id: str,
+    ) -> dict[str, object]:
+        """Bounded per-library reference breakdown including disabled ones."""
+
+        detail: dict[str, object] = {
+            "resourceLibraries": [],
+            "mediaLibraries": [],
+            "truncated": False,
+        }
+        collected = 0
+        for section, field, key in (
+            ("resourceLibraries", "storageId", "resourceLibraries"),
+            ("mediaLibraries", "storageId", "mediaLibraries"),
+        ):
+            if section not in active.document:
+                continue
+            try:
+                values = self._canonical_objects(active.document, section)
+            except Exception:
+                raise RuntimeSnapshotUnavailable(
+                    f"Active configuration {section} section is unreadable",
+                    revision_id=active.revision_id,
+                    reason="snapshot_malformed",
+                ) from None
+            for item in values:
+                if str(item.get(field, "")) != storage_id:
+                    continue
+                collected += 1
+                if len(detail[key]) >= self._REFERENCE_DETAIL_LIMIT:
+                    continue
+                detail[key].append(
+                    {
+                        "id": str(item.get("id", "")),
+                        "name": str(item.get("name") or item.get("id", "")),
+                        "enabled": item.get("enabled", True) is not False,
+                        "path": str(item.get("storagePath", item.get("rootPath", "")) or ""),
+                    }
+                )
+        document = self._storage_reference_document(active, storage_id)
+        truncated = bool(document.get("truncated")) or collected > (
+            len(detail["resourceLibraries"]) + len(detail["mediaLibraries"])
+        )
+        return {
+            "resourceLibraries": detail["resourceLibraries"],
+            "mediaLibraries": detail["mediaLibraries"],
+            "total": document["total"],
+            "truncated": truncated,
+        }
 
     def _storage_checks_document(
         self, revision: ManagedConfigurationRevision

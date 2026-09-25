@@ -64,6 +64,8 @@ import {
   type TransferResultModel,
 } from "../../entities/library/direct-files";
 import {
+  ApiReadError,
+  type ApiReadErrorCategory,
   DashboardApiError,
   MediaLibraryFilesApiError,
   StorageFilesApiError,
@@ -4938,4 +4940,204 @@ export async function createNotificationSuccessorDraft(
     },
     fetchImpl,
   );
+}
+
+// ---------------------------------------------------------------------------
+// V2 Storage management journey (Slice 39, Task 39.1).
+//
+// The reads use the bounded exact-Active operator projections under
+// /api/v1/operations/storage-management/; the explicit Connection/Read check
+// reuses the existing zero-mutation Storage check service bound to the exact
+// Active revision the operator inspected. Nothing here submits or accepts a
+// revision digest, a secret value or a write probe.
+
+import {
+  normalizeStorageCheckResult,
+  normalizeStorageDetail,
+  normalizeStorageInventory,
+  type StorageCheckResultModel,
+  type StorageDetailModel,
+  type StorageInventoryModel,
+} from "../../entities/storage/storage-management";
+
+const STORAGE_API_ERROR_MESSAGES: Readonly<
+  Record<ApiReadErrorCategory, string>
+> = {
+  unauthorized:
+    "The API token is missing, invalid or expired. Enter a valid API principal token to continue.",
+  forbidden:
+    "The connected API principal does not have permission to view Storage management.",
+  unavailable:
+    "The MediaFlow API is currently unavailable. Check that the application is running, then refresh.",
+  rejected:
+    "The Storage management request was rejected by the API as invalid.",
+  malformed:
+    "The Storage management response could not be understood as the expected read-only contract.",
+};
+
+/** Typed boundary error for the Storage management reads. */
+export class StorageManagementApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category, STORAGE_API_ERROR_MESSAGES[category]);
+    this.name = "StorageManagementApiError";
+  }
+}
+
+const STORAGE_BASE = "/api/v1/operations/storage-management";
+
+export async function fetchStorageInventory(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<StorageInventoryModel> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${STORAGE_BASE}/inventory`, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    throw new StorageManagementApiError("unavailable");
+  }
+  if (response.status === 401) {
+    throw new StorageManagementApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new StorageManagementApiError("forbidden");
+  }
+  if (!response.ok) {
+    throw new StorageManagementApiError("unavailable");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new StorageManagementApiError("malformed");
+  }
+  try {
+    return normalizeStorageInventory(payload);
+  } catch {
+    throw new StorageManagementApiError("malformed");
+  }
+}
+
+export async function fetchStorageDetail(
+  token: string | null,
+  storageId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<StorageDetailModel> {
+  if (!isSafeIdentifier(storageId)) {
+    throw new StorageManagementApiError("rejected");
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${STORAGE_BASE}/storage/${encodeURIComponent(storageId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    throw new StorageManagementApiError("unavailable");
+  }
+  if (response.status === 401) {
+    throw new StorageManagementApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new StorageManagementApiError("forbidden");
+  }
+  if (response.status === 404) {
+    throw new StorageManagementApiError("rejected");
+  }
+  if (!response.ok) {
+    throw new StorageManagementApiError("unavailable");
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new StorageManagementApiError("malformed");
+  }
+  try {
+    return normalizeStorageDetail(payload);
+  } catch {
+    throw new StorageManagementApiError("malformed");
+  }
+}
+
+export interface StorageCheckRunOptions {
+  readonly storageId: string;
+  readonly expectedRevisionId: string;
+  readonly expectedVersion: number;
+}
+
+/**
+ * Explicitly runs one bounded zero-mutation Connection/Read check against the
+ * exact Active revision the operator inspected. The body carries only the
+ * advertised revision identity and optimistic version; no digest, secret or
+ * write probe travels from or to the browser.
+ */
+export async function fetchStorageCheckRun(
+  token: string | null,
+  options: StorageCheckRunOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<
+  | {
+      readonly ok: true;
+      readonly status: number;
+      readonly model: StorageCheckResultModel;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+    }
+> {
+  if (
+    !isSafeIdentifier(options.storageId) ||
+    !isSafeIdentifier(options.expectedRevisionId) ||
+    !Number.isSafeInteger(options.expectedVersion) ||
+    options.expectedVersion < 0
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${STORAGE_BASE}/storage/${encodeURIComponent(options.storageId)}/check`,
+      {
+        method: "POST",
+        headers: operationsMutationHeaders(token),
+        body: JSON.stringify({
+          expectedRevisionId: options.expectedRevisionId,
+          expectedVersion: options.expectedVersion,
+        }),
+      },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      model: normalizeStorageCheckResult(payload),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
 }

@@ -5378,6 +5378,368 @@ function boundedAutomationBody(fields) {
   return body;
 }
 
+// ---------------------------------------------------------------------------
+// V2 Storage management journey (Slice 39, Task 39.1).
+//
+// Mirrors the bounded, secret-free documents the real Python API publishes
+// under /api/v1/operations/storage-management/* (proved by
+// tests/test_v2_storage_operations.py). Fixture values are synthetic; the
+// check is an explicit zero-mutation Connection/Read diagnostic that never
+// writes, scans or probes for write capability.
+
+const STORAGE_ACTIVE_REVISION = "storage-active-rev-e2e-001";
+
+const STORAGE_FIXTURE = [
+  {
+    id: "local-media",
+    name: "本地媒体",
+    type: "local",
+    family: "local",
+    enabled: true,
+    readOnly: false,
+    location: { kind: "local", rootPath: "/media/incoming" },
+    declaredCapabilities: {
+      can_move: true,
+      can_copy: true,
+      can_delete: true,
+      can_hard_link: true,
+      can_soft_link: false,
+    },
+    secretReadiness: [],
+    references: {
+      total: 2,
+      items: [],
+      truncated: false,
+      resourceLibraries: 1,
+      mediaLibraries: 1,
+      countedInBreakdown: 2,
+    },
+  },
+  {
+    id: "nas-media",
+    name: "NAS 媒体",
+    type: "smb",
+    family: "smb",
+    enabled: true,
+    readOnly: false,
+    location: {
+      kind: "remote",
+      rootPath: "media",
+      host: "nas.example",
+      share: "media",
+    },
+    declaredCapabilities: {
+      can_move: true,
+      can_copy: true,
+      can_delete: true,
+      can_hard_link: false,
+      can_soft_link: false,
+    },
+    secretReadiness: [
+      { field: "usernameEnv", env: "MF_NAS_USER", state: "SET" },
+      { field: "passwordEnv", env: "MF_NAS_PASSWORD", state: "SET" },
+    ],
+    references: {
+      total: 1,
+      items: [],
+      truncated: false,
+      resourceLibraries: 1,
+      mediaLibraries: 0,
+      countedInBreakdown: 1,
+    },
+  },
+  {
+    id: "openlist-media",
+    name: "OpenList 媒体",
+    type: "openlist",
+    family: "openlist",
+    enabled: true,
+    readOnly: false,
+    location: { kind: "remote", rootPath: "/Media" },
+    declaredCapabilities: {
+      can_move: true,
+      can_copy: true,
+      can_delete: true,
+      can_hard_link: false,
+      can_soft_link: false,
+    },
+    secretReadiness: [
+      { field: "tokenEnv", env: "MF_OPENLIST_TOKEN", state: "SET" },
+    ],
+    references: {
+      total: 0,
+      items: [],
+      truncated: false,
+      resourceLibraries: 0,
+      mediaLibraries: 0,
+      countedInBreakdown: 0,
+    },
+  },
+  {
+    id: "r2-archive",
+    name: "R2 归档",
+    type: "r2",
+    family: "s3",
+    enabled: false,
+    readOnly: true,
+    location: {
+      kind: "remote",
+      rootPath: "archive",
+      bucket: "archive",
+      endpoint: "https://archive.invalid",
+    },
+    declaredCapabilities: {
+      can_move: false,
+      can_copy: false,
+      can_delete: false,
+      can_hard_link: false,
+      can_soft_link: false,
+    },
+    secretReadiness: [
+      { field: "accessKeyEnv", env: "MF_R2_ACCESS", state: "UNSET" },
+    ],
+    references: {
+      total: 0,
+      items: [],
+      truncated: false,
+      resourceLibraries: 0,
+      mediaLibraries: 0,
+      countedInBreakdown: 0,
+    },
+  },
+];
+
+const STORAGE_REFERENCE_ENTRIES = {
+  "local-media": {
+    resourceLibraries: [
+      { id: "source", name: "Sources", enabled: true, path: "incoming" },
+    ],
+    mediaLibraries: [
+      { id: "movies", name: "Movies", enabled: false, path: "Movies" },
+    ],
+    total: 2,
+    truncated: false,
+  },
+  "nas-media": {
+    resourceLibraries: [
+      { id: "nas-source", name: "NAS Sources", enabled: true, path: "" },
+    ],
+    mediaLibraries: [],
+    total: 1,
+    truncated: false,
+  },
+  "openlist-media": {
+    resourceLibraries: [],
+    mediaLibraries: [],
+    total: 0,
+    truncated: false,
+  },
+  "r2-archive": {
+    resourceLibraries: [],
+    mediaLibraries: [],
+    total: 0,
+    truncated: false,
+  },
+};
+
+const STORAGE_STATES = new Map();
+
+function storageState(session) {
+  const key = session ?? "shared";
+  let value = STORAGE_STATES.get(key);
+  if (value === undefined) {
+    value = {
+      active: {
+        revisionId: STORAGE_ACTIVE_REVISION,
+        version: 3,
+        revisionSequence: 2,
+        status: "active",
+      },
+      // Durable per-Storage check evidence, keyed by Storage id.
+      checks: new Map(),
+      // Set by /__test__/reset-storage for deterministic failure journeys.
+      failCheck: false,
+      noActive: false,
+    };
+    STORAGE_STATES.set(key, value);
+  }
+  return value;
+}
+
+function storagePermissions(token) {
+  const canRead = READABLE_TOKENS.has(token) && !EXPIRED_TOKENS.has(token);
+  return {
+    canRead,
+    canManage: VIEWER_TOKENS.has(token) && !EXPIRED_TOKENS.has(token),
+  };
+}
+
+function storageFamilyCount(items) {
+  const families = {};
+  for (const item of items) {
+    families[item.family] = (families[item.family] ?? 0) + 1;
+  }
+  return families;
+}
+
+function storageCheckEvidence(storage, state, overrides = {}) {
+  return {
+    revisionId: state.active.revisionId,
+    revisionVersion: state.active.version,
+    status: "passed",
+    checkedAt: new Date().toISOString(),
+    actor: "e2e-operator",
+    storageId: storage.id,
+    storageType: storage.type,
+    readOnly: storage.readOnly,
+    capabilities: storage.declaredCapabilities,
+    operations: ["stat:root", "list:root"],
+    attemptedOperations: ["stat:root", "list:root"],
+    secretReadiness: storage.secretReadiness,
+    durationMs: 7,
+    failureCategory: null,
+    message: null,
+    nextAction: "review the read-only evidence and continue the setup journey",
+    sideEffects: "none",
+    retrySafe: true,
+    stale: false,
+    current: true,
+    staleReason: null,
+    capabilityProbe: "not_run",
+    ...overrides,
+  };
+}
+
+function storagePublicItem(storage, state) {
+  const evidence = state.checks.get(storage.id);
+  const capabilitiesKnown =
+    evidence?.current === true &&
+    evidence.storageType === storage.type &&
+    evidence.attemptedOperations.length > 0;
+  const capabilities = capabilitiesKnown
+    ? evidence.capabilities
+    : Object.fromEntries(
+        Object.keys(storage.declaredCapabilities).map((key) => [key, false]),
+      );
+  return {
+    id: storage.id,
+    name: storage.name,
+    type: storage.type,
+    family: storage.family,
+    enabled: storage.enabled,
+    readOnly: storage.readOnly,
+    location: storage.location,
+    capabilities,
+    capabilitiesKnown,
+    writeCapabilitySource: capabilitiesKnown
+      ? "configured_storage_abstraction"
+      : "unknown",
+    writeCapabilityProbe: "not_run",
+    secretReadiness: storage.secretReadiness,
+    references: storage.references,
+  };
+}
+
+function storageDetailAction(storage, canManage) {
+  const disabled = storage.enabled === false;
+  const available = canManage && !disabled;
+  let reason = null;
+  if (!canManage) {
+    reason =
+      "the connected API principal cannot run Storage checks (required permission: manage_configuration)";
+  } else if (disabled) {
+    reason =
+      "the selected Storage is disabled in the current Active configuration";
+  }
+  return {
+    available,
+    reason,
+    method: "POST",
+    path: available
+      ? `/api/v1/operations/storage-management/storage/${storage.id}/check`
+      : null,
+    sideEffects: "none",
+    durableOutcome:
+      "bounded read-only check evidence is persisted for this exact revision; no Storage content changes",
+    nextAction: available
+      ? "run the read-only check after reviewing the bounded configuration"
+      : (reason ?? "this check is unavailable"),
+    requiresConfirmation: false,
+  };
+}
+
+function storageInventoryDocument(state, canManage) {
+  if (state.noActive) {
+    return {
+      available: false,
+      reason: "no_active",
+      authority: null,
+      active: null,
+      items: [],
+      total: 0,
+      truncated: false,
+      families: {},
+      canManage,
+      actions: {
+        check: {
+          available: false,
+          reason: "no managed Active configuration exists",
+          method: "POST",
+          path: null,
+          sideEffects: "none",
+          durableOutcome: null,
+          nextAction:
+            "complete managed configuration setup, validate the Draft, and activate it",
+          requiresConfirmation: false,
+        },
+      },
+    };
+  }
+  return {
+    available: true,
+    reason: null,
+    authority: "MANAGED",
+    active: state.active,
+    items: STORAGE_FIXTURE.map((storage) => storagePublicItem(storage, state)),
+    total: STORAGE_FIXTURE.length,
+    truncated: false,
+    families: storageFamilyCount(STORAGE_FIXTURE),
+    canManage,
+    actions: {
+      check: {
+        available: false,
+        reason:
+          "a read check binds to exactly one selected Storage; open its detail to run it",
+        method: "POST",
+        path: null,
+        sideEffects: "none",
+        durableOutcome: null,
+        nextAction: "open one Storage detail, then run its read check",
+        requiresConfirmation: false,
+      },
+    },
+  };
+}
+
+function storageDetailDocument(storage, state, canManage) {
+  return {
+    storage: {
+      ...storagePublicItem(storage, state),
+      latestCheck: state.checks.get(storage.id) ?? null,
+    },
+    references: STORAGE_REFERENCE_ENTRIES[storage.id] ?? {
+      resourceLibraries: [],
+      mediaLibraries: [],
+      total: 0,
+      truncated: false,
+    },
+    activeConfiguration: state.active,
+    actions: { check: storageDetailAction(storage, canManage) },
+    writeCapabilityNote:
+      "a read check proves connection/read access only; write access is never tested by this diagnostic",
+  };
+}
+
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, `http://${HOST}:${PORT}`);
   const token = bearerToken(req);
@@ -5431,6 +5793,156 @@ const server = createServer(async (req, res) => {
     sendJson(res, 200, automationActivationDocument(state));
     return;
   }
+
+  // V2 Storage management journey (Slice 39): served on the dedicated
+  // operations route BEFORE the generic alias rewrite so the exact path
+  // contract of /api/v1/operations/storage-management/* is what the browser
+  // exercises.
+  const storageInventoryMatch =
+    url.pathname === "/api/v1/operations/storage-management/inventory";
+  const storageDetailMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/storage-management\/storage\/([^/]+)$/,
+  );
+  const storageCheckMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/storage-management\/storage\/([^/]+)\/check$/,
+  );
+  if (storageInventoryMatch || storageDetailMatch || storageCheckMatch) {
+    const permissions = storagePermissions(token);
+    if (!permissions.canRead) {
+      if (READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+        sendJson(res, 401, {
+          error: { code: "unauthorized", message: "bearer token required" },
+        });
+        return;
+      }
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message: "principal lacks read permission",
+        },
+      });
+      return;
+    }
+    const state = storageState(session);
+    if (storageInventoryMatch) {
+      if (req.method !== "GET") {
+        sendJson(res, 405, { error: { code: "method_not_allowed" } });
+        return;
+      }
+      sendJson(
+        res,
+        200,
+        storageInventoryDocument(state, permissions.canManage),
+      );
+      return;
+    }
+    const matchedStorageRoute = storageDetailMatch ?? storageCheckMatch;
+    const storageId = decodeURIComponent(matchedStorageRoute[1]);
+    const storage = STORAGE_FIXTURE.find((item) => item.id === storageId);
+    if (storage === undefined) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    if (storageDetailMatch && req.method === "GET") {
+      sendJson(
+        res,
+        200,
+        storageDetailDocument(storage, state, permissions.canManage),
+      );
+      return;
+    }
+    if (storageCheckMatch && req.method === "POST") {
+      if (!permissions.canManage) {
+        sendJson(res, 403, {
+          error: {
+            code: "forbidden",
+            message: "principal lacks manage_configuration permission",
+          },
+        });
+        return;
+      }
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) {
+        return;
+      }
+      const document = parsed.document ?? {};
+      if (!(
+        typeof document.expectedRevisionId === "string" &&
+        document.expectedRevisionId.length > 0 &&
+        Number.isInteger(document.expectedVersion)
+      )) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      if (
+        document.expectedRevisionId !== state.active.revisionId ||
+        document.expectedVersion !== state.active.version
+      ) {
+        sendJson(res, 409, {
+          error: {
+            code: "configuration_version_conflict",
+            message:
+              "the Active configuration changed since the inventory was read",
+            details: {
+              durableState: "active_preserved",
+              candidateState: "not_run",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction:
+                "refresh the Storage inventory, reopen the detail, then run the check again",
+            },
+          },
+        });
+        return;
+      }
+      if (state.failCheck) {
+        state.failCheck = false;
+        const evidence = storageCheckEvidence(storage, state, {
+          status: "failed",
+          current: true,
+          stale: false,
+          staleReason: null,
+          operations: [],
+          attemptedOperations: ["stat:root"],
+          failureCategory: "permission_denied",
+          message: "Storage root read permission was denied",
+          nextAction:
+            "grant read/list permission to MediaFlow, reload, and retry the check",
+          retrySafe: true,
+        });
+        state.checks.set(storage.id, evidence);
+        recordManualRequestForSession({
+          method: "POST",
+          objectId: storage.id,
+          objectType: "storage_read_check",
+          path: "/api/v1/operations/storage-management/storage/:storageId/check",
+          body: {
+            expectedRevisionId: document.expectedRevisionId,
+            expectedVersion: document.expectedVersion,
+          },
+        });
+        sendJson(res, 200, evidence);
+        return;
+      }
+      const evidence = storageCheckEvidence(storage, state);
+      state.checks.set(storage.id, evidence);
+      recordManualRequestForSession({
+        method: "POST",
+        objectId: storage.id,
+        objectType: "storage_read_check",
+        path: "/api/v1/operations/storage-management/storage/:storageId/check",
+        body: {
+          expectedRevisionId: document.expectedRevisionId,
+          expectedVersion: document.expectedVersion,
+        },
+      });
+      sendJson(res, 200, evidence);
+      return;
+    }
+    sendJson(res, 405, { error: { code: "method_not_allowed" } });
+    return;
+  }
+
   // The V2 Operations workspace reads the bounded /api/v1/operations/* alias;
   // the fake mirrors the authoritative Python contract by serving the same
   // bounded documents for both spellings.
@@ -11305,6 +11817,29 @@ const server = createServer(async (req, res) => {
       removed: target,
       session: session ?? null,
     });
+    return;
+  }
+
+  if (url.pathname === "/__test__/reset-storage" && req.method === "POST") {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    const params = new URLSearchParams(url.search);
+    STORAGE_STATES.set(sessionId, {
+      active: {
+        revisionId: STORAGE_ACTIVE_REVISION,
+        version: 3,
+        revisionSequence: 2,
+        status: "active",
+      },
+      checks: new Map(),
+      failCheck: params.get("failCheck") === "1",
+      noActive: params.get("noActive") === "1",
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
     return;
   }
 

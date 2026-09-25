@@ -2754,6 +2754,13 @@ class MediaFlowApi:
             return self._notification_operations_projection(
                 parts, method, environ, start_response, principal
             )
+        if parts[:4] == ["api", "v1", "operations", "storage-management"] and method in {
+            "GET",
+            "POST",
+        }:
+            return self._storage_operations_projection(
+                parts, method, environ, start_response, principal
+            )
         if parts == ["api", "v1", "management", "readiness"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -8196,6 +8203,17 @@ class MediaFlowApi:
             if parts[4] == "deliveries" and len(parts) == 6:
                 return "/api/v1/operations/notifications/deliveries/{id}"
             return "/api/v1/<unmatched>"
+        if len(parts) >= 4 and parts[:4] == ["api", "v1", "operations", "storage-management"]:
+            # The V2 Storage management projections name their own bounded
+            # operator surface without publishing revision identities or
+            # Storage IDs in audit evidence.
+            if len(parts) == 5 and parts[4] == "inventory":
+                return "/api/v1/operations/storage-management/inventory"
+            if len(parts) == 6 and parts[4] == "storage":
+                return "/api/v1/operations/storage-management/storage/{id}"
+            if len(parts) == 7 and parts[4] == "storage" and parts[6] == "check":
+                return "/api/v1/operations/storage-management/storage/{id}/check"
+            return "/api/v1/<unmatched>"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
         if (
@@ -12188,6 +12206,333 @@ class MediaFlowApi:
                 "nextAfter": next_after,
             },
         )
+
+    # ------------------------------------------------------------------
+    # V2 Storage management operations projections (bounded, secret-free)
+    #
+    # The read documents compose the exact immutable Active snapshot with the
+    # existing bounded reference evidence and Storage check documents; the one
+    # mutation here is the zero-mutation Connection/Read check bound to the
+    # exact Active revision the operator inspected.  The browser submits only
+    # the advertised revision identity and optimistic version, while the
+    # configuration digest and every secret reference stay server-side.  No
+    # route here scans recursively, calls a Metadata Provider, creates
+    # Jobs/Tasks, mutates Storage or claims write capability from a read.
+
+    def _storage_operations_projection(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        if len(parts) == 3:
+            return self._error(start_response, 404, "not_found", "route was not found")
+        if parts[3] == "storage-management" and len(parts) == 5 and parts[4] == "inventory":
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require_empty_query(environ, "storage management inventory")
+            self._require(principal, ApiPermission.READ)
+            return self._storage_inventory_operator_page(start_response, principal)
+        if parts[3] == "storage-management" and len(parts) == 6 and parts[4] == "storage":
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require_empty_query(environ, "storage management detail")
+            self._require(principal, ApiPermission.READ)
+            return self._storage_detail_operator_document(parts[5], start_response, principal)
+        if (
+            parts[3] == "storage-management"
+            and len(parts) == 7
+            and parts[4] == "storage"
+            and parts[6] == "check"
+        ):
+            if method != "POST":
+                return self._error(start_response, 405, "method_not_allowed", "POST required")
+            self._require_empty_query(environ, "storage management read check")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration service is unavailable",
+                )
+            document = self._document(environ)
+            if set(document) != {"expectedRevisionId", "expectedVersion"}:
+                raise ValueError(
+                    "Storage read check requires expectedRevisionId and expectedVersion"
+                )
+            expected_revision_id = document["expectedRevisionId"]
+            if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
+                raise ValueError("expectedRevisionId must be a non-empty string")
+            expected_version = document["expectedVersion"]
+            if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+                raise ValueError("expectedVersion must be an integer")
+            return self._storage_check_operator_document(
+                parts[5],
+                expected_revision_id,
+                expected_version,
+                start_response,
+                principal,
+            )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _storage_inventory_operator_page(
+        self, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        if self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        try:
+            inventory = self._configuration_objects.active_storage_management()
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        if not inventory.get("available"):
+            return self._response(
+                start_response,
+                200,
+                {
+                    **inventory,
+                    "items": [],
+                    "total": 0,
+                    "truncated": False,
+                    "families": {},
+                    "actions": {
+                        "check": {
+                            "available": False,
+                            "reason": self._storage_unavailable_reason(inventory),
+                            "method": "POST",
+                            "path": None,
+                            "sideEffects": "none",
+                            "durableOutcome": None,
+                            "nextAction": self._storage_unavailable_next_action(inventory),
+                            "requiresConfirmation": False,
+                        },
+                    },
+                    "canManage": manage,
+                },
+            )
+        return self._response(
+            start_response,
+            200,
+            {
+                **inventory,
+                "actions": {
+                    "check": {
+                        "available": False,
+                        "reason": (
+                            "a read check binds to exactly one selected Storage; open its "
+                            "detail to run it"
+                        ),
+                        "method": "POST",
+                        "path": None,
+                        "sideEffects": "none",
+                        "durableOutcome": None,
+                        "nextAction": "open one Storage detail, then run its read check",
+                        "requiresConfirmation": False,
+                    },
+                },
+                "canManage": manage,
+            },
+        )
+
+    @staticmethod
+    def _storage_unavailable_reason(inventory: dict) -> str:
+        return {
+            "no_active": "no managed Active configuration exists",
+            "unavailable": "the managed Active configuration is unavailable",
+            "malformed": "the managed Active configuration is unreadable",
+        }.get(str(inventory.get("reason")), "the Storage inventory is unavailable")
+
+    @staticmethod
+    def _storage_unavailable_next_action(inventory: dict) -> str:
+        reason = str(inventory.get("reason"))
+        if reason == "no_active":
+            return (
+                "complete managed configuration setup, validate the Draft, and "
+                "activate it; the setup journey remains the recovery path"
+            )
+        if reason == "malformed":
+            return "inspect configuration status and stage an explicit recovery Draft"
+        return "inspect configuration status and refresh after the authority is restored"
+
+    def _storage_detail_operator_document(
+        self, storage_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ) -> None:
+        if self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        try:
+            detail = self._configuration_objects.active_storage_detail(storage_id)
+        except RuntimeSnapshotUnavailable as error:
+            return self._error(
+                start_response,
+                503,
+                "configuration_unavailable",
+                str(error),
+                details={
+                    "durableState": "active_pointer_preserved",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "inspect configuration status and refresh after the authority is restored"
+                    ),
+                },
+            )
+        except LookupError as error:
+            return self._error(start_response, 404, "not_found", str(error))
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        storage = detail["storage"]
+        active_identity = detail["activeConfiguration"]
+        available = storage.get("enabled", True) is not False and active_identity is not None
+        check_reason = None
+        if not manage:
+            check_reason = (
+                "the connected API principal cannot run Storage checks "
+                "(required permission: manage_configuration)"
+            )
+        elif not available:
+            check_reason = "the selected Storage is disabled in the current Active configuration"
+        document = {
+            "storage": storage,
+            "references": detail["references"],
+            "activeConfiguration": active_identity,
+            "actions": {
+                "check": {
+                    "available": manage and available,
+                    "reason": check_reason,
+                    "method": "POST",
+                    "path": (
+                        f"/api/v1/operations/storage-management/storage/{storage_id}/check"
+                        if manage and available
+                        else None
+                    ),
+                    "sideEffects": "none",
+                    "durableOutcome": (
+                        "bounded read-only check evidence is persisted for this exact "
+                        "revision; no Storage content changes"
+                    ),
+                    "nextAction": (
+                        "run the read-only check after reviewing the bounded configuration"
+                        if manage and available
+                        else (check_reason or "this check is unavailable")
+                    ),
+                    "requiresConfirmation": False,
+                },
+            },
+            "writeCapabilityNote": (
+                "a read check proves connection/read access only; write access is "
+                "never tested by this diagnostic"
+            ),
+        }
+        return self._response(start_response, 200, document)
+
+    def _storage_check_operator_document(
+        self,
+        storage_id: str,
+        expected_revision_id: str,
+        expected_version: int,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ) -> None:
+        if self._configuration_service is None or self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        active = self._configuration_service.active()
+        if active is None:
+            return self._error(
+                start_response,
+                503,
+                "configuration_unavailable",
+                "no managed Active configuration exists",
+                details={
+                    "durableState": "active_pointer_preserved",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "complete managed configuration setup before running a read check"
+                    ),
+                },
+            )
+        if active.revision_id != expected_revision_id or active.version != expected_version:
+            return self._error(
+                start_response,
+                409,
+                "configuration_version_conflict",
+                "the Active configuration changed since the inventory was read; "
+                "refresh the inventory before retrying",
+                details={
+                    "durableState": "active_preserved",
+                    "candidateState": "not_run",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "refresh the Storage inventory, reopen the detail, then run the check again"
+                    ),
+                },
+            )
+        try:
+            self._configuration_objects.storage_check(
+                active.revision_id,
+                storage_id=storage_id,
+                expected_version=active.version,
+                expected_digest=active.digest,
+                actor=principal.principal_id,
+            )
+        except LookupError as error:
+            return self._error(start_response, 404, "not_found", str(error))
+        except RuntimeSnapshotUnavailable as error:
+            return self._error(
+                start_response,
+                503,
+                "configuration_unavailable",
+                str(error),
+                details={
+                    "durableState": "active_pointer_preserved",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "inspect configuration status and refresh after the authority is restored"
+                    ),
+                },
+            )
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        response = self._configuration_objects.storage_check_evidence(
+            active.revision_id, storage_id
+        )
+        return self._response(start_response, 200, response or {})
 
     # ------------------------------------------------------------------
     # V2 Notification operations projections (bounded, digest-free)
