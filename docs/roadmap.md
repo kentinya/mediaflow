@@ -52,8 +52,9 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 ## V2 program boundary
 
 V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33, 37
-and 38 are
-closed historical capabilities. The previously planned Slice 34, Slice 35 and Slice 36 boundaries
+and 38 are closed historical capabilities. Slice 39 is ACTIVE for the V2 Storage management
+workspace, reusing the existing managed-configuration and Storage foundations. The previously
+planned Slice 34, Slice 35 and Slice 36 boundaries
 were retired from the current Roadmap on 2026-09-14; their historical references remain in Git and
 are not current work commitments. Slice 37's post-reactivation closure, finalized by A on 2026-09-23,
 delivered the replacement
@@ -90,8 +91,9 @@ daily-operations journey across actionable Dashboard state, Tasks/Jobs, bounded 
 Web-native exact manual Organize, scheduled Automation and Notification delivery. The accepted Head
 includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
 projection and separate destructive confirmations; the second restores Worker reconstruction of the
-exact pinned source authority and fail-closed pre-mutation revalidation. Slice 37 is now closed as
-the most recent large Slice; this Roadmap does not retain the retired Slice 34–36 program rows.
+exact pinned source authority and fail-closed pre-mutation revalidation. Slice 38 is the most
+recently closed large Slice, and Slice 39 is the current ACTIVE Slice. This Roadmap does not retain
+the retired Slice 34–36 program rows.
 
 ## Roadmap rules
 
@@ -100,8 +102,9 @@ the most recent large Slice; this Roadmap does not retain the retired Slice 34�
 - Closed Slice 37 delivered the shared V2 shell's visual replacement, the Files page, drawer and common
   bounded file-management commands. Its authorized post-closure correction also delivered
   formal `library/path` destination parity with the local CLI. Its historical non-Files boundary
-  remains part of that closure. Active Slice 38 owns only the new MediaLibrary journey and required
-  route/navigation integration; existing Files behavior and other product journeys are protected.
+  remains part of that closure. Closed Slice 38 delivered the MediaLibrary journey and required
+  route/navigation integration. Active Slice 39 owns Storage management and its necessary shared
+  shell integration; existing Files, MediaLibrary and other product journeys are protected.
 - Task PASS, fixes, test counts, probes, rejected SHAs and review narratives never enter this file.
 - Safety, product and architecture requirements remain authoritative even when omitted from this
   compact prioritization view.
