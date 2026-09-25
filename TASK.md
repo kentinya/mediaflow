@@ -163,6 +163,13 @@ servers and temporary Storage roots only:
 - `web/src/features/library/LibraryCardStrip.tsx`
 - `web/src/features/library/StorageFilesPage.tsx`
 - `web/src/features/library/MediaLibraryFilesPage.tsx`
+- `web/src/features/library/StorageFilesPage.test.tsx`
+- `web/src/features/library/MediaLibraryConfigDialogs.test.tsx`
+- `web/src/shared/api/library-api.test.ts`
+- `web/src/shared/api/media-library-config-api.test.ts`
+- `web/tests/e2e/library-files.spec.ts`
+- `web/tests/e2e/medialib-config.spec.ts`
+- `web/tests/fake-server.mjs`
 - `TASK.md`
 
 ### Implemented
@@ -175,25 +182,33 @@ servers and temporary Storage roots only:
   read-only IDs and `保存并激活` semantics.
 - Added API regression coverage for field preservation, stale writers and zero-content mutation
   through the existing activation fixtures.
+- Corrected exact-Active concurrency to consume `revisionSequence`, matching the immutable identity
+  returned by both edit projections even when mutable revision `version` differs.
+- Added visible projection-failure recovery outside the closed drawer, retained failed Save input
+  without automatic replay, focus return, narrow-screen coverage and ResourceLibrary disable
+  handoff to configuration.
+- Added focused API/client/component and browser edit journeys for both library kinds, including
+  divergent version/sequence, prefill/read-only ID, field transitions, stale/failure recovery,
+  unchanged removal regressions and controlled edit-drawer screenshots.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS
-- `.venv/bin/python -m unittest tests.test_resource_library_activation tests.test_media_library_activation` — PASS (35 tests)
-- `npm --prefix web run test -- --run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (93 tests)
+- `.venv/bin/python -m unittest tests.test_resource_library_activation tests.test_media_library_activation` — PASS (37 tests)
+- `npm --prefix web run test -- --run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (99 tests)
 - `npm --prefix web run test -- --run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (58 tests after path-preservation fix)
 - `npm --prefix web run typecheck` — PASS
 - `npm --prefix web run lint -- --max-warnings=0` — PASS
 - `npm --prefix web run format:check` — PASS
-- `npm --prefix web run test -- --run` — PASS (603 tests)
+- `npm --prefix web run test -- --run` — PASS (609 tests)
 - `npm --prefix web run build` — PASS (existing chunk-size warning only)
 - `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
-- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-config.spec.ts` — PASS (47 tests)
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-config.spec.ts` — PASS (53 tests)
 - `python3 -m unittest tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` — PASS
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
 - `.venv/bin/ruff check .` — PASS
 - `.venv/bin/ruff format --check .` — PASS
-- `.venv/bin/python -m unittest discover -s tests` — PASS (1793 tests, 7 skipped)
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1795 tests, 7 skipped)
 - `git diff --check` — PASS
 
 ### Decisions
@@ -203,6 +218,10 @@ servers and temporary Storage roots only:
 - The existing Save pipeline remains authoritative for both create and edit; edit merges the
   focused fields into the current object before normalization so extensions and future fields are
   not reset.
+- `revisionSequence` is the edit form's immutable optimistic-concurrency version; mutable Draft
+  `version` remains a separate lifecycle token and is not exposed as edit authority.
+- Projection failure stays outside the drawer with explicit refresh/dismiss actions; unknown reads
+  and writes are never replayed automatically.
 
 ### Remaining In-Slice Work
 
@@ -210,24 +229,56 @@ servers and temporary Storage roots only:
 
 ### Risks / Deviations
 
-- Existing E2E coverage passed, including the controlled Files screenshot and narrow-screen
-  journeys; no new golden image was added for the edit drawer.
+- The browser proof writes controlled `resource-library-edit-drawer.png` and
+  `media-library-edit-drawer.png` evidence under Playwright `test-results`; these generated files
+  are not committed.
+- The pre-existing modified `docs/pics/文件页.png` remains preserved and excluded from both
+  correction commits.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 516acc1706f6cdacd8e4915225c4e70063833ee9
+Head SHA: 1074a6b50e11ea1246c1801f1062230213539b0e
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING | PASS | FIX REQUIRED
-Slice Required Outcomes all satisfied: PENDING | YES | NO
-Next: PENDING | SAME TASK FIX LOOP | NEXT TASK | SLICE READY FOR A REVIEW
+Reviewed: 64d0020265f2870983cd31d07d3809e425767d0d..516acc1706f6cdacd8e4915225c4e70063833ee9
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+- Exact-Active optimistic concurrency is broken after ordinary subsequent activations. The edit
+  projection returns `active.version`, while `save_resource_library(..., edit=True)` and
+  `save_media_library(..., edit=True)` compare the submitted value with
+  `active.revision_sequence or active.version`. Reproduction using the production API path: create
+  two ResourceLibraries through `POST /api/v1/resource-libraries`, yielding Active
+  `version=2, revisionSequence=3`; read `/api/v1/resource-libraries/source/edit`; submit that exact
+  projection to `PUT /api/v1/resource-libraries/source`; result is HTTP 409
+  `configuration_version_conflict` and no edit can succeed. This is a current Files journey and
+  violates RO-4/RO-9 plus the Task criteria for exact-Active editing and successful atomic
+  activation. Return and consume one consistent immutable Active identity for both kinds, and add
+  regression coverage where revision sequence and mutable revision version differ.
+- Edit-projection failures have no visible recovery on either page. `openResourceLibraryEdit` and
+  `openMediaLibraryEdit` store the failure in `saveError`, but that error is rendered only inside
+  the drawer and the drawer remains closed when the projection request fails. A current operator
+  clicking Edit during a 404/409/permission/service/transport failure therefore sees no error or
+  next action. Keep the selected-card journey visibly recoverable as required by RO-4/RO-9 and the
+  Task failure/recovery criteria; do not auto-retry an unknown result.
+- ResourceLibrary disable does not provide the required configuration recovery handoff. The edit
+  success path removes the disabled ResourceLibrary from selection but, unlike the MediaLibrary
+  path, renders no notice/action that explains the durable state and how to re-enable it. This is
+  reachable from the new ResourceLibrary Edit drawer and violates RO-4/RO-9 and the Task criterion
+  that a disabled result be hidden truthfully with the existing configuration handoff. Preserve
+  zero Storage mutation and add the explicit Web recovery action.
+- The required Web/API/browser proof for the new journey is absent. Base..Head changes no Web test
+  or E2E file, and repository search finds no test that opens `编辑资源库`/`编辑媒体库` or submits
+  `保存并激活`. The reported 93 component/API tests and 47 E2E tests are unchanged regressions, not
+  the Task-required edit coverage. Add focused API-client/component tests and both requested browser
+  journeys covering prefill/read-only ID, enabled/name/root/Storage transitions, stale and
+  projection/save failure recovery, no automatic retry, focus/narrow-screen behavior, unchanged
+  removal, and the corrected divergent-version concurrency case; then rerun and truthfully record
+  the complete T4 commands and controlled edit-drawer visual evidence required above.
