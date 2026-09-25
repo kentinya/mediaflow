@@ -190,20 +190,25 @@ servers and temporary Storage roots only:
 - Added focused API/client/component and browser edit journeys for both library kinds, including
   divergent version/sequence, prefill/read-only ID, field transitions, stale/failure recovery,
   unchanged removal regressions and controlled edit-drawer screenshots.
+- Added the enabled Storage choices to each kind-specific edit projection from the same verified
+  Active snapshot; edit drawers now use only that projection and fail visibly if the current
+  binding cannot be represented instead of substituting cached status data.
+- Restored successful-edit keyboard focus: enabled edits return to the invoking selected-card menu
+  trigger, while disabling an edited library focuses the visible configuration recovery handoff.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS
 - `.venv/bin/python -m unittest tests.test_resource_library_activation tests.test_media_library_activation` — PASS (37 tests)
-- `npm --prefix web run test -- --run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (99 tests)
+- `npm --prefix web run test -- --run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts` — PASS (41 tests)
 - `npm --prefix web run test -- --run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (58 tests after path-preservation fix)
 - `npm --prefix web run typecheck` — PASS
 - `npm --prefix web run lint -- --max-warnings=0` — PASS
 - `npm --prefix web run format:check` — PASS
-- `npm --prefix web run test -- --run` — PASS (609 tests)
+- `npm --prefix web run test -- --run` — PASS (611 tests)
 - `npm --prefix web run build` — PASS (existing chunk-size warning only)
 - `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
-- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-config.spec.ts` — PASS (53 tests)
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-config.spec.ts` — PASS (58 tests)
 - `python3 -m unittest tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` — PASS
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
 - `.venv/bin/ruff check .` — PASS
@@ -222,6 +227,10 @@ servers and temporary Storage roots only:
   `version` remains a separate lifecycle token and is not exposed as edit authority.
 - Projection failure stays outside the drawer with explicit refresh/dismiss actions; unknown reads
   and writes are never replayed automatically.
+- Edit Storage choices and the selected object are one atomic read model from the same verified
+  Active revision; cached `system-status` remains Add-page state only and cannot rewrite an edit.
+- Focus restoration follows the durable result: return to the still-present invoking trigger after
+  enabled success, or to the explicit configuration handoff when disable removes that trigger.
 
 ### Remaining In-Slice Work
 
@@ -239,46 +248,39 @@ servers and temporary Storage roots only:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 1074a6b095f2eac5e407c687df38a65cd27f89dc
+Head SHA: 7d4503e45dc3aa79628ed0d98e887167e1e7c529
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 64d0020265f2870983cd31d07d3809e425767d0d..516acc1706f6cdacd8e4915225c4e70063833ee9
+Reviewed: 64d0020265f2870983cd31d07d3809e425767d0d..1074a6b095f2eac5e407c687df38a65cd27f89dc
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Exact-Active optimistic concurrency is broken after ordinary subsequent activations. The edit
-  projection returns `active.version`, while `save_resource_library(..., edit=True)` and
-  `save_media_library(..., edit=True)` compare the submitted value with
-  `active.revision_sequence or active.version`. Reproduction using the production API path: create
-  two ResourceLibraries through `POST /api/v1/resource-libraries`, yielding Active
-  `version=2, revisionSequence=3`; read `/api/v1/resource-libraries/source/edit`; submit that exact
-  projection to `PUT /api/v1/resource-libraries/source`; result is HTTP 409
-  `configuration_version_conflict` and no edit can succeed. This is a current Files journey and
-  violates RO-4/RO-9 plus the Task criteria for exact-Active editing and successful atomic
-  activation. Return and consume one consistent immutable Active identity for both kinds, and add
-  regression coverage where revision sequence and mutable revision version differ.
-- Edit-projection failures have no visible recovery on either page. `openResourceLibraryEdit` and
-  `openMediaLibraryEdit` store the failure in `saveError`, but that error is rendered only inside
-  the drawer and the drawer remains closed when the projection request fails. A current operator
-  clicking Edit during a 404/409/permission/service/transport failure therefore sees no error or
-  next action. Keep the selected-card journey visibly recoverable as required by RO-4/RO-9 and the
-  Task failure/recovery criteria; do not auto-retry an unknown result.
-- ResourceLibrary disable does not provide the required configuration recovery handoff. The edit
-  success path removes the disabled ResourceLibrary from selection but, unlike the MediaLibrary
-  path, renders no notice/action that explains the durable state and how to re-enable it. This is
-  reachable from the new ResourceLibrary Edit drawer and violates RO-4/RO-9 and the Task criterion
-  that a disabled result be hidden truthfully with the existing configuration handoff. Preserve
-  zero Storage mutation and add the explicit Web recovery action.
-- The required Web/API/browser proof for the new journey is absent. Base..Head changes no Web test
-  or E2E file, and repository search finds no test that opens `编辑资源库`/`编辑媒体库` or submits
-  `保存并激活`. The reported 93 component/API tests and 47 E2E tests are unchanged regressions, not
-  the Task-required edit coverage. Add focused API-client/component tests and both requested browser
-  journeys covering prefill/read-only ID, enabled/name/root/Storage transitions, stale and
-  projection/save failure recovery, no automatic retry, focus/narrow-screen behavior, unchanged
-  removal, and the corrected divergent-version concurrency case; then rerun and truthfully record
-  the complete T4 commands and controlled edit-drawer visual evidence required above.
+- The edit projection still does not return the enabled Storage projection required by this Task.
+  `resource_library_edit_projection` and `media_library_edit_projection` return only the selected
+  object and Active summary, while both drawers receive Storage choices from the independent cached
+  `system-status` query. The production form then replaces an exact-Active `initial.storageId` that
+  is absent from that cached list with `storages[0].id` (`StorageFilesPage.tsx:1548-1558` and
+  `MediaLibraryFilesPage.tsx:1378-1387`). A legal sequence—page caches Active N status, Active N+1
+  changes/adds the selected library's Storage, operator opens Edit and receives the N+1 object—thus
+  displays and can save a different Storage while the N+1 optimistic identity still passes. This
+  affects the current selected-card edit journey and violates the Task API scope, RO-9 exact bounded
+  Active projection, and the Acceptance requirement that the exact Active object be prefilled.
+  Return the enabled Storage choices from the same verified Active projection for each kind, make
+  the edit drawer consume that projection instead of unrelated cache authority, fail visibly if the
+  exact binding cannot be represented, and add a regression where cached status and edit Active
+  differ without silently changing Storage.
+- Successful Edit does not restore keyboard focus to the invoking selected-card action button.
+  `closeDrawer()` restores `editDrawerInvokerRef`, but both successful mutation paths directly call
+  `setDrawerOpen(false)` and clear edit state without using that focus recovery
+  (`StorageFilesPage.tsx:2079-2105`, `MediaLibraryFilesPage.tsx:2097-2126`). The focused
+  `保存并激活` button is removed, leaving keyboard users without the required return point; the new
+  E2E tests assert focus only after Cancel, not after successful Save. This is reachable in both
+  current Web edit journeys and violates the Slice Operator Journey's keyboard/focus-return rule and
+  this Task's menu-focus/narrow-screen scope. Restore focus after known successful edit activation
+  (with a truthful fallback if disabling/removing the selected card makes that exact trigger no
+  longer available) and cover enabled and disabled success behavior in browser tests.
