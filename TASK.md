@@ -7,7 +7,7 @@ is the first implementation unit after the historical Slice 38 B Closure Packet.
 ```text
 Task ID: 38.8
 Parent Slice: 38
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 64d0020265f2870983cd31d07d3809e425767d0d
 Difficulty: High
 Test Level: T4
@@ -131,7 +131,8 @@ servers and temporary Storage roots only:
   Storage/enabled transitions, stale/failure recovery, no automatic retry, and unchanged delete.
 - T4 quality/safety gates material to the changed boundary, including
   `python3 scripts/check_governance.py`, `git diff --check`, the repository's normal Python quality
-  checks, and a controlled edit open/closed screenshot plus narrow-screen/focus evidence.
+  checks, `.venv/bin/python -m compileall -q mediaflow tests scripts`, `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .`, `scripts/docker_release_security_smoke_test.py`, and a controlled edit open/closed
+  screenshot plus narrow-screen/focus evidence.
   Do not modify or include the pre-existing dirty `docs/pics/文件页.png`.
 
 ## Non-goals
@@ -154,21 +155,69 @@ servers and temporary Storage roots only:
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_resource_library_activation.py`
+- `tests/test_media_library_activation.py`
+- `web/src/shared/api/api-client.ts`
+- `web/src/features/library/LibraryCardStrip.tsx`
+- `web/src/features/library/StorageFilesPage.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.tsx`
+- `TASK.md`
+
 ### Implemented
+
+- Added exact-Active edit projections and immutable-ID PUT updates for ResourceLibrary and
+  MediaLibrary, preserving unexposed fields through a merged successor document.
+- Reused checked validation, read-only evidence, runtime preparation and atomic activation; stale
+  revision/version/digest writers fail closed without replacing Active.
+- Added Web API client helpers, selected-card edit actions and prefilled edit-capable drawers with
+  read-only IDs and `保存并激活` semantics.
+- Added API regression coverage for field preservation, stale writers and zero-content mutation
+  through the existing activation fixtures.
 
 ### Tests and Results
 
+- `python3 scripts/check_governance.py` — PASS
+- `.venv/bin/python -m unittest tests.test_resource_library_activation tests.test_media_library_activation` — PASS (35 tests)
+- `npm --prefix web run test -- --run src/shared/api/library-api.test.ts src/shared/api/media-library-config-api.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (93 tests)
+- `npm --prefix web run test -- --run src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryConfigDialogs.test.tsx` — PASS (58 tests after path-preservation fix)
+- `npm --prefix web run typecheck` — PASS
+- `npm --prefix web run lint -- --max-warnings=0` — PASS
+- `npm --prefix web run format:check` — PASS
+- `npm --prefix web run test -- --run` — PASS (603 tests)
+- `npm --prefix web run build` — PASS (existing chunk-size warning only)
+- `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
+- `npm --prefix web run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-config.spec.ts` — PASS (47 tests)
+- `python3 -m unittest tests.test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` — PASS
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
+- `.venv/bin/ruff check .` — PASS
+- `.venv/bin/ruff format --check .` — PASS
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1793 tests, 7 skipped)
+- `git diff --check` — PASS
+
 ### Decisions
+
+- Edit requests use the exact Active revision identity read by the page; the browser never edits a
+  Draft or performs a separate activation step.
+- The existing Save pipeline remains authoritative for both create and edit; edit merges the
+  focused fields into the current object before normalization so extensions and future fields are
+  not reset.
 
 ### Remaining In-Slice Work
 
+- No additional Task-local work is known; Slice completeness remains for B/A review.
+
 ### Risks / Deviations
+
+- Existing E2E coverage passed, including the controlled Files screenshot and narrow-screen
+  journeys; no new golden image was added for the edit drawer.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 516acc1706f6cdacd8e4915225c4e70063833ee9
 ```
 
 ## B Review Result
