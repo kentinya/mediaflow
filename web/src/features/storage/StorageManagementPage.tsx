@@ -405,6 +405,7 @@ function InventoryTable({
   onView,
   onEdit,
   onAction,
+  onCheck,
 }: {
   readonly items: readonly StorageRowItem[];
   readonly canManage: boolean;
@@ -413,7 +414,9 @@ function InventoryTable({
   readonly onAction: (
     action: "copy" | "toggle" | "remove",
     item: StorageRowItem,
+    invoker: HTMLElement,
   ) => void;
+  readonly onCheck: (item: StorageRowItem) => void;
 }) {
   return (
     <div className="mf-files-table-scroll">
@@ -476,40 +479,12 @@ function InventoryTable({
                   >
                     编辑
                   </button>
-                  <details className="mf-storage-more">
-                    <summary
-                      className="mf-link-button"
-                      aria-label={`更多操作 ${item.name}`}
-                    >
-                      更多
-                    </summary>
-                    <div className="mf-storage-more-menu" role="menu">
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={!canManage}
-                        onClick={() => onAction("copy", item)}
-                      >
-                        复制
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={!canManage}
-                        onClick={() => onAction("toggle", item)}
-                      >
-                        {item.enabled ? "停用" : "启用"}
-                      </button>
-                      <button
-                        type="button"
-                        role="menuitem"
-                        disabled={!canManage}
-                        onClick={() => onAction("remove", item)}
-                      >
-                        移除配置
-                      </button>
-                    </div>
-                  </details>
+                  <StorageMoreMenu
+                    item={item}
+                    canManage={canManage}
+                    onAction={onAction}
+                    onCheck={onCheck}
+                  />
                 </div>
               </td>
             </tr>
@@ -517,6 +492,116 @@ function InventoryTable({
         </tbody>
       </table>
     </div>
+  );
+}
+
+function StorageMoreMenu({
+  item,
+  canManage,
+  onAction,
+  onCheck,
+}: {
+  readonly item: StorageRowItem;
+  readonly canManage: boolean;
+  readonly onAction: (
+    action: "copy" | "toggle" | "remove",
+    item: StorageRowItem,
+    invoker: HTMLElement,
+  ) => void;
+  readonly onCheck: (item: StorageRowItem) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const summaryRef = useRef<HTMLElement | null>(null);
+  const detailsRef = useRef<HTMLDetailsElement | null>(null);
+  const ignoreToggleRef = useRef(false);
+
+  const closeAndRestoreFocus = useCallback(() => {
+    ignoreToggleRef.current = true;
+    detailsRef.current?.removeAttribute("open");
+    setOpen(false);
+    requestAnimationFrame(() => summaryRef.current?.focus());
+  }, []);
+
+  return (
+    <details
+      ref={detailsRef}
+      className="mf-storage-more"
+      open={open}
+      onToggle={(event) => {
+        if (ignoreToggleRef.current) {
+          ignoreToggleRef.current = false;
+          return;
+        }
+        setOpen(event.currentTarget.open);
+      }}
+      onKeyDown={(event) => {
+        if (event.key === "Escape" && open) {
+          event.preventDefault();
+          event.stopPropagation();
+          closeAndRestoreFocus();
+        }
+      }}
+    >
+      <summary
+        ref={summaryRef}
+        id={`mf-more-storage-${item.id}`}
+        className="mf-link-button"
+        aria-label={`更多操作 ${item.name}`}
+      >
+        更多
+      </summary>
+      {open && (
+        <div className="mf-storage-more-menu" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canManage}
+            onClick={() => {
+              closeAndRestoreFocus();
+              if (summaryRef.current !== null)
+                onAction("copy", item, summaryRef.current);
+            }}
+          >
+            复制
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canManage}
+            onClick={() => {
+              closeAndRestoreFocus();
+              if (summaryRef.current !== null)
+                onAction("toggle", item, summaryRef.current);
+            }}
+          >
+            {item.enabled ? "停用" : "启用"}
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canManage}
+            onClick={() => {
+              closeAndRestoreFocus();
+              onCheck(item);
+            }}
+          >
+            运行只读检查
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            disabled={!canManage}
+            onClick={() => {
+              closeAndRestoreFocus();
+              if (summaryRef.current !== null)
+                onAction("remove", item, summaryRef.current);
+            }}
+          >
+            移除配置
+          </button>
+        </div>
+      )}
+    </details>
   );
 }
 
@@ -1026,6 +1111,7 @@ export function StorageManagementPage() {
     readonly unknown: boolean;
     readonly needsReview: boolean;
   } | null>(null);
+  const lifecycleInvokerRef = useRef<HTMLElement | null>(null);
 
   // Search and the provider filter are applied by the backend over the
   // complete Active object set, not over one already-truncated page.
@@ -1136,7 +1222,11 @@ export function StorageManagementPage() {
   }, [queryClient]);
 
   const runLifecycleAction = useCallback(
-    async (action: "copy" | "toggle" | "remove", item: StorageRowItem) => {
+    async (
+      action: "copy" | "toggle" | "remove",
+      item: StorageRowItem,
+      invoker: HTMLElement,
+    ) => {
       if (!inventory?.active || !inventory.canManage) return;
       const authority = await fetchStorageAuthority(token);
       if (!authority.ok) {
@@ -1151,6 +1241,7 @@ export function StorageManagementPage() {
         return;
       }
       if (action === "copy") {
+        lifecycleInvokerRef.current = invoker;
         setLifecycle({
           action,
           item,
@@ -1212,6 +1303,16 @@ export function StorageManagementPage() {
     },
     [inventory, token, refreshInventoryAuthority],
   );
+
+  const closeLifecycle = useCallback(() => {
+    const invoker = lifecycleInvokerRef.current;
+    const fallback = lifecycle
+      ? document.getElementById(`mf-more-storage-${lifecycle.item.id}`)
+      : null;
+    (invoker ?? fallback)?.focus();
+    setLifecycle(null);
+    lifecycleInvokerRef.current = null;
+  }, [lifecycle]);
 
   const submitCopy = useCallback(async () => {
     if (lifecycle === null || lifecycle.action !== "copy") return;
@@ -1599,6 +1700,12 @@ export function StorageManagementPage() {
                   aria-label={
                     lifecycle.action === "copy" ? "复制存储" : "操作结果核实"
                   }
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      closeLifecycle();
+                    }
+                  }}
                 >
                   {lifecycle.action === "copy" && !lifecycle.unknown ? (
                     <>
@@ -1670,7 +1777,7 @@ export function StorageManagementPage() {
                         <button
                           type="button"
                           className="mf-button mf-button-secondary"
-                          onClick={() => setLifecycle(null)}
+                          onClick={closeLifecycle}
                         >
                           取消
                         </button>
@@ -1696,7 +1803,7 @@ export function StorageManagementPage() {
                         <button
                           type="button"
                           className="mf-button mf-button-secondary"
-                          onClick={() => setLifecycle(null)}
+                          onClick={closeLifecycle}
                         >
                           关闭
                         </button>
@@ -1743,8 +1850,14 @@ export function StorageManagementPage() {
                   onEdit={(id) => {
                     void openEditDrawer(id);
                   }}
-                  onAction={(action, item) => {
-                    void runLifecycleAction(action, item);
+                  onAction={(action, item, invoker) => {
+                    void runLifecycleAction(action, item, invoker);
+                  }}
+                  onCheck={(item) => {
+                    setCheckBlocked(null);
+                    checkMutation.reset();
+                    setDetailId(item.id);
+                    runCheck(item.id);
                   }}
                 />
               )}
