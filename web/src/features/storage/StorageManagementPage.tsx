@@ -670,6 +670,9 @@ export function storageSaveFailure(
     readonly durableState?: string;
     readonly reason?: string;
     readonly nextAction?: string;
+    readonly failureCategory?: string;
+    readonly affectedStorageId?: string;
+    readonly affectedStorageName?: string;
   },
 ): StorageSaveFailureView {
   if (STORAGE_UNKNOWN_OUTCOME_CODES.has(code)) {
@@ -755,13 +758,22 @@ export function storageSaveFailure(
         refreshAuthoritativeState: true,
         unknownOutcome: false,
       };
-    case "storage_storage_check_failed":
+    case "storage_storage_check_failed": {
+      const affected =
+        details?.affectedStorageName ||
+        details?.affectedStorageId ||
+        "相关存储";
+      const category = details?.failureCategory
+        ? `失败原因: ${details.failureCategory}。`
+        : "";
+      const nextAction =
+        details?.nextAction || "修正该存储的挂载、权限或凭据引用,然后重试保存";
       return {
-        message:
-          "保存失败:只读连接/读取检查未通过,候选未发布;旧 Active 与 Storage 内容均未改变。请修正挂载、权限、启用状态或凭据引用后重试。",
+        message: `保存失败:存储“${affected}”的只读连接/读取检查未通过,候选未发布;旧 Active 与 Storage 内容均未改变。${category}${nextAction}。`,
         refreshAuthoritativeState: false,
         unknownOutcome: false,
       };
+    }
     case "storage_strategy_test_failed":
     case "storage_destination_check_failed":
     case "storage_evidence_failed":

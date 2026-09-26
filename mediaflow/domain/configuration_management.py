@@ -277,6 +277,9 @@ class ResourceLibrarySaveError(RuntimeError):
         side_effects: str = "successor_draft_or_read_only_evidence_may_be_retained",
         retry_safe: bool = True,
         next_action: str = "correct the reported condition, then retry or refresh Active state",
+        failure_category: str | None = None,
+        affected_storage_id: str | None = None,
+        affected_storage_name: str | None = None,
     ) -> None:
         super().__init__(message)
         self.code = code
@@ -288,6 +291,9 @@ class ResourceLibrarySaveError(RuntimeError):
         self.side_effects = side_effects
         self.retry_safe = retry_safe
         self.next_action = next_action
+        self.failure_category = failure_category
+        self.affected_storage_id = affected_storage_id
+        self.affected_storage_name = affected_storage_name
 
     @property
     def details(self) -> dict[str, object]:
@@ -301,6 +307,9 @@ class ResourceLibrarySaveError(RuntimeError):
                 "candidateState": "not_published",
                 "sideEffects": self.side_effects,
                 "retrySafe": self.retry_safe,
+                "failureCategory": self.failure_category,
+                "affectedStorageId": self.affected_storage_id,
+                "affectedStorageName": self.affected_storage_name,
                 "nextAction": self.next_action,
             }.items()
             if value is not None
