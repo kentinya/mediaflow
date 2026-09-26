@@ -9,16 +9,17 @@ paths and example records are synthetic fixture data and are not product truth.
 Slice ID: 39
 Name: Storage Management Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: READY FOR A REVIEW
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Implementation Head: c84d545a6b3d122d405ba03a286910322a765266
+Implementation Head: 466337c1337d0b03315d813ba258124538565cc1
 Contract Revision: 2026-09-25 A review corrections — checked activation, removal, layout and reference; no notes
 ```
 
-> A review decision: FIX REQUIRED. The empty-root inventory defect and incomplete setup handoff
-> below block Slice acceptance. The former Closure Packet is historical and its completeness
-> assertion is superseded. See [A Final Review](#a-final-review) for the authorized correction scope;
-> Required Outcomes, Required Surfaces, Safety Invariants, deferrals and Slice Base are unchanged.
+> Task 39.4 has passed B review and the corrected Head is returned to A. The earlier A decision
+> and superseded Closure Packet remain historical; B does not declare Slice completion or A PASS.
+> See [B Correction Return](#b-correction-return--task-394) for current evidence and remaining
+> non-blocking notes. Required Outcomes, Required Surfaces, Safety Invariants, deferrals and
+> Slice Base are unchanged.
 
 Slice 38 is `PASS / CLOSED`. Its Base, Implementation Head, Closure Packet and A Final Review are
 historical facts and remain unchanged. This Slice starts from the repository HEAD immediately after
@@ -461,7 +462,8 @@ and bounded correction scope below. Do not close the Slice using the superseded 
 
 Historical B submission at the Head below. Its all-Outcomes-complete conclusion is superseded by
 the [post-handoff findings](#b-post-handoff-findings); the tests below are historical evidence, not
-proof that those newly reproduced cases pass. No correction has been implemented yet.
+proof that those newly reproduced cases pass. No correction had been implemented at that submission;
+Task 39.4 and the correction return below provide the subsequent evidence.
 
 Slice: 39 — Storage Management Workspace
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
@@ -684,3 +686,92 @@ not a renewed assertion that all other outcomes or the complete final gate have 
   malformed response, stale/unknown outcome and zero-mutation safeguards. After its Task passes,
   return Slice status to READY FOR A REVIEW and submit the corrected Head/evidence to A; do not
   declare Slice PASS/CLOSED or silently revive the superseded packet's completeness assertion.
+
+
+## B Correction Return — Task 39.4
+
+```text
+Slice: 39 — Storage Management Workspace
+Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
+Head SHA: 466337c1337d0b03315d813ba258124538565cc1
+Task: 39.4 — Restore Storage inventory and setup recovery
+Task Base: 3779d203821930ad898fea49df2cee796c7a1c79
+B Task Decision: PASS
+Decision: SLICE READY FOR A REVIEW
+Next: A FINAL REVIEW
+```
+
+This is the correction return required by A's rejecting review, not a second B Slice-final
+completion judgement or a replacement A Final Review. The earlier A rejection and Closure Packet
+stay historical. A owns the next complete Slice Base..Head acceptance decision.
+
+Corrected A blockers:
+
+- Empty-root readability: COMPLETE. The production normalizer accepts the provider-valid empty
+  root while preserving its identity and unrelated bounds/types. The actual API and Python-served
+  Web now complete checked Save → full inventory → detail/Edit → reload. Existing saved entries
+  need no rewrite, deletion/recreation or mutation replay. Empty, `/` and non-empty roots are proven.
+- Setup recovery handoff: COMPLETE. Genuine setup-required Storage exposes the existing V1 setup
+  path, preserves/resumes the first Draft, completes the existing checked activation and provides
+  an explicit return to the actual Storage inventory. Existing memory-only authentication and
+  backend authority remain in force. No native V2 wizard/global onboarding is claimed.
+
+Tasks completed:
+
+- 39.1
+- 39.2
+- 39.3
+- 39.4
+
+Correction validation performed independently by B:
+
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations tests.test_storage_page_local_save tests.test_configuration_objects`: PASS, 128 tests, 0 skips.
+- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,843 tests, 7 existing isolated
+  real-service/endurance skips; 362.298 s. No production remote-service acceptance was attempted.
+- `cd web && npm test -- --run src/entities/storage/storage-management.test.ts src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx`: PASS, 113 tests.
+- `cd web && npm test -- --run`: PASS, 724 tests / 47 files, 0 skips; 303.73 s.
+- `cd web && npm run test:e2e -- --grep 'Storage management'`: initial 28 PASS / 1 FAIL;
+  affected test alone 1 PASS; unchanged complete rerun 29 PASS / 0 skips, 49.2 s. See P2 below.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: PASS.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: PASS, 316 formatted files.
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b394-review`: PASS.
+  The committed candidate passed V1/V2 serving, security headers, RBAC/denial, checked runtime,
+  Worker execution and log/SQLite redaction checks. Developer's previous temporary bind failure
+  did not recur; its historical report is retained without presenting it as today's result.
+- Real SQLite/Local, actual V1/V2 browser continuation and three provider-root Save projections:
+  PASS, via `/tmp/b394-server.py` and `/tmp/b394-realjourney.mjs`; detail in root `TASK.md`.
+  Fixture configuration was entered using the existing Advanced JSON editor; real checks and
+  explicit checked activation were used, with no fabricated evidence or V1 test replacement.
+- Governance before handoff, diff whitespace, exact manifest, private-file and dependency audits:
+  PASS. The final documentation checkpoint must also pass governance after committing its factual
+  status/Head transition. No schema change requires a new migration gate.
+
+Safety Evidence:
+
+- Read/navigation only projects existing authority; no automatic Draft creation, checks, activation,
+  media work or Storage mutation. Required negative/regression tests remain intact.
+- Local validation/confinement, exact checked publication and optimistic concurrency are unchanged.
+  Fixed same-origin links carry no secret/token and grant no new authority; viewers cannot mutate.
+- No private config/credential, unrelated image or reference-image change in Base..Head.
+
+Known Non-blocking Issues:
+
+- P2: the new setup browser test asserts the Storage URL before re-authentication, racing the
+  existing AuthBoundary redirect to the connection entry. Initial gate failed there; targeted and
+  full reruns passed unchanged. The real application restores Storage after authentication, so no
+  current user-impacting recovery failure was reproduced. No test/assertion was relaxed or skipped.
+- Existing ResourceWarnings, jsdom scrollTo notices and Vite bundle-size advisory remain non-fatal.
+
+Explicitly Deferred:
+
+- Unchanged from the Contract. General Configuration migration, native V2 wizard/global onboarding,
+  new authentication mechanisms and Storage write probes remain outside this correction.
+
+Documentation Reconciliation Needed:
+
+- A should reconcile configuration guidance's empty-root defect/workaround wording and Product
+  Experience's factual no-CTA statement with this implementation, without claiming the broader
+  native V2 setup target is delivered.
+- A owns the new full Base..Head acceptance, Closure Packet reconciliation and any final closure.
+  B has not reopened an earlier passed Task, moved any Base or declared the Slice PASS/CLOSED.
