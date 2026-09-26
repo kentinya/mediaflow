@@ -169,6 +169,8 @@ exact commands, totals, skips and unavailable external gates.
 - `web/src/features/storage/StorageManagementPage.tsx`: structured lifecycle dependency/state recovery feedback and explicit stale-copy review state preserving entered ID/name.
 - `web/src/features/storage/StorageManagementPage.test.tsx`: dependency failure and retained stale-copy review regressions.
 - `web/tests/e2e/storage-management.spec.ts`: real browser dependency-failure, stale-copy review and bounded-page exact-ID recovery journeys.
+- `web/src/features/storage/StorageManagementPage.tsx`: completed the More menu read-check action and keyboard dismissal/focus return for menus and Copy.
+- `web/src/features/storage/StorageManagementPage.test.tsx`: regression coverage for More read-check, Escape dismissal, focus return and no-copy-on-cancel.
 
 ### Implemented
 
@@ -184,16 +186,17 @@ exact commands, totals, skips and unavailable external gates.
 - Correction loop: stale Copy disables submission until the operator explicitly refreshes and reviews the current source authority; entered new ID/name remain unchanged and no command is replayed automatically.
 - Correction loop: the browser fake now validates read checks against `revisionSequence`, matching the production protocol.
 - Correction loop: stale Copy review now resolves the selected source through the exact `/edit` projection by stable ID, so a valid source outside the first bounded inventory page is not mistaken for deletion.
+- Correction loop: More now exposes the existing permission-aware zero-mutation read check; More and Copy Escape dismissal close without submission and return focus to the invoking row action.
 
 ### Tests and Results
 
 - PASS — `python3 -m py_compile mediaflow/application/configuration_objects.py mediaflow/interfaces/service_api.py`.
 - PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save` (126 tests, 0 failures).
 - PASS — `cd web && npm run typecheck`.
-- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts` (46 tests, 0 failures; jsdom reports existing `scrollTo` notices).
+- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx` (31 tests, 0 failures; jsdom reports existing `scrollTo` notices).
 - PASS — `python3 scripts/check_governance.py`; `git diff --check`.
 - PASS — `.venv/bin/python -m unittest discover -s tests` (1,836 tests, 7 skips for existing external/endurance profiles; existing SQLite ResourceWarnings only).
-- PASS — `cd web && npm test -- --run` (701 tests, 47 files; existing jsdom `scrollTo` notices only).
+- PASS — `cd web && npm test -- --run` (702 tests, 47 files; existing jsdom `scrollTo` notices only).
 - PASS — `cd web && npm run test:e2e -- --grep 'Storage management'` (24 Chromium tests).
 - PASS — `cd web && npm run lint && npm run typecheck && npm run format:check && npm run build` (existing Vite bundle-size advisory only).
 - PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`.
@@ -219,93 +222,93 @@ exact commands, totals, skips and unavailable external gates.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ee1ae01d0b426dfe50a704bfb1e97d1b42e8c028
+Head SHA: 55762f4820b53fda0be3b031d809d207b9137bf5
 ```
 
 ## B Review Validation
 
-Review round: 4 (third correction checkpoint). Reviewed implementation:
-`124a6f74f1b4f92eeda487b7bbe500e25d0f16cd`; repository HEAD:
-`c277057eb5c11fef8092979d37958879454a216a`. The subsequent commit changes only `TASK.md`.
+Review round: 5 (fourth correction checkpoint). Reviewed implementation:
+`ee1ae01d0b426dfe50a704bfb1e97d1b42e8c028`; repository HEAD:
+`4b0829e15ff1df72d7f2a9107b518bce823a9311`. The later commit changes only `TASK.md`.
 Task Base remains `6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9`.
 
-B inspected the cumulative Task and correction diffs. The prior dependency message now names
-`media-target`, its failure category and durable state; restoring that real Local target root
-allows the retained copy submission to succeed. With a normal three-Storage inventory, stale
-Copy now retains ID/name, explicitly refreshes the source, displays its changed name and succeeds
-on a new explicit Save. Both paths were reproduced with the built Web, real `MediaFlowApi`, SQLite
-configuration and real Local adapters. They are not retained as blockers.
+B inspected the correction and cumulative diffs. The previous bounded-list recovery defect is
+fixed: in a real 108-Storage configuration, search finds `spare` outside the first 100 entries;
+concurrent editing causes a stale rejection; exact-ID review displays the current source name
+and retains the proposed ID/name; explicit Save returns HTTP 200 and the resulting Active's
+exact-ID lookup returns the newly published copy. That finding is removed from the blocker list.
 
-The remaining reproduction uses a valid 108-Storage configuration, with 105 disabled Local
-Storage entries and the three normal source/target/spare entries. The existing bounded inventory
-returns 100 entries and explicitly reports `truncated: true`, `hasMore: true`. The operator finds
-`spare` through the supported top-bar search. No adapter, permission, API or runtime capability is
-hidden or replaced; all roots and credentials belong to the temporary synthetic review fixture.
+B then checked the original Task Acceptance Criterion 1 against the actual row-action UI. The
+More menu and Copy dialog do not complete the required action/keyboard surface described below.
+The same authorized Local Storage has a working read-check action in View (HTTP 200), so this
+finding concerns the explicitly required More entry and lifecycle interactions, not an unavailable
+adapter or a broken read-check API. Earlier B reviews failed to identify this original acceptance
+gap together with the other findings; it is not new scope.
 
 ### Whole-task complexity reassessment
 
-This fourth review follows three correction checkpoints, so B reassessed the approach as a whole.
-The lifecycle goal remains one appropriately bounded Task; there is no need to expand the Slice,
-add a new Task, relax concurrency or introduce a new configuration abstraction. The recurring
-integration problem is reconstructing one selected object's authority from separate generic list
-and authority reads. Prefer the existing exact-ID Storage projection with its immutable Active
-identity for copy review, following the established Add/Edit pattern. A paginated inventory is a
-discovery surface and cannot establish that a specific selected object was deleted. Simplifying
-this data access is sufficient for the remaining fix; a broad refactor is not required.
+Four correction checkpoints exceed the requested three-round threshold. The exact-ID change
+successfully simplifies source review to the existing projection and its own authority. The
+remaining requirement also fits existing UI behavior: reuse the current detail/read-check action
+and established accessible menu/dialog dismissal conventions. The business boundary does not
+require more configuration abstractions, extra operator confirmations or another Task. Repeated
+partial review/implementation of the original interaction criteria should be resolved as one
+row-action journey; do not expand the Contract or replace the checked publication architecture.
 
 ### Independent validation
 
 - `.venv/bin/python -m unittest discover -s tests`: PASS, 1,836 tests, 7 skips,
-  331.089 seconds; existing external/endurance profiles remain unavailable.
-- `cd web && npm test -- --run`: PASS, 700 tests across 47 files.
+  344.738 seconds; existing external/endurance profiles remain unavailable.
+- `cd web && npm test -- --run`: PASS, 701 tests across 47 files.
 - `cd web && npm run test:e2e -- --grep 'Storage management'` against the rebuilt candidate:
-  PASS, 23 Chromium tests. The previous three read-check fixture failures are corrected.
+  PASS, 24 Chromium tests. The new bounded-page scenario is included; B additionally verified
+  successful final publication with the real API rather than stopping at an enabled button.
 - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`:
-  PASS; existing bundle-size advisory only.
+  PASS; existing Vite bundle-size advisory only.
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: PASS, 316 files formatted.
   `.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
-- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-3-r4-review`:
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-3-r5-review`:
   PASS, release-security smoke acceptance passed against the clean committed candidate.
-- Governance and whitespace checks pass. No tests/assertions were removed or weakened and no skips
-  were added. The cumulative manifest contains only this Task's production, test and report files.
-  `config/alist.json` remains ignored and untracked. Slice Contract, reference image and unrelated
-  image changes remain untouched. No Storage mutation or FFmpeg/FFprobe dependency was added.
+- Governance and whitespace checks pass. No tests/assertions were removed or weakened and no
+  skips were added. The cumulative manifest contains only this Task's production/test/report
+  files. `config/alist.json` remains ignored and untracked; Contract, reference image and
+  pre-existing unrelated image changes remain untouched. No Storage mutation or FFmpeg/FFprobe
+  dependency was introduced.
 
-Logs: `/tmp/mediaflow-b393-r4-{corrections,bounded,python,web,e2e,docker}.log`.
-Reproduction commands for the corrected ordinary flow:
-`PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-r4-server.py`, followed by
-`node /tmp/mediaflow-b393-r4-corrections.mjs` on a fresh temporary instance.
-For the remaining defect, start
-`PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-r4-bounded-server.py`, then run
-`node /tmp/mediaflow-b393-r4-bounded.mjs`.
-Browser evidence: `/tmp/mediaflow-b393-r4-bounded.png`.
+Logs: `/tmp/mediaflow-b393-r5-{bounded,actions,python,web,e2e,docker}.log`.
+Reproduction: start `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-r5-server.py`, then run
+`node /tmp/mediaflow-b393-r5-bounded.mjs` and
+`node /tmp/mediaflow-b393-r5-actions.mjs`. These use the real application/API, SQLite managed
+configuration, actual Local adapters and temporary roots. No production capability is removed,
+no unsupported assembly is used and no production credential or media is involved.
+Browser evidence: `/tmp/mediaflow-b393-r5-bounded.png` and
+`/tmp/mediaflow-b393-r5-actions.png`.
 
-B did not run Slice Final: the supported bounded-inventory Copy recovery under RO-2/RO-4/RO-6
-and Task acceptance remains incomplete.
+B did not run Slice Final because original Task acceptance and the required row-action surface
+remain incomplete. Task ID/Base/Goal/Scope are unchanged.
 
 ## B Review Result
 
 ```text
-Reviewed: 6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9..124a6f74f1b4f92eeda487b7bbe500e25d0f16cd
+Reviewed: 6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9..ee1ae01d0b426dfe50a704bfb1e97d1b42e8c028
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Copy review treats absence from the first inventory page as deletion
-  (Task Acceptance Criteria 2/6; Slice RO-2/RO-4/RO-6).**
-  `StorageManagementPage.tsx:reviewCopy` calls unfiltered `fetchStorageInventory(token)` and
-  searches only `current.items`. In the current supported 108-Storage configuration, the operator
-  searches for `spare`, opens Copy and enters a new ID/name. Another authorized edit succeeds
-  (HTTP 200), so Copy correctly rejects the old authority (HTTP 409). Clicking
-  `刷新并审核复制源` then fetches the first 100 of 108 entries, with `truncated=true` and
-  `hasMore=true`; `spare` is outside that page. The UI incorrectly says
-  `当前复制源已不在 Active 配置中` and keeps Save disabled. A simultaneous exact-ID GET
-  `/api/v1/storages/spare/edit` returns HTTP 200 with the current name `Changed Spare`.
-  Thus an operator who legitimately found the source through search cannot finish the promised
-  retained-input recovery, even though the source still exists. Read the selected source by its
-  stable ID using the existing exact-object projection/authority path, distinguish actual absence
-  from bounded-list omission, retain the proposed ID/name and show the current source for review
-  before a new explicit Save. Add the supported beyond-first-page search → stale Copy → explicit
-  review → successful submission regression and rerun the assigned T4 checks against the corrected
-  checkpoint. Keep Task ID/Base/Goal/Scope unchanged.
+- **P1 — Complete the required More/read-check and keyboard interaction surface
+  (Task Acceptance Criterion 1; Slice Required Surfaces and RO-1's Reference Composition / Row actions).**
+  At `/ui-v2/storage`, an authorized operator opens More for the enabled Local `spare` Storage.
+  The real menu exposes only `复制`, `停用`, `移除配置`; its read-check menu-item count is zero.
+  The promised More → read-check entry is absent even though View → `运行只读检查` is enabled
+  and succeeds with HTTP 200 for that same Storage. `InventoryTable` wires only the three
+  lifecycle commands. The original Task explicitly requires read-check through More, so the
+  alternate View entry does not complete that required surface. In the same real browser,
+  focus a More menu item and press Escape: the menu remains open. Open Copy, focus its ID field
+  and press Escape: the dialog remains visible and focus stays in that input; the required
+  dismiss/return-to-invoker interaction is absent. Wire the applicable read-check menu action to
+  the existing permission-aware detail/check behavior, and complete the menu/Copy dialog Escape
+  and focus-return behavior without submitting a command on dismissal. Verify the actual More
+  and Copy controls with keyboard and narrow-layout coverage, including read-check completion
+  and no publication on cancel; the existing Add/Edit keyboard test does not cover this journey.
+  Rerun the assigned T4 gates and report the corrected checkpoint's actual results.
