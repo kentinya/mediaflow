@@ -932,6 +932,53 @@ function stubWorkspace(options: {
 }
 
 describe("Storage lifecycle actions", () => {
+  it("exposes read-check from More and dismisses menu and copy with Escape", async () => {
+    const fetchMock = stubWorkspace({ items: [STORAGE_LOCAL] });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    const invoker = await screen.findByLabelText("更多操作 Local source");
+    await userEvent.click(invoker);
+    const menu = screen.getByRole("menu");
+    expect(
+      within(menu).getByRole("menuitem", { name: "运行只读检查" }),
+    ).toBeVisible();
+    await userEvent.click(
+      within(menu).getByRole("menuitem", { name: "运行只读检查" }),
+    );
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith("/storage/local-source/check") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toBe(true);
+
+    await userEvent.click(invoker);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).toBeNull();
+    await waitFor(() => expect(document.activeElement).toBe(invoker));
+
+    await userEvent.click(invoker);
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+    const copy = await screen.findByRole("dialog", { name: "复制存储" });
+    const idInput = within(copy).getByLabelText("新存储 ID");
+    await userEvent.click(idInput);
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "复制存储" })).toBeNull(),
+    );
+    expect(document.activeElement).toBe(invoker);
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url).endsWith("/api/v1/storages") &&
+          (init as RequestInit | undefined)?.method === "POST",
+      ),
+    ).toHaveLength(0);
+  });
+
   it("shows the failing dependency and durable states for copy admission", async () => {
     const fetchMock = stubWorkspace({
       items: [STORAGE_R2],
