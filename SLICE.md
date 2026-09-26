@@ -9,9 +9,9 @@ paths and example records are synthetic fixture data and are not product truth.
 Slice ID: 39
 Name: Storage Management Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Implementation Head: NOT SET
+Implementation Head: c84d545a6b3d122d405ba03a286910322a765266
 Contract Revision: 2026-09-25 A review corrections — checked activation, removal, layout and reference; no notes
 ```
 
@@ -373,13 +373,143 @@ visual polish or a future write-probe idea is not a reason to create another Tas
 ```text
 Parent Slice: 39 — Storage Management Workspace
 Status: NO ACTIVE IMPLEMENTATION TASK
-Next Action: B plans the first coherent implementation Task after this Contract checkpoint
+Next Action: A FINAL REVIEW
 ```
 
 ## Closure Packet
 
-Not submitted. B records factual implementation and validation evidence here when the Required
-Outcomes are satisfied, following the development workflow.
+Slice: 39 — Storage Management Workspace
+Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
+Head SHA: c84d545a6b3d122d405ba03a286910322a765266
+
+Required Outcomes:
+- RO-1 COMPLETE — Dedicated V2 route/shared search, provider cards, six-column table,
+  View/Edit/More actions and explicit four-step drawer; desktop/narrow keyboard evidence verified.
+- RO-2 COMPLETE — Exact Active, bounded searchable inventory and details, provider-safe paths,
+  enabled/disabled reference counts and honest continuation; no reads needed to list configuration.
+- RO-3 COMPLETE — Typed Local/SMB/OpenList/S3/R2/S3-compatible Add/Edit, immutable IDs,
+  preserved options/secret references, full successor validation/evidence and checked publication.
+- RO-4 COMPLETE — Explicit configuration copy, enable/disable and one-confirmation removal;
+  complete reference protection, exact decision fencing, remaining-configuration checks, preserved
+  physical contents/historical snapshots and explicit recovery without automatic replay.
+- RO-5 COMPLETE — Bounded zero-mutation Connection/Read checks from View and More, current evidence,
+  failure/recovery state and an explicit statement that write access was not tested.
+- RO-6 COMPLETE — Setup/auth/validation/provider/dependency/stale/unknown states provide durable
+  state and recovery; copy retains input and reviews the selected source by exact ID beyond page 1.
+- RO-7 COMPLETE — Shared application authority, RBAC, redaction, audit, concurrency and runtime
+  publication; existing configuration, V1/V2, Storage and Organizer regression remains green.
+
+Required Surfaces:
+- COMPLETE — `/ui-v2/storage`, shared shell/navigation/top-bar search and provider cards.
+- COMPLETE — Six-column table with name/ID, separate state, both reference counts and row actions.
+- COMPLETE — Secret-free Storage detail/readiness, capabilities, authority and reference impact.
+- COMPLETE — Explicitly opened four-step Add/Edit drawer with prefill, immutable ID and safe dismissal.
+- COMPLETE — All six typed provider forms, supported common options and approved secret references.
+- COMPLETE — Bounded enabled/disabled library-reference inspection with honest truncation.
+- COMPLETE — Read-only Connection/Read evidence, currentness and explicit safe recovery.
+- COMPLETE — Matching typed list/detail/reference/Add/Edit/copy/state/removal/check APIs.
+
+Implemented:
+- Provider-neutral V2 Storage management over the existing managed-configuration authority.
+- Checked page-local configuration publication and complete row-action/recovery journeys.
+- Exact Active concurrency and bounded reference/diagnostic projections without media mutation.
+
+Tasks completed:
+- 39.1 — Inventory, detail and read diagnostics; PASS at 50642cd19da9da35197e6e54dcc6fe277003a3f3.
+- 39.2 — Typed Add/Edit and checked Save; PASS at 764a56eb74e2eb311fd9e685699c8cad4e24f3af.
+- 39.3 — Checked copy, enable/disable and configuration removal; PASS at fc6a1fa143efc1a10ee84494fa5940312f53af83.
+
+Final Tests:
+- `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`:
+  PASS, 128 tests, 0 skips, 24.365 s. This supersedes the stale 126-test report count.
+- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,836 tests, 7 skips, 351.685 s.
+  Skips: isolated real OpenList/SMB/S3 acceptance (3) and Local/SMB/OpenList/S3 endurance (4).
+  These external profiles were unavailable; no production service/credential/media was used.
+- `cd web && npm test -- --run`: PASS on unchanged full rerun, 702 tests / 47 files, 0 skips, 235.59 s.
+  First run: 701 passed, 1 failed (Storage header's asynchronous heading lookup).
+  Unchanged focused rerun: `npm test -- --run src/features/storage/StorageManagementPage.test.tsx`,
+  PASS, 31 tests. No assertion, timeout, skip or implementation was changed for either rerun.
+- `cd web && npm run test:e2e -- --grep 'Storage management'`: PASS, 24 Chromium tests, 0 skips,
+  42.8 s, using the rebuilt candidate. Controlled 1536 x 1024 closed/step-1/long-form screenshots
+  are in `web/test-results/storage-{closed,drawer-step1,drawer-long-form}-1536x1024.png`.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: PASS.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: PASS, 316 files formatted;
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-3-r6-review`:
+  PASS against the committed candidate; authenticated API/Web, RBAC denial, runtime activation,
+  Worker completion, exports/logs and release-security smoke passed. B reran this gate despite
+  Developer's explicit correction-round skip. No persistence schema migration was added.
+- `python3 scripts/check_governance.py`: PASS on the committed candidate before this B handoff;
+  `git diff --check` and Slice Base..Head whitespace audit: PASS.
+- Real application/API + SQLite + production Local adapters on temporary roots: PASS for copy,
+  disable/enable, referenced denial, stale removal (409), unavailable-root configuration removal,
+  unchanged contents/historical snapshot and subsequent read check (200). Real Chromium checks:
+  1536/390-width More and Copy Escape/focus/cancel, zero configuration commands on dismissal,
+  More read-check (200), 108-Storage exact-ID stale-copy review/retained input/final publication,
+  and Web disable/enable/one-confirmation removal with refreshed Active state all PASS.
+
+Safety Evidence:
+- Application/API diff retains complete successor validation, exact read-only and offline
+  strategy/destination evidence, prepared runtime binding and atomic activation. The same authority
+  fences every lifecycle command; stale displayed rows cannot be paired with newer Active state.
+- Removal uses the full reference graph, including disabled dependents; it checks only the remaining
+  configuration. Real Local proof preserves physical contents and historical revision documents.
+- No new Storage write path, media-job admission, capability fallback or FFmpeg/FFprobe dependency.
+  Tests/assertions were not removed or weakened and no skips were added in Task 39.3.
+- Private-file/manifest audit: `config/alist.json` is ignored and untracked, no real credentials
+  included; the three pre-existing unrelated image changes are preserved outside this work.
+- Reference `docs/pics/储存管理.png` remains unchanged, SHA-256
+  `5e3aa806a081aaa52afdb79e0442e751e793aedcb1e4dd4616049f15e3b3df44`.
+- Review round 6 reassessed the >3 correction rounds: the completed row actions reuse existing
+  checks, authority and UI behavior. No extra architecture, confirmation step or micro-Task is needed.
+
+Known Non-blocking Issues:
+- P2 — Some diagnostic capability/state labels and next-action text retain technical English;
+  the visible result, write-not-tested statement and recovery controls remain usable.
+- P3 — The first heavily concurrent validation run had one asynchronous heading-lookup failure;
+  focused and full unchanged reruns passed. Existing SQLite ResourceWarnings, jsdom scrollTo
+  notices and Vite bundle-size advisory remain non-fatal. No current P0/P1 blocker was found.
+
+Explicitly Deferred:
+- Storage notes input, display, persistence and search are excluded by the user's correction, not
+  deferred to a later Task or Slice.
+- Mutation-based Storage write/capability probes, probe cleanup, test-object retention and recovery
+  after an uncertain probe. This Slice deliberately delivers only zero-mutation Connection/Read
+  checks; a future capability-diagnostics Slice must design the explicit mutation authority first.
+- General Configuration page migration/redesign, full Draft/Validated/Active administration UI,
+  configuration import/export, backup/restore, System Settings and Webhook management.
+- New Storage providers (WebDAV, SFTP, FTP, OSS, COS or other adapters), provider switching and
+  complete Secret Store/Docker Secrets integration.
+- Storage Files/FileIndex browsing, ResourceLibrary/MediaLibrary file operations, media-processing
+  workflows and page-level Scan/Preview/Organize, thumbnails, capacity/full-library statistics and
+  media playback. The required offline activation checks and internal Parser/Recognition/Naming/
+  Classification/Planner calculations defined above remain in scope.
+- Arbitrary host filesystem browsing, recursive root scans, content indexing, upload/download or
+  automatic root directory creation. Existing bounded Storage Browser/path selection remains a
+  separate setup/configuration capability.
+- Changing Storage IDs, migrating or copying physical root contents after configuration changes,
+  automatic reference rewrites, bulk multi-object editing, policy editing, V1 `/ui` retirement or
+  a new identity/session system.
+- Editing or regenerating the supplied `docs/pics/储存管理.png`, which A includes unchanged in this
+  Contract checkpoint. Unrelated existing image modifications, deletions and new files remain
+  outside the checkpoint. Implementation Tasks consume the committed reference with the no-notes
+  override; they do not alter it.
+
+Documentation Reconciliation Needed:
+- A should reconcile CURRENT architecture/product-experience/requirement facts with the dedicated
+  Storage route and typed checked lifecycle, retaining the read-only diagnostic/write-probe boundary.
+- A owns the final Base..Head review, any Roadmap/Progress status reconciliation and closure checkpoint.
+  This B packet and Task notice record readiness for A review; committing or publishing this
+  handoff does not declare the Slice PASS / CLOSED.
+
+Decision: SLICE READY FOR A REVIEW
+
+Evidence location: `/tmp/mediaflow-b393-r6-{python,focused,web,web-focused,web-rerun,e2e,docker,api,actions,bounded,lifecycle}.log`.
+Real Local probes: `/tmp/mediaflow-b393-r6-api.py`, `/tmp/mediaflow-b393-r6-{actions,bounded,lifecycle}.mjs`
+with `/tmp/mediaflow-b393-r5-server.py`; browser action screenshots are
+`/tmp/mediaflow-b393-r6-actions-{1536,390}.png`. These are local validation artifacts, not repository
+product files. Task review used the reported Head above; the two later commits through this packet's
+Head alter only TASK.md, so all final validation covers the same implementation.
 
 ## A Final Review
 
