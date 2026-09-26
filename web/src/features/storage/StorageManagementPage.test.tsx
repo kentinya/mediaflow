@@ -1037,6 +1037,43 @@ describe("Storage lifecycle actions", () => {
     ).toHaveLength(2);
   });
 
+  it("reviews a stale copy source by exact ID even when inventory is bounded", async () => {
+    const source = { ...STORAGE_R2, id: "spare", name: "Spare" };
+    const fetchMock = stubWorkspace({
+      items: [source],
+      onSave: () => [
+        409,
+        errorPayload("storage_copy_stale", {
+          durableState: "active_preserved",
+          candidateState: "not_published",
+        }),
+      ],
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await userEvent.click(await screen.findByLabelText("更多操作 Spare"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+    const copy = await screen.findByRole("dialog", { name: "复制存储" });
+    await userEvent.click(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    );
+    expect(await within(copy).findByText(/复制源已变化/)).toBeVisible();
+    const editCallsBefore = fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/spare/edit"),
+    );
+    await userEvent.click(
+      within(copy).getByRole("button", { name: "刷新并审核复制源" }),
+    );
+    expect(
+      fetchMock.mock.calls.filter(([url]) =>
+        String(url).endsWith("/spare/edit"),
+      ).length,
+    ).toBeGreaterThan(editCallsBefore.length);
+    expect(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    ).toBeEnabled();
+  });
+
   it("rejects a row from an older Active before removal confirmation", async () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
