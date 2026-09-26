@@ -899,10 +899,33 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         self.assertEqual(status, 409, failure)
         self.assertEqual(failure["error"]["code"], "storage_storage_check_failed")
         self.assertEqual(failure["error"]["details"]["durableState"], "active_preserved")
+        self.assertEqual(failure["error"]["details"]["failureCategory"], "not_found")
+        self.assertEqual(failure["error"]["details"]["affectedStorageId"], "source-storage")
+        self.assertEqual(failure["error"]["details"]["affectedStorageName"], "Missing Mount")
+        self.assertIn(
+            "make the configured root available",
+            failure["error"]["details"]["nextAction"],
+        )
         self.assertEqual(self.configuration.active().revision_id, winner)
         self.assertEqual(self.storage_of("source-storage")["rootPath"], str(self.root / "source"))
         self.assertEqual(self.source.mutations, [])
         self.assertEqual(self.target.mutations, [])
+
+        self.api._configuration_objects._storage_adapters["source-storage"] = self.source
+        status, saved = request(
+            self.api,
+            f"{SAVE_ROUTE}/source-storage",
+            method="PUT",
+            body=edit_body(
+                self.form_identity("source-storage"),
+                "source-storage",
+                name="Recovered Source",
+                type="local",
+                rootPath=str(self.root / "source"),
+            ),
+        )
+        self.assertEqual(status, 200, saved)
+        self.assertEqual(saved["storage"]["name"], "Recovered Source")
 
     # ------------------------------------------------------------------
     # Authority, audit, evidence retention and application boundary

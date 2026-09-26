@@ -834,12 +834,32 @@ class ConfigurationObjectService:
                 )
                 if evidence.status is not ConfigurationStorageCheckStatus.PASSED:
                     category = self._bounded_utf8(evidence.failure_category or "unknown", 128)
+                    storage = next(
+                        (
+                            item
+                            for item in self._canonical_objects(validated.document, "storages")
+                            if item.get("id") == referenced_storage_id
+                        ),
+                        None,
+                    )
+                    storage_name = (
+                        self._bounded_utf8(str(storage.get("name")), 120)
+                        if isinstance(storage, Mapping) and storage.get("name") is not None
+                        else None
+                    )
                     raise ResourceLibrarySaveError(
                         f"{code_prefix}_storage_check_failed",
                         "a required read-only Storage check did not pass",
                         revision_id=validated.revision_id,
                         durable_state="active_preserved",
-                        next_action=(f"correct Storage availability ({category}), then retry Save"),
+                        failure_category=category,
+                        affected_storage_id=self._bounded_utf8(referenced_storage_id, 128),
+                        affected_storage_name=storage_name,
+                        next_action=(
+                            f"{evidence.next_action} (failure category: {category})"
+                            if evidence.next_action
+                            else f"correct Storage availability ({category}), then retry Save"
+                        ),
                     )
 
             enabled_resources = [

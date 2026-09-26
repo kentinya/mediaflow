@@ -1197,8 +1197,13 @@ describe("Storage Add/Edit drawer", () => {
       409,
       errorPayload("storage_storage_check_failed", {
         durableState: "active_preserved",
+        affectedStorageId: "media-target",
+        affectedStorageName: "Media target",
+        failureCategory: "not_found",
+        nextAction:
+          "make the configured root available, reload, and retry the read-only check",
       }),
-      /只读连接\/读取检查未通过/,
+      /存储“Media target”的只读连接\/读取检查未通过.*not_found.*make the configured root available/,
     ],
     [
       409,

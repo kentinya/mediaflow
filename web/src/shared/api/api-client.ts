@@ -2288,6 +2288,9 @@ export interface AutomationMutationFailureDetails {
   readonly retrySafe?: boolean;
   readonly nextAction?: string;
   readonly reason?: string;
+  readonly failureCategory?: string;
+  readonly affectedStorageId?: string;
+  readonly affectedStorageName?: string;
   readonly currentRevisionId?: string;
   readonly currentVersion?: number;
 }
@@ -2320,6 +2323,18 @@ function normalizeAutomationMutationFailureDetails(
       : {}),
     ...(typeof record.reason === "string" && record.reason.length <= 128
       ? { reason: record.reason }
+      : {}),
+    ...(typeof record.failureCategory === "string" &&
+    record.failureCategory.length <= 128
+      ? { failureCategory: record.failureCategory }
+      : {}),
+    ...(typeof record.affectedStorageId === "string" &&
+    record.affectedStorageId.length <= 128
+      ? { affectedStorageId: record.affectedStorageId }
+      : {}),
+    ...(typeof record.affectedStorageName === "string" &&
+    record.affectedStorageName.length <= 120
+      ? { affectedStorageName: record.affectedStorageName }
       : {}),
     ...(typeof record.currentRevisionId === "string" &&
     record.currentRevisionId.length <= 128
