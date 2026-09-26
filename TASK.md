@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 39.2
 Parent Slice: 39
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: 2d012c07f049fb2e0831a39b721b1aa465e3888e
 Difficulty: High
 Test Level: T4
@@ -137,6 +137,7 @@ provider services and synthetic secret references; never require production SMB/
 ### Changed Files
 
 - `mediaflow/application/configuration_objects.py`: Storage form authority/projection and checked Add/Edit command; extend shared evidence collection for the enabled Storage being saved.
+- `mediaflow/domain/configuration_management.py`: bounded Storage-check failure identity and category fields on Save errors.
 - `mediaflow/interfaces/service_api.py`: typed Storage routes, management + activation RBAC, runtime binding, bounded Save outcomes and audit route templates.
 - `tests/test_storage_page_local_save.py`: isolated application/API provider, concurrency, validation, admission failure, redaction and zero-mutation regressions.
 - `web/src/entities/storage/storage-form.ts` and `storage-form.test.ts`: six-provider field model, validation, exact path preservation and typed response normalization.
@@ -152,12 +153,16 @@ provider services and synthetic secret references; never require production SMB/
 - `GET /api/v1/storages` captures exact Active authority; `GET /api/v1/storages/{id}/edit` supplies the selected form; POST/PUT use the same application command. Both Add and Edit reject stale open-time revision/sequence/digest before creating a successor.
 - Save composes and validates the complete successor, checks referenced enabled Storages plus the enabled Storage being saved, retains offline strategy/destination evidence, prepares runtime binding and checked-activates atomically. No media work or Storage mutation is started.
 - Failed validation, dependencies, credentials/read checks, persistence, runtime preparation or concurrency leave the prior Active intact. Unknown/stale outcomes block resubmission until explicit successful authority verification; no automatic Save replay occurs.
+- Failed checked Storage evidence now carries the actual affected Storage ID/name, bounded failure category and the evidence-derived recovery action through API and Web; the failed candidate remains editable and a corrected explicit Save can continue.
 - Same-provider edits preserve omitted supported options; explicit null clears optional settings and provider changes drop the former provider's options. Legacy unnamed Storage projections use their stable ID. OpenList provider-rooted paths remain logical; Local host root and traversal are rejected.
 - Shared search, existing detail/read checks and V1 surfaces remain in place. Desktop drawer context now keeps Storage names/IDs readable instead of inheriting Files checkbox-column widths.
 
 ### Tests and Results
 
 Final command results (2026-09-26; temporary roots and fake/local services only):
+
+- PASS — `.venv/bin/python -m unittest tests.test_storage_page_local_save tests.test_resource_library_activation`: 37 tests, zero failures; includes multi-Storage failed-mount identity/recovery and explicit successful continuation.
+- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts`: 42 tests, zero failures; includes typed API error projection and affected-Storage Web recovery.
 
 - PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`: 126 tests, zero skips.
 - PASS — `.venv/bin/python -m unittest discover -s tests`: 1,834 tests, 7 SKIP (dedicated SMB/S3/OpenList real-service acceptance and Local/SMB/OpenList/S3 endurance profiles are absent).
@@ -168,7 +173,7 @@ Final command results (2026-09-26; temporary roots and fake/local services only)
 - PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: 316 files formatted; lint clean.
 - PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`.
 - PASS — `python3 scripts/check_governance.py`; `git diff --check`; explicit Task manifest/private-file/reference-image audit; changed-source FFmpeg/FFprobe/private-key exclusion audit.
-- UNAVAILABLE — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-2-validation`, run twice in `/tmp/mediaflow-task39-candidate-efomxm1u` with all final Task source/test files verified byte-for-byte against this workspace. Both commands exited 1 before application validation: Docker Hub returned EOF fetching `node:22-bookworm-slim` metadata, then the anonymous token for `python:3.13-slim`. Logs: `/tmp/mediaflow-task39-release-security-exact.log` and `/tmp/mediaflow-task39-release-security-retry.log`. A previous candidate run passed but is not claimed as final-code evidence. The first repository-HEAD attempt was deliberately interrupted because it would not include uncommitted implementation.
+- PASS — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-2-correction`: exact candidate image, isolated four-service stack, non-root/mount checks, V1/V2 static coexistence, auth/RBAC, managed activation, Worker restart and durable evidence acceptance passed.
 
 Controlled visual evidence (generated/ignored, not committed):
 
@@ -201,7 +206,7 @@ this Task, as specified by B. No next Task or Slice outcome is defined here.
 
 ### Risks / Deviations
 
-- The final-candidate Docker release-security gate is UNAVAILABLE due to the external registry failures above; B must assess this missing evidence.
+- Existing SQLite ResourceWarnings, jsdom `scrollTo` messages and the Vite bundle-size advisory remain non-fatal pre-existing test/build output.
 - Existing workspace Storage implementation was inspected and completed. Pre-existing `docs/pics/媒体库页.png` deletion, `docs/pics/文件页.png` modification and untracked `docs/pics/媒体库.png` were preserved and excluded. `SLICE.md`, Roadmap and the committed Storage reference are untouched.
 - `config/alist.json` remains ignored, untracked and unstaged; its contents were not read. Screenshots/test traces and `/tmp` validation logs are local generated evidence only.
 - Python emits SQLite ResourceWarnings; jsdom reports unimplemented `window.scrollTo`; the build reports a >500 kB bundle advisory. These messages are recorded separately from actual test results.
@@ -214,14 +219,80 @@ documentation-only commit so it can name the actual immutable SHA. Neither commi
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 3a57dc374908aeebc3eaa06e826c27bb50e5db92
+Head SHA: 764a56eb74e2eb311fd9e685699c8cad4e24f3af
 ```
+
+## B Review Validation
+
+B independently reviewed the actual Task Base..`3a57dc374908aeebc3eaa06e826c27bb50e5db92`
+diff on 2026-09-26. Current HEAD `4e152e1dcd93448395ec14aa8f38f91ac73309d2` adds only the
+Developer report; its implementation, tests and packaging match that checkpoint. This is the first
+B correction round for Task 39.2.
+
+- PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`: 126 tests, zero skips.
+- PASS — `.venv/bin/python -m unittest discover -s tests`: 1,834 tests, 7 skips for the absent
+  isolated SMB/S3/OpenList acceptance and Local/SMB/OpenList/S3 endurance profiles.
+- PASS — `cd web && npm test -- --run`: 694 tests, 47 files, zero skips.
+- PASS — `cd web && npm run test:e2e -- --grep 'Storage management'`: 22 Chromium journeys,
+  zero skips; reviewed the generated step-1 screenshot against the unchanged committed reference.
+- PASS — `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`.
+- PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .` (316 files),
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`, `python3 scripts/check_governance.py`,
+  working-tree and Task-range `git diff --check`.
+- PASS — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-2-review`:
+  exact committed candidate build, four-service stack and release-security acceptance passed.
+  This supplies fresh evidence for the previously unavailable Developer gate; its earlier result
+  is retained above as historical fact. Log: `/tmp/mediaflow-b39-docker.log`.
+- Manifest/private-file audit: no Contract/Roadmap/reference-image changes, no private configuration
+  or unrelated images in the checkpoint, no changed-source FFmpeg/FFprobe/private-key matches.
+  `config/alist.json` remains ignored and untracked; its contents were not read. Pre-existing image
+  changes remain untouched. No weakened assertion or hidden skip was found in the reviewed diff.
+
+The regression results do not cover the independently reproduced recovery blocker below. SQLite
+ResourceWarnings, jsdom `scrollTo` messages and the existing bundle-size advisory were visible and
+were not counted as test failures. No production provider service was used and no additional
+schema/migration gate is material to this diff. Full-run logs are `/tmp/mediaflow-b39-python.log`,
+`/tmp/mediaflow-b39-web.log` and `/tmp/mediaflow-b39-e2e.log`.
 
 ## B Review Result
 
 ```text
-Reviewed: NOT SET
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 2d012c07f049fb2e0831a39b721b1aa465e3888e..3a57dc374908aeebc3eaa06e826c27bb50e5db92
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — Preserve the failed Storage identity and actionable cause through Save recovery.**
+  `ConfigurationObjectService._checked_successor_evidence()`
+  (`mediaflow/application/configuration_objects.py:835`) drops the failed check's Storage identity;
+  `storageSaveFailure()` (`web/src/features/storage/StorageManagementPage.tsx:758`) also discards
+  its failure category/next action and renders the same generic mount/permission/credential advice.
+  **Production reachability:** a valid managed Active with the existing production Local adapters,
+  an enabled ResourceLibrary on `source-storage` and an enabled MediaLibrary on `media-target`;
+  the target mount becomes unavailable after the source Edit form opens. No adapter override or
+  reduced-capability fake is needed. **User impact:** saving only the source's name fails because
+  of the other Storage, but neither the response nor the drawer identifies `media-target` or tells
+  the operator that its root is missing. The operator cannot locate the actual correction from
+  this Save failure; editing the selected source's fields cannot resolve it. **Contract:** Task
+  Acceptance Criteria item 5 requires the affected object/field and an explicit correction action;
+  Slice RO-6 and its Operator Journey Failure/Recovery require an actionable missing-mount/check
+  failure. **Reproduced evidence:**
+  `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b39-recovery-probe.py` builds a checked Active from
+  `tests.test_configuration_objects.example_document()` using real Local adapters and temporary
+  roots, opens `/api/v1/storages/source-storage/edit`, renames only the temporary target directory
+  to simulate an unavailable mount, then PUTs the source name edit. Result: HTTP 409,
+  `storage_storage_check_failed`, old Active preserved; the error contains no affected Storage ID
+  and only `correct Storage availability (not_found), then retry Save`. The persisted exact-successor
+  evidence correctly records `storageId=media-target`, `failureCategory=not_found`, and
+  `Storage root was not found` (log: `/tmp/mediaflow-b39-recovery-probe.log`). A temporary Vitest
+  probe of the actual `storageSaveFailure` mapping also confirmed the rendered message omits the
+  affected Storage and specific cause (1 test passed; `/tmp/mediaflow-b39-recovery-ui.log`; temporary
+  test removed after review). **Required correction:** carry bounded, secret-free affected Storage
+  identity and failure category/recovery guidance from the real check through the application/API
+  error and typed Web rendering. Name the actual failing dependency even when it is not the object
+  being edited, retain entered values and prior Active, and direct the operator to the appropriate
+  mount/configuration/credential correction without raw revision handling. Add application/API and
+  Web regression coverage for this multi-Storage failure and successful explicit continuation
+  after the real blocker is corrected. Keep this correction in Task 39.2; do not bypass or weaken
+  any checked-activation evidence gate.
