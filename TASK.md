@@ -1,3 +1,8 @@
+# NO ACTIVE IMPLEMENTATION TASK
+
+Task 39.4 passed B review. Slice 39 is returned to A for final review of the correction.
+The completed Task and Developer report below are retained as review evidence, not active work.
+
 # Task 39.4 — Restore Storage inventory and setup recovery
 
 This Task follows [the development workflow](docs/development-workflow.md) and implements the
@@ -285,7 +290,7 @@ Slice status.
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
+Status: PASS
 Head SHA: 466337c1337d0b03315d813ba258124538565cc1
 ```
 
@@ -293,8 +298,56 @@ Head SHA: 466337c1337d0b03315d813ba258124538565cc1
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
+Reviewed: 3779d203821930ad898fea49df2cee796c7a1c79..466337c1337d0b03315d813ba258124538565cc1
+Decision: PASS
 Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Next: SLICE READY FOR A REVIEW
 ```
+
+
+The Slice-wide field remains PENDING under the user's explicit A-correction return rule: B reviews
+this correction and returns it to A without independently deciding Slice completion again. This
+is not an outstanding Task blocker and does not revive the superseded Closure Packet.
+
+B independently reviewed the actual Base..Head production/test diff and confirmed both A blockers
+are corrected in the current legal production assembly. No test was deleted, assertion weakened,
+skip hidden, credential added or frozen Contract changed. The only commit after the implementation
+Head changes the Developer report. No production fix was made during this review.
+
+B validation (2026-09-26):
+
+- Required focused Python: PASS, 128 tests, 0 skips; full Python: PASS, 1,843 tests, 7 existing
+  isolated external/endurance skips. Logs: `/tmp/b394-focused.log`, `/tmp/b394-python.log`.
+- Required focused Web: PASS, 113 tests; full Web: PASS, 724 tests in 47 files, 0 skips.
+  Logs: `/tmp/b394-web-focused.log`, `/tmp/b394-web.log`.
+- Storage browser gate: initial 28 passed / 1 failed at the new setup test's pre-authentication
+  URL assertion; focused recheck 1 passed; complete unchanged rerun 29 passed / 0 skipped.
+  Logs: `/tmp/b394-e2e.log`, `/tmp/b394-e2e-targeted.log`, `/tmp/b394-e2e-rerun.log`.
+  The existing AuthBoundary legitimately redirects to the connection entry before restoring
+  Storage after authentication. A real same-version browser journey confirms this continuation.
+  The timing-dependent test assertion is P2, not a production journey failure; it was not changed
+  or retried invisibly. Preserve it in A's known non-blocking review notes.
+- Typecheck, lint, Prettier, build, Ruff format/check, compileall, diff checks and pre-handoff
+  governance: PASS. Existing jsdom scrollTo notices, ResourceWarnings and bundle-size advisory
+  remain visible. No schema/migration or deployment manifest change.
+- Docker release-security: PASS on this candidate via
+  `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b394-review`.
+  Log: `/tmp/b394-docker.log`. The Developer's earlier bind-mount failure did not reproduce;
+  this new actual pass supersedes gate unavailability for this handoff, not the historical report.
+- Real application integration: `PYTHONPATH=. .venv/bin/python /tmp/b394-server.py` and
+  `node /tmp/b394-realjourney.mjs` PASS. SQLite management-only bootstrap, real Local adapters,
+  current Python-served V1/V2 and synthetic credentials; no fake V1 page or seeded check evidence.
+  Storage → V1 login → explicit first Draft → reconnect/resume same Draft → complete example
+  graph via existing V1 Advanced JSON editor → Validate → actual API read checks/offline strategy/
+  destination precheck → explicit V1 checked activation → return/re-auth → current Storage list.
+  The existing advanced editor only supplies the fixture graph; no new setup wizard is claimed.
+  Actual page-local Save then added disabled OpenList objects with empty, `/` and `media` roots;
+  the real Web rendered all entries. Existing empty-root Edit preserved the empty value and reload
+  succeeded. Log: `/tmp/b394-realjourney.log`; screenshot: `/tmp/b394-return.png`.
+- Exact manifest/private-file audit: PASS. `config/alist.json` remains ignored/untracked; unrelated
+  user image changes and the frozen reference image are untouched. No FFmpeg/FFprobe dependency,
+  token bridge, new mutation authority or automatic initialization was introduced.
+
+Non-blocking reconciliation for A: update the now-historical empty-root defect/workaround wording
+in configuration guidance and the factual no-CTA wording in Product Experience; retain the native
+V2 wizard/global onboarding target and all current deferrals. No further implementation Task.
