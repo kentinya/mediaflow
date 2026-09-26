@@ -31,6 +31,16 @@ export const MAX_INVENTORY_ITEMS = 100;
 export const STORAGE_FAMILIES = ["local", "smb", "openlist", "s3"] as const;
 export type StorageFamily = (typeof STORAGE_FAMILIES)[number];
 
+/**
+ * The one operator-facing label for a provider rooted at its service root.
+ *
+ * Every supported remote provider resolves an empty `rootPath` to the same
+ * service root it uses for `/`, so the configuration is valid; the label exists
+ * so the UI can state that truthfully instead of rendering an empty cell or
+ * repeating a `/` that was never stored.
+ */
+export const PROVIDER_ROOT_LABEL = "提供商根目录";
+
 export interface StorageLocation {
   readonly kind: "local" | "remote";
   readonly rootPath: string;
@@ -77,6 +87,34 @@ export interface StorageActiveIdentity {
   readonly status: string;
 }
 
+/**
+ * The setup authority the Storage workspace may offer as a recovery path.
+ *
+ * These flags come from the same configuration status the existing V1 setup
+ * workflow uses, so Storage never becomes a second source of truth about
+ * whether setup is outstanding. They are read-only facts about that journey:
+ * none of them is a command, and the page must not create a Draft, run a check
+ * or activate configuration just because this block is present.
+ */
+export interface StorageSetupAuthority {
+  /** No managed runtime exists yet: first setup is genuinely outstanding. */
+  readonly setupRequired: boolean;
+  /** A setup Draft already exists and must be resumed, never recreated. */
+  readonly setupDraftExists: boolean;
+  /** A managed activation happened before, so Active is expected to exist. */
+  readonly managedActivation: boolean;
+  /** A managed Active exists but is not runtime-consumable right now. */
+  readonly recoveryRequired: boolean;
+  readonly health: string | null;
+  /**
+   * The fixed same-origin route that continues the existing setup workflow.
+   *
+   * It is a server-owned constant rather than an operator-supplied redirect
+   * target, and it carries no token, claim or revision identifier.
+   */
+  readonly setupPath: string;
+}
+
 export interface StorageInventoryModel {
   readonly available: boolean;
   readonly reason: string | null;
@@ -98,6 +136,9 @@ export interface StorageInventoryModel {
   /** Provider counts derived from the complete Active object set. */
   readonly families: Readonly<Record<string, number>>;
   readonly canManage: boolean;
+  /** Backend-authoritative: this principal may start the first-Draft command. */
+  readonly canStartSetup: boolean;
+  readonly setup: StorageSetupAuthority;
 }
 
 export class StorageInventoryNormalizationError extends Error {
@@ -122,19 +163,49 @@ function normalizeFamily(value: unknown): StorageFamily | "other" {
   fail("storage.family");
 }
 
+/**
+ * The provider root as one bounded identity string.
+ *
+ * Every supported remote provider resolves an empty root and `/` to the same
+ * service root, so an empty `rootPath` is a provider-valid configuration, not
+ * a missing value. The projection is rendered by the exact Active snapshot, so
+ * the stored characters are preserved byte for byte and a saved empty root
+ * survives inventory, detail and a prefilled Edit unchanged.
+ *
+ * This deliberately does not reuse `normalizeBoundedText`, which both trims the
+ * end of a value and rejects an empty string. Trimming would silently retarget
+ * a path that addresses the same server resource, and accepting a
+ * whitespace-only value here would disguise it as the provider root. Every
+ * other requirement stays strict: a non-string, a NUL, or an oversized value
+ * is malformed data and fails the whole response rather than being coerced.
+ */
+function normalizeRootPath(value: unknown): string {
+  if (value === null || value === undefined) {
+    // An omitted root is the same provider-root configuration as an empty one.
+    return "";
+  }
+  if (typeof value !== "string") {
+    fail("storage.location.rootPath");
+  }
+  const exact = value;
+  if (exact.length > MAX_TEXT_LENGTH || exact.includes("\0")) {
+    fail("storage.location.rootPath");
+  }
+  if (exact !== "" && exact.trim() === "") {
+    // A value that is only whitespace is not the provider root; reject it
+    // instead of silently reading it as one. The genuinely empty string is the
+    // one legal value here, so it is excluded from this check on purpose.
+    fail("storage.location.rootPath");
+  }
+  return exact;
+}
+
 function normalizeLocation(raw: Record<string, unknown>): StorageLocation {
   const kindValue = normalizeBoundedText(raw.kind, "storage.location.kind", 16);
   if (kindValue !== "local" && kindValue !== "remote") {
     fail("storage.location.kind");
   }
-  const rootPath =
-    raw.rootPath === null || raw.rootPath === undefined
-      ? ""
-      : normalizeBoundedText(
-          raw.rootPath,
-          "storage.location.rootPath",
-          MAX_TEXT_LENGTH,
-        );
+  const rootPath = normalizeRootPath(raw.rootPath);
   const location: {
     kind: "local" | "remote";
     rootPath: string;
@@ -287,6 +358,51 @@ function normalizeActiveIdentity(raw: unknown): StorageActiveIdentity | null {
   };
 }
 
+/**
+ * The one application route family that may continue setup.
+ *
+ * A return target is a server-owned constant, never an operator-supplied
+ * string, so an absolute URL, a protocol-relative URL or a protocol/scheme can
+ * never travel into an href from this projection.
+ */
+const SETUP_ROUTE = /^\/ui\/?$/;
+
+function normalizeSetupAuthority(raw: unknown): StorageSetupAuthority {
+  const source = readRecord(raw, "inventory.setup");
+  const health =
+    source.health === null || source.health === undefined
+      ? null
+      : normalizeBoundedText(source.health, "setup.health", 64);
+  const setupPath = normalizeBoundedText(
+    source.setupPath,
+    "setup.setupPath",
+    256,
+  );
+  if (!SETUP_ROUTE.test(setupPath)) {
+    fail("setup.setupPath");
+  }
+  return {
+    setupRequired: normalizeBoolean(
+      source.setupRequired,
+      "setup.setupRequired",
+    ),
+    setupDraftExists: normalizeBoolean(
+      source.setupDraftExists,
+      "setup.setupDraftExists",
+    ),
+    managedActivation: normalizeBoolean(
+      source.managedActivation,
+      "setup.managedActivation",
+    ),
+    recoveryRequired: normalizeBoolean(
+      source.recoveryRequired,
+      "setup.recoveryRequired",
+    ),
+    health,
+    setupPath,
+  };
+}
+
 export function normalizeStorageInventory(
   payload: unknown,
 ): StorageInventoryModel {
@@ -355,6 +471,17 @@ export function normalizeStorageInventory(
       fail("inventory.items");
     }
     const canManage = normalizeBoolean(source.canManage, "inventory.canManage");
+    const canStartSetup = normalizeBoolean(
+      source.canStartSetup,
+      "inventory.canStartSetup",
+    );
+    const setup = normalizeSetupAuthority(source.setup);
+    if (available && setup.setupRequired) {
+      // A readable Managed Active inventory and an outstanding first setup are
+      // different durable states. Presenting both at once would let a stale or
+      // mixed response send the operator into initialization they do not need.
+      fail("inventory.setup");
+    }
     return {
       available,
       reason,
@@ -369,6 +496,8 @@ export function normalizeStorageInventory(
       nextAfter,
       families,
       canManage,
+      canStartSetup,
+      setup,
     };
   } catch (error) {
     if (error instanceof StorageInventoryNormalizationError) {

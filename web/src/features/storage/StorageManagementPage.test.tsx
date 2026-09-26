@@ -48,6 +48,54 @@ const STORAGE_LOCAL = {
   },
 };
 
+/**
+ * A saved, disabled, unreferenced OpenList object rooted at the provider
+ * service root. The backend stores and projects `rootPath: ""` verbatim, so this
+ * is the response shape a real checked Save produces.
+ */
+const STORAGE_OPENLIST_ROOT = {
+  id: "openlist-root",
+  name: "OpenList root",
+  type: "openlist",
+  family: "openlist",
+  enabled: false,
+  readOnly: true,
+  location: {
+    kind: "remote",
+    rootPath: "",
+    endpoint: "https://openlist.example",
+  },
+  capabilities: {
+    can_move: false,
+    can_copy: false,
+    can_delete: false,
+    can_hard_link: false,
+    can_soft_link: false,
+  },
+  capabilitiesKnown: false,
+  writeCapabilitySource: "unknown",
+  writeCapabilityProbe: "not_run",
+  secretReadiness: [
+    { field: "tokenEnv", env: "OPENLIST_TOKEN", state: "UNSET" },
+  ],
+  references: {
+    total: 0,
+    items: [],
+    truncated: false,
+    resourceLibraries: 0,
+    mediaLibraries: 0,
+    countedInBreakdown: 0,
+  },
+};
+
+/** An OpenList object whose service root was saved as an explicit `/`. */
+const STORAGE_OPENLIST_SLASH = {
+  ...STORAGE_OPENLIST_ROOT,
+  id: "openlist-slash",
+  name: "OpenList slash",
+  location: { ...STORAGE_OPENLIST_ROOT.location, rootPath: "/" },
+};
+
 const STORAGE_R2 = {
   id: "r2-media",
   name: "R2 media",
@@ -118,6 +166,20 @@ const STORAGE_BEYOND_PAGE = {
   },
 };
 
+/**
+ * The settled setup authority for an instance that already has a managed
+ * Active: first setup is closed, and the fixed V1 route is still advertised
+ * for the recovery paths that need it.
+ */
+const SETTLED_SETUP = {
+  setupRequired: false,
+  setupDraftExists: false,
+  managedActivation: true,
+  recoveryRequired: false,
+  health: "HEALTHY",
+  setupPath: "/ui",
+};
+
 function inventoryPayload(items: unknown[]): unknown {
   return {
     available: true,
@@ -142,10 +204,59 @@ function inventoryPayload(items: unknown[]): unknown {
       ? { local: 1, s3: 1 }
       : { local: items.length },
     canManage: true,
+    canStartSetup: true,
+    setup: SETTLED_SETUP,
   };
 }
 
 const INVENTORY_PATH = "/api/v1/operations/storage-management/inventory";
+
+/**
+ * The read a management-only instance with no managed runtime returns: setup
+ * is genuinely outstanding, no Draft exists yet, and the fixed V1 route is the
+ * recovery path. `canStartSetup` is the backend-authoritative permission.
+ */
+function setupRequiredInventory(
+  overrides: Record<string, unknown> = {},
+): unknown {
+  return {
+    available: false,
+    reason: "no_active",
+    authority: null,
+    active: null,
+    items: [],
+    total: 0,
+    matched: 0,
+    truncated: false,
+    returned: 0,
+    hasMore: false,
+    nextAfter: null,
+    families: {},
+    canManage: false,
+    canStartSetup: true,
+    setup: {
+      setupRequired: true,
+      setupDraftExists: false,
+      managedActivation: false,
+      recoveryRequired: false,
+      health: "SETUP_REQUIRED",
+      setupPath: "/ui",
+    },
+    actions: {
+      check: {
+        available: false,
+        reason: "no managed Active configuration exists",
+        method: "POST",
+        path: null,
+        sideEffects: "none",
+        durableOutcome: null,
+        nextAction: "complete managed configuration setup",
+        requiresConfirmation: false,
+      },
+    },
+    ...overrides,
+  };
+}
 
 /** A legal over-limit Active inventory: one bounded page of six Local rows. */
 function overLimitInventoryPayload(): unknown {
@@ -575,6 +686,235 @@ describe("Storage management journey", () => {
     });
   });
 
+  it("keeps an already-saved empty provider root readable beside other entries", async () => {
+    // The operator-facing regression: this exact Active configuration used to
+    // make the whole workspace unreadable, showing "存储管理不可用" even though
+    // the save itself had succeeded.
+    const fetchMock = stubInventory([
+      STORAGE_LOCAL,
+      STORAGE_OPENLIST_ROOT,
+      STORAGE_OPENLIST_SLASH,
+    ]);
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = String(input);
+      if (url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse(
+          inventoryPayload([
+            STORAGE_LOCAL,
+            STORAGE_OPENLIST_ROOT,
+            STORAGE_OPENLIST_SLASH,
+          ]),
+        );
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await screen.findByRole("heading", { name: "存储管理" });
+    await screen.findByRole("table");
+    // The valid Local row is still listed: the empty root hid nothing.
+    expect(screen.getByText("Local source")).toBeVisible();
+    expect(screen.getByText("OpenList root")).toBeVisible();
+    // An empty root is labelled truthfully and stays distinguishable from a
+    // `/` the operator actually stored.
+    expect(
+      screen.getByText("https://openlist.example / 提供商根目录"),
+    ).toBeVisible();
+    expect(screen.getByText("https://openlist.example / /")).toBeVisible();
+    // No malformed-inventory banner anywhere on the page.
+    expect(screen.queryByText("存储管理不可用")).toBeNull();
+  });
+
+  it("keeps the provider root in the prefilled Edit form of a saved empty root", async () => {
+    const fetchMock = stubInventory([STORAGE_OPENLIST_ROOT]);
+    fetchMock.mockImplementation(async (input: string) => {
+      const url = String(input);
+      if (url.startsWith(INVENTORY_PATH)) {
+        return jsonResponse(inventoryPayload([STORAGE_OPENLIST_ROOT]));
+      }
+      if (url === "/api/v1/storages/openlist-root/edit") {
+        return jsonResponse({
+          storage: {
+            id: "openlist-root",
+            name: "OpenList root",
+            type: "openlist",
+            // The stored value is exactly the empty provider root.
+            rootPath: "",
+            readOnly: true,
+            enabled: false,
+            options: {
+              baseUrl: "https://openlist.example",
+              tokenEnv: "OPENLIST_TOKEN",
+            },
+            secretReadiness: [
+              { field: "tokenEnv", env: "OPENLIST_TOKEN", state: "UNSET" },
+            ],
+          },
+          active: {
+            revisionId: "rev-1",
+            version: 3,
+            revisionSequence: 2,
+            status: "active",
+            digest: "digest-1",
+          },
+          sideEffects: "none",
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await screen.findByRole("heading", { name: "存储管理" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "编辑 OpenList root" }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "编辑存储 openlist-root",
+    });
+    await userEvent.click(
+      within(drawer).getByRole("button", { name: /2\s*连接配置/ }),
+    );
+    const root = await within(drawer).findByLabelText("根路径 *");
+    // The empty provider root is prefilled, not blanked, guessed or rewritten
+    // to `/`.
+    expect(root).toHaveValue("");
+  });
+
+  it("offers an existing setup Draft to resume instead of a second one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          setupRequiredInventory({
+            setup: {
+              setupRequired: true,
+              setupDraftExists: true,
+              managedActivation: false,
+              recoveryRequired: false,
+              health: "SETUP_REQUIRED",
+              setupPath: "/ui",
+            },
+          }),
+        ),
+      ),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    expect(await screen.findByText(/继续已有的设置草稿/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "去完成设置" })).toHaveAttribute(
+      "href",
+      "/ui",
+    );
+  });
+
+  it("gives a viewer administrator guidance instead of a setup control", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          setupRequiredInventory({
+            canStartSetup: false,
+            canManage: false,
+          }),
+        ),
+      ),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    expect(await screen.findByText(/没有管理配置的权限/)).toBeVisible();
+    // The read-only principal is never shown a control it cannot use, but is
+    // still told exactly where the workflow lives.
+    expect(screen.queryByRole("link", { name: "去完成设置" })).toBeNull();
+    expect(screen.getByRole("link", { name: "查看设置页面" })).toHaveAttribute(
+      "href",
+      "/ui",
+    );
+    // No mutation surface is offered to a viewer.
+    expect(screen.getByRole("button", { name: "+ 添加存储" })).toBeDisabled();
+  });
+
+  it("keeps an existing-but-unavailable Active distinct from first setup", async () => {
+    // Repeating initialization would be wrong here: a managed Active was
+    // already published, so this is a temporary unavailability.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          setupRequiredInventory({
+            reason: "unavailable",
+            setup: {
+              setupRequired: false,
+              setupDraftExists: false,
+              managedActivation: true,
+              recoveryRequired: true,
+              health: "UNAVAILABLE",
+              setupPath: "/ui",
+            },
+          }),
+        ),
+      ),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    expect(await screen.findByText("已激活配置暂不可用")).toBeVisible();
+    // The state states what did not happen; it never offers to start over.
+    expect(screen.getByText(/这不是首次设置/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "去完成设置" })).toBeNull();
+  });
+
+  it("keeps a malformed Active distinct from an unavailable one", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse(
+          setupRequiredInventory({
+            reason: "malformed",
+            setup: {
+              setupRequired: false,
+              setupDraftExists: false,
+              managedActivation: true,
+              recoveryRequired: false,
+              health: "UNAVAILABLE",
+              setupPath: "/ui",
+            },
+          }),
+        ),
+      ),
+    );
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    expect(await screen.findByText("配置快照无法解析")).toBeVisible();
+    // The read did not change anything, and the state says so.
+    expect(screen.getByText(/已有配置未被本次读取修改/)).toBeVisible();
+    expect(screen.queryByRole("link", { name: "去完成设置" })).toBeNull();
+  });
+
+  it("keeps navigation into setup read-only and starts no configuration work", async () => {
+    const calls: [string, RequestInit | undefined][] = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push([String(input), init]);
+      return jsonResponse(setupRequiredInventory());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const setupLink = await screen.findByRole("link", { name: "去完成设置" });
+    expect(setupLink).toHaveAttribute("href", "/ui");
+    // Re-rendering the recovery state only re-reads the inventory; it never
+    // issues a Draft, validation, activation or Storage command.
+    await userEvent.click(screen.getByRole("button", { name: "刷新" }));
+    await waitFor(() => {
+      expect(
+        calls.filter(([url]) => url.startsWith("/api/v1/storages")),
+      ).toHaveLength(0);
+    });
+    for (const [url, init] of calls) {
+      expect(`${init?.method ?? "GET"} ${url}`).toMatch(/^GET /);
+    }
+  });
+
   it("shows an inspectable detail with references and runs the zero-mutation check", async () => {
     const fetchMock = stubInventory([STORAGE_LOCAL]);
     // Install the detail/check handlers before opening the detail so the first
@@ -636,39 +976,15 @@ describe("Storage management journey", () => {
   it("renders the truthful setup handoff when no Active configuration exists", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        jsonResponse({
-          available: false,
-          reason: "no_active",
-          authority: null,
-          active: null,
-          items: [],
-          total: 0,
-          matched: 0,
-          truncated: false,
-          returned: 0,
-          hasMore: false,
-          nextAfter: null,
-          families: {},
-          canManage: false,
-          actions: {
-            check: {
-              available: false,
-              reason: "no managed Active configuration exists",
-              method: "POST",
-              path: null,
-              sideEffects: "none",
-              durableOutcome: null,
-              nextAction: "complete managed configuration setup",
-              requiresConfirmation: false,
-            },
-          },
-        }),
-      ),
+      vi.fn(async () => jsonResponse(setupRequiredInventory())),
     );
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
-    expect(await screen.findByText("尚未完成托管配置")).toBeVisible();
+    expect(await screen.findByText("尚未完成首次设置")).toBeVisible();
+    // The recovery handoff the empty state previously lacked: one explicit
+    // action that continues the existing V1 setup workflow.
+    const setupLink = screen.getByRole("link", { name: "去完成设置" });
+    expect(setupLink).toHaveAttribute("href", "/ui");
   });
 
   it("distinguishes a healthy empty inventory from the setup state", async () => {
@@ -676,7 +992,7 @@ describe("Storage management journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
     expect(await screen.findByText("没有匹配的存储")).toBeVisible();
-    expect(screen.queryByText("尚未完成托管配置")).toBeNull();
+    expect(screen.queryByText("尚未完成首次设置")).toBeNull();
   });
 
   it("surfaces a failed check with an actionable, secret-free recovery", async () => {
@@ -804,6 +1120,8 @@ function commandInventoryPayload(items: unknown[], canManage = true): unknown {
     nextAfter: null,
     families,
     canManage,
+    canStartSetup: canManage,
+    setup: SETTLED_SETUP,
   };
 }
 

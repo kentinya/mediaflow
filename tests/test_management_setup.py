@@ -199,6 +199,95 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertIn("readiness.setupRequired || readiness.recoveryRequired", script)
         self.assertIn("setupRequired", script)
 
+    def test_operator_web_offers_a_return_to_the_storage_workspace(self) -> None:
+        """The V1 setup journey can hand the operator back to Storage.
+
+        Completing setup inside the V1 console must not strand the operator
+        there: once a managed Active exists, the Configuration view offers a
+        return to the V2 Storage workspace that reads that exact Active. The
+        link is a fixed same-origin application route, so it cannot become an
+        arbitrary redirect, and it carries no token or revision identifier.
+        """
+
+        script = APP_JS.decode("utf-8")
+        self.assertIn("backToStorageLink", script)
+        self.assertIn("Return to Storage management", script)
+        self.assertIn("'/ui-v2/storage'", script)
+
+    def test_storage_workspace_reports_a_resumable_setup_draft(self) -> None:
+        """An unfinished setup is resumable, and Storage reports it honestly.
+
+        The V2 Storage empty state needs to distinguish "no setup Draft yet"
+        from "a setup Draft exists to resume", so a return visit or reconnect
+        never invites a second initialization that would conflict with the one
+        already in flight.
+        """
+
+        route = "/api/v1/operations/storage-management/inventory"
+        status, before = request(self.api, route, token="admin-token")
+        self.assertEqual(status, 200)
+        self.assertFalse(before["available"])
+        self.assertTrue(before["setup"]["setupRequired"])
+        self.assertFalse(before["setup"]["setupDraftExists"])
+
+        status, created = request(
+            self.api,
+            "/api/v1/configuration/drafts/first",
+            method="POST",
+            body=None,
+        )
+        self.assertEqual(status, 201)
+
+        # The existing setup Draft is advertised for resumption rather than
+        # replaced, and nothing was activated or started by reading.
+        status, after = request(self.api, route, token="admin-token")
+        self.assertEqual(status, 200)
+        self.assertTrue(after["setup"]["setupRequired"])
+        self.assertTrue(after["setup"]["setupDraftExists"])
+        self.assertIsNone(after["active"])
+        self.assertEqual(after["items"], [])
+        # The Draft identity stays in the configuration authority that owns it;
+        # the Storage projection carries only the presence fact.
+        self.assertNotIn(created["revisionId"], json.dumps(after, ensure_ascii=False))
+
+        # Navigating or reading again is idempotent: it does not create a
+        # competing first Draft.
+        status, replay = request(
+            self.api,
+            "/api/v1/configuration/drafts/first",
+            method="POST",
+            body={},
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(replay["error"]["details"]["durableState"], "setup_draft_preserved")
+        status, again = request(self.api, route, token="admin-token")
+        self.assertEqual(again["setup"]["setupDraftExists"], True)
+
+    def test_a_read_only_principal_is_told_to_ask_an_administrator(self) -> None:
+        """A viewer can read the setup state but never start it.
+
+        The Storage empty state shows the viewer the same truthful recovery
+        guidance without any control it cannot use, so the permission decision
+        stays backend-authoritative.
+        """
+
+        route = "/api/v1/operations/storage-management/inventory"
+        status, denied = request(
+            self.api,
+            "/api/v1/configuration/drafts/first",
+            method="POST",
+            body=None,
+            token="viewer-token",
+        )
+        self.assertEqual(status, 403)
+        status, viewer = request(self.api, route, token="viewer-token")
+        self.assertEqual(status, 200)
+        self.assertTrue(viewer["setup"]["setupRequired"])
+        self.assertFalse(viewer["canStartSetup"])
+        self.assertFalse(viewer["canManage"])
+        # The viewer still gets the recovery route so the guidance is actionable.
+        self.assertEqual(viewer["setup"]["setupPath"], "/ui")
+
     def test_first_draft_preserves_only_bootstrap_refs_and_is_resumable(self) -> None:
         status, created = request(
             self.api,

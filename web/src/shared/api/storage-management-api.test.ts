@@ -68,6 +68,15 @@ const inventoryPayload = {
   nextAfter: null,
   families: { local: 1 },
   canManage: true,
+  canStartSetup: true,
+  setup: {
+    setupRequired: false,
+    setupDraftExists: false,
+    managedActivation: true,
+    recoveryRequired: false,
+    health: "HEALTHY",
+    setupPath: "/ui",
+  },
 };
 
 function jsonResponse(payload: unknown, status = 200): Response {
@@ -76,6 +85,56 @@ function jsonResponse(payload: unknown, status = 200): Response {
     headers: { "Content-Type": "application/json" },
   });
 }
+
+/**
+ * A real inventory projection containing an already-saved disabled OpenList
+ * object rooted at the provider service root, alongside a valid Local entry.
+ * The empty `rootPath` is what the backend stores and returns verbatim.
+ */
+const emptyRootInventoryPayload = {
+  ...inventoryPayload,
+  items: [
+    {
+      id: "openlist-root",
+      name: "OpenList root",
+      type: "openlist",
+      family: "openlist",
+      enabled: false,
+      readOnly: true,
+      location: {
+        kind: "remote",
+        rootPath: "",
+        endpoint: "https://openlist.example",
+      },
+      capabilities: {
+        can_move: false,
+        can_copy: false,
+        can_delete: false,
+        can_hard_link: false,
+        can_soft_link: false,
+      },
+      capabilitiesKnown: false,
+      writeCapabilitySource: "unknown",
+      writeCapabilityProbe: "not_run",
+      secretReadiness: [
+        { field: "tokenEnv", env: "OPENLIST_TOKEN", state: "UNSET" },
+      ],
+      references: {
+        total: 0,
+        items: [],
+        truncated: false,
+        resourceLibraries: 0,
+        mediaLibraries: 0,
+        countedInBreakdown: 0,
+      },
+    },
+    inventoryPayload.items[0],
+  ],
+  total: 2,
+  matched: 2,
+  returned: 2,
+  families: { local: 1, openlist: 1 },
+};
 
 afterEach(() => {
   authStore.clearToken();
@@ -138,6 +197,105 @@ describe("Storage management API", () => {
     expect(url).toBe(
       "/api/v1/operations/storage-management/inventory?limit=100",
     );
+  });
+
+  it("decodes a saved OpenList object with an empty provider root", async () => {
+    // The regression this corrects: this exact backend response used to be
+    // reported as an unreadable Storage workspace, which hid the valid Local
+    // entry with it and read like a failed Save.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse(emptyRootInventoryPayload)),
+    );
+    const model = await fetchStorageInventory("inventory-token");
+    expect(model.items.map((item) => item.id)).toEqual([
+      "openlist-root",
+      "local-source",
+    ]);
+    expect(model.items[0].location.rootPath).toBe("");
+    expect(model.items[0].enabled).toBe(false);
+  });
+
+  it("decodes the same empty root in the detail projection", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          storage: emptyRootInventoryPayload.items[0],
+          references: {
+            resourceLibraries: [],
+            mediaLibraries: [],
+            total: 0,
+            truncated: false,
+          },
+          latestCheck: null,
+          activeConfiguration: {
+            revisionId: "rev-1",
+            version: 3,
+            revisionSequence: 2,
+            status: "active",
+          },
+          actions: {},
+          writeCapabilityNote: "A read check does not test write access.",
+        }),
+      ),
+    );
+    const detail = await fetchStorageDetail("inventory-token", "openlist-root");
+    expect(detail.storage.location.rootPath).toBe("");
+    expect(detail.storage.name).toBe("OpenList root");
+  });
+
+  it("surfaces the setup handoff an administrator can continue", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({
+          available: false,
+          reason: "no_active",
+          authority: null,
+          active: null,
+          items: [],
+          total: 0,
+          matched: 0,
+          truncated: false,
+          returned: 0,
+          hasMore: false,
+          nextAfter: null,
+          families: {},
+          canManage: false,
+          canStartSetup: true,
+          setup: {
+            setupRequired: true,
+            setupDraftExists: false,
+            managedActivation: false,
+            recoveryRequired: false,
+            health: "SETUP_REQUIRED",
+            setupPath: "/ui",
+          },
+          actions: {},
+        }),
+      ),
+    );
+    const model = await fetchStorageInventory("inventory-token");
+    expect(model.available).toBe(false);
+    expect(model.setup.setupRequired).toBe(true);
+    // The permission is backend-authoritative: the page may not invent the
+    // ability to start setup for a principal that cannot.
+    expect(model.canStartSetup).toBe(true);
+    expect(model.setup.setupPath).toBe("/ui");
+  });
+
+  it("still reports an unrelated malformed response as malformed", async () => {
+    // Accepting the provider root must not weaken the rest of the shape.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        jsonResponse({ ...emptyRootInventoryPayload, total: "two" }),
+      ),
+    );
+    await expect(
+      fetchStorageInventory("inventory-token"),
+    ).rejects.toBeInstanceOf(StorageManagementApiError);
   });
 
   it("maps 401/403 to the typed boundary error without leaking details", async () => {
