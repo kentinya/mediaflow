@@ -1,13 +1,13 @@
-# Task 39.2 — Typed Storage Add/Edit and checked Active Save
+# Task 39.3 — Checked Storage copy, enable/disable and configuration removal
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 39.2
+Task ID: 39.3
 Parent Slice: 39
-Status: FIX REQUIRED
-Task Base: 2d012c07f049fb2e0831a39b721b1aa465e3888e
+Status: PLANNED
+Task Base: 6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,284 +15,203 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the operator's Storage Add/Edit journey through typed API and V2 Web: enter one of the six
-supported provider configurations in the four-step drawer, Save against the exact Active snapshot
-used to open it, and see the successfully checked successor become runtime Active. This advances
-Slice RO-1, RO-3, RO-6 and RO-7. Copy, enable/disable and removal remain one subsequent coherent
-mutation unit under RO-4.
+Complete Slice RO-4 through matching application/API and `/ui-v2/storage` actions: copy a Storage
+configuration under an explicit new identity, enable or disable it safely, or remove an unreferenced
+configuration while leaving physical contents and historical snapshots intact. Every successful
+operation publishes one checked immutable Active successor. Finish the required row-action surface
+under RO-1 and preserve RO-2/RO-3/RO-5/RO-6/RO-7 throughout these journeys.
 
 ## Why This Task Exists
 
-Task 39.1 delivered truthful Active inventory, references and zero-mutation read diagnostics, but
-the current `/ui-v2/storage` page has no working Add/Edit or provider form. Existing generic Draft
-object CRUD and checked activation require an operator to manage implementation revisions and do
-not deliver the page-local Save promised by the Slice. The ResourceLibrary/MediaLibrary Save paths
-show the existing successor, evidence and runtime-binding boundary; Storage needs its own
-provider-neutral command and typed Web journey through that boundary. Add and Edit belong together
-because they share the same form, validation and checked publication behavior.
+The reviewed inventory, detail, read-check and typed Add/Edit journeys already use the managed
+configuration authority. The current table has View/Edit but no More menu, and the existing
+`copy_storage`, `set_storage_enabled` and generic object removal helpers only edit Drafts. They do
+not deliver RO-4's page-local publication, removal confirmation, refreshed Active list or recovery.
+Copy, state changes and removal form the remaining coherent Storage lifecycle unit; they share the
+same selection authority, reference explanation and checked publication boundary. Do not split them
+into separate Tasks for menus, fields, individual assertions or error text.
+
+Planning basis: Task 39.2 passed B review at
+`764a56eb74e2eb311fd9e685699c8cad4e24f3af` (Task Base
+`2d012c07f049fb2e0831a39b721b1aa465e3888e`). Its original multi-Storage recovery failure was
+reproduced as fixed with real Local adapters, including successful explicit continuation.
+RO-2, RO-3 and RO-5 are complete; RO-1 still needs the More menu; RO-4 is incomplete;
+RO-6/RO-7 are verified for existing surfaces and still need the RO-4 journeys. Therefore:
+`Decision: PASS; Slice Required Outcomes all satisfied: NO; Next: NEXT TASK`.
+The new Task Base is the actual current committed HEAD, including the correction report; it does
+not move the previous Task Base or Slice Base. This is the third coherent Task in Slice 39.
 
 ## Implementation Scope
 
-- Add a Storage-scoped application command and matching versioned API Add/Edit behavior built on the
-  existing Managed Configuration and `ConfigurationObjectService` authority. Capture the exact
-  current Active used to open the form; compose one complete successor; run full graph validation,
-  applicable exact-successor read-only Storage checks, offline Recognition Strategy Test and
-  destination precheck; prepare runtime binding before atomic checked publication. Preserve the
-  former Active and its runtime binding on every failed admission. Keep historical admitted work
-  pinned to its own snapshot.
-- Add an edit-safe, typed projection of the selected Active Storage needed to prefill the form,
-  including supported option fields and approved secret-reference *names* without secret values.
-  API edits preserve existing options the form does not expose; reject attempted ID changes,
-  duplicate IDs, malformed fields, unsupported provider options and stale Active authority.
-- Implement Local, SMB, OpenList, AWS S3, Cloudflare R2 and generic S3-compatible form fields and
-  provider-specific validation. Include common name, ID, type, root, enabled/read-only and
-  supported timeout/retry/concurrency settings. Use only approved deployment-owned secret
-  references. Do not add Storage notes or accept notes in the Storage page command.
-- Extend the existing Storage workspace with `+ 添加存储`, applicable row `编辑`, and the prescribed
-  right-side four-step drawer (`基本信息 → 连接配置 → 高级设置 → 确认`). Keep the drawer closed on normal entry,
-  reload and reconnect; explicit Add/Edit opens step 1. Use a left step rail, right form and
-  reachable bottom Cancel/Back/Next/Save controls. The inventory remains context at reference
-  desktop width. Keep current view/detail/read-check functionality and shared top-bar search.
-- Map backend validation, permission, provider/evidence, stale/conflict, persistence and runtime
-  failures to field or action-oriented Web states. Retain correctable form input after known
-  failure. Treat an unknown Save outcome as a state-verification problem: refresh exact Active
-  before any new explicit submission; never automatically replay Save.
-- Add focused application/API/entity/component/browser coverage for success, invalid fields,
-  provider variation, secret redaction, stale writers, graph/evidence/runtime failures, no Storage
-  mutation, drawer focus/keyboard/narrow layout and existing route compatibility. Keep the
-  committed reference image and pre-existing unrelated `docs/pics/` changes outside the checkpoint.
+Application / existing persistence authority → typed API → V2 row actions and recovery → Tests.
+Reuse existing domain validation, configuration repositories, reference evidence, read-only checks,
+offline strategy/destination checks and runtime binding; no second configuration authority.
+
+- Add working, accessible `更多` actions after `查看 / 编辑` in each row. Offer applicable copy,
+  enable/disable, read-check and configuration removal using backend-authoritative permissions.
+  Reuse the existing detail/read-check behavior. Keep the shared search, provider filters, bounded
+  inventory, separate enabled/check state and four-step Add/Edit drawer intact.
+- Copy opens a focused typed journey from one exact Active source. Require an explicit new ID and
+  name and show what configuration will be copied, including enabled/read-only intent. Retain all
+  supported provider options and approved secret references without secret values. The source and
+  other objects remain unchanged. Reusing the Add drawer is appropriate; copy must still retain
+  source identity for concurrency and audit. Validation, checks and atomic activation happen on
+  explicit Save, never on menu opening or form navigation.
+- Enable/disable is a bounded command on the selected Storage, with an explicit intended state.
+  Preserve every other option and object. Enabling obtains applicable checks for the enabled
+  Storage. Disabling rejects any enabled ResourceLibrary/MediaLibrary binding that would become
+  invalid, identifies affected dependents and offers repoint/re-enable recovery. Keep full graph
+  validation; do not rewrite references or silently disable libraries.
+- Removal opens one explicit confirmation naming the selected Storage and explaining that only its
+  configuration is removed and physical files remain. Show bounded current ResourceLibrary and
+  MediaLibrary impact, including disabled dependents and honest truncation. Backend rechecks the
+  complete reference graph, not just displayed entries, and rejects every remaining reference.
+  Unreferenced enabled or disabled Storage can be removed without first making its own root or
+  credentials available. Do not require a check against the removed Storage merely to remove it.
+- Each command binds to the exact Active authority used for the operator's decision, rechecks
+  management/activation permissions, composes one complete successor, validates all dependencies,
+  obtains applicable exact-successor read-only Storage evidence and offline strategy/destination
+  evidence, prepares runtime binding, and atomically checked-activates. Removal checks the
+  remaining configuration. Persist bounded secret-free actor/action/before/after/result evidence;
+  report success only after the successor is actual runtime Active.
+- Refresh inventory, counts, references and selected detail from resulting Active truth after
+  success. Failed admission preserves previous Active, physical contents and correctable copy
+  input or removal context. Explain the actual affected object/dependency, cause, durable state
+  and next action. Stale decisions require refreshing and reviewing current context; unknown
+  outcomes require explicit Active-state verification before another manual attempt. Never
+  automatically replay a configuration command or infer success from a local row removal.
+- Preserve V1/general Configuration, Storage Browser, Files/MediaLibrary, existing Add/Edit,
+  diagnostics, adapters and OrganizerExecutor. Freeze the A-owned Contract/Roadmap, committed
+  `docs/pics/储存管理.png`, unrelated `docs/pics/` changes and private configuration.
 
 ## Acceptance Criteria
 
-- [ ] Authenticated authorized operators can open Add or Edit from `/ui-v2/storage`. The drawer is
-      closed on ordinary entry and opens at step 1 only on explicit intent. It follows the Slice
-      composition and field order: `名称`, `存储 ID`, `存储类型`, then provider connection, advanced
-      settings and secret-free confirmation. Edit is prefilled from one exact Active object, shows
-      immutable ID, and preserves supported existing options. Back/Next preserve entered values;
-      Cancel, close and Escape never Save and restore focus where practical. Long forms, narrow
-      width and keyboard operation keep controls reachable.
-- [ ] All six supported provider types can be added and edited through typed fields and API
-      validation without JSON-only editing. Local roots use backend confinement; remote roots stay
-      logical provider-relative paths. ID follows `[a-z0-9][a-z0-9_-]` up to 64 characters and
-      cannot change on Edit. Only fields valid for the selected provider are shown and accepted;
-      supported timeout/retry/concurrency values follow existing domain limits. Storage notes are
-      absent from input, output and search.
-- [ ] API/Web never return or log secret values, raw credentials, tokens, authorization headers or
-      cookies. Form prefill and confirmation use only approved secret-reference names/readiness.
-      Missing or unavailable references fail safely with an actionable recovery path; no secret
-      value is copied into a test fixture, response, audit or error.
-- [ ] Each Save binds to the exact Active authority seen when Add/Edit opened and uses backend
-      permissions for management and activation. It composes a complete successor from that Active,
-      validates every dependency, obtains applicable exact-successor read-only Storage evidence,
-      offline strategy-test evidence and destination precheck, prepares runtime binding, then
-      atomically checked-activates. No Draft edit alone reports success. The refreshed list/detail
-      and subsequent configuration work consume the new immutable Active snapshot.
-- [ ] Duplicate ID, invalid name/provider/root/endpoint/options, stale Active, denied permission,
-      unavailable/missing mount or credential, failed check/strategy/destination evidence,
-      persistence failure and runtime-binding failure preserve prior Active and Storage contents.
-      The UI identifies the affected object or field, durable state and explicit correction or
-      refresh action. Correctable input remains; unknown outcomes are verified from Active before
-      another manual attempt. No page Save starts a media Task or performs Storage mutation.
-- [ ] API and Web use one application command and the same RBAC, validation, concurrency, audit,
-      redaction, error and recovery semantics. Existing V1 `/ui`, general Configuration,
-      Storage Browser, Files/MediaLibrary, read diagnostics, adapters and OrganizerExecutor remain
-      compatible. The checkpoint changes only this Task and leaves the A-owned Slice Contract and
-      unrelated/private files untouched.
+- [ ] An authenticated authorized operator reaches working Copy, Enable/Disable, read-check and
+      configuration removal through the accessible `更多` menu at `/ui-v2/storage`. View/Edit/More
+      retain their required order. Menus and dialogs support keyboard, Escape, reachable narrow
+      layouts and focus return; opening/cancelling them never saves or mutates Storage. Normal
+      entry/reload/reconnect leaves the Add/Edit drawer closed.
+- [ ] Copy accepts a valid explicit new ID/name, preserves supported provider settings and approved
+      references, never exposes credential values and never copies media. Source configuration is
+      unchanged. Duplicate/invalid identity, stale source/Active, unavailable evidence and denied
+      authority fail with retained input and actionable recovery. All six supported provider types
+      retain their distinct typed configuration semantics.
+- [ ] Enable/disable changes only the selected object's intended state via checked activation.
+      An enabled library cannot remain bound to a disabled Storage; failures identify the blocking
+      references and preserve the previous Active. A successful enabled or disabled state is
+      immediately reflected in Active inventory and detail, separately from connection health.
+- [ ] Removal uses one explicit configuration-only confirmation and exact Active fencing. Backend
+      rejects every ResourceLibrary/MediaLibrary reference, including disabled dependents and
+      references outside a truncated display. Stale/concurrent decisions cannot remove a newly
+      referenced or changed object. No cascade or automatic reference rewrite occurs.
+- [ ] Removing an unreferenced enabled or disabled Storage succeeds through complete checked
+      successor publication, even when that removed Storage's root is unavailable, provided the
+      remaining configuration passes its applicable gates. The refreshed Active list/counts omit
+      the removed entry only after publication. Historical snapshots, other configuration objects,
+      admitted work's snapshot identity and all physical contents remain intact.
+- [ ] Copy/state-change/removal share application behavior across API/Web and retain full graph
+      validation, exact evidence, runtime preparation, RBAC, concurrency and secret-free audit.
+      Validation/evidence/persistence/runtime failures retain prior Active and correctable context.
+      Unknown outcomes never auto-replay; successful verification shows current truth before any
+      new explicit action. No command starts a media Task, scan, live Metadata request or Storage
+      mutation, and no read check implies write capability.
+- [ ] Existing routes and the accepted inventory/Add/Edit/read-check journeys remain compatible.
+      Assigned T4 checks pass with truthful counts/skips/unavailable evidence; the checkpoint
+      contains only this Task and leaves the Contract and unrelated/private files untouched.
 
 ## Required Tests
 
-Run and record exact commands, counts, skips and unavailable gates. Use temporary roots, fake/local
-provider services and synthetic secret references; never require production SMB/OpenList/S3/TMDB.
+Use temporary roots, real Local adapters where relevant, fake/local remote services and synthetic
+secret references. Never use production SMB/OpenList/S3/TMDB, credentials or user media. Record
+exact commands, totals, skips and unavailable external gates.
 
-- `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations` plus focused new Add/Edit application/API tests for all six provider types, exact Active fencing, full validation/evidence, runtime binding, audit, redaction and zero Storage mutation.
+- `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save` plus the new focused lifecycle-command tests. Cover copy/provider option preservation and secrets; successful enabled/disabled state changes; enabled-dependent disable rejection; all-reference removal blocking including disabled/truncated dependents; and exact Active concurrency across all commands.
+- Prove unreferenced removal with a real unavailable Local root without touching its contents,
+  successful checked runtime publication, unchanged historical snapshots, and failures at graph,
+  Storage/strategy/destination evidence, persistence and runtime preparation boundaries. Include
+  an unrelated Storage check failure that identifies the actual dependency, correction and an
+  explicit successful continuation. Prove zero Storage mutation and no media-work admission.
 - `.venv/bin/python -m unittest discover -s tests` for the T4 full Python regression.
-- `cd web && npm test -- --run` plus focused Storage entity/API/component tests for provider forms,
-  steps, prefill, option preservation, field errors, unknown outcome and permission states.
-- `cd web && npm run test:e2e -- --grep 'Storage management'` for authenticated Add/Edit success,
-  provider variation, failed/stale Save recovery, drawer closed/open states, desktop/narrow layout,
-  keyboard/focus and continued inventory/read-check behavior. Capture controlled `1536 x 1024`
-  drawer-open and closed visual evidence against the committed reference; report browser or
-  fixture limitations honestly.
+- `cd web && npm test -- --run` plus focused entity/API/component tests for typed commands,
+  permission states, menu/focus behavior, copy input, reference explanations, confirmation,
+  refreshed list/counts, known failures and unknown-outcome verification without replay.
+- `cd web && npm run test:e2e -- --grep 'Storage management'`: authenticated copy, enable/disable,
+  referenced removal including disabled dependents, successful configuration-only removal,
+  stale/failed publication and unknown-outcome recovery, plus retained Add/Edit/read-check/search
+  behavior. Capture controlled `1536 x 1024` drawer-open/closed and More/removal evidence; cover
+  narrow layout, keyboard and focus. Use the unchanged reference with the no-notes override.
 - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`.
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check .` and
   `.venv/bin/python -m compileall -q mediaflow tests scripts`.
-- `python3 scripts/check_governance.py`, `git diff --check`, manifest/private-file and secret-output
-  audit, and FFmpeg/FFprobe exclusion audit. Record whether
-  `scripts/docker_release_security_smoke_test.py` or another packaging/migration gate is material
-  to the actual diff; run any material gate and report an unavailable external gate explicitly.
+- `python3 scripts/check_governance.py`, `git diff --check`, checkpoint manifest/private-file and
+  secret-output audit, and FFmpeg/FFprobe exclusion audit.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-3-validation`
+  against the exact committed candidate for the authenticated API/Web composition. If external
+  infrastructure is unavailable, report the exact failure and which validation did not run.
+  Assess additional migration/packaging gates from the actual diff; do not claim unnecessary or
+  unavailable gates passed.
 
 ## Non-goals
 
-- Copy, enable/disable, configuration removal and their `更多` actions; these form the remaining
-  RO-4 mutation unit. Do not display dead controls that appear usable.
-- Full general Configuration redesign, first-time setup replacement, physical Storage file
-  mutation, write probes, media Scan/Preview/Organize or new adapters/providers.
-- Storage notes, arbitrary host browsing, secret values, reference rewrites, Storage ID migration
-  or physical root migration.
-- Editing the committed `docs/pics/储存管理.png`, unrelated image work, or any change to the Slice
-  Contract/Roadmap boundary.
+- Work beyond Slice 39 or any change to its Base, Required Outcomes, Required Surfaces or Safety
+  Invariants; declaring the Slice complete belongs to A after B's closure preparation.
+- Physical file copy/move/delete, Storage root migration, write probes, new adapters/providers,
+  media-processing work, Storage notes, arbitrary host browsing or secret-value entry.
+- General Configuration redesign, bulk multi-object editing, automatic reference rewrites,
+  rewriting historical snapshots, new identity/session systems or automatic uncertain replay.
+- Optional polish, unrelated refactors, per-field/test micro-Tasks and changes to reference images
+  or pre-existing unrelated/private files.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/application/configuration_objects.py`: Storage form authority/projection and checked Add/Edit command; extend shared evidence collection for the enabled Storage being saved.
-- `mediaflow/domain/configuration_management.py`: bounded Storage-check failure identity and category fields on Save errors.
-- `mediaflow/interfaces/service_api.py`: typed Storage routes, management + activation RBAC, runtime binding, bounded Save outcomes and audit route templates.
-- `tests/test_storage_page_local_save.py`: isolated application/API provider, concurrency, validation, admission failure, redaction and zero-mutation regressions.
-- `web/src/entities/storage/storage-form.ts` and `storage-form.test.ts`: six-provider field model, validation, exact path preservation and typed response normalization.
-- `web/src/features/storage/StorageEditDrawer.tsx`, `StorageManagementPage.tsx` and `StorageManagementPage.test.tsx`: four-step Add/Edit, prefill, retained input, explicit state verification, focus and permission states.
-- `web/src/shared/api/api-client.ts` and `storage-management-api.test.ts`: authority read and fenced typed Save clients.
-- `web/src/shared/ui/styles.css`: drawer/provider choices and Storage-specific six-column widths.
-- `web/tests/fake-server.mjs` and `web/tests/e2e/storage-management.spec.ts`: isolated browser fixture, mutation journeys and reproducible screenshots.
-- `TASK.md`: factual Developer report only; Task ID/Base/Goal/Scope and B decision remain unchanged.
+- `mediaflow/application/configuration_objects.py`: checked Active-bound Storage copy, state-change and configuration-only removal commands with full successor validation and reference protection.
+- `mediaflow/interfaces/service_api.py`: typed Storage lifecycle routes with RBAC, exact Active fencing, runtime preparation and publication.
+- `web/src/shared/api/api-client.ts`: typed copy, enable/disable and removal clients.
+- `web/src/features/storage/StorageManagementPage.tsx`: accessible row-local More menu and recovery-aware lifecycle actions.
 
 ### Implemented
 
-- Explicit Add/Edit at `/ui-v2/storage` opens step 1; Local, SMB, OpenList, AWS S3, R2 and S3-compatible forms support connection and advanced settings, immutable edit ID, environment-reference names, and secret-free confirmation. Close/Cancel/Escape never Save; values survive navigation and known failures.
-- `GET /api/v1/storages` captures exact Active authority; `GET /api/v1/storages/{id}/edit` supplies the selected form; POST/PUT use the same application command. Both Add and Edit reject stale open-time revision/sequence/digest before creating a successor.
-- Save composes and validates the complete successor, checks referenced enabled Storages plus the enabled Storage being saved, retains offline strategy/destination evidence, prepares runtime binding and checked-activates atomically. No media work or Storage mutation is started.
-- Failed validation, dependencies, credentials/read checks, persistence, runtime preparation or concurrency leave the prior Active intact. Unknown/stale outcomes block resubmission until explicit successful authority verification; no automatic Save replay occurs.
-- Failed checked Storage evidence now carries the actual affected Storage ID/name, bounded failure category and the evidence-derived recovery action through API and Web; the failed candidate remains editable and a corrected explicit Save can continue.
-- Same-provider edits preserve omitted supported options; explicit null clears optional settings and provider changes drop the former provider's options. Legacy unnamed Storage projections use their stable ID. OpenList provider-rooted paths remain logical; Local host root and traversal are rejected.
-- Shared search, existing detail/read checks and V1 surfaces remain in place. Desktop drawer context now keeps Storage names/IDs readable instead of inheriting Files checkbox-column widths.
+- Copy preserves provider options and approved secret references under an explicit new identity; it never copies physical contents.
+- Enable/disable publishes only a checked successor and rejects disabling Storage with enabled ResourceLibrary or MediaLibrary dependents.
+- Removal rechecks the complete Active reference graph, preserves physical contents and historical snapshots, and publishes only after remaining configuration gates pass.
+- All commands keep the previous Active and actionable context on stale, reference, validation, evidence, persistence or runtime failures.
 
 ### Tests and Results
 
-Final command results (2026-09-26; temporary roots and fake/local services only):
-
-- PASS — `.venv/bin/python -m unittest tests.test_storage_page_local_save tests.test_resource_library_activation`: 37 tests, zero failures; includes multi-Storage failed-mount identity/recovery and explicit successful continuation.
-- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts`: 42 tests, zero failures; includes typed API error projection and affected-Storage Web recovery.
-
-- PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`: 126 tests, zero skips.
-- PASS — `.venv/bin/python -m unittest discover -s tests`: 1,834 tests, 7 SKIP (dedicated SMB/S3/OpenList real-service acceptance and Local/SMB/OpenList/S3 endurance profiles are absent).
-- PASS — `cd web && npm test -- --run src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx`: 69 tests across 3 files, zero skips.
-- PASS — `cd web && npm test -- --run`: 694 tests across 47 files, zero skips.
-- PASS — `cd web && npm run test:e2e -- --grep 'Storage management'`: 22 Chromium journeys, zero skips; authenticated Add/Edit, provider variation, failed/stale/unknown outcomes, read-only permissions, setup, shared search, read checks, narrow layout and keyboard focus.
-- PASS — `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: all four gates passed; only the bundle-size advisory remains.
-- PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: 316 files formatted; lint clean.
-- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`.
-- PASS — `python3 scripts/check_governance.py`; `git diff --check`; explicit Task manifest/private-file/reference-image audit; changed-source FFmpeg/FFprobe/private-key exclusion audit.
-- PASS — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-2-correction`: exact candidate image, isolated four-service stack, non-root/mount checks, V1/V2 static coexistence, auth/RBAC, managed activation, Worker restart and durable evidence acceptance passed.
-
-Controlled visual evidence (generated/ignored, not committed):
-
-- `web/test-results/storage-closed-1536x1024.png`
-- `web/test-results/storage-drawer-step1-1536x1024.png`
-- `web/test-results/storage-drawer-long-form-1536x1024.png`
-
-Inspected against unchanged `docs/pics/储存管理.png` (SHA-256
-`5e3aa806a081aaa52afdb79e0442e751e793aedcb1e4dd4616049f15e3b3df44`). Browser assertions
-also cover narrow width and keyboard/focus; the desktop assertion checks a readable name/ID column
-while the drawer is open. No pixel-equality claim or production-provider browser claim is made.
-
-Earlier validation found and corrected missing Add fencing, an insufficient verification gate,
-legacy unnamed projection handling and outdated Save assertions. One multi-scenario Web test hit
-its 5-second limit under concurrent gates; its five scenarios now run as separate parameterized
-cases with the same assertions, without changing timeout limits or skipping coverage.
+- PASS — `python3 -m py_compile mediaflow/application/configuration_objects.py mediaflow/interfaces/service_api.py`.
+- PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save` (126 tests, 0 failures).
+- PASS — `cd web && npm run typecheck`.
+- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts` (42 tests, 0 failures; jsdom reports existing `scrollTo` notices).
+- PASS — `python3 scripts/check_governance.py`; `git diff --check`.
 
 ### Decisions
 
-- Reuse Managed Configuration and checked activation; no second Storage repository or adapter registry. Add authority is captured by a bounded read instead of making the operator handle revisions.
-- An enabled unreferenced Storage still needs its own root read check before Save reports success. Disabled unreferenced entries remain configuration facts and receive no misleading passed connection claim.
-- Readiness exposes deployment environment-reference names and SET/UNSET only. No real external account or credential was used.
-- Explicit state verification can refresh a stale edit's authority only after displaying current Storage context; input stays correctable and a subsequent Save remains an explicit action. If an unknown Add already exists, direct the operator to inspect/edit it instead of replaying creation.
-- Docker release-security was treated as material to the new authenticated API/Web composition. No database schema, migration, package dependency or deployment manifest changed; no additional migration gate applies.
+- Reused the existing checked successor/runtime-binding authority rather than exposing Draft-only generic object mutation.
+- Removal does not require a read check against the removed Storage; only the remaining configuration is admitted.
 
 ### Remaining In-Slice Work
 
-Copy, dedicated enable/disable and reference-protected configuration removal (`RO-4`) remain outside
-this Task, as specified by B. No next Task or Slice outcome is defined here.
+- B review may require broader lifecycle-specific API/Web and full T4 regression coverage.
 
 ### Risks / Deviations
 
-- Existing SQLite ResourceWarnings, jsdom `scrollTo` messages and the Vite bundle-size advisory remain non-fatal pre-existing test/build output.
-- Existing workspace Storage implementation was inspected and completed. Pre-existing `docs/pics/媒体库页.png` deletion, `docs/pics/文件页.png` modification and untracked `docs/pics/媒体库.png` were preserved and excluded. `SLICE.md`, Roadmap and the committed Storage reference are untouched.
-- `config/alist.json` remains ignored, untracked and unstaged; its contents were not read. Screenshots/test traces and `/tmp` validation logs are local generated evidence only.
-- Python emits SQLite ResourceWarnings; jsdom reports unimplemented `window.scrollTo`; the build reports a >500 kB bundle advisory. These messages are recorded separately from actual test results.
-- No production SMB/OpenList/S3/TMDB acceptance was attempted. Browser proof uses the local fake API; Python proves the actual application/API behavior independently.
+- Full T4 Python/Web/E2E, Ruff, Docker security smoke and production-provider gates were not run in this checkpoint.
+- Existing unrelated `TASK.md` and `docs/pics/` worktree changes were preserved and are not part of the implementation commit.
 
 ### Checkpoint
 
-The SHA below is the implementation checkpoint. This report is recorded in a following
-documentation-only commit so it can name the actual immutable SHA. Neither commit is pushed.
-
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 764a56eb74e2eb311fd9e685699c8cad4e24f3af
+Head SHA: a5f01937f8a8d1b19d2e19e708b55b8d0cc70b72
 ```
-
-## B Review Validation
-
-B independently reviewed the actual Task Base..`3a57dc374908aeebc3eaa06e826c27bb50e5db92`
-diff on 2026-09-26. Current HEAD `4e152e1dcd93448395ec14aa8f38f91ac73309d2` adds only the
-Developer report; its implementation, tests and packaging match that checkpoint. This is the first
-B correction round for Task 39.2.
-
-- PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`: 126 tests, zero skips.
-- PASS — `.venv/bin/python -m unittest discover -s tests`: 1,834 tests, 7 skips for the absent
-  isolated SMB/S3/OpenList acceptance and Local/SMB/OpenList/S3 endurance profiles.
-- PASS — `cd web && npm test -- --run`: 694 tests, 47 files, zero skips.
-- PASS — `cd web && npm run test:e2e -- --grep 'Storage management'`: 22 Chromium journeys,
-  zero skips; reviewed the generated step-1 screenshot against the unchanged committed reference.
-- PASS — `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`.
-- PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .` (316 files),
-  `.venv/bin/python -m compileall -q mediaflow tests scripts`, `python3 scripts/check_governance.py`,
-  working-tree and Task-range `git diff --check`.
-- PASS — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-2-review`:
-  exact committed candidate build, four-service stack and release-security acceptance passed.
-  This supplies fresh evidence for the previously unavailable Developer gate; its earlier result
-  is retained above as historical fact. Log: `/tmp/mediaflow-b39-docker.log`.
-- Manifest/private-file audit: no Contract/Roadmap/reference-image changes, no private configuration
-  or unrelated images in the checkpoint, no changed-source FFmpeg/FFprobe/private-key matches.
-  `config/alist.json` remains ignored and untracked; its contents were not read. Pre-existing image
-  changes remain untouched. No weakened assertion or hidden skip was found in the reviewed diff.
-
-The regression results do not cover the independently reproduced recovery blocker below. SQLite
-ResourceWarnings, jsdom `scrollTo` messages and the existing bundle-size advisory were visible and
-were not counted as test failures. No production provider service was used and no additional
-schema/migration gate is material to this diff. Full-run logs are `/tmp/mediaflow-b39-python.log`,
-`/tmp/mediaflow-b39-web.log` and `/tmp/mediaflow-b39-e2e.log`.
 
 ## B Review Result
 
 ```text
-Reviewed: 2d012c07f049fb2e0831a39b721b1aa465e3888e..3a57dc374908aeebc3eaa06e826c27bb50e5db92
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: NOT SET
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- **P1 — Preserve the failed Storage identity and actionable cause through Save recovery.**
-  `ConfigurationObjectService._checked_successor_evidence()`
-  (`mediaflow/application/configuration_objects.py:835`) drops the failed check's Storage identity;
-  `storageSaveFailure()` (`web/src/features/storage/StorageManagementPage.tsx:758`) also discards
-  its failure category/next action and renders the same generic mount/permission/credential advice.
-  **Production reachability:** a valid managed Active with the existing production Local adapters,
-  an enabled ResourceLibrary on `source-storage` and an enabled MediaLibrary on `media-target`;
-  the target mount becomes unavailable after the source Edit form opens. No adapter override or
-  reduced-capability fake is needed. **User impact:** saving only the source's name fails because
-  of the other Storage, but neither the response nor the drawer identifies `media-target` or tells
-  the operator that its root is missing. The operator cannot locate the actual correction from
-  this Save failure; editing the selected source's fields cannot resolve it. **Contract:** Task
-  Acceptance Criteria item 5 requires the affected object/field and an explicit correction action;
-  Slice RO-6 and its Operator Journey Failure/Recovery require an actionable missing-mount/check
-  failure. **Reproduced evidence:**
-  `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b39-recovery-probe.py` builds a checked Active from
-  `tests.test_configuration_objects.example_document()` using real Local adapters and temporary
-  roots, opens `/api/v1/storages/source-storage/edit`, renames only the temporary target directory
-  to simulate an unavailable mount, then PUTs the source name edit. Result: HTTP 409,
-  `storage_storage_check_failed`, old Active preserved; the error contains no affected Storage ID
-  and only `correct Storage availability (not_found), then retry Save`. The persisted exact-successor
-  evidence correctly records `storageId=media-target`, `failureCategory=not_found`, and
-  `Storage root was not found` (log: `/tmp/mediaflow-b39-recovery-probe.log`). A temporary Vitest
-  probe of the actual `storageSaveFailure` mapping also confirmed the rendered message omits the
-  affected Storage and specific cause (1 test passed; `/tmp/mediaflow-b39-recovery-ui.log`; temporary
-  test removed after review). **Required correction:** carry bounded, secret-free affected Storage
-  identity and failure category/recovery guidance from the real check through the application/API
-  error and typed Web rendering. Name the actual failing dependency even when it is not the object
-  being edited, retain entered values and prior Active, and direct the operator to the appropriate
-  mount/configuration/credential correction without raw revision handling. Add application/API and
-  Web regression coverage for this multi-Storage failure and successful explicit continuation
-  after the real blocker is corrected. Keep this correction in Task 39.2; do not bypass or weaken
-  any checked-activation evidence gate.
