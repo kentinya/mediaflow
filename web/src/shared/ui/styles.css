@@ -3285,3 +3285,154 @@ button.mf-grid-button {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* Storage Add/Edit drawer (Slice 39, Task 39.2): the four-step typed provider
+   form keeps its error, verification and reference-note presentation inside
+   the right-side drawer so a rejected Save stays legible beside the correctable
+   input, and row actions keep 查看 / 编辑 in one stable cell. */
+.mf-storage-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.mf-storage-drawer-error {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border: 1px solid #b42318;
+  border-radius: 8px;
+  background: #fef3f2;
+  color: #b42318;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.mf-storage-field-error {
+  color: #b42318;
+}
+
+.mf-storage-verify {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border: 1px solid #fcd34d;
+  border-radius: 8px;
+  background: #fffbeb;
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.mf-storage-verify p {
+  margin: 0 0 8px;
+}
+
+.mf-storage-provider-description {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 8px 0 0;
+  color: var(--files-muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.mf-storage-provider-description svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+/* The reference drawer keeps the inventory readable beside it and stays usable
+   when the viewport narrows: the step rail reflows above the form. */
+@media (max-width: 1080px) {
+  .mf-storage-drawer {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    width: min(520px, calc(100vw - 24px));
+  }
+
+  .mf-storage-drawer .mf-files-drawer-steps {
+    grid-column: 1;
+    grid-row: 2;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    border-right: none;
+    border-bottom: 1px solid var(--files-line);
+    padding: 10px 14px;
+  }
+
+  .mf-storage-drawer .mf-files-drawer-steps li + li {
+    margin-top: 0;
+  }
+
+  .mf-storage-drawer .mf-files-drawer-body {
+    grid-column: 1;
+    grid-row: 3;
+  }
+}
+
+/* Storage has six data columns, unlike the Files checkbox/name table. */
+.mf-storage-table {
+  min-width: 760px;
+}
+.mf-storage-table th:nth-child(1),
+.mf-storage-table td:nth-child(1) {
+  width: 22%;
+}
+.mf-storage-table th:nth-child(2),
+.mf-storage-table td:nth-child(2) {
+  width: 11%;
+}
+.mf-storage-table th:nth-child(3),
+.mf-storage-table td:nth-child(3) {
+  width: 23%;
+}
+.mf-storage-table th:nth-child(4),
+.mf-storage-table td:nth-child(4) {
+  width: 12%;
+}
+.mf-storage-table th:nth-child(5),
+.mf-storage-table td:nth-child(5) {
+  width: 14%;
+  text-align: left;
+}
+.mf-storage-table th:nth-child(6),
+.mf-storage-table td:nth-child(6) {
+  width: 18%;
+}
+.mf-storage-name-cell > div {
+  min-width: 0;
+}
+.mf-storage-name,
+.mf-storage-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mf-storage-provider-choices {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mf-storage-provider-choices button {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--files-line);
+  border-radius: 5px;
+  background: white;
+  text-align: left;
+  padding: 10px;
+  color: var(--ink);
+}
+.mf-storage-provider-choices button[aria-pressed="true"] {
+  border-color: #1268f5;
+  background: #eff6ff;
+}
+.mf-storage-provider-choices svg {
+  flex: 0 0 24px;
+}
+.mf-storage-provider-choices small {
+  display: block;
+  margin-top: 4px;
+  color: var(--files-muted);
+}

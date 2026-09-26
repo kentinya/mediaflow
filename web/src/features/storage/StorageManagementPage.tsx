@@ -1,17 +1,19 @@
 /**
- * V2 Storage management workspace (Slice 39, Task 39.1).
+ * V2 Storage management workspace (Slice 39, Tasks 39.1 and 39.2).
  *
  * Read-only view-and-diagnose journey: bounded provider summary/filter cards,
  * six-column inventory table with name above ID, inspectable detail/readiness
  * with reference breakdown, and an explicit zero-mutation Connection/Read
- * check. All data derives from the exact immutable Active snapshot via
- * `/api/v1/operations/storage-management/*`; no recursive Storage read,
- * scan, Provider call, Job/Task or mutation happens on load, filter or search.
- * Add/Edit/mutation controls are deliberately absent (later Task owns the
- * checked-publication boundary).
+ * check. Task 39.2 adds the typed four-step Add/Edit drawer whose page-local
+ * Save publishes one checked Active successor through the same application
+ * command the API exposes. All data derives from the exact immutable Active
+ * snapshot via `/api/v1/operations/storage-management/*` and
+ * `/api/v1/storages*`; no recursive Storage read, scan, Provider call,
+ * Job/Task or mutation happens on load, filter or search. Copy,
+ * enable/disable and removal remain a subsequent mutation unit.
  */
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -25,14 +27,29 @@ import {
   type StorageFamily,
   type StorageInventoryModel,
 } from "../../entities/storage/storage-management";
+import type {
+  StorageFieldValue,
+  StorageFormModel,
+  StorageSaveCandidate,
+} from "../../entities/storage/storage-form";
 import {
+  editStorage,
   fetchStorageCheckRun,
   fetchStorageDetail,
+  fetchStorageEdit,
+  fetchStorageAuthority,
+  saveStorage,
 } from "../../shared/api/api-client";
 import {
   STORAGE_INVENTORY_QUERY_KEY,
   storageInventoryQueryOptions,
 } from "./storage-management-query";
+import {
+  StorageEditDrawer,
+  addStorageContent,
+  editStorageContent,
+  type StorageDrawerContent,
+} from "./StorageEditDrawer";
 
 const FAMILY_LABELS: Readonly<Record<string, string>> = {
   local: "本地存储",
@@ -157,7 +174,16 @@ function toRowItem(
     referencesTruncated: item.references.truncated,
   }));
 }
-function InventoryHeader({ canManage }: { readonly canManage: boolean }) {
+function InventoryHeader({
+  canManage,
+  available,
+  onAdd,
+}: {
+  readonly canManage: boolean;
+  readonly available: boolean;
+  readonly onAdd: () => void;
+}) {
+  const disabled = !canManage || !available;
   return (
     <header className="mf-files-header">
       <div>
@@ -168,14 +194,18 @@ function InventoryHeader({ canManage }: { readonly canManage: boolean }) {
       </div>
       <div className="mf-files-header-actions">
         <button
+          id="mf-add-storage-button"
           className="mf-button mf-button-primary"
           type="button"
-          disabled
+          disabled={disabled}
           title={
-            canManage
-              ? "添加存储将在后续版本中提供"
-              : "当前账号没有管理存储的权限"
+            !canManage
+              ? "当前账号没有管理存储的权限"
+              : !available
+                ? "需要先有已激活的托管配置才能添加存储"
+                : undefined
           }
+          onClick={onAdd}
         >
           + 添加存储
         </button>
@@ -324,10 +354,14 @@ function ReferencesCell({ item }: { readonly item: StorageRowItem }) {
 
 function InventoryTable({
   items,
+  canManage,
   onView,
+  onEdit,
 }: {
   readonly items: readonly StorageRowItem[];
+  readonly canManage: boolean;
   readonly onView: (storageId: string) => void;
+  readonly onEdit: (storageId: string) => void;
 }) {
   return (
     <div className="mf-files-table-scroll">
@@ -370,14 +404,27 @@ function InventoryTable({
                 <ReferencesCell item={item} />
               </td>
               <td>
-                <button
-                  type="button"
-                  className="mf-link-button"
-                  aria-label={`查看 ${item.name}`}
-                  onClick={() => onView(item.id)}
-                >
-                  查看
-                </button>
+                <div className="mf-storage-row-actions">
+                  <button
+                    type="button"
+                    className="mf-link-button"
+                    aria-label={`查看 ${item.name}`}
+                    onClick={() => onView(item.id)}
+                  >
+                    查看
+                  </button>
+                  <button
+                    type="button"
+                    className="mf-link-button"
+                    id={`mf-edit-storage-${item.id}`}
+                    aria-label={`编辑 ${item.name}`}
+                    disabled={!canManage}
+                    title={canManage ? undefined : "当前账号没有管理存储的权限"}
+                    onClick={() => onEdit(item.id)}
+                  >
+                    编辑
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -595,6 +642,180 @@ interface StorageDetailSafeLocation {
   readonly region?: string;
 }
 
+/**
+ * Bounded, action-oriented Add/Edit failure states.
+ *
+ * Every rejected Save names the affected object, states that the previous
+ * Active and Storage contents remain, and offers the explicit next action. An
+ * undelivered outcome is a state-verification problem, never an automatic
+ * replay: `unknownOutcome` blocks a second submission until the operator has
+ * refreshed the durable Active state.
+ */
+export interface StorageSaveFailureView {
+  readonly message: string;
+  readonly refreshAuthoritativeState: boolean;
+  readonly unknownOutcome: boolean;
+}
+
+const STORAGE_UNKNOWN_OUTCOME_CODES = new Set([
+  "transport_unavailable",
+  "malformed_response",
+  "internal_error",
+  "service_unavailable",
+]);
+
+export function storageSaveFailure(
+  code: string,
+  details?: {
+    readonly durableState?: string;
+    readonly reason?: string;
+    readonly nextAction?: string;
+  },
+): StorageSaveFailureView {
+  if (STORAGE_UNKNOWN_OUTCOME_CODES.has(code)) {
+    return {
+      message:
+        "保存结果未知:系统不会自动重发。请先核实当前 Active 状态,再手动重试。",
+      refreshAuthoritativeState: true,
+      unknownOutcome: true,
+    };
+  }
+  if (
+    code === "configuration_unavailable" ||
+    code === "runtime_not_configured"
+  ) {
+    if (
+      details?.durableState === "no_active_configuration" ||
+      details?.reason === "active_missing"
+    ) {
+      return {
+        message:
+          "保存失败:当前没有已激活的托管配置,候选存储未保存;请先完成首次设置并激活配置后重试。",
+        refreshAuthoritativeState: true,
+        unknownOutcome: false,
+      };
+    }
+    return {
+      message:
+        "保存失败:当前 Active 配置不可用,候选存储未保存;请先修复或替换有效配置后重试。",
+      refreshAuthoritativeState: true,
+      unknownOutcome: false,
+    };
+  }
+  switch (code) {
+    case "invalid_request":
+      return {
+        message:
+          "保存失败:候选存储未保存。请修正名称、存储 ID、类型、根路径或连接参数后重试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "storage_duplicate":
+      return {
+        message:
+          "保存失败:该存储 ID 已存在于当前 Active 配置;旧 Active 仍在使用,请更换 ID 后重试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "storage_not_found":
+    case "not_found":
+      return {
+        message:
+          "保存失败:该存储已不在当前 Active 配置中,未创建新对象;请刷新存储清单后重新选择。",
+        refreshAuthoritativeState: true,
+        unknownOutcome: false,
+      };
+    case "storage_validation_failed":
+      return {
+        message:
+          "保存失败:候选配置未通过完整校验,旧 Active 仍在使用;请检查该存储的启用、只读设置及引用它的资源库和媒体库，修正后重试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "forbidden":
+      return {
+        message:
+          "保存失败:当前账号没有管理与激活存储配置的权限,未执行任何更改;请使用有权限的账号。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "unauthorized":
+      return {
+        message: "保存失败:登录状态已失效,未执行任何更改;请重新连接后再试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "configuration_conflict":
+    case "configuration_version_conflict":
+      return {
+        message:
+          details?.durableState === "active_winner_preserved"
+            ? "保存失败:Active 已被其他变更替换,本次候选未保存;当前获胜的 Active 仍为权威。请刷新后核对再重试。"
+            : "保存失败:Active 配置在打开表单后已变化,本次候选未保存;请刷新当前状态后重试。",
+        refreshAuthoritativeState: true,
+        unknownOutcome: false,
+      };
+    case "storage_storage_check_failed":
+      return {
+        message:
+          "保存失败:只读连接/读取检查未通过,候选未发布;旧 Active 与 Storage 内容均未改变。请修正挂载、权限、启用状态或凭据引用后重试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "storage_strategy_test_failed":
+    case "storage_destination_check_failed":
+    case "storage_evidence_failed":
+      return {
+        message:
+          "保存失败:离线识别策略测试或目标预检未通过,候选未发布;旧 Active 仍在使用,请修正相关策略后重试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "storage_persistence_failed":
+      return {
+        message:
+          "保存失败:候选配置无法持久化,未发布;旧 Active 仍在使用。请检查配置存储健康状态后重试。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+    case "storage_runtime_failed":
+      return {
+        message:
+          "保存失败:候选配置无法绑定运行时,未发布;旧 Active 仍在使用,请刷新状态后重试。",
+        refreshAuthoritativeState: true,
+        unknownOutcome: false,
+      };
+    default:
+      return {
+        message:
+          "保存失败:候选存储未保存,当前 Active 未被本次操作替换;请修正问题后重试或刷新状态。",
+        refreshAuthoritativeState: false,
+        unknownOutcome: false,
+      };
+  }
+}
+
+/** How a rejected edit-prefill read is presented (the drawer never opened). */
+export function storageEditLoadFailure(code: string): string {
+  switch (code) {
+    case "forbidden":
+      return "无法打开编辑表单:当前账号没有读取该存储配置的权限。";
+    case "unauthorized":
+      return "无法打开编辑表单:登录状态已失效;请重新连接后再试。";
+    case "storage_not_found":
+    case "not_found":
+      return "无法打开编辑表单:该存储已不在当前 Active 配置中;请刷新存储清单。";
+    case "configuration_unavailable":
+    case "runtime_not_configured":
+      return "无法打开编辑表单:当前没有可用的托管 Active 配置;请完成首次设置并激活配置。";
+    case "transport_unavailable":
+    case "malformed_response":
+      return "无法打开编辑表单,未执行任何更改;结果未知且不会自动重试,请刷新当前 Active 状态后再试。";
+    default:
+      return "无法打开编辑表单,未执行任何更改;请刷新存储清单后重试。";
+  }
+}
+
 interface StorageDetailViewModel {
   readonly storage: StorageDetailModel["storage"];
   readonly references: StorageDetailModel["references"];
@@ -665,6 +886,39 @@ export function StorageManagementPage() {
   // the operator explicitly verifies current state (AC: unknown result is
   // verified before another attempt).
   const [checkBlocked, setCheckBlocked] = useState<string | null>(null);
+
+  // Add/Edit drawer state.  The drawer is an operator-invoked action surface:
+  // it stays closed on normal entry, reload and reconnect, and a failed Save
+  // keeps the entered values instead of discarding a rejected candidate.
+  const [drawer, setDrawer] = useState<{
+    readonly open: boolean;
+    readonly editing: boolean;
+    readonly content: StorageDrawerContent;
+    readonly originalOptions: Readonly<
+      Record<string, StorageFieldValue>
+    > | null;
+    readonly expected: {
+      readonly expectedRevisionId: string;
+      readonly expectedVersion: number;
+      readonly expectedDigest: string;
+    } | null;
+  }>({
+    open: false,
+    editing: false,
+    content: addStorageContent("local"),
+    originalOptions: null,
+    expected: null,
+  });
+  const lastCandidateRef = useRef<StorageSaveCandidate | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  // An outcome the browser cannot confirm (transport/malformed/internal) is a
+  // state-verification problem: another submission stays blocked until the
+  // operator refreshes the durable Active state.
+  const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [editLoadError, setEditLoadError] = useState<string | null>(null);
+  const drawerInvokerIdRef = useRef<string | null>(null);
+  const editInvokerRef = useRef<HTMLElement | null>(null);
+  const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
   // Search and the provider filter are applied by the backend over the
   // complete Active object set, not over one already-truncated page.
@@ -764,6 +1018,226 @@ export function StorageManagementPage() {
     }
   }, [detailId, token, queryClient, checkMutation]);
 
+  const refreshInventoryAuthority = useCallback(() => {
+    void queryClient.invalidateQueries({
+      queryKey: [STORAGE_INVENTORY_QUERY_KEY],
+    });
+    void queryClient.invalidateQueries({
+      queryKey: ["storage-management-detail"],
+    });
+  }, [queryClient]);
+
+  const closeDrawer = useCallback(() => {
+    setDrawer((current) => ({ ...current, open: false }));
+    setSaveError(null);
+    setAwaitingVerification(false);
+    // Focus returns to the invoking control where practical.
+    if (drawerInvokerIdRef.current !== null) {
+      document.getElementById(drawerInvokerIdRef.current)?.focus();
+    } else {
+      editInvokerRef.current?.focus();
+    }
+    editInvokerRef.current = null;
+  }, []);
+
+  const openAddDrawer = useCallback(async () => {
+    const authority = await fetchStorageAuthority(token);
+    if (!authority.ok) {
+      setEditLoadError("无法打开添加表单：请刷新并确认托管 Active 配置可用。");
+      return;
+    }
+    drawerInvokerIdRef.current = "mf-add-storage-button";
+    editInvokerRef.current = null;
+    setEditLoadError(null);
+    setSaveError(null);
+    setAwaitingVerification(false);
+    setDrawer({
+      open: true,
+      editing: false,
+      content: addStorageContent("local"),
+      originalOptions: null,
+      expected: authority.model,
+    });
+  }, [token]);
+
+  const openEditDrawer = useCallback(
+    async (storageId: string) => {
+      drawerInvokerIdRef.current = null;
+      editInvokerRef.current = document.getElementById(
+        `mf-edit-storage-${storageId}`,
+      );
+      setEditLoadError(null);
+      setSaveError(null);
+      setAwaitingVerification(false);
+      const result = await fetchStorageEdit(token, storageId);
+      if (!result.ok) {
+        setEditLoadError(storageEditLoadFailure(result.code));
+        if (
+          result.code === "transport_unavailable" ||
+          result.code === "malformed_response"
+        ) {
+          refreshInventoryAuthority();
+        }
+        editInvokerRef.current = null;
+        return;
+      }
+      const model: StorageFormModel = result.model;
+      setDrawer({
+        open: true,
+        editing: true,
+        content: editStorageContent(model),
+        originalOptions: model.values.options,
+        expected: {
+          expectedRevisionId: model.activeRevisionId,
+          expectedVersion: model.activeRevisionSequence,
+          expectedDigest: model.activeDigest,
+        },
+      });
+    },
+    [token, refreshInventoryAuthority],
+  );
+
+  const saveMutation = useMutation({
+    mutationFn: async ({
+      candidate,
+      editing,
+      expected,
+    }: {
+      readonly candidate: StorageSaveCandidate;
+      readonly editing: boolean;
+      readonly expected: {
+        readonly expectedRevisionId: string;
+        readonly expectedVersion: number;
+        readonly expectedDigest: string;
+      } | null;
+    }) => {
+      if (expected === null)
+        throw new Error("Storage form authority is missing");
+      return editing
+        ? editStorage(token, candidate, expected)
+        : saveStorage(token, candidate, expected);
+    },
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        const failure = storageSaveFailure(result.code, result.details);
+        setSaveError(failure.message);
+        setAwaitingVerification(
+          failure.unknownOutcome || failure.refreshAuthoritativeState,
+        );
+        if (failure.refreshAuthoritativeState) refreshInventoryAuthority();
+        return;
+      }
+      setSaveError(null);
+      setAwaitingVerification(false);
+      const wasEditing = drawer.editing;
+      const invoker = editInvokerRef.current;
+      setDrawer((current) => ({ ...current, open: false }));
+      refreshInventoryAuthority();
+      setSavedNotice(
+        result.model.values.enabled
+          ? null
+          : `存储“${result.model.values.name}”已保存并激活,但当前为停用状态:它仍出现在存储清单中,只作为配置事实存在。Storage 内容未被改动。`,
+      );
+      if (wasEditing) {
+        requestAnimationFrame(() => {
+          if (invoker?.isConnected) invoker.focus();
+        });
+      }
+      editInvokerRef.current = null;
+    },
+    onError: () => {
+      // A transport-level failure never replays automatically: the operator
+      // verifies the current Active state before another explicit submission.
+      setSaveError(
+        "保存结果未知,未自动重试;候选配置未被确认发布。请刷新 Active 状态后再决定是否重试。",
+      );
+      setAwaitingVerification(true);
+      refreshInventoryAuthority();
+    },
+  });
+
+  // Explicit verification before another submission: re-read the authoritative
+  // Active inventory, then release the unknown-outcome gate.
+  const verifySaveState = useCallback(async () => {
+    const result = await fetchStorageAuthority(token);
+    if (!result.ok) {
+      setSaveError("无法核实当前状态;请确认 API 可用后再次核实。");
+      return;
+    }
+    // A failed inventory read must not unlock Save. React Query's default
+    // refetch resolves even on error, so explicitly request error propagation.
+    try {
+      const current = await inventoryQuery.refetch({ throwOnError: true });
+      if (
+        !current.data?.available ||
+        current.data.active?.revisionId !== result.model.expectedRevisionId
+      ) {
+        setSaveError("当前配置仍不可用或已再次变化；请重新核实后再保存。");
+        return;
+      }
+    } catch {
+      setSaveError("无法核实当前状态;请确认 API 可用后再次核实。");
+      return;
+    }
+    const changed =
+      result.model.expectedRevisionId !== drawer.expected?.expectedRevisionId;
+    if (changed) {
+      // Inspect the current object before allowing the retained input to be
+      // applied to a newer snapshot. Never silently rebase or replay Save.
+      const id = lastCandidateRef.current?.storageId;
+      if (id) {
+        const current = await fetchStorageEdit(token, id);
+        if (current.ok) {
+          setSaveError(
+            `已核实当前存储：${current.model.values.name}，${providerTypeLabel(current.model.values.type)}，根路径 ${current.model.values.rootPath || "/"}。当前 Active 已变化；请核对保留的输入后再明确保存，或关闭并重新编辑。`,
+          );
+          setDrawer((previous) => ({
+            ...previous,
+            expected: {
+              expectedRevisionId: current.model.activeRevisionId,
+              expectedVersion: current.model.activeRevisionSequence,
+              expectedDigest: current.model.activeDigest,
+            },
+          }));
+          if (!drawer.editing) {
+            setSaveError(
+              "已核实：此 ID 已存在于当前 Active。请关闭后查看该存储，再选择编辑；不会重复新增。",
+            );
+            return;
+          }
+        } else if (current.code !== "storage_not_found") {
+          setSaveError("无法核实该存储的当前状态；请稍后再次核实。");
+          return;
+        } else {
+          setDrawer((previous) => ({ ...previous, expected: result.model }));
+          setSaveError(
+            "已核实：当前 Active 已变化且该 ID 不存在。请核对保留的输入后再明确保存。",
+          );
+        }
+      }
+    } else {
+      setSaveError(
+        "已核实：Active 未变化，本次候选尚未发布；可修正输入后手动保存。",
+      );
+    }
+    setAwaitingVerification(false);
+    saveMutation.reset();
+  }, [token, inventoryQuery, saveMutation, drawer.expected, drawer.editing]);
+
+  const submitDrawer = useCallback(
+    (candidate: StorageSaveCandidate) => {
+      if (saveMutation.isPending || awaitingVerification) return;
+      lastCandidateRef.current = candidate;
+      saveMutation.mutate({
+        candidate,
+        editing: drawer.editing,
+        expected: drawer.expected,
+      });
+    },
+    [drawer.editing, drawer.expected, saveMutation, awaitingVerification],
+  );
+
   return (
     <div className="mf-files-page mf-storage-page">
       <AuthorizedReadBoundary
@@ -782,7 +1256,11 @@ export function StorageManagementPage() {
             const setupState = data.reason === "no_active";
             return (
               <>
-                <InventoryHeader canManage={data.canManage} />
+                <InventoryHeader
+                  canManage={data.canManage && !saveMutation.isPending}
+                  available={false}
+                  onAdd={openAddDrawer}
+                />
                 <StatusBanner
                   variant="warning"
                   title={setupState ? "尚未完成托管配置" : "存储管理暂不可用"}
@@ -808,7 +1286,40 @@ export function StorageManagementPage() {
           }
           return (
             <>
-              <InventoryHeader canManage={data.canManage} />
+              <InventoryHeader
+                canManage={data.canManage && !saveMutation.isPending}
+                available={data.available}
+                onAdd={openAddDrawer}
+              />
+              {savedNotice !== null && (
+                <StatusBanner variant="info" title="已保存">
+                  <p>{savedNotice}</p>
+                  <div className="mf-actions">
+                    <button
+                      id="mf-storage-saved-notice"
+                      type="button"
+                      className="mf-button mf-button-secondary"
+                      onClick={() => setSavedNotice(null)}
+                    >
+                      知道了
+                    </button>
+                  </div>
+                </StatusBanner>
+              )}
+              {editLoadError !== null && (
+                <StatusBanner variant="error" title="无法打开编辑表单">
+                  <p>{editLoadError}</p>
+                  <div className="mf-actions">
+                    <button
+                      type="button"
+                      className="mf-button mf-button-secondary"
+                      onClick={() => setEditLoadError(null)}
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </StatusBanner>
+              )}
               <ProviderCards
                 families={data.families}
                 selected={familyFilter}
@@ -836,6 +1347,7 @@ export function StorageManagementPage() {
               ) : (
                 <InventoryTable
                   items={rows}
+                  canManage={data.canManage && !saveMutation.isPending}
                   onView={(id) => {
                     if (id !== detailId) {
                       setCheckBlocked(null);
@@ -843,9 +1355,13 @@ export function StorageManagementPage() {
                     }
                     setDetailId(id);
                   }}
+                  onEdit={(id) => {
+                    void openEditDrawer(id);
+                  }}
                 />
               )}
-              {detailId !== null &&
+              {!drawer.open &&
+                detailId !== null &&
                 (detailQuery.data ? (
                   <StorageDetailPanel
                     detail={toDetailViewModel(detailQuery.data, {
@@ -863,7 +1379,7 @@ export function StorageManagementPage() {
                       setCheckBlocked(null);
                       checkMutation.reset();
                     }}
-                    canManage={data.canManage}
+                    canManage={data.canManage && !saveMutation.isPending}
                   />
                 ) : detailQuery.isError ? (
                   <StatusBanner variant="error" title="存储详情不可用">
@@ -874,6 +1390,22 @@ export function StorageManagementPage() {
                     <p>正在读取该存储的配置与引用信息...</p>
                   </StatusBanner>
                 ))}
+              {drawer.open && (
+                <StorageEditDrawer
+                  open
+                  editing={drawer.editing}
+                  content={drawer.content}
+                  originalOptions={drawer.originalOptions}
+                  saving={saveMutation.isPending}
+                  saveError={saveError}
+                  awaitingVerification={awaitingVerification}
+                  onVerify={() => {
+                    void verifySaveState();
+                  }}
+                  onClose={closeDrawer}
+                  onSave={submitDrawer}
+                />
+              )}
             </>
           );
         }}

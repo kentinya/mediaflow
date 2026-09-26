@@ -5564,6 +5564,15 @@ function storageState(session) {
       // bounded page, mirroring the real backend contract proved by
       // tests/test_v2_storage_operations.py.
       overLimit: false,
+      // Task 39.2 Add/Edit command state. `storages` is the per-session
+      // Active Storage set (lazily copied from the shared fixture so a Saved
+      // object survives refresh within the session, exactly like a published
+      // immutable successor); `digest` is the Active identity the opened Edit
+      // form binds to; `saveFail` selects one deterministic failure journey.
+      storages: null,
+      digest: "e2e-digest-3",
+      saveFail: null,
+      published: 0,
     };
     STORAGE_STATES.set(key, value);
   }
@@ -5795,10 +5804,480 @@ function storageOverLimitFixture() {
 
 const STORAGE_INVENTORY_PAGE_LIMIT = 100;
 
-/** The configured Storage set for this request's session. */
+/**
+ * The configured Storage set for this request's session. A published Add/Edit
+ * successor replaces the Active set, so a refresh lists the new object from the
+ * same authority instead of a local browser guess.
+ */
 function storageFixture(state) {
-  return state.overLimit ? storageOverLimitFixture() : STORAGE_FIXTURE;
+  if (state.storages !== null && state.storages !== undefined) {
+    return state.storages;
+  }
+  const base = state.overLimit ? storageOverLimitFixture() : STORAGE_FIXTURE;
+  state.storages = base.map((storage) => ({ ...storage }));
+  return state.storages;
 }
+
+/**
+ * The persisted typed provider options per Storage (the Add/Edit form's
+ * prefill source). They mirror the real edit projection: provider settings and
+ * approved environment-variable *names* only — a fake server never holds or
+ * returns a credential value either.
+ */
+const STORAGE_FIXTURE_OPTIONS = {
+  "local-media": {},
+  "nas-media": {
+    host: "nas.example",
+    share: "media",
+    domain: "WORKGROUP",
+    port: 445,
+    usernameEnv: "MF_NAS_USER",
+    passwordEnv: "MF_NAS_PASSWORD",
+    connectTimeout: 30,
+    operationTimeout: 60,
+    maxConcurrency: 4,
+  },
+  "openlist-media": {
+    baseUrl: "https://openlist.example",
+    tokenEnv: "MF_OPENLIST_TOKEN",
+    connectTimeout: 10,
+    requestTimeout: 60,
+    maxConcurrency: 4,
+    maxRetries: 2,
+    pageSize: 100,
+  },
+  "r2-archive": {
+    bucket: "archive",
+    endpoint: "https://archive.invalid",
+    region: "auto",
+    accessKeyEnv: "MF_R2_ACCESS",
+    secretKeyEnv: "MF_R2_SECRET",
+    forcePathStyle: false,
+    connectTimeout: 10,
+    requestTimeout: 60,
+    maxConcurrency: 4,
+    maxRetries: 2,
+    pageSize: 1000,
+    multipartThreshold: 67108864,
+    multipartPartSize: 16777216,
+  },
+};
+
+/** Options the projection falls back to for synthetic over-limit fixtures. */
+function storageFixtureOptions(storage) {
+  if (STORAGE_FIXTURE_OPTIONS[storage.id] !== undefined) {
+    return STORAGE_FIXTURE_OPTIONS[storage.id];
+  }
+  if (storage.type === "smb") {
+    const host = storage.location?.host ?? "nas.example";
+    const share = storage.location?.share ?? "media";
+    return {
+      host,
+      share,
+      usernameEnv: "MF_NAS_USER",
+      passwordEnv: "MF_NAS_PASSWORD",
+      port: 445,
+    };
+  }
+  if (storage.type === "openlist") {
+    return {
+      baseUrl: "https://openlist.example",
+      tokenEnv: "MF_OPENLIST_TOKEN",
+    };
+  }
+  if (storage.type === "local") {
+    return {};
+  }
+  return {
+    bucket: storage.location?.bucket ?? "media",
+    endpoint: storage.location?.endpoint ?? "https://objects.example",
+    accessKeyEnv: "MF_S3_ACCESS",
+    secretKeyEnv: "MF_S3_SECRET",
+  };
+}
+
+const STORAGE_TYPES_SUPPORTED = [
+  "local",
+  "smb",
+  "openlist",
+  "s3",
+  "r2",
+  "s3-compatible",
+];
+const STORAGE_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+// Same literal-secret ban the Python domain validator enforces: an option key
+// shaped like a credential value is rejected, only Env references are legal.
+const STORAGE_SECRET_KEYS = new Set([
+  "token",
+  "password",
+  "secret",
+  "access_key",
+  "secret_key",
+  "session_token",
+  "authorization",
+  "username",
+  "cookie",
+  "api_key",
+  "accesskey",
+  "secretkey",
+  "sessiontoken",
+]);
+
+function storageProviderFamily(type) {
+  if (type === "local") return "local";
+  if (type === "smb") return "smb";
+  if (type === "openlist") return "openlist";
+  if (["s3", "r2", "s3-compatible"].includes(type)) return "s3";
+  return "other";
+}
+
+function storageFamilyLabelFor(type) {
+  return {
+    local: "本地存储",
+    smb: "SMB",
+    openlist: "OpenList",
+    s3: "S3",
+    r2: "R2",
+    "s3-compatible": "S3 兼容",
+  }[type];
+}
+
+/** Provider coordinates shown as configuration location, never secrets. */
+function storageLocationFromOptions(type, rootPath, options) {
+  if (type === "local") {
+    return { kind: "local", rootPath };
+  }
+  const location = { kind: "remote", rootPath };
+  for (const field of ["host", "share", "bucket", "endpoint", "region"]) {
+    const value = options[field];
+    if (typeof value === "string" || typeof value === "number") {
+      if (String(value) !== "") location[field] = String(value);
+    }
+  }
+  return location;
+}
+
+/**
+ * The typed provider check the Python domain validator performs. The fake
+ * mirrors the same bounded rules so an operator-visible rejection in the
+ * browser proves the same contract the API enforces.
+ */
+function validateStorageCandidate(fields, editing) {
+  const allowed = new Set([
+    "storageId",
+    "name",
+    "type",
+    "rootPath",
+    "readOnly",
+    "enabled",
+    "options",
+    "expectedRevisionId",
+    "expectedVersion",
+    "expectedDigest",
+  ]);
+  const keys = Object.keys(fields);
+  if (keys.length !== allowed.size || keys.some((key) => !allowed.has(key))) {
+    return "shape";
+  }
+  if (
+    typeof fields.storageId !== "string" ||
+    !STORAGE_ID_PATTERN.test(fields.storageId)
+  ) {
+    return "storageId";
+  }
+  if (
+    typeof fields.name !== "string" ||
+    fields.name.trim() === "" ||
+    fields.name.length > 120 ||
+    /[\u0000\r\n]/.test(fields.name)
+  ) {
+    return "name";
+  }
+  if (
+    typeof fields.type !== "string" ||
+    !STORAGE_TYPES_SUPPORTED.includes(fields.type)
+  ) {
+    return "type";
+  }
+  if (typeof fields.rootPath !== "string" || fields.rootPath.length > 4096) {
+    return "rootPath";
+  }
+  if (
+    typeof fields.readOnly !== "boolean" ||
+    typeof fields.enabled !== "boolean"
+  ) {
+    return "state";
+  }
+  const options = fields.options;
+  if (
+    typeof options !== "object" ||
+    options === null ||
+    Array.isArray(options)
+  ) {
+    return "options";
+  }
+  if (fields.type === "local") {
+    if (
+      fields.rootPath === "" ||
+      !fields.rootPath.startsWith("/") ||
+      fields.rootPath.includes("\\") ||
+      fields.rootPath.split("/").includes("..")
+    ) {
+      return "rootPath";
+    }
+  } else if (
+    fields.rootPath.startsWith("/") ||
+    fields.rootPath.startsWith("\\") ||
+    fields.rootPath.includes("\\") ||
+    (fields.rootPath !== "" &&
+      fields.rootPath.split("/").some((part) => part === "" || part === ".."))
+  ) {
+    return "rootPath";
+  }
+  for (const [key, value] of Object.entries(options)) {
+    if (STORAGE_SECRET_KEYS.has(String(key).toLowerCase()))
+      return "secretOption";
+    if (key.toLowerCase().endsWith("env") && value !== null) {
+      if (typeof value !== "string" || !ENV_NAME_PATTERN.test(value)) {
+        return `options.${key}`;
+      }
+    }
+    if (key === "port" && value !== null) {
+      if (!Number.isInteger(value) || value < 1 || value > 65535)
+        return "options.port";
+    }
+    if (key === "bucket" && value !== null) {
+      if (typeof value !== "string" || value === "" || value.includes("/")) {
+        return "options.bucket";
+      }
+    }
+    if (key === "endpoint" && value !== null) {
+      if (typeof value !== "string" || !/^https?:\/\/[^/?#]+$/.test(value)) {
+        return "options.endpoint";
+      }
+    }
+    if (
+      (key === "connectTimeout" ||
+        key === "requestTimeout" ||
+        key === "operationTimeout") &&
+      value !== null
+    ) {
+      if (typeof value !== "number" || !(value > 0)) return `options.${key}`;
+    }
+    if ((key === "maxConcurrency" || key === "pageSize") && value !== null) {
+      if (!Number.isInteger(value) || value < 1) return `options.${key}`;
+    }
+    if (key === "maxRetries" && value !== null) {
+      if (!Number.isInteger(value) || value < 0) return "options.maxRetries";
+    }
+    if (key === "multipartPartSize" && value !== null) {
+      if (!Number.isInteger(value) || value < 5 * 1024 * 1024) {
+        return "options.multipartPartSize";
+      }
+    }
+  }
+  if (fields.type === "smb") {
+    if (
+      !options.host ||
+      !options.share ||
+      !options.usernameEnv ||
+      !options.passwordEnv
+    ) {
+      return "options.smb";
+    }
+  }
+  if (fields.type === "openlist") {
+    if (!options.tokenEnv || !options.baseUrl) return "options.openlist";
+  }
+  if (["s3", "r2", "s3-compatible"].includes(fields.type)) {
+    if (!options.bucket || !options.accessKeyEnv || !options.secretKeyEnv) {
+      return "options.s3";
+    }
+    if (fields.type !== "s3" && !options.endpoint) return "options.endpoint";
+  }
+  return null;
+}
+
+/**
+ * The edit-safe typed projection of one Active Storage: provider settings and
+ * approved environment-variable reference names plus deployment readiness. No
+ * credential value exists in the fake either, so a browser journey can never
+ * accidentally assert on one.
+ */
+function storageFormDocument(storage) {
+  const options =
+    storage.options !== undefined && storage.options !== null
+      ? { ...storage.options }
+      : { ...storageFixtureOptions(storage) };
+  return {
+    id: storage.id,
+    name: storage.name,
+    type: storage.type,
+    rootPath: storage.location?.rootPath ?? "",
+    readOnly: storage.readOnly === true,
+    enabled: storage.enabled !== false,
+    options,
+    secretReadiness: storage.secretReadiness ?? [],
+  };
+}
+
+/**
+ * Same-provider option merge mirroring the application command: an option the
+ * typed form does not expose survives, and an explicit null clears it. A
+ * provider switch starts from that provider's own option set.
+ */
+function storageMergedOptions(existing, fields) {
+  const submitted = fields.options ?? {};
+  if (existing === undefined) return { ...submitted };
+  if (
+    String(existing.type).toLowerCase() !== String(fields.type).toLowerCase()
+  ) {
+    return { ...submitted };
+  }
+  const merged =
+    existing.options !== undefined && existing.options !== null
+      ? { ...existing.options }
+      : { ...storageFixtureOptions(existing) };
+  for (const [key, value] of Object.entries(submitted)) {
+    if (value === null) delete merged[key];
+    else merged[key] = value;
+  }
+  return merged;
+}
+
+function storageSecretReadiness(type, options) {
+  const referenceFields = {
+    openlist: ["tokenEnv"],
+    smb: ["usernameEnv", "passwordEnv"],
+    s3: ["accessKeyEnv", "secretKeyEnv", "sessionTokenEnv"],
+    r2: ["accessKeyEnv", "secretKeyEnv", "sessionTokenEnv"],
+    "s3-compatible": ["accessKeyEnv", "secretKeyEnv", "sessionTokenEnv"],
+  };
+  const entries = [];
+  for (const field of referenceFields[type] ?? []) {
+    const env = options[field];
+    if (typeof env === "string" && env !== "") {
+      entries.push({ field, env, state: "SET" });
+    }
+  }
+  return entries;
+}
+
+function storageInternalFromCandidate(fields, options, existing) {
+  return {
+    id: String(fields.storageId),
+    name: String(fields.name),
+    type: String(fields.type),
+    family: storageProviderFamily(String(fields.type)),
+    enabled: fields.enabled === true,
+    readOnly: fields.readOnly === true,
+    location: storageLocationFromOptions(
+      String(fields.type),
+      String(fields.rootPath),
+      options,
+    ),
+    declaredCapabilities: existing?.declaredCapabilities ?? {
+      can_move: true,
+      can_copy: true,
+      can_delete: true,
+      can_hard_link: false,
+      can_soft_link: false,
+    },
+    secretReadiness: storageSecretReadiness(String(fields.type), options),
+    references: existing?.references ?? {
+      total: 0,
+      items: [],
+      truncated: false,
+      resourceLibraries: 0,
+      mediaLibraries: 0,
+      countedInBreakdown: 0,
+    },
+    options,
+  };
+}
+
+/**
+ * The published Active successor document for one Storage command.
+ *
+ * A successful Save bumps the immutable Active identity, so the refreshed
+ * inventory and any later Save bind to the successor actually published;
+ * a candidate that addressed the previous identity is stale afterwards.
+ */
+function storageSaveSuccess(state, storage, record) {
+  const fixture = storageFixture(state);
+  const existing = fixture.findIndex((item) => item.id === storage.id);
+  if (existing >= 0) fixture.splice(existing, 1, storage);
+  else fixture.push(storage);
+  state.published += 1;
+  state.active = {
+    ...state.active,
+    revisionId: `storage-active-rev-e2e-${String(state.published + 3).padStart(3, "0")}`,
+    version: state.active.version + 1,
+    revisionSequence: state.active.revisionSequence + 1,
+    status: "active",
+  };
+  state.digest = `e2e-digest-${state.published + 3}`;
+  if (typeof record === "function") {
+    record({
+      method: existing >= 0 ? "PUT" : "POST",
+      objectId: storage.id,
+      objectType: "storage_save",
+      path: existing >= 0 ? "/api/v1/storages/:storageId" : "/api/v1/storages",
+    });
+  }
+  const projected = storageFormDocument(storage);
+  return {
+    storage: projected,
+    active: { ...state.active, digest: state.digest },
+    configuration: {
+      authority: "MANAGED",
+      revisionId: state.active.revisionId,
+      version: state.active.version,
+      digest: state.digest,
+    },
+    sideEffects: "configuration_only",
+    nextAction:
+      "refresh the Active Storage inventory; the published successor is the configuration runtime consumes",
+  };
+}
+
+function storageRejected(res, status, code, message, details) {
+  sendJson(res, status, {
+    error: { code, message, details },
+  });
+}
+
+const STORAGE_FAILURE_PRESETS = {
+  check: {
+    status: 409,
+    code: "storage_storage_check_failed",
+    message: "a required read-only Storage check did not pass",
+    details: {
+      durableState: "active_preserved",
+      sideEffects: "read-only evidence only; Storage unchanged",
+      retrySafe: true,
+      nextAction: "correct Storage availability, then retry Save",
+    },
+  },
+  strategy: {
+    status: 409,
+    code: "storage_strategy_test_failed",
+    message: "the required offline Recognition Strategy Test did not pass",
+    details: {
+      durableState: "active_preserved",
+      sideEffects: "read-only evidence only; Storage unchanged",
+      retrySafe: true,
+      nextAction: "correct the recognition strategy, then retry Save",
+    },
+  },
+  unknown: {
+    status: 500,
+    code: "internal_error",
+    message: "request failed (details redacted)",
+    details: {},
+  },
+};
 
 /** Server-side search over the complete Active set, exactly like the API. */
 function storageInventoryMatches(storage, query, family) {
@@ -6159,6 +6638,246 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 405, { error: { code: "method_not_allowed" } });
+    return;
+  }
+
+  // V2 Storage Add/Edit command (Slice 39, Task 39.2): one page-local typed
+  // command over /api/v1/storages*. The fake mirrors the authoritative Python
+  // contract proved by tests/test_storage_page_local_save.py: typed provider
+  // validation, immutable ID, optimistic Active fencing, a published immutable
+  // Active successor on full success, and bounded secret-free failure
+  // documents. It never mutates Storage and never returns a credential value.
+  const storageEditMatch = url.pathname.match(
+    /^\/api\/v1\/storages\/([^/]+)\/edit$/,
+  );
+  const storageItemMatch = url.pathname.match(/^\/api\/v1\/storages\/([^/]+)$/);
+  const storageCollectionRoute = url.pathname === "/api/v1/storages";
+  if (
+    storageEditMatch !== null ||
+    storageItemMatch !== null ||
+    storageCollectionRoute
+  ) {
+    const commandState = storageState(session);
+    const permissions = storagePermissions(token);
+    if (!READABLE_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    // A management-only bootstrap has no Active workflow snapshot: Storage
+    // Add/Edit fails closed with the truthful setup-handoff state, exactly
+    // like the Python command, and never presents a partial object as Active.
+    if (commandState.noActive) {
+      storageRejected(
+        res,
+        503,
+        "configuration_unavailable",
+        "no Active configuration exists; Storage Save is unavailable",
+        {
+          durableState: "no_active_configuration",
+          candidateState: "not_saved",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "activate a valid managed configuration, then retry Save",
+        },
+      );
+      return;
+    }
+    if (storageCollectionRoute && req.method === "GET") {
+      sendJson(res, 200, {
+        active: { ...commandState.active, digest: commandState.digest },
+        sideEffects: "none",
+      });
+      return;
+    }
+    if (storageEditMatch !== null && req.method === "GET") {
+      if (!permissions.canRead) {
+        sendJson(res, 403, {
+          error: {
+            code: "forbidden",
+            message: "principal lacks read permission",
+          },
+        });
+        return;
+      }
+      const storageId = decodeURIComponent(storageEditMatch[1]);
+      const storage = storageFixture(commandState).find(
+        (item) => item.id === storageId,
+      );
+      if (storage === undefined) {
+        storageRejected(
+          res,
+          404,
+          "storage_not_found",
+          "the selected Storage is not part of the current Active configuration",
+          {
+            durableState: "active_preserved",
+            candidateState: "not_published",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "refresh the Active Storage list and retry",
+          },
+        );
+        return;
+      }
+      sendJson(res, 200, {
+        storage: storageFormDocument(storage),
+        active: {
+          ...commandState.active,
+          digest: commandState.digest,
+        },
+        sideEffects: "none",
+      });
+      return;
+    }
+    if (
+      storageEditMatch !== null ||
+      (storageItemMatch !== null && req.method !== "PUT") ||
+      (storageCollectionRoute && req.method !== "POST")
+    ) {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
+    const editing = storageItemMatch !== null;
+    if (!permissions.canManage) {
+      sendJson(res, 403, {
+        error: {
+          code: "forbidden",
+          message:
+            "principal lacks configuration management and activation authority",
+        },
+      });
+      return;
+    }
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    const fields = parsed.document;
+    const invalid = validateStorageCandidate(fields, editing);
+    if (invalid !== null) {
+      storageRejected(
+        res,
+        400,
+        "invalid_request",
+        `Storage Save rejected field ${invalid}`,
+        {
+          durableState: "active_preserved",
+          candidateState: "not_saved",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "correct the reported field, then retry Save",
+        },
+      );
+      return;
+    }
+    const storageId = String(fields.storageId);
+    if (editing && storageId !== decodeURIComponent(storageItemMatch[1])) {
+      // The ID is immutable after creation: an Edit may only address the
+      // Active Storage its form opened, never re-identify the object.
+      storageRejected(
+        res,
+        400,
+        "invalid_request",
+        "Storage edit requires immutable matching ID and Active identity",
+        {
+          durableState: "active_preserved",
+          candidateState: "not_saved",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "keep the immutable Storage ID and retry Save",
+        },
+      );
+      return;
+    }
+    const fixture = storageFixture(commandState);
+    const existing = fixture.find((item) => item.id === storageId);
+    if (
+      fields.expectedRevisionId !== commandState.active.revisionId ||
+      fields.expectedVersion !== commandState.active.revisionSequence ||
+      fields.expectedDigest !== commandState.digest
+    ) {
+      storageRejected(
+        res,
+        409,
+        "configuration_version_conflict",
+        "the Active configuration changed since the form was opened",
+        {
+          durableState: "active_preserved",
+          candidateState: "not_published",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "refresh the current Active configuration and retry Save",
+        },
+      );
+      return;
+    }
+    if (editing) {
+      if (existing === undefined) {
+        storageRejected(
+          res,
+          404,
+          "storage_not_found",
+          "the Storage is not present in the current Active configuration",
+          {
+            durableState: "active_preserved",
+            candidateState: "not_saved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "refresh Active state and choose an existing Storage",
+          },
+        );
+        return;
+      }
+    } else if (existing !== undefined) {
+      storageRejected(
+        res,
+        409,
+        "storage_duplicate",
+        "the Storage ID already exists in the current Active configuration",
+        {
+          durableState: "active_preserved",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "choose a different Storage ID, then retry",
+        },
+      );
+      return;
+    }
+    if (
+      commandState.saveFail === "check" ||
+      commandState.saveFail === "strategy"
+    ) {
+      const preset = STORAGE_FAILURE_PRESETS[commandState.saveFail];
+      commandState.saveFail = null;
+      storageRejected(
+        res,
+        preset.status,
+        preset.code,
+        preset.message,
+        preset.details,
+      );
+      return;
+    }
+    if (commandState.saveFail === "unknown") {
+      commandState.saveFail = null;
+      storageRejected(
+        res,
+        500,
+        "internal_error",
+        "request failed (details redacted)",
+        {},
+      );
+      return;
+    }
+    const options = storageMergedOptions(existing, fields);
+    const storage = storageInternalFromCandidate(fields, options, existing);
+    sendJson(
+      res,
+      200,
+      storageSaveSuccess(commandState, storage, (entry) =>
+        recordManualRequestForSession(entry),
+      ),
+    );
     return;
   }
 
@@ -12054,12 +12773,49 @@ const server = createServer(async (req, res) => {
       failCheck: params.get("failCheck") === "1",
       noActive: params.get("noActive") === "1",
       overLimit: params.get("overLimit") === "1",
+      // Task 39.2 Add/Edit command state: the per-session published Active
+      // Storage set, the Active digest the opened form binds to, and one
+      // deterministic Save failure (`check`, `strategy`, `unknown`).
+      storages: null,
+      digest: "e2e-digest-3",
+      saveFail: ["check", "strategy", "unknown"].includes(
+        params.get("saveFail"),
+      )
+        ? params.get("saveFail")
+        : null,
+      published: 0,
     });
     res.setHeader(
       "Set-Cookie",
       `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
     );
     sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  // Simulate a competing writer publishing a successor Active while an open
+  // Edit form still holds the previous identity: the Storage set is unchanged,
+  // only the immutable Active pointer/digest move forward.
+  if (
+    url.pathname === "/__test__/advance-storage-active" &&
+    req.method === "POST"
+  ) {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    const current = storageState(
+      sessionId === undefined ? "shared" : sessionId,
+    );
+    const state = STORAGE_STATES.get(sessionId) ?? current;
+    state.published += 1;
+    state.active = {
+      ...state.active,
+      revisionId: `storage-active-rev-e2e-${String(state.published + 3).padStart(3, "0")}`,
+      version: state.active.version + 1,
+      revisionSequence: state.active.revisionSequence + 1,
+      status: "active",
+    };
+    state.digest = `e2e-digest-${state.published + 3}`;
+    sendJson(res, 200, { ok: true, active: state.active });
     return;
   }
 

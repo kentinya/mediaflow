@@ -836,10 +836,7 @@ class MediaFlowApi:
                 "conflict",
                 409,
             )
-            is_library_save = (
-                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
-                and method == "POST"
-            )
+            is_library_save = self._is_page_local_save(path, method)
             details = {
                 key: value
                 for key, value in {
@@ -925,10 +922,7 @@ class MediaFlowApi:
                 "conflict",
                 409,
             )
-            is_library_save = (
-                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
-                and method == "POST"
-            )
+            is_library_save = self._is_page_local_save(path, method)
             details = {
                 key: value
                 for key, value in {
@@ -1001,10 +995,7 @@ class MediaFlowApi:
                 "denied",
                 503,
             )
-            is_library_save = (
-                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
-                and method == "POST"
-            )
+            is_library_save = self._is_page_local_save(path, method)
             return self._error(
                 start_response,
                 503,
@@ -1100,10 +1091,7 @@ class MediaFlowApi:
                 "error",
                 503,
             )
-            is_library_save = (
-                path in ("/api/v1/resource-libraries", "/api/v1/media-libraries")
-                and method == "POST"
-            )
+            is_library_save = self._is_page_local_save(path, method)
             active_unavailable_state = (
                 "no_active_configuration"
                 if is_library_save and error.reason == "active_missing"
@@ -4723,6 +4711,179 @@ class MediaFlowApi:
                     ),
                 },
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "storages"]
+            and parts[4] == "edit"
+            and method == "GET"
+        ):
+            self._require_empty_query(environ, "Storage edit projection")
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            return self._response(
+                start_response,
+                200,
+                self._configuration_objects.storage_edit_projection(parts[3]),
+            )
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "storages"] and method == "PUT":
+            self._require_empty_query(environ, "Storage edit")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {
+                "storageId",
+                "name",
+                "type",
+                "rootPath",
+                "readOnly",
+                "enabled",
+                "options",
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+            }
+            # The ID is immutable after creation: an Edit may only address the
+            # Active Storage it opened, never publish a re-identified object.
+            if set(document) != allowed or document["storageId"] != parts[3]:
+                raise ValueError("Storage edit requires immutable matching ID and Active identity")
+            candidate = {
+                "id": parts[3],
+                "name": document["name"],
+                "type": document["type"],
+                "rootPath": document["rootPath"],
+                "readOnly": document["readOnly"],
+                "enabled": document["enabled"],
+                "options": document["options"],
+            }
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                self._refresh_configuration_binding_locked()
+                try:
+                    revision = self._configuration_objects.save_storage(
+                        candidate,
+                        actor=principal.principal_id,
+                        before_publish=lambda rev: prepared.append(
+                            self._prepare_storage_binding_for_revision(rev)
+                        ),
+                        expected_revision_id=document["expectedRevisionId"],
+                        expected_version=document["expectedVersion"],
+                        expected_digest=document["expectedDigest"],
+                        edit=True,
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "storage_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                    )
+                self._publish_runtime_binding(prepared[0])
+            return self._storage_save_response(start_response, revision, parts[3])
+        if parts == ["api", "v1", "storages"] and method == "GET":
+            self._require_empty_query(environ, "Storage form authority")
+            self._require(principal, ApiPermission.READ)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            return self._response(
+                start_response, 200, self._configuration_objects.storage_form_authority()
+            )
+        if parts == ["api", "v1", "storages"] and method == "POST":
+            self._require_empty_query(environ, "Storage Save")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "managed configuration object service is unavailable",
+                )
+            document = self._document(environ)
+            allowed = {
+                "storageId",
+                "name",
+                "type",
+                "rootPath",
+                "readOnly",
+                "enabled",
+                "options",
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+            }
+            if set(document) != allowed:
+                raise ValueError(
+                    "Storage Save requires only storageId, name, type, rootPath, readOnly, "
+                    "enabled, options, and exact Active identity"
+                )
+            candidate = {
+                "id": document["storageId"],
+                "name": document["name"],
+                "type": document["type"],
+                "rootPath": document["rootPath"],
+                "readOnly": document["readOnly"],
+                "enabled": document["enabled"],
+                "options": document["options"],
+            }
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                # Pin the process to the same save-time Active before any
+                # successor work begins.  A failed Save must leave a usable
+                # old binding, while a competing winner can be refreshed
+                # explicitly below if publication loses the race.
+                self._refresh_configuration_binding_locked()
+
+                def before_publish(revision) -> None:
+                    prepared.append(self._prepare_storage_binding_for_revision(revision))
+
+                try:
+                    revision = self._configuration_objects.save_storage(
+                        candidate,
+                        actor=principal.principal_id,
+                        before_publish=before_publish,
+                        expected_revision_id=document["expectedRevisionId"],
+                        expected_version=document["expectedVersion"],
+                        expected_digest=document["expectedDigest"],
+                    )
+                except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                    # The repository has authoritative concurrency fencing;
+                    # if another Active won, make this process consume that
+                    # winner before returning the stale/conflict result.
+                    self._refresh_configuration_binding_locked()
+                    raise
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError(
+                        "storage_runtime_failed",
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use",
+                        status=503,
+                        revision_id=revision.revision_id,
+                        durable_state="active_preserved",
+                        next_action="refresh the current Active configuration and retry Save",
+                    )
+                self._publish_runtime_binding(prepared[0])
+            return self._storage_save_response(start_response, revision, candidate["id"])
         if parts == ["api", "v1", "system", "status"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -7775,6 +7936,25 @@ class MediaFlowApi:
             return False
 
     @staticmethod
+    def _is_page_local_save(path: str, method: str) -> bool:
+        """Whether the request is a page-local checked Save command.
+
+        The Files ResourceLibrary, MediaLibrary and Storage workspace saves
+        capture the save-time Active, run the checked admission gates and
+        publish one atomic successor, so their conflict/unavailable failures
+        report the candidate truthfully (`not_published` / `not_saved`) instead
+        of a generic Draft-only state.
+        """
+
+        if path in (
+            "/api/v1/resource-libraries",
+            "/api/v1/media-libraries",
+            "/api/v1/storages",
+        ):
+            return method == "POST"
+        return method == "PUT" and path.startswith("/api/v1/storages/")
+
+    @staticmethod
     def _is_workflow_producing_route(method: str, parts: list[str]) -> bool:
         if method in {"GET", "HEAD", "OPTIONS"}:
             return False
@@ -8115,6 +8295,7 @@ class MediaFlowApi:
             ("api", "v1", "jobs"),
             ("api", "v1", "jobs", "stale"),
             ("api", "v1", "resource-libraries"),
+            ("api", "v1", "storages"),
             ("api", "v1", "security-audit"),
             ("api", "v1", "dashboard"),
             ("api", "v1", "system", "status"),
@@ -8276,6 +8457,12 @@ class MediaFlowApi:
             return f"/api/v1/{parts[2]}/{{id}}/{parts[4]}"
         if len(parts) == 4 and parts[:3] == ["api", "v1", "resource-libraries"]:
             return "/api/v1/resource-libraries/{id}"
+        if len(parts) == 4 and parts[:3] == ["api", "v1", "storages"]:
+            # The Storage Add/Edit surface is audited by template so the exact
+            # Storage ID never appears in security audit route evidence.
+            return "/api/v1/storages/{id}"
+        if len(parts) == 5 and parts[:3] == ["api", "v1", "storages"] and parts[4] == "edit":
+            return "/api/v1/storages/{id}/edit"
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -12278,6 +12465,73 @@ class MediaFlowApi:
             )
         return self._error(start_response, 404, "not_found", "route was not found")
 
+    def _prepare_storage_binding_for_revision(self, revision):
+        """Bind the Storage Save successor to runtime, or fail with its own code.
+
+        The shared runtime-binding preparation is authoritative; only the
+        bounded failure identity differs, so a Storage Save runtime error
+        reports `storage_runtime_failed` instead of borrowing the
+        ResourceLibrary code family.
+        """
+
+        try:
+            return self._prepare_runtime_binding_for_revision(revision)
+        except ResourceLibrarySaveError as error:
+            if error.code != "resource_library_runtime_failed":
+                raise
+            raise ResourceLibrarySaveError(
+                "storage_runtime_failed",
+                str(error),
+                status=error.status,
+                revision_id=error.revision_id,
+                durable_state=error.durable_state,
+                side_effects=error.side_effects,
+                retry_safe=error.retry_safe,
+                next_action=error.next_action,
+            ) from error
+
+    def _storage_save_response(
+        self,
+        start_response: Callable,
+        revision,
+        storage_id: str,
+    ) -> list[bytes]:
+        """One bounded Add/Edit success document for the Storage workspace.
+
+        It echoes the persisted Storage form projection (provider settings and
+        approved secret-reference names only — never a secret value), the new
+        immutable Active identity and the configuration-only side effect, so
+        the page can refresh its inventory from the exact successor it just
+        published.
+        """
+
+        storage = next(
+            item
+            for item in self._configuration_objects._canonical_objects(
+                revision.document, "storages"
+            )
+            if item.get("id") == storage_id
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "storage": self._configuration_objects.storage_form_document(storage),
+                "active": revision.summary(),
+                "configuration": {
+                    "authority": "MANAGED",
+                    "revisionId": revision.revision_id,
+                    "version": revision.version,
+                    "digest": revision.digest,
+                },
+                "sideEffects": "configuration_only",
+                "nextAction": (
+                    "refresh the Active Storage inventory; the published successor is the "
+                    "configuration runtime consumes"
+                ),
+            },
+        )
+
     _STORAGE_INVENTORY_FAMILIES = ("local", "smb", "openlist", "s3", "other")
 
     @classmethod
@@ -12335,7 +12589,10 @@ class MediaFlowApi:
                 "service_unavailable",
                 "managed configuration service is unavailable",
             )
-        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        manage = {
+            ApiPermission.MANAGE_CONFIGURATION,
+            ApiPermission.ACTIVATE_CONFIGURATION,
+        }.issubset(principal.permissions)
         if not inventory.get("available"):
             return self._response(
                 start_response,
