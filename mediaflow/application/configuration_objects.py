@@ -2164,6 +2164,211 @@ class ConfigurationObjectService:
                 next_action="check configuration persistence health, then retry Save",
             ) from error
 
+    def copy_storage_checked(
+        self,
+        storage_id: str,
+        *,
+        new_storage_id: str,
+        new_name: str,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Publish an explicit copy of one exact Active Storage."""
+        active = self._require_storage_command_active(
+            storage_id,
+            expected_revision_id=expected_revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            action="copy",
+        )
+        source = self._active_storage(active, storage_id)
+        candidate = copy.deepcopy(source)
+        candidate["id"] = new_storage_id
+        candidate["name"] = new_name
+        projected = self.storage_form_document(candidate)
+        save_candidate = {
+            key: projected[key]
+            for key in ("id", "name", "type", "rootPath", "readOnly", "enabled", "options")
+        }
+        return self.save_storage(
+            save_candidate,
+            actor=actor,
+            before_publish=before_publish,
+            expected_revision_id=active.revision_id,
+            expected_version=active.revision_sequence or active.version,
+            expected_digest=active.digest,
+        )
+
+    def set_storage_enabled_checked(
+        self,
+        storage_id: str,
+        *,
+        enabled: bool,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Publish one explicit enabled-state successor for an exact Active Storage."""
+        if not isinstance(enabled, bool):
+            raise ValueError("Storage enabled state must be boolean")
+        active = self._require_storage_command_active(
+            storage_id,
+            expected_revision_id=expected_revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            action="enable" if enabled else "disable",
+        )
+        source = self._active_storage(active, storage_id)
+        if not enabled:
+            for section in ("resourceLibraries", "mediaLibraries"):
+                for item in self._canonical_objects(active.document, section):
+                    if item.get("storageId") == storage_id and item.get("enabled", True) is True:
+                        raise ResourceLibrarySaveError(
+                            "storage_disable_referenced",
+                            f"cannot disable Storage {storage_id!r} while an enabled {section} depends on it",
+                            status=409,
+                            durable_state="active_preserved",
+                            next_action=f"repoint or disable the affected {section}, then retry",
+                        )
+        projected = self.storage_form_document(source)
+        candidate = {
+            key: projected[key]
+            for key in ("id", "name", "type", "rootPath", "readOnly", "enabled", "options")
+        }
+        candidate["enabled"] = enabled
+        return self.save_storage(
+            candidate,
+            actor=actor,
+            before_publish=before_publish,
+            expected_revision_id=active.revision_id,
+            expected_version=active.revision_sequence or active.version,
+            expected_digest=active.digest,
+            edit=True,
+        )
+
+    def remove_storage_checked(
+        self,
+        storage_id: str,
+        *,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+    ) -> ManagedConfigurationRevision:
+        """Remove only an unreferenced Storage configuration through checked activation."""
+        active = self._require_storage_command_active(
+            storage_id,
+            expected_revision_id=expected_revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            action="remove",
+        )
+        source = self._active_storage(active, storage_id)
+        try:
+            draft = self._managed.create_successor_draft(
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                verified_active=active,
+            )
+            edited = self.mutate(
+                draft.revision_id,
+                ConfigurationObjectKind.STORAGE,
+                object_id=storage_id,
+                value=None,
+                expected_version=draft.version,
+                actor=actor,
+                delete=True,
+                audit_action="storage_remove",
+                audit_metadata={
+                    "surface": "storage",
+                    "removed": {"id": source.get("id"), "name": source.get("name")},
+                },
+            )
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+        except ConfigurationObjectReferenced:
+            raise
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "storage_persistence_failed",
+                "the Storage removal could not be prepared; the previous Active remains in use",
+                status=503,
+                durable_state="active_preserved",
+                next_action="refresh the current Active configuration and retry removal",
+            ) from error
+        if validated.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ResourceLibrarySaveError(
+                "storage_validation_failed",
+                "the successor without the Storage failed complete configuration validation",
+                status=422,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="correct the blocking configuration, then retry removal",
+            )
+        self._checked_successor_evidence(
+            validated, actor=actor, code_prefix="storage_removal"
+        )
+        try:
+            return self.activate_checked(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+                before_publish=before_publish,
+            )
+        except ConfigurationActivationConflict:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "storage_persistence_failed",
+                "the Storage successor could not be published; the previous Active remains in use",
+                status=503,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="refresh the current Active configuration and retry removal",
+            ) from error
+
+    def _require_storage_command_active(
+        self,
+        storage_id: str,
+        *,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        action: str,
+    ) -> ManagedConfigurationRevision:
+        if not isinstance(storage_id, str) or not self._STORAGE_SAVE_ID.fullmatch(storage_id):
+            raise ValueError("Storage command requires a valid Storage ID")
+        active = self._managed.active()
+        if active is None:
+            raise RuntimeSnapshotUnavailable(
+                f"no Active configuration exists; Storage {action} is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        if (
+            active.revision_id != expected_revision_id
+            or active.version != expected_version
+            or active.digest != expected_digest
+        ):
+            raise ResourceLibrarySaveError(
+                f"storage_{action}_stale",
+                f"the Storage {action} decision is stale; the current Active remains in use",
+                status=409,
+                durable_state="active_preserved",
+                next_action="refresh the Active Storage inventory and review the action again",
+            )
+        self._active_storage(active, storage_id)
+        return active
+
     def revision_detail(self, revision_id: str) -> dict[str, object]:
         revision = self._managed.require(revision_id)
         document = revision.document

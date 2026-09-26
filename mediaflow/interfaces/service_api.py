@@ -4731,6 +4731,69 @@ class MediaFlowApi:
                 200,
                 self._configuration_objects.storage_edit_projection(parts[3]),
             )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "storages"]
+            and parts[4] in {"copy", "enable", "disable"}
+            and method == "POST"
+        ):
+            self._require_empty_query(environ, "Storage lifecycle command")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(start_response, 503, "service_unavailable", "managed configuration object service is unavailable")
+            document = self._document(environ)
+            required = {"expectedRevisionId", "expectedVersion", "expectedDigest"}
+            action = parts[4]
+            if action == "copy":
+                if set(document) != required | {"newStorageId", "name"}:
+                    raise ValueError("Storage copy requires newStorageId, name and exact Active identity")
+                command = lambda callback: self._configuration_objects.copy_storage_checked(
+                    parts[3], new_storage_id=document["newStorageId"], new_name=document["name"],
+                    actor=principal.principal_id, before_publish=callback,
+                    expected_revision_id=document["expectedRevisionId"], expected_version=document["expectedVersion"], expected_digest=document["expectedDigest"])
+                result_id = document["newStorageId"]
+            else:
+                if set(document) != required | {"enabled"}:
+                    raise ValueError("Storage state change requires enabled and exact Active identity")
+                command = lambda callback: self._configuration_objects.set_storage_enabled_checked(
+                    parts[3], enabled=document["enabled"], actor=principal.principal_id,
+                    before_publish=callback, expected_revision_id=document["expectedRevisionId"],
+                    expected_version=document["expectedVersion"], expected_digest=document["expectedDigest"])
+                result_id = parts[3]
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                self._refresh_configuration_binding_locked()
+                revision = command(lambda rev: prepared.append(self._prepare_storage_binding_for_revision(rev)))
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError("storage_runtime_failed", "the successor runtime binding was not prepared; the previous Active remains in use", status=503, durable_state="active_preserved", next_action="refresh the current Active configuration and retry")
+                self._publish_runtime_binding(prepared[0])
+            return self._storage_save_response(start_response, revision, result_id)
+        if (
+            len(parts) == 4
+            and parts[:3] == ["api", "v1", "storages"]
+            and method == "DELETE"
+        ):
+            self._require_empty_query(environ, "Storage removal")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            if self._configuration_objects is None:
+                return self._error(start_response, 503, "service_unavailable", "managed configuration object service is unavailable")
+            document = self._document(environ)
+            required = {"expectedRevisionId", "expectedVersion", "expectedDigest"}
+            if set(document) != required:
+                raise ValueError("Storage removal requires the exact Active identity")
+            prepared: list[_ApiRuntimeBinding] = []
+            with self._runtime_binding_lock:
+                self._refresh_configuration_binding_locked()
+                revision = self._configuration_objects.remove_storage_checked(
+                    parts[3], actor=principal.principal_id,
+                    before_publish=lambda rev: prepared.append(self._prepare_storage_binding_for_revision(rev)),
+                    expected_revision_id=document["expectedRevisionId"], expected_version=document["expectedVersion"], expected_digest=document["expectedDigest"])
+                if len(prepared) != 1:
+                    raise ResourceLibrarySaveError("storage_runtime_failed", "the successor runtime binding was not prepared; the previous Active remains in use", status=503, durable_state="active_preserved", next_action="refresh the current Active configuration and retry removal")
+                self._publish_runtime_binding(prepared[0])
+            return self._response(start_response, 200, {"removed": {"id": parts[3]}, "active": revision.summary(), "sideEffects": "configuration_only", "nextAction": "refresh the Active Storage inventory; physical contents remain unchanged"})
         if len(parts) == 4 and parts[:3] == ["api", "v1", "storages"] and method == "PUT":
             self._require_empty_query(environ, "Storage edit")
             self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
@@ -8461,6 +8524,12 @@ class MediaFlowApi:
             # The Storage Add/Edit surface is audited by template so the exact
             # Storage ID never appears in security audit route evidence.
             return "/api/v1/storages/{id}"
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "storages"]
+            and parts[4] in {"copy", "enable", "disable"}
+        ):
+            return f"/api/v1/storages/{{id}}/{parts[4]}"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "storages"] and parts[4] == "edit":
             return "/api/v1/storages/{id}/edit"
         if (
