@@ -81,6 +81,7 @@ from mediaflow.domain.configuration_management import (
     ResourceLibrarySaveError,
     RuntimeSnapshotUnavailable,
     StorageConfigurationType,
+    StorageConfigurationValidator,
     StorageSetupCheckEvidence,
     validate_storage_configuration,
 )
@@ -337,6 +338,8 @@ class ConfigurationObjectService:
     _MEDIA_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
     _MEDIA_LIBRARY_SAVE_FIELDS = {"id", "name", "storageId", "rootPath", "enabled"}
     _MEDIA_LIBRARY_SAVE_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}$")
+    _STORAGE_SAVE_FIELDS = {"id", "name", "type", "rootPath", "readOnly", "enabled", "options"}
+    _STORAGE_SAVE_ID = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
     _RECOGNITION_TYPE_FIELDS = {"id", "name", "description", "enabled"}
     _RECOGNITION_RULE_FIELDS = {
         "id",
@@ -806,6 +809,7 @@ class ConfigurationObjectService:
         actor: str,
         preferred_resource_id: str | None = None,
         code_prefix: str = "resource_library",
+        additional_storage_ids: tuple[str, ...] = (),
     ) -> None:
         """Run the shared read-only successor evidence gates.
 
@@ -818,7 +822,9 @@ class ConfigurationObjectService:
         """
 
         try:
-            for referenced_storage_id in self.referenced_storage_ids(validated):
+            for referenced_storage_id in sorted(
+                set(self.referenced_storage_ids(validated)) | set(additional_storage_ids)
+            ):
                 evidence = self.storage_check(
                     validated.revision_id,
                     storage_id=referenced_storage_id,
@@ -1765,6 +1771,378 @@ class ConfigurationObjectService:
                 next_action="refresh the Active MediaLibrary list and retry",
             )
         return library
+
+    def _active_storage(self, active: ManagedConfigurationRevision, storage_id: str):
+        storage = next(
+            (
+                item
+                for item in self._canonical_objects(active.document, "storages")
+                if item.get("id") == storage_id
+            ),
+            None,
+        )
+        if storage is None:
+            raise ResourceLibrarySaveError(
+                "storage_not_found",
+                "the selected Storage is not part of the current Active configuration",
+                status=404,
+                durable_state="active_preserved",
+                next_action="refresh the Active Storage list and retry",
+            )
+        return storage
+
+    @classmethod
+    def storage_form_document(cls, storage: Mapping[str, object]) -> dict[str, object]:
+        """Project one Storage object into the typed Add/Edit form contract.
+
+        Only the allowlisted form fields and the supported provider options
+        travel to the operator.  Option values are deployment-owned environment
+        variable *names* plus bounded provider settings; a literal credential
+        is rejected by the domain validator, so no secret value can appear in
+        prefill, confirmation or a Save response.  ``secretReadiness`` reports
+        each reference's SET/UNSET deployment state, never its value.
+        """
+
+        storage_type = str(storage.get("type", "")).lower()
+        options = cls._merged_storage_options(storage, {})
+        # Validate legacy Active coordinates as well: a projection must never
+        # forward literal secrets or credential-bearing endpoints.
+        validate_storage_configuration(
+            ManagedStorageConfiguration(
+                str(storage.get("id", "")),
+                storage_type,
+                str(storage.get("name") or storage.get("id", "")),
+                str(storage.get("rootPath", "")),
+                storage.get("readOnly", False),
+                storage.get("enabled", True),
+                options,
+            )
+        )
+        return {
+            "id": storage.get("id"),
+            "name": storage.get("name") or storage.get("id"),
+            "type": storage_type,
+            "rootPath": storage.get("rootPath", ""),
+            "readOnly": storage.get("readOnly", False) is True,
+            "enabled": storage.get("enabled", True) is not False,
+            "options": options,
+            "secretReadiness": cls._storage_secret_readiness(storage_type, options),
+        }
+
+    @classmethod
+    def _merged_storage_options(
+        cls,
+        current: Mapping[str, object],
+        submitted: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Merge a submitted option set over one stored Storage object.
+
+        Every supported option the typed form does not expose survives the
+        edit, including provider fields a complete JSON bootstrap kept at the
+        object level.  An explicit ``null`` clears an optional value; an
+        unsupported key stays in the merge so the domain validator rejects it
+        instead of silently dropping the operator's input.
+        """
+
+        base = cls._storage_options(current)
+        if isinstance(current.get("options"), Mapping):
+            for field in cls._STORAGE_LEGACY_OPTION_FIELDS:
+                if field in current and field not in base:
+                    base[field] = copy.deepcopy(current[field])
+        for field, value in submitted.items():
+            if value is None:
+                base.pop(field, None)
+            else:
+                base[field] = copy.deepcopy(value)
+        return base
+
+    def storage_form_authority(self) -> dict[str, object]:
+        """Capture exact Active for Add or explicit outcome verification, without I/O."""
+        active = self._managed.active()
+        if active is None:
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists", reason="active_missing"
+            )
+        self._managed.verify_integrity(active)
+        return {"active": active.summary(), "sideEffects": "none"}
+
+    def storage_edit_projection(self, storage_id: str) -> dict[str, object]:
+        """Edit-safe, typed projection of one exact Active Storage.
+
+        The projection binds the form to the immutable Active snapshot the
+        operator opened, carries every supported provider option and approved
+        secret-reference name/readiness (never a secret value), and performs
+        zero Storage access and zero configuration mutation.
+        """
+
+        active = self._managed.active()
+        if active is None:
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists", reason="active_missing"
+            )
+        self._managed.verify_integrity(active)
+        storage = self._active_storage(active, storage_id)
+        return {
+            "storage": self.storage_form_document(storage),
+            "active": active.summary(),
+            "sideEffects": "none",
+        }
+
+    def save_storage(
+        self,
+        candidate: Mapping[str, object],
+        *,
+        actor: str,
+        before_publish: Callable[[ManagedConfigurationRevision], object] | None = None,
+        expected_revision_id: str | None = None,
+        expected_version: int | None = None,
+        expected_digest: str | None = None,
+        edit: bool = False,
+    ) -> ManagedConfigurationRevision:
+        """Save one Storage Add/Edit candidate as a managed successor.
+
+        The command mirrors the page-local ResourceLibrary and MediaLibrary
+        Save boundary for the Storage workspace: it captures the exact Active
+        snapshot used to open the form, composes one complete successor from
+        that immutable document, runs full dependency-graph validation plus
+        the applicable exact-successor read-only Storage checks, offline
+        Recognition Strategy Test and destination precheck, prepares the
+        runtime binding and publishes only through checked atomic activation.
+        It never creates workflow work, never calls a mutating Storage
+        operation and never returns a secret value.
+        """
+
+        if not isinstance(candidate, Mapping):
+            raise ValueError("Storage Save candidate must be an object")
+        if set(candidate) != self._STORAGE_SAVE_FIELDS:
+            raise ValueError(
+                "Storage Save accepts only id, name, type, rootPath, readOnly, enabled, and options"
+            )
+        storage_id = candidate.get("id")
+        name = candidate.get("name")
+        storage_type = candidate.get("type")
+        root_path = candidate.get("rootPath")
+        read_only = candidate.get("readOnly")
+        enabled = candidate.get("enabled")
+        options = candidate.get("options")
+        if not isinstance(storage_id, str) or not self._STORAGE_SAVE_ID.fullmatch(storage_id):
+            raise ValueError(
+                "Storage Save id must match [a-z0-9][a-z0-9_-] and be at most 64 characters"
+            )
+        if (
+            not isinstance(name, str)
+            or not name.strip()
+            or len(name) > 120
+            or any(ord(character) < 32 or ord(character) == 127 for character in name)
+        ):
+            raise ValueError("Storage Save name must be bounded text without control characters")
+        if not isinstance(storage_type, str) or not storage_type.strip() or len(storage_type) > 32:
+            raise ValueError("Storage Save type must be a supported provider type")
+        if not isinstance(root_path, str) or len(root_path) > 4096 or "\x00" in root_path:
+            raise ValueError("Storage Save rootPath must be a safe bounded path")
+        if not isinstance(read_only, bool) or not isinstance(enabled, bool):
+            raise ValueError("Storage Save readOnly and enabled must be boolean")
+        if not isinstance(options, Mapping):
+            raise ValueError("Storage Save options must be an object")
+        try:
+            provider = StorageConfigurationType(storage_type.lower())
+        except ValueError:
+            raise ValueError("Storage Save type must be a supported provider type") from None
+        if set(options) - StorageConfigurationValidator.OPTION_FIELDS[provider]:
+            raise ValueError("Storage Save options contain unsupported fields for this provider")
+        if any(ord(character) < 32 or ord(character) == 127 for character in root_path):
+            raise ValueError("Storage Save rootPath must not contain control characters")
+        if provider is StorageConfigurationType.OPENLIST:
+            # OpenList may use a leading slash for its logical provider root.
+            # This is never a host path and cannot contain traversal segments.
+            logical_root = root_path.lstrip("/")
+            if "\\" in root_path or any(part in {".", ".."} for part in logical_root.split("/")):
+                raise ValueError("Storage Save OpenList rootPath must be a confined logical path")
+        if provider is StorageConfigurationType.LOCAL and root_path.strip("/") == "":
+            raise ValueError(
+                "Storage Save rootPath must name an explicit media directory, not host root"
+            )
+        if expected_version is not None and (
+            isinstance(expected_version, bool)
+            or not isinstance(expected_version, int)
+            or expected_version < 1
+        ):
+            raise ValueError("Storage Save expectedVersion must be a positive integer")
+        submitted_options = copy.deepcopy(dict(options))
+
+        active = self._managed.active()
+        if active is None:
+            # Reuse the managed service's fail-closed missing/marker distinction.
+            self._managed.create_successor_draft(actor=actor)
+            raise RuntimeSnapshotUnavailable(
+                "no Active configuration exists; Storage Save is unavailable",
+                reason="active_missing",
+            )
+        self._managed.verify_integrity(active)
+        if (
+            expected_revision_id != active.revision_id
+            or expected_version != (active.revision_sequence or active.version)
+            or expected_digest != active.digest
+        ):
+            raise ConfigurationVersionConflict(
+                "Storage Save is stale; refresh the Active configuration before saving",
+                revision_id=active.revision_id,
+                current_version=active.revision_sequence or active.version,
+                current_digest=active.digest,
+            )
+
+        existing = next(
+            (
+                item
+                for item in self._canonical_objects(active.document, "storages")
+                if item.get("id") == storage_id
+            ),
+            None,
+        )
+        if edit and existing is None:
+            raise ResourceLibrarySaveError(
+                "storage_not_found",
+                "the Storage is not present in the current Active configuration",
+                status=404,
+                durable_state="active_preserved",
+                next_action="refresh Active state and choose an existing Storage",
+            )
+        if existing is not None and not edit:
+            raise ResourceLibrarySaveError(
+                "storage_duplicate",
+                "the Storage ID already exists in the current Active configuration",
+                status=409,
+                durable_state="active_preserved",
+                side_effects="none",
+                next_action="choose a different Storage ID, then retry",
+            )
+
+        raw: dict[str, object] = {
+            "id": storage_id,
+            "name": name,
+            "type": storage_type,
+            "rootPath": root_path,
+            "readOnly": read_only,
+            "enabled": enabled,
+            "options": submitted_options,
+        }
+        if (
+            edit
+            and existing is not None
+            and str(existing.get("type") or "").lower() == str(storage_type).lower()
+        ):
+            # Same provider: preserve every supported option the typed form
+            # does not expose.  A provider switch starts from that provider's
+            # own option set so unsupported options never survive the change.
+            raw["options"] = self._merged_storage_options(existing, submitted_options)
+        normalized = self._normalize(ConfigurationObjectKind.STORAGE, raw)
+
+        try:
+            draft = self._managed.create_successor_draft(
+                actor=actor,
+                expected_active_revision_id=active.revision_id,
+                expected_active_version=active.revision_sequence or active.version,
+                expected_active_digest=active.digest,
+                verified_active=active,
+            )
+        except (ConfigurationVersionConflict, RuntimeSnapshotUnavailable):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "storage_persistence_failed",
+                "the successor configuration could not be created; the previous Active "
+                "remains in use",
+                status=503,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+
+        try:
+            edited = self.mutate(
+                draft.revision_id,
+                ConfigurationObjectKind.STORAGE,
+                object_id=storage_id if edit else None,
+                value=normalized,
+                expected_version=draft.version,
+                actor=actor,
+                audit_action="storage_edit" if edit else "storage_save",
+                audit_metadata={"surface": "storage", "candidate": normalized},
+            )
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict, ValueError):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "storage_persistence_failed",
+                "the Storage candidate could not be persisted; the previous Active remains in use",
+                status=503,
+                revision_id=draft.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+
+        try:
+            validated = self._managed.validate(edited.revision_id, actor=actor)
+        except (ConfigurationVersionConflict, ConfigurationActivationConflict):
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "storage_persistence_failed",
+                "the successor configuration could not be validated; the previous Active "
+                "remains in use",
+                status=503,
+                revision_id=edited.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry",
+            ) from error
+        if validated.status is not ManagedConfigurationStatus.VALIDATED:
+            raise ResourceLibrarySaveError(
+                "storage_validation_failed",
+                "the Storage candidate failed complete configuration validation",
+                status=422,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="correct the reported Storage fields, then retry the Save",
+            )
+
+        self._checked_successor_evidence(
+            validated,
+            actor=actor,
+            code_prefix="storage",
+            additional_storage_ids=(storage_id,) if enabled else (),
+        )
+
+        try:
+            return self.activate_checked(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor=actor,
+                before_publish=before_publish,
+            )
+        except ResourceLibrarySaveError:
+            raise
+        except ConfigurationActivationConflict as error:
+            if error.current_revision_id is not None:
+                raise
+            raise ResourceLibrarySaveError(
+                "storage_evidence_failed",
+                "checked activation admission failed; the previous Active remains in use",
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action=(
+                    error.next_action or "refresh the current Active configuration and retry Save"
+                ),
+            ) from error
+        except ConfigurationVersionConflict:
+            raise
+        except Exception as error:
+            raise ResourceLibrarySaveError(
+                "storage_persistence_failed",
+                "the successor could not be published; the previous Active remains in use",
+                status=503,
+                revision_id=validated.revision_id,
+                durable_state="active_preserved",
+                next_action="check configuration persistence health, then retry Save",
+            ) from error
 
     def revision_detail(self, revision_id: str) -> dict[str, object]:
         revision = self._managed.require(revision_id)

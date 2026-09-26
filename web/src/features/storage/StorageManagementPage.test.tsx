@@ -736,3 +736,569 @@ describe("Storage management journey", () => {
     expect(screen.queryByText("备注")).toBeNull();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Task 39.2 — typed Add/Edit drawer through the checked Active Save command.
+
+/** A third bounded Active Storage whose provider form has real fields. */
+const STORAGE_SMB = {
+  id: "nas-media",
+  name: "NAS 媒体",
+  type: "smb",
+  family: "smb",
+  enabled: true,
+  readOnly: false,
+  location: {
+    kind: "remote",
+    rootPath: "media",
+    host: "nas.example",
+    share: "media",
+  },
+  capabilities: {
+    can_move: true,
+    can_copy: true,
+    can_delete: true,
+    can_hard_link: false,
+    can_soft_link: false,
+  },
+  capabilitiesKnown: false,
+  writeCapabilitySource: "unknown",
+  writeCapabilityProbe: "not_run",
+  secretReadiness: [
+    { field: "usernameEnv", env: "MF_NAS_USER", state: "SET" },
+    { field: "passwordEnv", env: "MF_NAS_PASSWORD", state: "UNSET" },
+  ],
+  references: {
+    total: 1,
+    items: [],
+    truncated: false,
+    resourceLibraries: 1,
+    mediaLibraries: 0,
+    countedInBreakdown: 1,
+  },
+};
+
+function commandInventoryPayload(items: unknown[], canManage = true): unknown {
+  const families: Record<string, number> = {};
+  for (const item of items) {
+    const family = (item as { family: string }).family;
+    families[family] = (families[family] ?? 0) + 1;
+  }
+  return {
+    available: true,
+    reason: null,
+    authority: "MANAGED",
+    active: {
+      revisionId: "rev-1",
+      version: 3,
+      revisionSequence: 2,
+      status: "active",
+    },
+    items,
+    total: items.length,
+    matched: items.length,
+    truncated: false,
+    returned: items.length,
+    hasMore: false,
+    nextAfter: null,
+    families,
+    canManage,
+  };
+}
+
+/** The edit-safe projection of the SMB row above. */
+const SMB_EDIT_PROJECTION = {
+  storage: {
+    ...STORAGE_SMB,
+    options: {
+      host: "nas.example",
+      share: "media",
+      domain: "WORKGROUP",
+      port: 445,
+      usernameEnv: "MF_NAS_USER",
+      passwordEnv: "MF_NAS_PASSWORD",
+      connectTimeout: 30,
+      operationTimeout: 60,
+      maxConcurrency: 4,
+      // A supported option the SMB form never exposes: it must survive.
+      pageSize: 1000,
+    },
+  },
+  active: {
+    revisionId: "rev-1",
+    version: 3,
+    revisionSequence: 2,
+    status: "active",
+    digest: "digest-1",
+  },
+  sideEffects: "none",
+};
+
+function saveResponsePayload(storage: Record<string, unknown> = {}) {
+  return {
+    storage: {
+      id: "nas-media",
+      name: "NAS 媒体",
+      type: "smb",
+      rootPath: "media",
+      readOnly: false,
+      enabled: true,
+      options: { host: "nas.example", share: "media" },
+      secretReadiness: [
+        { field: "passwordEnv", env: "MF_NAS_PASSWORD", state: "UNSET" },
+      ],
+      ...storage,
+    },
+    active: {
+      revisionId: "rev-2",
+      version: 4,
+      revisionSequence: 3,
+      status: "active",
+      digest: "digest-2",
+    },
+    configuration: {
+      authority: "MANAGED",
+      revisionId: "rev-2",
+      version: 4,
+      digest: "digest-2",
+    },
+    sideEffects: "configuration_only",
+    nextAction:
+      "refresh the Active Storage inventory; the published successor is the configuration runtime consumes",
+  };
+}
+
+function errorPayload(code: string, details: Record<string, unknown> = {}) {
+  return {
+    error: { code, message: "bounded secret-free message", details },
+  };
+}
+
+/**
+ * Serve the workspace reads plus the `/api/v1/storages*` command surface.
+ * `onSave` answers one POST/PUT with a [status, payload] pair.
+ */
+function stubWorkspace(options: {
+  items?: unknown[];
+  canManage?: boolean;
+  editProjection?: unknown;
+  onSave?: (
+    method: "POST" | "PUT",
+    body: Record<string, unknown>,
+  ) => [number, unknown];
+}): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    if (url === "/api/v1/storages" && method === "GET") {
+      return jsonResponse({
+        active: SMB_EDIT_PROJECTION.active,
+        sideEffects: "none",
+      });
+    }
+    if (url.startsWith("/api/v1/storages/") && url.endsWith("/edit")) {
+      if (options.editProjection === null) {
+        return jsonResponse(errorPayload("storage_not_found"), 404);
+      }
+      return jsonResponse(options.editProjection ?? SMB_EDIT_PROJECTION);
+    }
+    if (url === "/api/v1/storages" || url.startsWith("/api/v1/storages/")) {
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<
+        string,
+        unknown
+      >;
+      const [status, payload] = options.onSave?.(
+        method as "POST" | "PUT",
+        body,
+      ) ?? [200, saveResponsePayload()];
+      return jsonResponse(payload, status);
+    }
+    if (url.startsWith(INVENTORY_PATH)) {
+      return jsonResponse(
+        commandInventoryPayload(
+          options.items ?? [STORAGE_LOCAL, STORAGE_SMB],
+          options.canManage ?? true,
+        ),
+      );
+    }
+    return jsonResponse(detailPayload(STORAGE_LOCAL));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+function commandCalls(
+  fetchMock: ReturnType<typeof vi.fn>,
+  method: "POST" | "PUT",
+): Array<Record<string, unknown>> {
+  return (fetchMock.mock.calls as unknown as [string, RequestInit][])
+    .filter(
+      ([url, init]) =>
+        String(url).startsWith("/api/v1/storages") && init?.method === method,
+    )
+    .map(([, init]) => JSON.parse(String(init.body ?? "{}")));
+}
+
+async function openAddDrawer() {
+  await userEvent.click(
+    await screen.findByRole("button", { name: "+ 添加存储" }),
+  );
+  return screen.findByRole("complementary", { name: "添加存储" });
+}
+
+/** Step 1..3 walker for a Local Add: name/ID, root, then advanced defaults. */
+
+async function fillLocalAdd(form: ReturnType<typeof within>, id = "new-local") {
+  await userEvent.type(form.getByLabelText("名称 *"), "新的本地存储");
+  await userEvent.type(form.getByLabelText("存储 ID *"), id);
+  await userEvent.click(form.getByRole("button", { name: "下一步" }));
+  await userEvent.type(form.getByLabelText("根路径 *"), "/media/new-local");
+  await userEvent.click(form.getByRole("button", { name: "下一步" }));
+  await userEvent.click(form.getByRole("button", { name: "下一步" }));
+}
+
+describe("Storage Add/Edit drawer", () => {
+  it("stays closed on normal entry and opens step 1 on explicit Add", async () => {
+    stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await screen.findByRole("heading", { name: "存储管理" });
+    expect(
+      screen.queryByRole("complementary", { name: "添加存储" }),
+    ).toBeNull();
+
+    const form = within(await openAddDrawer());
+    // Prescribed four-step rail in Contract order.
+    const steps = form.getAllByRole("listitem");
+    expect(steps.map((step) => step.textContent?.replace(/\s/g, ""))).toEqual([
+      "1基本信息",
+      "2连接配置",
+      "3高级设置",
+      "4确认",
+    ]);
+    // Step 1 field order: 名称 → 存储 ID → 存储类型.
+    expect(form.getAllByRole("textbox").map((input) => input.id)).toEqual([
+      "mf-storage-name",
+      "mf-storage-id",
+    ]);
+    expect(form.getByLabelText("存储类型 *")).toBeInTheDocument();
+    // Keyboard focus moved into the drawer.
+    expect(document.activeElement?.getAttribute("id")).toBe("mf-storage-name");
+    // Storage has no notes input.
+    expect(form.queryByLabelText(/备注/)).toBeNull();
+    expect(form.queryByText("备注")).toBeNull();
+  });
+
+  it("keeps inventory context and restores focus to the invoker on Cancel", async () => {
+    const fetchMock = stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    // The inventory stays visible as context beside the drawer.
+    expect(screen.getByRole("table")).toBeVisible();
+
+    await userEvent.click(form.getByRole("button", { name: "取消" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: "添加存储" }),
+      ).toBeNull(),
+    );
+    expect(document.activeElement?.getAttribute("id")).toBe(
+      "mf-add-storage-button",
+    );
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(0);
+  });
+
+  it("closes on Escape without submitting a candidate", async () => {
+    const fetchMock = stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await userEvent.type(form.getByLabelText("名称 *"), "半成品");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: "添加存储" }),
+      ).toBeNull(),
+    );
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(0);
+  });
+
+  it("blocks an invalid step instead of advancing", async () => {
+    stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    expect(await form.findByText("请输入存储名称")).toBeVisible();
+
+    await userEvent.type(form.getByLabelText("名称 *"), "坏的 ID");
+    await userEvent.type(form.getByLabelText("存储 ID *"), "Bad ID");
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    expect(await form.findByText(/存储 ID 仅支持小写字母/)).toBeVisible();
+    // Still on step 1 with the entered values preserved.
+    expect(form.getByLabelText("名称 *")).toHaveValue("坏的 ID");
+    expect(form.queryByLabelText("根路径 *")).toBeNull();
+  });
+
+  it("prefills Edit from one exact Active object and preserves unexposed options", async () => {
+    const fetchMock = stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
+    );
+    const drawer = await screen.findByRole("complementary", {
+      name: "编辑存储 nas-media",
+    });
+    const form = within(drawer);
+    // The immutable ID is visible and read-only.
+    const idInput = form.getByLabelText("存储 ID *");
+    expect(idInput).toBeDisabled();
+    expect(idInput).toHaveValue("nas-media");
+    expect(form.getByLabelText("名称 *")).toHaveValue("NAS 媒体");
+
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    // Step 2 shows this provider's connection fields only.
+    expect(form.getByLabelText("主机地址")).toHaveValue("nas.example");
+    expect(form.getByLabelText("密码环境变量")).toHaveValue("MF_NAS_PASSWORD");
+    expect(form.getByLabelText("端口")).toHaveValue("445");
+    // A field from another provider never renders.
+    expect(form.queryByLabelText("存储桶")).toBeNull();
+
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    // Step 3 carries the state and supported advanced settings.
+    expect(form.getByLabelText("最大并发")).toHaveValue("4");
+    expect(form.getByLabelText("连接超时(秒)")).toHaveValue("30");
+
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    // Step 4 is a bounded, secret-free summary.
+    const summary = drawer.textContent ?? "";
+    expect(summary).toContain("nas.example");
+    expect(summary).toContain("MF_NAS_PASSWORD");
+    expect(summary).toMatch(
+      /表单未展示的\s*1\s*个受支持选项将按当前 Active 原样保留/,
+    );
+    // An unavailable deployment-owned credential reference is an actionable
+    // warning before Save, not a silent later failure.
+    expect(summary).toContain("部署尚未注入这些凭据引用:MF_NAS_PASSWORD");
+
+    await userEvent.click(form.getByRole("button", { name: "保存并激活" }));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: "编辑存储 nas-media" }),
+      ).toBeNull(),
+    );
+    const puts = commandCalls(fetchMock, "PUT");
+    expect(puts).toHaveLength(1);
+    expect(puts[0]).toMatchObject({
+      storageId: "nas-media",
+      type: "smb",
+      expectedRevisionId: "rev-1",
+      // The optimistic identity is the revisionSequence of the Active the form
+      // opened, never a value the operator had to copy.
+      expectedVersion: 2,
+      expectedDigest: "digest-1",
+    });
+    // The prefill exposed the readiness state so an unset credential is an
+    // actionable recovery before Save, not a silent failure afterwards.
+    expect(
+      (fetchMock.mock.calls as unknown as [string][]).some(([url]) =>
+        String(url).endsWith("/api/v1/storages/nas-media/edit"),
+      ),
+    ).toBe(true);
+    // Only SMB-valid options travel; the unexposed option is preserved by
+    // omission instead of being cleared.
+    const sent = puts[0]?.options as Record<string, unknown>;
+    expect(sent.pageSize).toBeUndefined();
+    expect(sent.domain).toBe("WORKGROUP");
+    // The refreshed list comes from the published successor authority.
+    const inventoryCalls = (
+      fetchMock.mock.calls as unknown as [string][]
+    ).filter(([url]) => String(url).startsWith(INVENTORY_PATH));
+    expect(inventoryCalls.length).toBeGreaterThan(1);
+  });
+
+  it("keeps a failed Save correctable and never replays it automatically", async () => {
+    const fetchMock = stubWorkspace({
+      onSave: () => [
+        409,
+        errorPayload("storage_duplicate", {
+          durableState: "active_preserved",
+          nextAction: "choose a different Storage ID, then retry",
+        }),
+      ],
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const drawer = await openAddDrawer();
+    const form = within(drawer);
+    await fillLocalAdd(form, "taken-id");
+    await userEvent.click(form.getByRole("button", { name: "保存" }));
+
+    expect(await form.findByText(/该存储 ID 已存在/)).toBeVisible();
+    // The rejected candidate stays correctable and the drawer stays open; the
+    // operator walks back to step 1 and fixes the named field.
+    await userEvent.click(form.getByRole("button", { name: /基本信息/ }));
+    expect(form.getByLabelText("名称 *")).toHaveValue("新的本地存储");
+    expect(form.getByLabelText("存储 ID *")).toHaveValue("taken-id");
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
+  });
+
+  it("treats an unknown outcome as state verification before another Save", async () => {
+    const fetchMock = stubWorkspace({
+      onSave: () => [500, errorPayload("internal_error", {})],
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await fillLocalAdd(form, "unknown-1");
+    await userEvent.click(form.getByRole("button", { name: "保存" }));
+
+    expect(
+      await form.findByText(/请先核实当前 Active 状态，再决定是否再次提交/),
+    ).toBeVisible();
+    const saveButton = form.getByRole("button", { name: "保存" });
+    expect(saveButton).toBeDisabled();
+    expect(saveButton.getAttribute("title")).toMatch(
+      /请先核实当前 Active 状态/,
+    );
+    const verify = form.getByRole("button", { name: "核实当前状态" });
+    expect(verify).toBeEnabled();
+
+    await userEvent.click(verify);
+    await waitFor(() => expect(saveButton).toBeEnabled());
+    // Verification re-read the Active authority; the candidate was not replayed.
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
+  });
+
+  it("keeps Save blocked when explicit authority verification fails", async () => {
+    const fetchMock = stubWorkspace({
+      onSave: () => [500, errorPayload("internal_error")],
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    const form = within(await openAddDrawer());
+    await fillLocalAdd(form, "verify-failed");
+    await userEvent.click(form.getByRole("button", { name: "保存" }));
+    await form.findByRole("button", { name: "核实当前状态" });
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(errorPayload("configuration_unavailable"), 503),
+    );
+    await userEvent.click(form.getByRole("button", { name: "核实当前状态" }));
+    expect(await form.findByText(/无法核实当前状态/)).toBeVisible();
+    expect(form.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(commandCalls(fetchMock, "POST")).toHaveLength(1);
+  });
+
+  it.each([
+    [403, errorPayload("forbidden", {}), /没有管理与激活存储配置的权限/],
+    [
+      409,
+      errorPayload("storage_storage_check_failed", {
+        durableState: "active_preserved",
+      }),
+      /只读连接\/读取检查未通过/,
+    ],
+    [
+      409,
+      errorPayload("storage_strategy_test_failed", {
+        durableState: "active_preserved",
+      }),
+      /离线识别策略测试或目标预检未通过/,
+    ],
+    [
+      409,
+      errorPayload("configuration_version_conflict", {
+        durableState: "active_winner_preserved",
+      }),
+      /Active 已被其他变更替换/,
+    ],
+    [
+      503,
+      errorPayload("configuration_unavailable", {
+        durableState: "no_active_configuration",
+      }),
+      /没有已激活的托管配置/,
+    ],
+  ] as Array<[number, Record<string, unknown>, RegExp]>)(
+    "maps failure %i to its recovery action",
+    async (status, payload, pattern) => {
+      stubWorkspace({ onSave: () => [status, payload] });
+      authStore.setToken(TOKEN);
+      renderApp("/ui-v2/storage");
+      const form = within(await openAddDrawer());
+      await fillLocalAdd(form, `case-${status}`);
+      await userEvent.click(form.getByRole("button", { name: "保存" }));
+      expect(await form.findByText(pattern)).toBeVisible();
+      // Stale/unavailable authority requires explicit verification before resubmission.
+      const needsVerification = [
+        "configuration_version_conflict",
+        "configuration_unavailable",
+      ].includes((payload.error as { code: string }).code);
+      if (needsVerification)
+        expect(form.getByRole("button", { name: "保存" })).toBeDisabled();
+      else expect(form.getByRole("button", { name: "保存" })).toBeEnabled();
+    },
+  );
+
+  it("refuses to open the Edit drawer when the projection fails", async () => {
+    const fetchMock = stubWorkspace({ editProjection: null });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "编辑 NAS 媒体" }),
+    );
+    const banner = await screen.findByRole("heading", {
+      name: "无法打开编辑表单",
+    });
+    expect(banner.parentElement?.textContent).toContain(
+      "该存储已不在当前 Active 配置中",
+    );
+    expect(
+      screen.queryByRole("complementary", { name: /编辑存储/ }),
+    ).toBeNull();
+    expect(commandCalls(fetchMock, "PUT")).toHaveLength(0);
+  });
+
+  it("hides mutation intent behind a truthful disabled state for a viewer", async () => {
+    stubWorkspace({ canManage: false });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await screen.findByRole("heading", { name: "存储管理" });
+    const addButton = screen.getByRole("button", { name: "+ 添加存储" });
+    expect(addButton).toBeDisabled();
+    expect(addButton.getAttribute("title")).toMatch(/没有管理存储的权限/);
+    const editButton = screen.getByRole("button", { name: "编辑 NAS 媒体" });
+    expect(editButton).toBeDisabled();
+    // A disabled action never opens the drawer.
+    await userEvent.click(editButton);
+    expect(
+      screen.queryByRole("complementary", { name: /编辑存储/ }),
+    ).toBeNull();
+  });
+
+  it("keeps Add/Edit reachable by keyboard in a narrow layout", async () => {
+    stubWorkspace({});
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await screen.findByRole("heading", { name: "存储管理" });
+    const editButton = screen.getByRole("button", { name: "编辑 NAS 媒体" });
+    expect(editButton.tagName).toBe("BUTTON");
+    expect(editButton).not.toHaveAttribute("tabindex", "-1");
+    await editButton.focus();
+    await userEvent.keyboard("{Enter}");
+    const drawer = await screen.findByRole("complementary", {
+      name: "编辑存储 nas-media",
+    });
+    const form = within(drawer);
+    expect(document.activeElement?.getAttribute("id")).toBe("mf-storage-name");
+    // Back/Next/Save stay reachable from the keyboard while the form scrolls.
+    await userEvent.tab();
+    await userEvent.tab();
+    await userEvent.click(form.getByRole("button", { name: "下一步" }));
+    expect(form.getByLabelText("主机地址")).toBeInTheDocument();
+    await userEvent.click(form.getByRole("button", { name: "上一步" }));
+    expect(form.getByLabelText("名称 *")).toBeInTheDocument();
+  });
+});

@@ -52,6 +52,47 @@ function viewRow(page: Page, name: string): Locator {
   return page.getByRole("button", { name: `查看 ${name}` });
 }
 
+/** The 编辑 action for one storage row. */
+function editRow(page: Page, name: string): Locator {
+  return page.getByRole("button", { name: `编辑 ${name}` });
+}
+
+/** The four-step Add/Edit drawer. */
+function storageDrawer(page: Page, storageId?: string): Locator {
+  return page.getByRole("complementary", {
+    name: storageId === undefined ? "添加存储" : `编辑存储 ${storageId}`,
+  });
+}
+
+/** Walk the Local Add form from step 1 to the confirmation step. */
+async function fillLocalAdd(
+  drawer: Locator,
+  id: string,
+  rootPath: string,
+  name = "新的本地存储",
+) {
+  await drawer.getByLabel("名称 *").fill(name);
+  await drawer.getByLabel("存储 ID *").fill(id);
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByLabel("根路径 *").fill(rootPath);
+  await drawer.getByRole("button", { name: "下一步" }).click();
+  await drawer.getByRole("button", { name: "下一步" }).click();
+}
+
+/** Back/Next navigation keeps entered input, and only explicit Save submits. */
+async function expectStepRail(drawer: Locator) {
+  await expect(
+    drawer.getByRole("button", { name: /1\s*基本信息/ }),
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("button", { name: /2\s*连接配置/ }),
+  ).toBeVisible();
+  await expect(
+    drawer.getByRole("button", { name: /3\s*高级设置/ }),
+  ).toBeVisible();
+  await expect(drawer.getByRole("button", { name: /4\s*确认/ })).toBeVisible();
+}
+
 test.describe("Storage management", () => {
   test("inventory renders the prescribed workspace after authentication", async ({
     page,
@@ -112,9 +153,17 @@ test.describe("Storage management", () => {
     await expect(disabledRow).toBeVisible();
     await expect(disabledRow.getByText("只读")).toBeVisible();
 
-    // The header Add action is present but not a dead mutation control.
+    // The Add action is available to this managing principal, and the drawer
+    // is closed on normal entry (Task 39.2): it opens only on explicit intent.
     const addButton = page.getByRole("button", { name: "+ 添加存储" });
-    await expect(addButton).toBeDisabled();
+    await expect(addButton).toBeEnabled();
+    await expect(
+      page.getByRole("complementary", { name: "添加存储" }),
+    ).toHaveCount(0);
+    // Every row keeps 查看 then 编辑 in the operation cell.
+    await expect(
+      firstRow.getByRole("button", { name: "编辑 本地媒体" }),
+    ).toBeEnabled();
 
     // Page load started no recursive read: only the inventory document was
     // requested for the workspace itself.
@@ -497,5 +546,532 @@ test.describe("Storage management", () => {
     await expect(runButton).toBeEnabled();
     await page.keyboard.press("Enter");
     await expect(drawer.getByText(/连接\/读取检查结果/)).toBeVisible();
+  });
+
+  // -------------------------------------------------------------------------
+  // Task 39.2 — typed Add/Edit through the four-step drawer and checked Save.
+
+  test("add drawer opens on explicit intent at step 1 and stays closed otherwise", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await connect(page);
+    await openStorageManagement(page);
+
+    // Normal entry leaves the drawer closed; the inventory is the context.
+    await expect(storageDrawer(page)).toHaveCount(0);
+    await expect(page.getByRole("table")).toBeVisible();
+
+    await page.getByRole("button", { name: "+ 添加存储" }).click();
+    const drawer = storageDrawer(page);
+    await expect(drawer).toBeVisible();
+    await expectStepRail(drawer);
+    await expect(
+      drawer.getByRole("heading", { name: "添加存储" }),
+    ).toBeVisible();
+
+    // Step 1 carries exactly 名称 → 存储 ID → 存储类型, in that order.
+    const stepOne = drawer.locator(".mf-files-drawer-panel");
+    const labels = await stepOne
+      .locator("label:not(.mf-files-toggle)")
+      .allTextContents();
+    expect(labels.slice(0, 3)).toEqual(["名称 *", "存储 ID *", "存储类型 *"]);
+    // The prescribed provider choices are typed, not a JSON editor.
+    await expect(
+      drawer.getByRole("combobox", { name: "存储类型 *" }),
+    ).toBeVisible();
+    for (const choice of [
+      "本地存储",
+      "SMB",
+      "OpenList",
+      "AWS S3",
+      "Cloudflare R2",
+      "S3 兼容",
+    ]) {
+      await expect(
+        drawer
+          .getByRole("combobox", { name: "存储类型 *" })
+          .locator(
+            `option[value="${
+              choice === "本地存储"
+                ? "local"
+                : choice === "SMB"
+                  ? "smb"
+                  : choice === "OpenList"
+                    ? "openlist"
+                    : choice === "AWS S3"
+                      ? "s3"
+                      : choice === "Cloudflare R2"
+                        ? "r2"
+                        : "s3-compatible"
+            }"]`,
+          ),
+      ).toHaveCount(1);
+    }
+    // No notes input or notes copy anywhere in the form.
+    await expect(drawer.getByText(/备注/)).toHaveCount(0);
+
+    // Cancel restores focus to the invoking control without saving.
+    await drawer.getByRole("button", { name: "取消" }).click();
+    await expect(storageDrawer(page)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "+ 添加存储" }),
+    ).toBeFocused();
+  });
+
+  test("add publishes one checked Active successor and refreshes the inventory", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    const posts: Array<Record<string, unknown>> = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith("/api/v1/storages")
+      ) {
+        posts.push(request.postDataJSON() as Record<string, unknown>);
+      }
+    });
+    await connect(page);
+    await openStorageManagement(page);
+    await page.getByRole("button", { name: "+ 添加存储" }).click();
+    const drawer = storageDrawer(page);
+    await fillLocalAdd(drawer, "local-added", "/media/added", "新增本地");
+
+    // The confirmation step is a secret-free summary of the intended object.
+    await expect(drawer.getByText("新增本地")).toBeVisible();
+    await expect(drawer.getByText("/media/added")).toBeVisible();
+    await expect(drawer.getByText(/本地存储/)).toBeVisible();
+
+    await drawer.getByRole("button", { name: "保存" }).click();
+    await expect(storageDrawer(page)).toHaveCount(0);
+
+    // The refreshed list shows the object from the published successor Active.
+    const row = page.getByRole("row").filter({ hasText: "local-added" });
+    await expect(row).toBeVisible();
+    await expect(row.getByText("新增本地")).toBeVisible();
+    await expect(row.getByText("本地存储")).toBeVisible();
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toEqual({
+      expectedRevisionId: "storage-active-rev-e2e-001",
+      expectedVersion: 2,
+      expectedDigest: "e2e-digest-3",
+      storageId: "local-added",
+      name: "新增本地",
+      type: "local",
+      rootPath: "/media/added",
+      readOnly: false,
+      enabled: true,
+      options: {},
+    });
+    // Authority travels internally; the operator never copies it into a field.
+    expect(JSON.stringify(posts[0])).not.toMatch(/token|claim|fence/);
+    expect(posts[0].expectedRevisionId).toBe("storage-active-rev-e2e-001");
+  });
+
+  test("provider variation changes the typed connection fields", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await connect(page);
+    await openStorageManagement(page);
+    await page.getByRole("button", { name: "+ 添加存储" }).click();
+    const drawer = storageDrawer(page);
+    await drawer.getByLabel("名称 *").fill("NAS 新增");
+    await drawer.getByLabel("存储 ID *").fill("nas-added");
+    await drawer.getByLabel("存储类型 *").selectOption("smb");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+
+    // Only SMB-valid connection fields render.
+    await expect(drawer.getByLabel("主机地址")).toBeVisible();
+    await expect(drawer.getByLabel("共享名称")).toBeVisible();
+    await expect(drawer.getByLabel("用户名环境变量")).toBeVisible();
+    await expect(drawer.getByLabel("密码环境变量")).toBeVisible();
+    await expect(drawer.getByLabel("存储桶")).toHaveCount(0);
+    await expect(drawer.getByLabel("服务地址")).toHaveCount(0);
+    // Credential entry is a reference name, never a value.
+    await expect(
+      drawer.getByText(/只填写部署注入的环境变量名,绝不填写凭据值/).first(),
+    ).toBeVisible();
+
+    await drawer.getByLabel("主机地址").fill("nas2.example");
+    await drawer.getByLabel("共享名称").fill("share2");
+    await drawer.getByLabel("用户名环境变量").fill("MF_NAS_USER");
+    await drawer.getByLabel("密码环境变量").fill("MF_NAS_PASSWORD");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    // Advanced step exposes state plus supported timeout/concurrency settings.
+    await expect(drawer.getByRole("checkbox", { name: /启用/ })).toBeChecked();
+    await expect(drawer.getByLabel("连接超时(秒)")).toBeVisible();
+    await expect(drawer.getByLabel("最大并发")).toBeVisible();
+
+    // Switching provider replaces the option set instead of mixing providers.
+    await drawer.getByRole("button", { name: /基本信息/ }).click();
+    await drawer.getByLabel("存储类型 *").selectOption("s3-compatible");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(drawer.getByLabel("存储桶")).toBeVisible();
+    await expect(drawer.getByLabel("端点 *")).toBeVisible();
+    await expect(drawer.getByLabel("主机地址")).toHaveCount(0);
+
+    // A missing required provider field blocks the step with a field error.
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(drawer.getByText("存储桶 不能为空")).toBeVisible();
+    await drawer.getByLabel("存储桶").fill("bucket-2");
+    await drawer.getByLabel("端点 *").fill("not-a-url");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(
+      drawer.getByText(/端点.*必须是不含凭据的完整 http\(s\) 地址/),
+    ).toBeVisible();
+  });
+
+  test("edit is prefilled from one exact Active object with an immutable ID", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    const puts: Array<Record<string, unknown>> = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "PUT" &&
+        request.url().includes("/api/v1/storages/")
+      ) {
+        puts.push(request.postDataJSON() as Record<string, unknown>);
+      }
+    });
+    await connect(page);
+    await openStorageManagement(page);
+    await editRow(page, "NAS 媒体").click();
+    const drawer = storageDrawer(page, "nas-media");
+    await expect(drawer).toBeVisible();
+    await expect(
+      drawer.getByRole("heading", { name: "编辑存储" }),
+    ).toBeVisible();
+
+    // The immutable ID is visible and read-only.
+    const idInput = drawer.getByLabel("存储 ID *");
+    await expect(idInput).toHaveValue("nas-media");
+    await expect(idInput).toBeDisabled();
+    // Prefilled provider connection values come from the Active object.
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(drawer.getByLabel("主机地址")).toHaveValue("nas.example");
+    await expect(drawer.getByLabel("密码环境变量")).toHaveValue(
+      "MF_NAS_PASSWORD",
+    );
+    await drawer.getByLabel("主机地址").fill("nas-renamed.example");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(drawer.getByLabel("最大并发")).toHaveValue("4");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    // The confirmation step is a bounded, secret-free summary.
+    await expect(drawer.getByText(/nas-renamed.example/)).toBeVisible();
+    await expect(
+      drawer
+        .getByText(/凭据由部署注入环境变量|环境变量 MF_NAS_PASSWORD/)
+        .first(),
+    ).toBeVisible();
+    // No credential value ever appears in the page.
+    await expect(page.getByText(/MF_NAS_PASSWORD=(?!)/)).toHaveCount(0);
+
+    await drawer.getByRole("button", { name: "保存并激活" }).click();
+    await expect(storageDrawer(page, "nas-media")).toHaveCount(0);
+    await expect(
+      page.getByRole("row").filter({ hasText: "nas-renamed.example" }),
+    ).toBeVisible();
+
+    expect(puts).toHaveLength(1);
+    expect(puts[0]).toMatchObject({
+      storageId: "nas-media",
+      type: "smb",
+      // The optimistic identity is backend-managed, carried automatically.
+      expectedRevisionId: "storage-active-rev-e2e-001",
+      expectedVersion: 2,
+      expectedDigest: "e2e-digest-3",
+    });
+    const options = puts[0]?.options as Record<string, unknown>;
+    expect(options.host).toBe("nas-renamed.example");
+    // The unexposed option was preserved by omission, never cleared.
+    expect(options.pageSize).toBeUndefined();
+  });
+
+  test("a failed Save keeps correctable input and the prior Active state", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?saveFail=check");
+    const posts: number[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith("/api/v1/storages")
+      ) {
+        posts.push(1);
+      }
+    });
+    await connect(page);
+    await openStorageManagement(page);
+    await page.getByRole("button", { name: "+ 添加存储" }).click();
+    const drawer = storageDrawer(page);
+    await fillLocalAdd(drawer, "local-fail", "/media/fail", "失败重试");
+    await drawer.getByRole("button", { name: "保存" }).click();
+
+    await expect(
+      drawer.getByText(/只读连接\/读取检查未通过,候选未发布/),
+    ).toBeVisible();
+    await expect(
+      drawer.getByText(/旧 Active 与 Storage 内容均未改变/),
+    ).toBeVisible();
+    // No automatic replay of a known failed Save.
+    expect(posts).toHaveLength(1);
+
+    // The rejected candidate stays correctable: walking back to step 1 shows
+    // the entered input instead of discarding it.
+    await drawer.getByRole("button", { name: /基本信息/ }).click();
+    await expect(drawer.getByLabel("名称 *")).toHaveValue("失败重试");
+    await expect(drawer.getByLabel("存储 ID *")).toHaveValue("local-fail");
+
+    // Correcting the named blocker and saving again succeeds explicitly.
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await drawer.getByRole("button", { name: "保存" }).click();
+    await expect(storageDrawer(page)).toHaveCount(0);
+    await expect(
+      page.getByRole("row").filter({ hasText: "local-fail" }),
+    ).toBeVisible();
+    expect(posts).toHaveLength(2);
+  });
+
+  test("a stale Active rejection asks for a refresh instead of overwriting", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await connect(page);
+    await openStorageManagement(page);
+    // The Edit form captures the exact Active identity it was opened against.
+    await editRow(page, "NAS 媒体").click();
+    const drawer = storageDrawer(page, "nas-media");
+    await expect(drawer.getByLabel("名称 *")).toHaveValue("NAS 媒体");
+    await drawer.getByLabel("名称 *").fill("过期编辑");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await drawer.getByRole("button", { name: "下一步" }).click();
+
+    // Another writer publishes a successor Active while this candidate is
+    // being reviewed, so the captured identity is now stale.
+    await page.evaluate(async () => {
+      await fetch("/__test__/advance-storage-active", { method: "POST" });
+    });
+    await drawer.getByRole("button", { name: "保存并激活" }).click();
+
+    await expect(
+      drawer.getByText(/Active 配置在打开表单后已变化,本次候选未保存/),
+    ).toBeVisible();
+    // Verify the new Active before resubmitting retained input; never silently rebase.
+    await expect(
+      drawer.getByRole("button", { name: "保存并激活" }),
+    ).toBeDisabled();
+    await drawer.getByRole("button", { name: "核实当前状态" }).click();
+    await expect(drawer.getByText(/已核实当前存储/)).toBeVisible();
+    await expect(
+      drawer.getByRole("button", { name: "保存并激活" }),
+    ).toBeEnabled();
+    await drawer.getByRole("button", { name: /基本信息/ }).click();
+    await expect(drawer.getByLabel("名称 *")).toHaveValue("过期编辑");
+
+    // Refreshing the authority re-reads the current Active, then re-opening
+    // the form binds to the new identity and the same intent publishes.
+    await drawer.getByRole("button", { name: "取消" }).click();
+    await editRow(page, "NAS 媒体").click();
+    const refreshed = storageDrawer(page, "nas-media");
+    await refreshed.getByLabel("名称 *").fill("刷新后编辑");
+    await refreshed.getByRole("button", { name: "下一步" }).click();
+    await refreshed.getByRole("button", { name: "下一步" }).click();
+    await refreshed.getByRole("button", { name: "下一步" }).click();
+    await refreshed.getByRole("button", { name: "保存并激活" }).click();
+    await expect(storageDrawer(page, "nas-media")).toHaveCount(0);
+    await expect(
+      page.getByRole("row").filter({ hasText: "刷新后编辑" }),
+    ).toBeVisible();
+  });
+
+  test("an unknown Save outcome requires explicit state verification", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?saveFail=unknown");
+    const submits: number[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        request.url().endsWith("/api/v1/storages")
+      ) {
+        submits.push(1);
+      }
+    });
+    await connect(page);
+    await openStorageManagement(page);
+    await page.getByRole("button", { name: "+ 添加存储" }).click();
+    const drawer = storageDrawer(page);
+    await fillLocalAdd(drawer, "local-unknown", "/media/unknown", "未知结果");
+    await drawer.getByRole("button", { name: "保存" }).click();
+
+    await expect(
+      drawer.getByText(/请先核实当前 Active 状态，再决定是否再次提交/),
+    ).toBeVisible();
+    // Save is blocked until the operator verifies the durable state.
+    const saveButton = drawer.getByRole("button", { name: "保存" });
+    await expect(saveButton).toBeDisabled();
+    await expect(
+      drawer.getByRole("button", { name: "核实当前状态" }),
+    ).toBeEnabled();
+
+    await drawer.getByRole("button", { name: "核实当前状态" }).click();
+    await expect(saveButton).toBeEnabled();
+    // Verification only re-read state; it never replayed the write.
+    expect(submits).toHaveLength(1);
+  });
+
+  test("a read-only principal gets no usable mutation control", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await connect(page, READ_ONLY_TOKEN);
+    await openStorageManagement(page);
+
+    await expect(
+      page.getByRole("button", { name: "+ 添加存储" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "+ 添加存储" }),
+    ).toHaveAttribute("title", /没有管理存储的权限/);
+    const edit = page.getByRole("button", { name: "编辑 NAS 媒体" });
+    await expect(edit).toBeDisabled();
+    // A disabled action never opens a drawer.
+    await edit.click({ force: true });
+    await expect(
+      page.getByRole("complementary", { name: /编辑存储/ }),
+    ).toHaveCount(0);
+  });
+
+  test("setup state offers no false Add surface and fails truthfully", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?noActive=1");
+    await connect(page);
+    await openStorageManagement(page);
+    await expect(page.getByText("尚未完成托管配置")).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "+ 添加存储" }),
+    ).toBeDisabled();
+    // No fabricated table appears behind the handoff state.
+    await expect(page.getByRole("table")).toHaveCount(0);
+  });
+
+  test("controlled 1536x1024 visual evidence with drawer step 1 open and closed", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await page.setViewportSize({ width: 1536, height: 1024 });
+    await connect(page);
+    await openStorageManagement(page);
+
+    // Closed state: title/subtitle, Add action, provider cards, six columns.
+    await page.screenshot({
+      path: "test-results/storage-closed-1536x1024.png",
+    });
+    await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
+    await expect(
+      page.getByRole("list", { name: "存储类型汇总" }),
+    ).toBeVisible();
+
+    // Open state at step 1: right drawer with left step rail and bottom actions.
+    await page.getByRole("button", { name: "+ 添加存储" }).click();
+    const drawer = storageDrawer(page);
+    await expect(drawer).toBeVisible();
+    await expect(
+      drawer.getByRole("button", { name: /基本信息/ }),
+    ).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "下一步" })).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "取消" })).toBeVisible();
+    await page.screenshot({
+      path: "test-results/storage-drawer-step1-1536x1024.png",
+    });
+
+    // Name/ID remain readable while the drawer shares the desktop workspace.
+    const nameCell = page.locator(".mf-storage-name-cell").first();
+    const nameBounds = await nameCell.boundingBox();
+    expect(nameBounds?.width).toBeGreaterThan(150);
+    await expect(nameCell.getByText("本地媒体", { exact: true })).toBeVisible();
+    await expect(
+      nameCell.getByText("local-media", { exact: true }),
+    ).toBeVisible();
+
+    // Composition guides from the Contract reference size.
+    const geometry = await page.evaluate(() => {
+      const rail = document.querySelector(".mf-shell-rail, nav");
+      const topbar = document.querySelector(".mf-shell-topbar, header");
+      const panel = document.querySelector(".mf-storage-drawer");
+      const box = (element: Element | null) => {
+        if (element === null) return null;
+        const rect = element.getBoundingClientRect();
+        return {
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+      };
+      return {
+        rail: box(rail),
+        topbar: box(topbar),
+        drawer: box(panel),
+      };
+    });
+    expect(geometry.drawer?.width).toBeGreaterThan(360);
+    if (geometry.topbar !== null) {
+      expect(geometry.topbar.height).toBeLessThan(120);
+    }
+
+    // A long provider form keeps the footer reachable while the body scrolls.
+    await drawer.getByLabel("存储类型 *").selectOption("s3-compatible");
+    await drawer.getByLabel("名称 *").fill("长表单证据");
+    await drawer.getByLabel("存储 ID *").fill("long-form-evidence");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(drawer.getByLabel("存储桶")).toBeVisible();
+    await expect(drawer.getByRole("button", { name: "下一步" })).toBeVisible();
+    await page.screenshot({
+      path: "test-results/storage-drawer-long-form-1536x1024.png",
+    });
+
+    await drawer.getByRole("button", { name: "关闭添加存储" }).click();
+    await expect(storageDrawer(page)).toHaveCount(0);
+  });
+
+  test("keyboard focus round trip through the step rail and drawer", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await page.setViewportSize({ width: 1000, height: 800 });
+    await connect(page);
+    await openStorageManagement(page);
+
+    // Keyboard-only: reach Add, walk the rail, then Escape back to the row action.
+    await page.getByRole("button", { name: "+ 添加存储" }).focus();
+    await page.keyboard.press("Enter");
+    const drawer = storageDrawer(page);
+    await expect(drawer).toBeVisible();
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.id ?? ""))
+      .toBe("mf-storage-name");
+
+    await drawer.getByLabel("名称 *").fill("键盘新增");
+    await drawer.getByLabel("存储 ID *").fill("keyboard-add");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await drawer.getByLabel("根路径 *").fill("/media/keyboard");
+    // Escape dismisses without saving and restores the invoker focus.
+    await page.keyboard.press("Escape");
+    await expect(storageDrawer(page)).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => document.activeElement?.getAttribute("id") ?? ""),
+      )
+      .toBe("mf-add-storage-button");
+    await expect(
+      page.getByRole("row").filter({ hasText: "keyboard-add" }),
+    ).toHaveCount(0);
   });
 });

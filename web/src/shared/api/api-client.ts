@@ -5185,3 +5185,229 @@ export async function fetchStorageCheckRun(
     return { ok: false, status: response.status, code: "malformed_response" };
   }
 }
+
+// ---------------------------------------------------------------------------
+// V2 Storage Add/Edit command (Slice 39, Task 39.2).
+//
+// The typed Storage form reads one exact-Active edit projection and publishes
+// one page-local Save through the same checked successor boundary the Python
+// application proves in tests/test_storage_page_local_save.py. The browser
+// never receives or submits a secret value; provider credentials travel only
+// as approved deployment-owned environment-variable names, and an optimistic
+// Active identity is carried solely as backend-managed concurrency evidence.
+
+import {
+  STORAGE_ID,
+  normalizeStorageEditProjection,
+  normalizeStorageSave,
+  type StorageFormModel,
+  type StorageProviderType,
+  type StorageSaveCandidate,
+  type StorageSaveModel,
+} from "../../entities/storage/storage-form";
+
+const STORAGE_COMMAND_BASE = "/api/v1/storages";
+
+function storageOptionFields(
+  options: StorageSaveCandidate["options"],
+): boolean {
+  return (
+    typeof options === "object" && options !== null && !Array.isArray(options)
+  );
+}
+
+function validateStorageCandidate(
+  candidate: StorageSaveCandidate,
+  editing: boolean,
+): boolean {
+  return (
+    // On Add the ID must satisfy the backend identifier rule; on Edit it is
+    // the already-validated immutable identity.
+    (editing || STORAGE_ID.test(candidate.storageId)) &&
+    candidate.name.trim().length > 0 &&
+    candidate.name.length <= 120 &&
+    candidate.rootPath.length <= 4096 &&
+    typeof candidate.readOnly === "boolean" &&
+    typeof candidate.enabled === "boolean" &&
+    storageOptionFields(candidate.options)
+  );
+}
+
+/** Read the edit-safe typed projection of one exact Active Storage. */
+export async function fetchStorageEdit(
+  token: string | null,
+  storageId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<StorageFormModel>> {
+  if (!isSafeIdentifier(storageId)) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `${STORAGE_COMMAND_BASE}/${encodeURIComponent(storageId)}/edit`,
+      { method: "GET", headers: directFilesReadHeaders(token) },
+    );
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      model: normalizeStorageEditProjection(payload),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+export interface StorageSaveAuthority {
+  readonly expectedRevisionId: string;
+  readonly expectedVersion: number;
+  readonly expectedDigest: string;
+}
+
+/** Capture the exact Active for Add or explicit Save-outcome verification. */
+export async function fetchStorageAuthority(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<StorageSaveAuthority>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(STORAGE_COMMAND_BASE, {
+      method: "GET",
+      headers: directFilesReadHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      status: response.status,
+      code: "configuration_unavailable",
+    };
+  }
+  try {
+    const payload = await response.json();
+    const active = payload.active;
+    if (
+      payload.sideEffects !== "none" ||
+      active.status !== "active" ||
+      !isSafeIdentifier(active.revisionId) ||
+      !isSafeIdentifier(active.digest) ||
+      !Number.isSafeInteger(active.revisionSequence) ||
+      active.revisionSequence < 1
+    ) {
+      throw new Error("invalid Active identity");
+    }
+    return {
+      ok: true,
+      status: response.status,
+      model: {
+        expectedRevisionId: active.revisionId,
+        expectedVersion: active.revisionSequence,
+        expectedDigest: active.digest,
+      },
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** Publish one new Storage through the checked successor boundary. */
+export async function saveStorage(
+  token: string | null,
+  candidate: StorageSaveCandidate,
+  expected: StorageSaveAuthority,
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<StorageSaveModel>> {
+  if (
+    !validateStorageCandidate(candidate, false) ||
+    !isSafeIdentifier(expected.expectedRevisionId) ||
+    !isSafeIdentifier(expected.expectedDigest) ||
+    !Number.isSafeInteger(expected.expectedVersion) ||
+    expected.expectedVersion < 1
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "POST",
+    STORAGE_COMMAND_BASE,
+    {
+      storageId: candidate.storageId,
+      name: candidate.name,
+      type: candidate.type as StorageProviderType,
+      rootPath: candidate.rootPath,
+      readOnly: candidate.readOnly,
+      enabled: candidate.enabled,
+      options: candidate.options,
+      ...expected,
+    },
+    normalizeStorageSave,
+    fetchImpl,
+  );
+}
+
+/** Edit one existing Storage; the ID is immutable and the Active identity fences. */
+export async function editStorage(
+  token: string | null,
+  candidate: StorageSaveCandidate,
+  expected: {
+    readonly expectedRevisionId: string;
+    readonly expectedVersion: number;
+    readonly expectedDigest: string;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<AutomationMutationResult<StorageSaveModel>> {
+  if (
+    !isSafeIdentifier(candidate.storageId) ||
+    !STORAGE_ID.test(candidate.storageId) ||
+    !validateStorageCandidate(candidate, true) ||
+    !isSafeIdentifier(expected.expectedRevisionId) ||
+    !Number.isSafeInteger(expected.expectedVersion) ||
+    expected.expectedVersion < 0 ||
+    !isSafeIdentifier(expected.expectedDigest)
+  ) {
+    return { ok: false, status: 400, code: "invalid_request" };
+  }
+  return submitAutomationMutation(
+    token,
+    "PUT",
+    `${STORAGE_COMMAND_BASE}/${encodeURIComponent(candidate.storageId)}`,
+    {
+      storageId: candidate.storageId,
+      name: candidate.name,
+      type: candidate.type as StorageProviderType,
+      rootPath: candidate.rootPath,
+      readOnly: candidate.readOnly,
+      enabled: candidate.enabled,
+      options: candidate.options,
+      expectedRevisionId: expected.expectedRevisionId,
+      expectedVersion: expected.expectedVersion,
+      expectedDigest: expected.expectedDigest,
+    },
+    normalizeStorageSave,
+    fetchImpl,
+  );
+}
