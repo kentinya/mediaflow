@@ -587,6 +587,7 @@ describe("Storage management journey", () => {
           "expectedRevisionId",
           "expectedVersion",
         ]);
+        expect(body.expectedVersion).toBe(2);
         expect(body).not.toHaveProperty("expectedDigest");
         return jsonResponse(CHECK_PASSED);
       }
@@ -882,8 +883,10 @@ function stubWorkspace(options: {
   items?: unknown[];
   canManage?: boolean;
   editProjection?: unknown;
+  authority?: unknown;
+  inventory?: unknown;
   onSave?: (
-    method: "POST" | "PUT",
+    method: "POST" | "PUT" | "DELETE",
     body: Record<string, unknown>,
   ) => [number, unknown];
 }): ReturnType<typeof vi.fn> {
@@ -892,7 +895,7 @@ function stubWorkspace(options: {
     const method = (init?.method ?? "GET").toUpperCase();
     if (url === "/api/v1/storages" && method === "GET") {
       return jsonResponse({
-        active: SMB_EDIT_PROJECTION.active,
+        active: options.authority ?? SMB_EDIT_PROJECTION.active,
         sideEffects: "none",
       });
     }
@@ -908,17 +911,18 @@ function stubWorkspace(options: {
         unknown
       >;
       const [status, payload] = options.onSave?.(
-        method as "POST" | "PUT",
+        method as "POST" | "PUT" | "DELETE",
         body,
       ) ?? [200, saveResponsePayload()];
       return jsonResponse(payload, status);
     }
     if (url.startsWith(INVENTORY_PATH)) {
       return jsonResponse(
-        commandInventoryPayload(
-          options.items ?? [STORAGE_LOCAL, STORAGE_SMB],
-          options.canManage ?? true,
-        ),
+        options.inventory ??
+          commandInventoryPayload(
+            options.items ?? [STORAGE_LOCAL, STORAGE_SMB],
+            options.canManage ?? true,
+          ),
       );
     }
     return jsonResponse(detailPayload(STORAGE_LOCAL));
@@ -926,6 +930,86 @@ function stubWorkspace(options: {
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
+
+describe("Storage lifecycle actions", () => {
+  it("rejects a row from an older Active before removal confirmation", async () => {
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_R2],
+      authority: {
+        ...SMB_EDIT_PROJECTION.active,
+        revisionId: "rev-2",
+        revisionSequence: 3,
+        digest: "digest-2",
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "移除配置" }));
+
+    expect(
+      await screen.findByText(/当前 Active 已在清单显示后发生变化/),
+    ).toBeVisible();
+    expect(confirm).not.toHaveBeenCalled();
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).endsWith("/api/v1/storages/r2-media") &&
+          (init as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps the displayed removal fence when Active changes during confirmation", async () => {
+    let changedDuringConfirmation = false;
+    const confirm = vi.fn(() => {
+      changedDuringConfirmation = true;
+      return true;
+    });
+    vi.stubGlobal("confirm", confirm);
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_R2],
+      onSave: (method, body) => {
+        if (method === "DELETE") {
+          expect(changedDuringConfirmation).toBe(true);
+          expect(body).toMatchObject({
+            expectedRevisionId: "rev-1",
+            expectedVersion: 2,
+            expectedDigest: "digest-1",
+          });
+          return [
+            409,
+            errorPayload("configuration_version_conflict", {
+              durableState: "active_winner_preserved",
+              nextAction: "refresh and review the changed Storage",
+            }),
+          ];
+        }
+        return [200, saveResponsePayload()];
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+
+    await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "移除配置" }));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("R2 media"));
+    expect(
+      await screen.findByText(/refresh and review the changed Storage/),
+    ).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(
+        ([url, init]) =>
+          String(url).endsWith("/api/v1/storages/r2-media") &&
+          (init as RequestInit | undefined)?.method === "DELETE",
+      ),
+    ).toHaveLength(1);
+  });
+});
 
 function commandCalls(
   fetchMock: ReturnType<typeof vi.fn>,

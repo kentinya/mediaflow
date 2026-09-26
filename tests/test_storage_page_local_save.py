@@ -1332,6 +1332,111 @@ class StoragePageLocalSaveTests(unittest.TestCase):
         self.assertEqual(self.source.mutations, [])
         self.assertEqual(self.target.mutations, [])
 
+    def test_lifecycle_publications_use_sequence_for_followup_read_check(self) -> None:
+        active = self.active_identity()
+        command_identity = {
+            "expectedRevisionId": active["revisionId"],
+            "expectedVersion": active["revisionSequence"],
+            "expectedDigest": self.configuration.active().digest,
+        }
+        status, copied = request(
+            self.api,
+            f"{SAVE_ROUTE}/source-storage/copy",
+            method="POST",
+            body={
+                **command_identity,
+                "newStorageId": "lifecycle-copy",
+                "name": "Lifecycle Copy",
+            },
+        )
+        self.assertEqual(status, 200, copied)
+        self.assertIsNotNone(self.storage_of("lifecycle-copy"))
+
+        for action, enabled in (("disable", False), ("enable", True)):
+            current = self.configuration.active()
+            status, changed = request(
+                self.api,
+                f"{SAVE_ROUTE}/lifecycle-copy/{action}",
+                method="POST",
+                body={
+                    "enabled": enabled,
+                    "expectedRevisionId": current.revision_id,
+                    "expectedVersion": current.revision_sequence,
+                    "expectedDigest": current.digest,
+                },
+            )
+            self.assertEqual(status, 200, changed)
+            self.assertEqual(self.storage_of("lifecycle-copy")["enabled"], enabled)
+
+        current = self.configuration.active()
+        status, removed = request(
+            self.api,
+            f"{SAVE_ROUTE}/lifecycle-copy",
+            method="DELETE",
+            body={
+                "expectedRevisionId": current.revision_id,
+                "expectedVersion": current.revision_sequence,
+                "expectedDigest": current.digest,
+            },
+        )
+        self.assertEqual(status, 200, removed)
+        self.assertIsNone(self.storage_of("lifecycle-copy"))
+
+        active = self.active_identity()
+        self.assertNotEqual(active["revisionSequence"], active["version"])
+        status, evidence = request(
+            self.api,
+            "/api/v1/operations/storage-management/storage/source-storage/check",
+            method="POST",
+            body={
+                "expectedRevisionId": active["revisionId"],
+                "expectedVersion": active["revisionSequence"],
+            },
+        )
+        self.assertEqual(status, 200, evidence)
+        self.assertEqual(evidence["status"], "passed")
+        self.assertEqual(self.source.mutations, [])
+        self.assertEqual(self.target.mutations, [])
+
+    def test_remove_rejects_authority_captured_before_concurrent_edit(self) -> None:
+        status, created = request(
+            self.api,
+            SAVE_ROUTE,
+            method="POST",
+            body=self.add_body(storageId="stale-remove", name="Spare Original"),
+        )
+        self.assertEqual(status, 200, created)
+        stale = self.configuration.active()
+
+        status, edited = request(
+            self.api,
+            f"{SAVE_ROUTE}/stale-remove",
+            method="PUT",
+            body=edit_body(
+                self.form_identity("stale-remove"),
+                "stale-remove",
+                name="Spare Changed After Decision",
+                rootPath=str(self.root / "source"),
+            ),
+        )
+        self.assertEqual(status, 200, edited)
+
+        status, rejected = request(
+            self.api,
+            f"{SAVE_ROUTE}/stale-remove",
+            method="DELETE",
+            body={
+                "expectedRevisionId": stale.revision_id,
+                "expectedVersion": stale.revision_sequence,
+                "expectedDigest": stale.digest,
+            },
+        )
+        self.assertEqual(status, 409, rejected)
+        self.assertEqual(rejected["error"]["code"], "storage_remove_stale")
+        self.assertEqual(self.storage_of("stale-remove")["name"], "Spare Changed After Decision")
+        self.assertEqual(self.source.mutations, [])
+        self.assertEqual(self.target.mutations, [])
+
     def test_add_captures_open_time_authority_and_rejects_stale_or_missing_identity(self):
         reads_before = list(self.source.read_calls)
         status, authority = request(self.api, SAVE_ROUTE)

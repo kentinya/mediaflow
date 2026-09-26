@@ -25,6 +25,7 @@ import {
   type StorageCheckResultModel,
   type StorageDetailModel,
   type StorageFamily,
+  type StorageActiveIdentity,
   type StorageInventoryModel,
 } from "../../entities/storage/storage-management";
 import type {
@@ -83,6 +84,16 @@ const PROVIDER_TYPE_LABELS: Readonly<Record<string, string>> = {
 
 function providerTypeLabel(type: string): string {
   return PROVIDER_TYPE_LABELS[type] ?? type;
+}
+
+function activeMatchesAuthority(
+  active: StorageActiveIdentity,
+  authority: StorageSaveAuthority,
+): boolean {
+  return (
+    active.revisionId === authority.expectedRevisionId &&
+    (active.revisionSequence ?? active.version) === authority.expectedVersion
+  );
 }
 
 /**
@@ -1062,7 +1073,8 @@ export function StorageManagementPage() {
       checkMutation.mutate({
         storageId,
         expectedRevisionId: inventory.active.revisionId,
-        expectedVersion: inventory.active.version,
+        expectedVersion:
+          inventory.active.revisionSequence ?? inventory.active.version,
       });
     },
     [inventory, checkMutation, checkBlocked],
@@ -1097,6 +1109,13 @@ export function StorageManagementPage() {
       const authority = await fetchStorageAuthority(token);
       if (!authority.ok) {
         setEditLoadError("无法核实当前 Active 配置,请刷新后重试。");
+        return;
+      }
+      if (!activeMatchesAuthority(inventory.active, authority.model)) {
+        setEditLoadError(
+          "当前 Active 已在清单显示后发生变化。请刷新并重新查看当前存储后再操作。",
+        );
+        refreshInventoryAuthority();
         return;
       }
       if (action === "copy") {
