@@ -9,11 +9,16 @@ paths and example records are synthetic fixture data and are not product truth.
 Slice ID: 39
 Name: Storage Management Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
 Implementation Head: c84d545a6b3d122d405ba03a286910322a765266
 Contract Revision: 2026-09-25 A review corrections — checked activation, removal, layout and reference; no notes
 ```
+
+> A review decision: FIX REQUIRED. The empty-root inventory defect and incomplete setup handoff
+> below block Slice acceptance. The former Closure Packet is historical and its completeness
+> assertion is superseded. See [A Final Review](#a-final-review) for the authorized correction scope;
+> Required Outcomes, Required Surfaces, Safety Invariants, deferrals and Slice Base are unchanged.
 
 Slice 38 is `PASS / CLOSED`. Its Base, Implementation Head, Closure Packet and A Final Review are
 historical facts and remain unchanged. This Slice starts from the repository HEAD immediately after
@@ -368,15 +373,95 @@ criteria are satisfied, B stops planning, emits the Closure Packet with decision
 REVIEW`, and leaves A to review Base..Head and reconcile CURRENT documents. P2 wording, optional
 visual polish or a future write-probe idea is not a reason to create another Task.
 
-## NO ACTIVE IMPLEMENTATION TASK
+## Implementation Task Handoff
 
-```text
-Parent Slice: 39 — Storage Management Workspace
-Status: NO ACTIVE IMPLEMENTATION TASK
-Next Action: A FINAL REVIEW
-```
+A requests one coherent Storage configuration readability/recovery correction for the blockers in
+A Final Review. Root `TASK.md` owns the actual implementation Task state. B uses this A review's
+committed checkpoint as the new Task Base, preserves every passed Task's history, and returns the
+corrected checkpoint to A after Task review. No implementation is authorized by a draft document
+alone; the Contract and Task must pass governance before Developer execution.
+
+## B Post-handoff Findings
+
+Recorded after user deployment feedback at code/document checkpoint
+`f3873521aa1c03bff83fb8acb1afe20be24d59ee` (production code unchanged from the Implementation Head).
+This is B's factual correction to the handoff, not an A Final Review or a claim that a fix is
+implemented. The previous global completeness assertion is no longer valid; the historical test
+results and individual Task review records below remain as recorded. No active implementation Task
+is created while this Slice is awaiting A review.
+
+### P1 — Provider-valid empty OpenList root breaks the Storage workspace
+
+1. **Current production reachability:** the current typed form and backend accept an OpenList
+   Storage with `rootPath: ""`. The real checked-save/application/API path accepts an unreferenced
+   disabled OpenList object alongside a complete working Local runtime; listing disabled objects
+   is explicitly supported. No future adapter, mixed version or reduced-capability test double is
+   needed. Listing the configured object does not require connecting to OpenList.
+2. **Current user impact:** after adding that configuration, `/ui-v2/storage` cannot render its
+   inventory, including other valid Storage entries. It reports `存储管理不可用` and
+   `The Storage management response could not be understood as the expected read-only contract.`
+   The user may mistake a post-save read failure for a failed save or invalid token and retry Add.
+3. **Current Contract violation:** RO-2/AC-2 require a truthful usable inventory including disabled
+   objects; RO-3/AC-3 require supported provider input to survive the typed journey; RO-6 requires
+   truthful durable state and recovery. The fix implements existing provider semantics, not a new
+   provider or a change to Local confinement.
+4. **Reproducible evidence:** with a complete checked Active on temporary Local roots and SQLite,
+   POST `/api/v1/storages` using a fresh exact-Active fence and this candidate:
+
+   ```json
+   {"storageId":"openlist-root","name":"OpenList root","type":"openlist","rootPath":"","readOnly":true,"enabled":false,"options":{"baseUrl":"https://openlist.example","tokenEnv":"OPENLIST_TOKEN"}}
+   ```
+
+   Save returns 200. GET `/api/v1/operations/storage-management/inventory` returns 200 with
+   `location: {"kind":"remote","rootPath":""}` for the new object.
+   `ConfigurationObjectService._active_storage_document` preserves that legal empty string.
+   The actual `normalizeStorageInventory` rejects this response because `normalizeLocation` calls
+   the non-empty `normalizeBoundedText` for `""`; only null/undefined take its empty-root branch.
+   The production API client catches the normalization error and emits the quoted generic message.
+   Feeding the identical payload with this one OpenList root changed to `/` into the same parser
+   succeeds and returns all three entries. Local reproduction scripts:
+   `/tmp/mediaflow-openlist-empty-root-probe.py` and
+   `/tmp/mediaflow-openlist-normalize-probe.cjs`; no real OpenList credential or user media was used.
+5. **Severity and correction acceptance:** P1, a legal saved object makes the required workspace
+   unavailable. Accept the provider-valid empty root through list/detail normalization and display
+   it as `提供商根目录`, preserving the stored path and all existing validation boundaries. Do not
+   filter out the object, weaken unrelated shape validation or require delete/recreate. Prove
+   Add → successful Save → full list → detail → prefilled Edit → reload for empty and `/` roots,
+   including an already saved empty-root object, alongside Local and another valid remote entry.
+   Preserve malformed-payload rejection, Local confinement, permissions and zero Storage mutation.
+   List failure must not auto-resubmit Save or falsely claim that Active was rolled back.
+
+### Required setup entry and return experience — recorded target
+
+The user requested a system-level first-setup entry after seeing the no-Active message. The current
+`StorageManagementPage` no-Active branch shows an explanation and Refresh only. The existing V1
+`/ui` Configuration implements `Create first Draft` / `Resume setup Draft`; V2 general Configuration
+is a migration landing. That capability exists, but the Storage empty state has no direct setup
+handoff or return action.
+
+The requested experience is specified in the Chinese product specification,
+[Product Experience](docs/product-experience.md#target--discoverable-v2-setup-and-return-journey) and
+`V2-SETUP-001/002` in [V2 Requirements](docs/v2-requirements.md): authenticated Start/Continue,
+System Settings → Initialization and Configuration, and Storage → Complete setup all lead to one
+resumable journey; successful checked activation returns to the originating page. Permission denial,
+missing setup, unavailable Active and malformed reads must remain distinct. Page entry/return does
+not create a Draft, activate or start media work by itself.
+
+A should assess the minimal actionable handoff under existing RO-6 and the original setup/handoff
+scope, and scope the broader native V2 wizard separately if needed. This request does not authorize
+B to remove the general Configuration deferral, migrate the whole page, create a second authority
+or silently add all global setup surfaces to Slice 39. Acceptance must cover a fresh instance,
+existing incomplete setup, reconnect/resume, viewer permissions, explicit successful completion and
+return to the refreshed Storage workspace. The empty-root P1 is independently established above.
+
+**Disposition:** A has reviewed these findings under explicit user authorization; see the decision
+and bounded correction scope below. Do not close the Slice using the superseded completeness assertion.
 
 ## Closure Packet
+
+Historical B submission at the Head below. Its all-Outcomes-complete conclusion is superseded by
+the [post-handoff findings](#b-post-handoff-findings); the tests below are historical evidence, not
+proof that those newly reproduced cases pass. No correction has been implemented yet.
 
 Slice: 39 — Storage Management Workspace
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
@@ -513,5 +598,89 @@ Head alter only TASK.md, so all final validation covers the same implementation.
 
 ## A Final Review
 
-Not performed. A reviews the complete immutable Base..Implementation Head range after B submits
-the Closure Packet; this planning checkpoint does not declare any implementation outcome complete.
+```text
+Review type: rejection and correction-scope decision
+Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
+Reviewed Implementation Head: c84d545a6b3d122d405ba03a286910322a765266
+Repository checkpoint inspected: f3873521aa1c03bff83fb8acb1afe20be24d59ee
+Decision: FIX REQUIRED
+Next: B PLANS ONE FOCUSED CORRECTION TASK
+```
+
+### Review authority and limits
+
+The user explicitly authorized the existing B agent to exercise A authority: “授权你A的权限 A 审核
+空根路径 P1 和首次设置入口衔接范围，记录 FIX REQUIRED 并提交 checkpoint”. This is the disclosed
+role-separation exception required by the development workflow; this review does not claim an
+independent reviewer. A inspected the Slice Base..Head manifest, current production implementations
+and the recorded findings, and reran the targeted reproductions below. It is a rejecting review,
+not a renewed assertion that all other outcomes or the complete final gate have passed.
+
+### P0/P1 Blockers
+
+- **P1 — Legal provider-root configuration cannot be read by the required workspace.**
+  In the current same-version application/API and Web, a valid complete managed runtime can add
+  an unreferenced disabled OpenList object with an empty root. Save and inventory both return 200,
+  but the actual frontend inventory normalizer rejects the API projection and makes the entire
+  Storage workspace unavailable. The backend permits this configuration, and the OpenList adapter
+  resolves both empty and `/` roots to its service root. The reproduced disabled case is a normal
+  supported configuration, not a capability-removed fake. This violates RO-2/RO-3/RO-6 and AC-2/3/4's
+  usable provider-safe inventory and post-save recovery. Fix the input/projection/list/detail/Edit
+  round trip and an honest provider-root display; retain strict unrelated payload checks and Local
+  confinement. Already-saved entries must recover without manual database edits, deletion or replay.
+  The step-by-step real API and production-normalizer evidence is in B Post-handoff Findings.
+
+- **P1 — The promised setup recovery handoff is absent at the Storage failure surface.**
+  A real management-only instance with an authenticated admin returns `setupRequired: true`.
+  Opening `/ui-v2/storage` shows the no-Active message, disabled Add and Refresh; the page body has
+  zero setup/configuration links or setup buttons. Refresh cannot establish an initial runtime.
+  The current V1 `/ui` does have functioning Create first Draft / Resume setup Draft after
+  authentication, and the global System Settings migration landing links to V1; this finding does
+  not claim that setup is absent everywhere. The gap is the required actionable recovery from this
+  Storage state and a clear continuation back to the user's goal, under A Scope Decisions' existing
+  setup/handoff boundary, RO-6 and AC-7. Provide the page-local setup handoff, continue existing
+  setup through the existing authority, and an explicit return that refreshes actual Active truth.
+  A real browser reproduction confirms this missing entry and the working V1 create/resume flow.
+
+### Authorized correction boundary
+
+- Treat both blockers as one coherent Storage workspace readability and recovery correction, not
+  one Task per field, button or test. Do not reopen the three passed Tasks or move their Bases.
+- Accept provider-valid empty roots in existing typed read surfaces and show a truthful provider-root
+  label. Empty, `/` and non-empty OpenList roots must survive Save, inventory, detail, Edit and reload.
+  Other providers retain their existing semantics; never reinterpret an invalid Local root as `/`.
+- At genuine setup-required Storage state, expose `去完成设置` or an equivalent explicit action
+  into the existing V1 Configuration setup workflow. A small V1 entry/return affordance and bounded
+  readiness projection reuse are permitted if necessary to complete this handoff. The existing
+  workflow owns first-Draft creation/resume, checks and activation. Do not duplicate it in Storage.
+- Returning or reconnecting refetches current authority. Preserve unfinished setup; distinguish
+  first setup, temporarily unavailable Active and malformed inventory. Read-only users receive
+  actionable administrator guidance. A click that merely navigates or inspects readiness must not
+  create a Draft, activate, repeat Save or start Storage/media work.
+- Preserve the current memory-only Bearer model. A V1 authentication prompt is acceptable within
+  the existing migration boundary; do not pass tokens in URLs/storage, invent a token bridge or
+  weaken RBAC to make the handoff appear seamless. Return targets are fixed or same-origin
+  allowlisted application routes, with no arbitrary redirect.
+- The broader `V2-SETUP-001/002` native wizard, global post-login onboarding and System Settings
+  redesign remain future scope. This correction does not migrate general Configuration, remove
+  any existing deferral, invent workflow defaults or bypass complete checked activation.
+
+### Validation and return to A
+
+- Repeated `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-openlist-empty-root-probe.py` followed by
+  `node /tmp/mediaflow-openlist-normalize-probe.cjs`: current defect reproduced; Save/inventory 200,
+  empty-root response rejected, otherwise identical `/` response accepted with all three entries.
+- Ran the real application with SQLite management-only bootstrap via
+  `/tmp/mediaflow-a39-setup-server.py`, then `node /tmp/mediaflow-a39-setup-probe.mjs`: current V2
+  setup CTA count 0, configuration-link count 0, readiness setupRequired true; existing V1 first
+  Draft creation and Resume both work. This used only temporary state and synthetic credentials.
+  Log: `/tmp/mediaflow-a39-setup-probe.log`; image: `/tmp/mediaflow-a39-setup-gap.png`.
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations`:
+  PASS, 27 tests, 0 skips, 4.148 s. These existing tests do not disprove the reproduced UI gaps.
+- The prior full Python/Web/browser/Docker results remain historical. No full final gate was rerun
+  for this rejecting review, and no production behavior or test assertion was edited.
+- B plans from the actual committed A-review Head. The correction must prove provider-root
+  round-trip and a fresh/resumable setup-to-Storage return journey, with negative permissions,
+  malformed response, stale/unknown outcome and zero-mutation safeguards. After its Task passes,
+  return Slice status to READY FOR A REVIEW and submit the corrected Head/evidence to A; do not
+  declare Slice PASS/CLOSED or silently revive the superseded packet's completeness assertion.

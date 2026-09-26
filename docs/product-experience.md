@@ -146,6 +146,52 @@ read-only destination precheck for the MediaLibrary destination on any supported
 older Local-only setup check stays available as a Local diagnostic and is not required for
 activation.
 
+### TARGET — Discoverable V2 setup and return journey
+
+This is a required V2 experience, not a claim that the current V2 workspace already delivers it.
+The existing first-setup implementation is in V1 `/ui` Configuration; the current V2 Storage
+no-Active state offers Refresh but no direct setup action.
+
+- **Goal:** reach a usable initial configuration without knowing the internal revision lifecycle.
+- **Entry:** after authentication, offer `开始设置` when setup is required or `继续设置` when an
+  unfinished configuration exists. System Settings retains `初始化与配置`; a Storage setup-required
+  empty state offers `去完成设置` as its primary action. All entries lead to the same setup journey.
+- **Visible state:** which setup steps are complete, the configured Storage and libraries, named
+  blockers and whether the configuration is in use. Keep missing initialization distinct from a
+  temporarily unavailable Active or a malformed list response. A viewer sees an administrator
+  handoff, not a usable configuration command.
+- **Action:** connect Storage, configure source/destination libraries and required policies, inspect
+  checks and explicitly choose `完成设置`. Compose the complete graph validation, exact-revision
+  Storage/strategy/destination checks and atomic activation behind these user-facing steps; no
+  token/digest/revision copying or arbitrary workflow defaults. Opening the journey does not create
+  another Draft or start checks. No media scan, organization or write is started by setup completion.
+- **Success:** only a fully checked snapshot bound to runtime is reported as ready. Return to the
+  originating supported application page, such as Storage, and refetch its Active state. Return
+  navigation carries no credentials and cannot redirect to an arbitrary external location.
+- **Failure:** denied authority, missing fields/secrets/mounts, provider errors, invalid dependencies,
+  stale evidence or activation/runtime failure identifies the actual blocker and durable state.
+- **Recovery:** retain and resume the existing setup configuration across reload/reconnect; correct
+  the named blocker and explicitly continue. Verify unknown activation outcomes before a new
+  attempt. Never recreate initial configuration merely because a list failed to render.
+
+During migration, the immediate handoff may explicitly open the existing V1 Configuration setup
+surface with a visible way back to Storage; authentication continues under the existing memory-only
+token model. The complete native V2 wizard is a separate product target for A to scope, not an
+implicit addition to Slice 39's deferred general Configuration migration.
+
+## Storage root display and save recovery
+
+Provider-valid root values must round-trip from typed input through Save, Active inventory, detail
+and Edit. OpenList permits an empty root or `/` for its service root. Show an empty OpenList root as
+`提供商根目录` without changing the stored identity or pretending it is a host filesystem root.
+Other providers keep their own backend rules; Local still requires a valid confined absolute root.
+A legitimate empty root must not invalidate the whole inventory or cause a row to disappear.
+
+A successful Save followed by a failed list read is a read/presentation failure, not proof that Save
+was rolled back. Preserve the durable result where known, offer explicit state verification when
+unknown, and never repeat Add or activation automatically. Existing saved empty-root configurations
+must become readable after the correction without a database edit, delete/recreate or media move.
+
 ## Recognition and metadata
 
 - **Goal:** identify the RecognitionType and actual movie/show without changing files.
