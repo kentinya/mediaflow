@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 39.2
 Parent Slice: 39
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 2d012c07f049fb2e0831a39b721b1aa465e3888e
 Difficulty: High
 Test Level: T4
@@ -136,33 +136,85 @@ provider services and synthetic secret references; never require production SMB/
 
 ### Changed Files
 
-Pending Developer implementation.
+- `mediaflow/application/configuration_objects.py`: Storage form authority/projection and checked Add/Edit command; extend shared evidence collection for the enabled Storage being saved.
+- `mediaflow/interfaces/service_api.py`: typed Storage routes, management + activation RBAC, runtime binding, bounded Save outcomes and audit route templates.
+- `tests/test_storage_page_local_save.py`: isolated application/API provider, concurrency, validation, admission failure, redaction and zero-mutation regressions.
+- `web/src/entities/storage/storage-form.ts` and `storage-form.test.ts`: six-provider field model, validation, exact path preservation and typed response normalization.
+- `web/src/features/storage/StorageEditDrawer.tsx`, `StorageManagementPage.tsx` and `StorageManagementPage.test.tsx`: four-step Add/Edit, prefill, retained input, explicit state verification, focus and permission states.
+- `web/src/shared/api/api-client.ts` and `storage-management-api.test.ts`: authority read and fenced typed Save clients.
+- `web/src/shared/ui/styles.css`: drawer/provider choices and Storage-specific six-column widths.
+- `web/tests/fake-server.mjs` and `web/tests/e2e/storage-management.spec.ts`: isolated browser fixture, mutation journeys and reproducible screenshots.
+- `TASK.md`: factual Developer report only; Task ID/Base/Goal/Scope and B decision remain unchanged.
 
 ### Implemented
 
-Pending Developer implementation.
+- Explicit Add/Edit at `/ui-v2/storage` opens step 1; Local, SMB, OpenList, AWS S3, R2 and S3-compatible forms support connection and advanced settings, immutable edit ID, environment-reference names, and secret-free confirmation. Close/Cancel/Escape never Save; values survive navigation and known failures.
+- `GET /api/v1/storages` captures exact Active authority; `GET /api/v1/storages/{id}/edit` supplies the selected form; POST/PUT use the same application command. Both Add and Edit reject stale open-time revision/sequence/digest before creating a successor.
+- Save composes and validates the complete successor, checks referenced enabled Storages plus the enabled Storage being saved, retains offline strategy/destination evidence, prepares runtime binding and checked-activates atomically. No media work or Storage mutation is started.
+- Failed validation, dependencies, credentials/read checks, persistence, runtime preparation or concurrency leave the prior Active intact. Unknown/stale outcomes block resubmission until explicit successful authority verification; no automatic Save replay occurs.
+- Same-provider edits preserve omitted supported options; explicit null clears optional settings and provider changes drop the former provider's options. Legacy unnamed Storage projections use their stable ID. OpenList provider-rooted paths remain logical; Local host root and traversal are rejected.
+- Shared search, existing detail/read checks and V1 surfaces remain in place. Desktop drawer context now keeps Storage names/IDs readable instead of inheriting Files checkbox-column widths.
 
 ### Tests and Results
 
-Pending Developer implementation.
+Final command results (2026-09-26; temporary roots and fake/local services only):
+
+- PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`: 126 tests, zero skips.
+- PASS — `.venv/bin/python -m unittest discover -s tests`: 1,834 tests, 7 SKIP (dedicated SMB/S3/OpenList real-service acceptance and Local/SMB/OpenList/S3 endurance profiles are absent).
+- PASS — `cd web && npm test -- --run src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx`: 69 tests across 3 files, zero skips.
+- PASS — `cd web && npm test -- --run`: 694 tests across 47 files, zero skips.
+- PASS — `cd web && npm run test:e2e -- --grep 'Storage management'`: 22 Chromium journeys, zero skips; authenticated Add/Edit, provider variation, failed/stale/unknown outcomes, read-only permissions, setup, shared search, read checks, narrow layout and keyboard focus.
+- PASS — `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: all four gates passed; only the bundle-size advisory remains.
+- PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: 316 files formatted; lint clean.
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`.
+- PASS — `python3 scripts/check_governance.py`; `git diff --check`; explicit Task manifest/private-file/reference-image audit; changed-source FFmpeg/FFprobe/private-key exclusion audit.
+- UNAVAILABLE — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-2-validation`, run twice in `/tmp/mediaflow-task39-candidate-efomxm1u` with all final Task source/test files verified byte-for-byte against this workspace. Both commands exited 1 before application validation: Docker Hub returned EOF fetching `node:22-bookworm-slim` metadata, then the anonymous token for `python:3.13-slim`. Logs: `/tmp/mediaflow-task39-release-security-exact.log` and `/tmp/mediaflow-task39-release-security-retry.log`. A previous candidate run passed but is not claimed as final-code evidence. The first repository-HEAD attempt was deliberately interrupted because it would not include uncommitted implementation.
+
+Controlled visual evidence (generated/ignored, not committed):
+
+- `web/test-results/storage-closed-1536x1024.png`
+- `web/test-results/storage-drawer-step1-1536x1024.png`
+- `web/test-results/storage-drawer-long-form-1536x1024.png`
+
+Inspected against unchanged `docs/pics/储存管理.png` (SHA-256
+`5e3aa806a081aaa52afdb79e0442e751e793aedcb1e4dd4616049f15e3b3df44`). Browser assertions
+also cover narrow width and keyboard/focus; the desktop assertion checks a readable name/ID column
+while the drawer is open. No pixel-equality claim or production-provider browser claim is made.
+
+Earlier validation found and corrected missing Add fencing, an insufficient verification gate,
+legacy unnamed projection handling and outdated Save assertions. One multi-scenario Web test hit
+its 5-second limit under concurrent gates; its five scenarios now run as separate parameterized
+cases with the same assertions, without changing timeout limits or skipping coverage.
 
 ### Decisions
 
-Pending Developer implementation.
+- Reuse Managed Configuration and checked activation; no second Storage repository or adapter registry. Add authority is captured by a bounded read instead of making the operator handle revisions.
+- An enabled unreferenced Storage still needs its own root read check before Save reports success. Disabled unreferenced entries remain configuration facts and receive no misleading passed connection claim.
+- Readiness exposes deployment environment-reference names and SET/UNSET only. No real external account or credential was used.
+- Explicit state verification can refresh a stale edit's authority only after displaying current Storage context; input stays correctable and a subsequent Save remains an explicit action. If an unknown Add already exists, direct the operator to inspect/edit it instead of replaying creation.
+- Docker release-security was treated as material to the new authenticated API/Web composition. No database schema, migration, package dependency or deployment manifest changed; no additional migration gate applies.
 
 ### Remaining In-Slice Work
 
-Pending Developer implementation.
+Copy, dedicated enable/disable and reference-protected configuration removal (`RO-4`) remain outside
+this Task, as specified by B. No next Task or Slice outcome is defined here.
 
 ### Risks / Deviations
 
-Pending Developer implementation.
+- The final-candidate Docker release-security gate is UNAVAILABLE due to the external registry failures above; B must assess this missing evidence.
+- Existing workspace Storage implementation was inspected and completed. Pre-existing `docs/pics/媒体库页.png` deletion, `docs/pics/文件页.png` modification and untracked `docs/pics/媒体库.png` were preserved and excluded. `SLICE.md`, Roadmap and the committed Storage reference are untouched.
+- `config/alist.json` remains ignored, untracked and unstaged; its contents were not read. Screenshots/test traces and `/tmp` validation logs are local generated evidence only.
+- Python emits SQLite ResourceWarnings; jsdom reports unimplemented `window.scrollTo`; the build reports a >500 kB bundle advisory. These messages are recorded separately from actual test results.
+- No production SMB/OpenList/S3/TMDB acceptance was attempted. Browser proof uses the local fake API; Python proves the actual application/API behavior independently.
 
 ### Checkpoint
 
+The SHA below is the implementation checkpoint. This report is recorded in a following
+documentation-only commit so it can name the actual immutable SHA. Neither commit is pushed.
+
 ```text
-Status: PLANNED
-Head SHA: NOT SET
+Status: READY FOR B REVIEW
+Head SHA: 3a57dc374908aeebc3eaa06e826c27bb50e5db92
 ```
 
 ## B Review Result
