@@ -166,10 +166,11 @@ exact commands, totals, skips and unavailable external gates.
 
 ### Changed Files
 
-- `mediaflow/application/configuration_objects.py`: checked Active-bound Storage copy, state-change and configuration-only removal commands with full successor validation and reference protection.
-- `mediaflow/interfaces/service_api.py`: typed Storage lifecycle routes with RBAC, exact Active fencing, runtime preparation and publication.
-- `web/src/shared/api/api-client.ts`: typed copy, enable/disable and removal clients.
-- `web/src/features/storage/StorageManagementPage.tsx`: accessible row-local More menu and recovery-aware lifecycle actions.
+- `tests/test_storage_page_local_save.py`: lifecycle publication/read-check sequence and concurrent stale-removal regressions.
+- `web/src/features/storage/StorageManagementPage.tsx`: compare the displayed row's Active fence with current authority before confirmation, and send revision sequence for read checks.
+- `web/src/features/storage/StorageManagementPage.test.tsx`: pre-confirmation stale-row and during-confirmation fence regressions, plus sequence/version read-check coverage.
+- `web/src/shared/api/storage-management-api.test.ts`: typed lifecycle request and recovery regressions.
+- `web/tests/fake-server.mjs`: configuration-only copy, enable/disable and removal behavior for browser lifecycle coverage.
 
 ### Implemented
 
@@ -179,18 +180,20 @@ exact commands, totals, skips and unavailable external gates.
 - All commands keep the previous Active and actionable context on stale, reference, validation, evidence, persistence or runtime failures.
 - Correction loop: lifecycle API requests now match the typed contracts and fence on `revisionSequence`; removal keeps the authority captured before confirmation; Copy uses retained controlled input instead of transient prompts.
 - Correction loop: unknown lifecycle outcomes now require explicit Active verification and do not claim that the prior Active survived or automatically replay a command.
+- Correction loop: lifecycle actions now refuse to pair a stale displayed row with a newer authority, while removal during a concurrent change submits the originally reviewed fence and surfaces the backend conflict.
+- Correction loop: the Web read-check caller uses `active.revisionSequence` when it differs from document `version`.
 
 ### Tests and Results
 
 - PASS — `python3 -m py_compile mediaflow/application/configuration_objects.py mediaflow/interfaces/service_api.py`.
 - PASS — `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save` (126 tests, 0 failures).
 - PASS — `cd web && npm run typecheck`.
-- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts` (42 tests, 0 failures; jsdom reports existing `scrollTo` notices).
+- PASS — `cd web && npm test -- --run src/features/storage/StorageManagementPage.test.tsx src/shared/api/storage-management-api.test.ts` (46 tests, 0 failures; jsdom reports existing `scrollTo` notices).
 - PASS — `python3 scripts/check_governance.py`; `git diff --check`.
-- PASS — `.venv/bin/python -m unittest discover -s tests` (1,834 tests, 7 skips for existing external/endurance profiles).
-- PASS — `cd web && npm test -- --run` (694 tests, 47 files).
+- PASS — `.venv/bin/python -m unittest discover -s tests` (1,836 tests, 7 skips for existing external/endurance profiles; existing SQLite ResourceWarnings only).
+- PASS — `cd web && npm test -- --run` (698 tests, 47 files; existing jsdom `scrollTo` notices only).
 - PASS — `cd web && npm run test:e2e -- --grep 'Storage management'` (22 Chromium tests).
-- PASS — `cd web && npm run lint && npm run typecheck && npm run format:check && npm run build`.
+- PASS — `cd web && npm run lint && npm run typecheck && npm run format:check && npm run build` (existing Vite bundle-size advisory only).
 - PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`.
 - PASS — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-3-validation` (release-security smoke acceptance passed).
 
@@ -202,7 +205,7 @@ exact commands, totals, skips and unavailable external gates.
 
 ### Remaining In-Slice Work
 
-- B review may require broader lifecycle-specific API/Web and full T4 regression coverage.
+- No known remaining implementation work from the current B blocker list; B review and any further Slice work remain outside this Developer report.
 
 ### Risks / Deviations
 
@@ -214,90 +217,91 @@ exact commands, totals, skips and unavailable external gates.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e887987cd954d3da5d07563cb0180ba4c98d02e5
+Head SHA: bd80736c9be66f4d38679a7e340830d91d8e6be2
 ```
 
 ## B Review Validation
 
-Review round: 1. The explicit implementation checkpoint is
-`a5f01937f8a8d1b19d2e19e708b55b8d0cc70b72`; repository HEAD is
-`8a16fad10c2bae4b6150b8744c8fbf2361053b04`. The subsequent three commits change only
-`TASK.md`. The implementation diff contains four production files and no added or changed tests.
-Task ID, Task Base, Goal and Implementation Scope remain unchanged.
+Review round: 2 (first Developer correction). Reviewed implementation checkpoint:
+`e887987cd954d3da5d07563cb0180ba4c98d02e5`; repository HEAD:
+`2514fc5503043f9cc9a7f7a4150a3690a0b06724`. The later commit changes only `TASK.md`.
+Task Base remains `6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9`.
 
-B reproduced the failures below using the current application/API, SQLite managed configuration,
-real Local adapters and temporary roots, then the actual built V2 page served by `MediaFlowApi`.
-The browser response-loss test lets the real server commit before dropping its response; it does
-not hide or remove a production adapter capability. All credentials used by these local probes
-are synthetic.
+B inspected both the cumulative Task diff and the correction diff. The copy request fields and
+lifecycle sequence comparison are corrected. A real Local API reproduction successfully publishes
+copy, disable, enable and removal in sequence. A real browser reproduction confirms duplicate-copy
+input remains correctable, the corrected copy succeeds, and a committed disable with its response
+lost offers explicit verification that displays the current enabled state. These prior findings
+are not retained in the blocker list. The remaining stale-decision case and the newly introduced
+read-check regression below are reachable with the actual API, SQLite managed configuration,
+real Local adapters, temporary roots and the current built V2 page. No production capability was
+removed or weakened to manufacture either reproduction.
 
-Reproduction artifacts in this review workspace:
+Independent B validation:
 
-- `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-api-probe.py`;
-  output: `/tmp/mediaflow-b393-api-probe.log`.
-- Temporary real API server: `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-server.py`.
-  Start a fresh instance for each of the stale-decision and response-loss scenarios.
-  `node /tmp/mediaflow-b393-ui-stale.mjs` and
-  `node /tmp/mediaflow-b393-ui-unknown.mjs`; outputs:
-  `/tmp/mediaflow-b393-ui-stale.log` and `/tmp/mediaflow-b393-ui-unknown.log`.
-- `node /tmp/mediaflow-b393-ui-copy.mjs` on the response-loss scenario's instance;
-  output: `/tmp/mediaflow-b393-ui-copy.log`.
-- Browser evidence: `/tmp/mediaflow-b393-stale-removal.png` and
-  `/tmp/mediaflow-b393-unknown-outcome.png`.
+- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,834 tests, 7 skips,
+  312.186 seconds; existing external/endurance profiles remain unavailable.
+- `cd web && npm test -- --run`: PASS, 694 tests across 47 files.
+- `cd web && npm run test:e2e -- --grep 'Storage management'`: PASS, 22 Chromium tests.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`:
+  PASS; the existing bundle-size advisory remains non-fatal.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: PASS, 316 files formatted.
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-3-r2-review`:
+  PASS, release-security smoke acceptance passed against the clean committed candidate.
+- Governance and whitespace checks pass. The cumulative checkpoint changes only `TASK.md` and
+  the four in-scope production files. No tests or assertions were removed, weakened or skipped;
+  however, no lifecycle regression tests were added either. `config/alist.json` remains ignored
+  and untracked. The Slice Contract, reference image and pre-existing unrelated image changes
+  remain untouched. The production diff adds no Storage mutation or FFmpeg/FFprobe dependency.
 
-B ran `cd web && npm run build` successfully. B's `.venv/bin/ruff check .` reports
-15 errors in the two changed Python files; `.venv/bin/ruff format --check .` reports those
-two files unformatted; `cd web && npm run format:check` reports the two changed Web files
-unformatted. The reported 126 Python / 42 Web tests are Developer results, not independently
-rerun full-regression results. The assigned new lifecycle tests, full Python/Web regression,
-Storage management E2E and Docker security smoke are absent from this checkpoint's evidence.
-B did not run Slice Final or claim those gates passed.
+Evidence logs: `/tmp/mediaflow-b393-r2-{api,stale,recovery,readcheck,python,web,e2e,docker}.log`.
+Reproduction commands:
+
+- `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-r2-api.py`.
+- Start `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-r2-server.py`, then run
+  `node /tmp/mediaflow-b393-r2-stale.mjs`.
+- Start a fresh `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-b393-r2b-server.py`, then run
+  `node /tmp/mediaflow-b393-r2-recovery.mjs` followed by
+  `node /tmp/mediaflow-b393-r2-readcheck.mjs`.
+
+B did not run Slice Final: Task acceptance and Slice RO-4/RO-5/RO-7 remain unmet.
 
 ## B Review Result
 
 ```text
-Reviewed: 6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9..a5f01937f8a8d1b19d2e19e708b55b8d0cc70b72
+Reviewed: 6bb70ebcf7a3f718ce3bd88b5e91e474d62a00a9..e887987cd954d3da5d07563cb0180ba4c98d02e5
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Lifecycle request and Active-version contracts break normal commands
-  (Acceptance Criteria 2/3/5/6/7; Slice RO-4/RO-7).**
-  `api-client.ts` sends `storageId` in the copy body, while `service_api.py` rejects that extra
-  field: the exact browser request returns HTTP 400 `invalid_request`, so Web Copy cannot
-  succeed. Independently, `_require_storage_command_active` compares `expectedVersion` against
-  `active.version`, while the existing authority/form contract supplies `revisionSequence`.
-  The real Local API probe performs a successful copy with the accepted body and a normal Edit,
-  reaching sequence 3 / version 2. Fresh authority then yields HTTP 409 `storage_copy_stale`,
-  `storage_disable_stale` and `storage_remove_stale` for otherwise valid actions, including an
-  unreferenced selected Storage. Align Web/API payloads and the established authority semantics
-  while preserving revision/digest fencing. Add the required lifecycle API/Web regressions for
-  successful commands and repeated publication where sequence differs from document version.
-  Complete the already assigned T4 Required Tests before resubmission, including the missing
-  lifecycle/E2E coverage and failing Ruff/format gates identified above; report actual counts,
-  skips and any unavailable external gate. The existing tests alone do not verify these commands.
-- **P1 — Removal silently adopts authority newer than the operator's confirmation
+- **P1 — Removal still combines an old displayed object with newer authority
   (Acceptance Criterion 4; Slice RO-4 and Safety Invariant 8).**
-  `StorageManagementPage.tsx:runLifecycleAction` fetches authority after `window.confirm`.
-  In the real browser reproduction, the confirmation names `Spare Original`; another authorized
-  API Edit changes it to `Spare Changed After Decision` while the dialog is open (HTTP 200).
-  Accepting the old confirmation then deletes the changed object (HTTP 200; subsequent Edit
-  lookup HTTP 404), instead of rejecting the stale decision. Bind the displayed selected object
-  and confirmation to one exact Active authority before the decision, submit that same fence,
-  and require explicit review of refreshed context after a conflict. Do not silently rebase
-  removal on a post-confirmation authority fetch. Cover this actual two-writer journey in the
-  lifecycle browser regression.
-- **P1 — Failure recovery loses copy input and misreports a committed unknown outcome
-  (Acceptance Criteria 2/6; Slice RO-4/RO-6).**
-  The real disable request commits successfully (HTTP 200); dropping only its response makes the
-  page display `操作未完成: transport_unavailable。当前 Active 未改变`, although a fresh real API
-  read reports `enabled=false` at Active sequence 2. The stale row still offers an enabled
-  `停用` action and there is no outcome-verification control. Separately, entering
-  `retained-copy-id` / `Retained Copy Name` and receiving the actual copy rejection loses both
-  values: reopening Copy shows `spare-copy` / `Spare Original copy`. Replace the transient prompt
-  flow with retained, correctable copy state and give lifecycle failures meaningful durable-state
-  recovery. Distinguish known rejection from response loss; an unknown result must offer explicit
-  Active-state verification and show current truth before a new manual submission, without
-  claiming the previous Active necessarily survived or replaying automatically. Add browser
-  coverage for retained failed-copy input and real committed-but-response-lost recovery.
+  `StorageManagementPage.tsx:runLifecycleAction` now fetches authority before confirmation,
+  but continues to use `item` from the previously loaded inventory without checking that they
+  describe the same Active. In the real browser reproduction, load the `Spare Original` row,
+  use another authorized API request to edit it to `Spare Changed After Decision` (HTTP 200),
+  then click removal on the old row. The confirmation still names `Spare Original`; accepting
+  it removes the changed configuration (DELETE HTTP 200; subsequent lookup HTTP 404).
+  Moving the fetch earlier only closes the during-dialog case. Bind the displayed object and
+  operator decision to the same exact authority: either submit the inventory's original fence,
+  or refresh the selected object's actual decision context before presenting confirmation.
+  Reject stale context and require review; never silently pair an old row with a newer fence.
+  Add browser/API regression coverage for edits both before opening and during confirmation.
+- **P1 — The correction breaks read checks after normal lifecycle publication
+  (Acceptance Criteria 1/6/7; Slice RO-5/RO-7).**
+  `_storage_check_operator_document` now compares `expectedVersion` with `revisionSequence`,
+  but `StorageManagementPage.tsx:runCheck` still submits `inventory.active.version` and the
+  inventory exposes both values distinctly. The real Local API sequence copy → disable →
+  enable → remove reaches sequence 5 / version 2. The exact current Web request returns HTTP
+  409 `configuration_version_conflict`; a request using sequence 5 succeeds (HTTP 200), proving
+  the Storage and read capability are available. The real built page also reproduces HTTP 409
+  via View → `运行只读检查` after copy/disable, incorrectly telling the operator Active changed.
+  Reloading cannot reconcile this protocol mismatch. Restore one consistent version contract
+  for the existing read-check API and Web caller while preserving stale rejection. Add a
+  real publication → inventory → Web read-check regression where sequence differs from version,
+  alongside the lifecycle coverage already required by this Task. No lifecycle-specific tests
+  were added in either checkpoint; the existing 1,834/694/22 tests passing does not satisfy that
+  explicit Required Tests obligation. Complete the assigned lifecycle tests and rerun T4 gates
+  for the corrected checkpoint, recording actual totals, skips and unavailable gates.
