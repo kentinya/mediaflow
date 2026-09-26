@@ -1249,39 +1249,36 @@ export function StorageManagementPage() {
 
   const reviewCopy = useCallback(async () => {
     if (lifecycle === null || lifecycle.action !== "copy") return;
-    const [authority, current] = await Promise.all([
-      fetchStorageAuthority(token),
-      fetchStorageInventory(token),
-    ]);
-    if (!authority.ok || !current.available || current.active === null) {
-      setEditLoadError(
-        "无法刷新当前 Active,请确认 API 可用后重试。已保留复制输入。",
-      );
+    // Resolve the selected source by its stable ID. Inventory is intentionally
+    // bounded and may omit a valid source outside the first page.
+    const projection = await fetchStorageEdit(token, lifecycle.item.id);
+    if (!projection.ok) {
+      if (
+        projection.code === "storage_not_found" ||
+        projection.code === "not_found"
+      ) {
+        setEditLoadError(
+          "当前复制源已不在 Active 配置中。请刷新后选择现有存储。已保留复制输入。",
+        );
+      } else {
+        setEditLoadError(
+          "无法读取当前复制源,请确认 API 可用后重试。已保留复制输入。",
+        );
+      }
       return;
     }
-    if (!activeMatchesAuthority(current.active, authority.model)) {
-      setEditLoadError(
-        "Active 在刷新过程中再次变化,请重新刷新并审核。已保留复制输入。",
-      );
-      return;
-    }
-    const item = current.items.find(
-      (candidate) => candidate.id === lifecycle.item.id,
-    );
-    if (item === undefined) {
-      setEditLoadError(
-        "当前复制源已不在 Active 配置中。请刷新后选择现有存储。已保留复制输入。",
-      );
-      return;
-    }
-    const reviewedItem = toRowItem({ ...current, items: [item] })[0];
+    const authority: StorageSaveAuthority = {
+      expectedRevisionId: projection.model.activeRevisionId,
+      expectedVersion: projection.model.activeRevisionSequence,
+      expectedDigest: projection.model.activeDigest,
+    };
     setLifecycle((existing) =>
       existing === null
         ? null
         : {
             ...existing,
-            item: reviewedItem,
-            authority: authority.model,
+            item: { ...existing.item, name: projection.model.values.name },
+            authority,
             needsReview: false,
           },
     );

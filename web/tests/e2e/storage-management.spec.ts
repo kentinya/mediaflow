@@ -496,6 +496,31 @@ test.describe("Storage management", () => {
     await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
   });
 
+  test("bounded-page Copy review resolves the source by exact ID", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?overLimit=1");
+    await connect(page);
+    await openStorageManagement(page);
+    const search = page.getByRole("searchbox", { name: "搜索存储、路径" });
+    await search.fill("NAS 后续页");
+    const row = page.getByRole("row").filter({ hasText: "NAS 后续页" });
+    await expect(row).toBeVisible();
+    await row.getByLabel(/更多操作/).click();
+    await row.getByRole("menuitem", { name: "复制" }).click();
+    const copy = page.getByRole("dialog", { name: "复制存储" });
+    await copy.getByLabel("新存储 ID").fill("bounded-copy");
+    await copy.getByLabel("新存储名称").fill("Bounded Copy");
+    await page.evaluate(async () => {
+      await fetch("/__test__/advance-storage-active", { method: "POST" });
+    });
+    await copy.getByRole("button", { name: "保存复制" }).click();
+    await expect(copy.getByText(/复制源已变化/)).toBeVisible();
+    await copy.getByRole("button", { name: "刷新并审核复制源" }).click();
+    await expect(copy.getByRole("button", { name: "保存复制" })).toBeEnabled();
+    await expect(copy.getByLabel("新存储 ID")).toHaveValue("bounded-copy");
+  });
+
   test("read-only principal can inspect evidence but cannot start a check", async ({
     page,
   }) => {
