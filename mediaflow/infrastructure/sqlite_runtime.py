@@ -7905,6 +7905,7 @@ class SQLiteTaskRepository:
         worker_id: str,
         claim_token: str,
         lease_seconds: float,
+        supported_commands: tuple[str, ...] | None = None,
     ) -> PersistentFilesTransfer | None:
         """Atomically lease the oldest admitted (or abandoned) transfer.
 
@@ -7934,16 +7935,31 @@ class SQLiteTaskRepository:
         if now.tzinfo is None:
             raise ValueError("files transfer claim timestamp needs timezone")
         expires_at = now + timedelta(seconds=float(lease_seconds))
+        commands = tuple(dict.fromkeys(supported_commands or ()))
+        if supported_commands is not None and not commands:
+            return None
+        command_join = ""
+        command_predicate = ""
+        command_parameters: tuple[str, ...] = ()
+        if commands:
+            placeholders = ", ".join("?" for _ in commands)
+            command_join = " JOIN tasks ON tasks.task_id=files_transfers.task_id"
+            command_predicate = f" AND tasks.command IN ({placeholders})"
+            command_parameters = commands
         with self._lock, self._connection:
             row = self._connection.execute(
-                """SELECT transfer_id FROM files_transfers
-                WHERE status IN (?, ?) AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
-                AND mutation_state IS NULL
-                ORDER BY created_at, transfer_id LIMIT 1""",
+                f"""SELECT files_transfers.transfer_id FROM files_transfers{command_join}
+                WHERE files_transfers.status IN (?, ?)
+                AND (files_transfers.claim_expires_at IS NULL
+                     OR files_transfers.claim_expires_at <= ?)
+                AND files_transfers.mutation_state IS NULL
+                {command_predicate}
+                ORDER BY files_transfers.created_at, files_transfers.transfer_id LIMIT 1""",
                 (
                     FilesTransferStatus.ADMITTED.value,
                     FilesTransferStatus.RUNNING.value,
                     now.isoformat(),
+                    *command_parameters,
                 ),
             ).fetchone()
             if row is None:
@@ -7977,6 +7993,7 @@ class SQLiteTaskRepository:
         worker_id: str,
         claim_token: str,
         lease_seconds: float,
+        supported_commands: tuple[str, ...] | None = None,
     ) -> PersistentFilesTransfer | None:
         """Take ownership of one expired transfer that has a mutation in flight.
 
@@ -7993,16 +8010,31 @@ class SQLiteTaskRepository:
         if now.tzinfo is None:
             raise ValueError("files transfer claim timestamp needs timezone")
         expires_at = now + timedelta(seconds=float(lease_seconds))
+        commands = tuple(dict.fromkeys(supported_commands or ()))
+        if supported_commands is not None and not commands:
+            return None
+        command_join = ""
+        command_predicate = ""
+        command_parameters: tuple[str, ...] = ()
+        if commands:
+            placeholders = ", ".join("?" for _ in commands)
+            command_join = " JOIN tasks ON tasks.task_id=files_transfers.task_id"
+            command_predicate = f" AND tasks.command IN ({placeholders})"
+            command_parameters = commands
         with self._lock, self._connection:
             row = self._connection.execute(
-                """SELECT transfer_id FROM files_transfers
-                WHERE status IN (?, ?) AND mutation_state IS NOT NULL
-                AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
-                ORDER BY created_at, transfer_id LIMIT 1""",
+                f"""SELECT files_transfers.transfer_id FROM files_transfers{command_join}
+                WHERE files_transfers.status IN (?, ?)
+                AND files_transfers.mutation_state IS NOT NULL
+                AND (files_transfers.claim_expires_at IS NULL
+                     OR files_transfers.claim_expires_at <= ?)
+                {command_predicate}
+                ORDER BY files_transfers.created_at, files_transfers.transfer_id LIMIT 1""",
                 (
                     FilesTransferStatus.ADMITTED.value,
                     FilesTransferStatus.RUNNING.value,
                     now.isoformat(),
+                    *command_parameters,
                 ),
             ).fetchone()
             if row is None:

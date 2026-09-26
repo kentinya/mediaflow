@@ -5,12 +5,18 @@ import json
 import tempfile
 import threading
 import unittest
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
-from mediaflow.container_probe import liveness_error, probe_preflight_errors
+from mediaflow.container_probe import (
+    liveness_error,
+    probe_preflight_errors,
+    worker_readiness_error,
+)
 from mediaflow.container_probe import main as probe_main
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
 
 def _configuration(root: Path) -> Path:
@@ -117,6 +123,26 @@ class ContainerProbeTests(unittest.TestCase):
     def test_unknown_service_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "unknown probe service"):
             probe_preflight_errors("not-a-service")
+
+    def test_worker_probe_requires_live_schema_compatible_transfer_commands(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _configuration(root)
+            environment = _environment(config, root / "data")
+            self.assertIn("not transfer-ready", worker_readiness_error(environ=environment))
+            runtime = root / "data" / "mediaflow.sqlite3"
+            with SQLiteTaskRepository(runtime) as repository:
+                repository.register_worker(
+                    worker_id="worker-probe",
+                    label="worker-probe",
+                    heartbeat_interval_seconds=5.0,
+                    supported_commands=("files_transfer", "media_files_transfer"),
+                    configuration_snapshot_id=None,
+                    configuration_snapshot_digest=None,
+                    runtime_schema_version=SCHEMA_VERSION,
+                    now=datetime.now(UTC),
+                )
+            self.assertIsNone(worker_readiness_error(environ=environment))
 
     def test_liveness_requires_loopback_plain_http_and_accepts_ok_payload(self) -> None:
         with self.assertRaisesRegex(ValueError, "loopback"):

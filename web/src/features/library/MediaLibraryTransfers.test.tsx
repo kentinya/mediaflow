@@ -9,6 +9,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
+import { transferStatusMessage } from "./TransferDialog";
 
 /**
  * Component/router proof for the Task 38.4 MediaLibrary bounded Copy/Move
@@ -28,6 +29,17 @@ import { renderApp } from "../../../tests/utils";
  */
 
 const TOKEN = "media-transfer-page-token";
+
+it("explains a durable queued transfer waiting for a compatible Worker", () => {
+  expect(
+    transferStatusMessage({
+      status: "QUEUED",
+      succeededItems: 0,
+      failedItems: 0,
+      waitingForWorker: true,
+    }),
+  ).toContain("等待可用 Worker");
+});
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return new Response(JSON.stringify(payload), {

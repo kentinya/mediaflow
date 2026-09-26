@@ -446,7 +446,7 @@ discovery and compatibility surface and is not used as source or execution autho
   explicit continuation authority, or repair the bounded FileIndex synchronization state. Continue
   the original Organize journey without replaying successful siblings or uncertain mutation.
 
-## TARGET — Transfer continuity and Worker readiness (Slice 39)
+## CURRENT — Transfer continuity and Worker readiness (Slice 39 implementation)
 
 - **Goal/entry:** from existing ResourceLibrary or MediaLibrary Files, explicitly submit Copy/Move
   after setup without restarting a Worker that was already running.
@@ -464,8 +464,9 @@ discovery and compatibility surface and is not used as source or execution autho
   action. Do not tell users to resubmit admitted work or copy internal revision/fence identifiers.
   Finished and uncertain operations are never replayed; slow OpenList work keeps ownership.
 
-This is an authorized target, not a claim that current startup-order and readiness gaps are fixed.
-It reuses existing Files/Operations surfaces and adds no new command or setup/authentication UI.
+The current implementation reuses existing Files/Operations surfaces and adds no new transfer
+command or setup/authentication UI. Slice acceptance remains governed by `SLICE.md` and its review
+workflow rather than this factual journey description.
 
 ## Per-item failure and recovery
 

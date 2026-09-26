@@ -384,6 +384,7 @@ class WorkerReadiness(StrEnum):
     STALE_WORKER = "stale_worker"
     SNAPSHOT_MISMATCH = "snapshot_mismatch"
     SCHEMA_MISMATCH = "schema_mismatch"
+    UNSUPPORTED_COMMAND = "unsupported_command"
 
 
 _WORKER_SECRET_PATTERN = re.compile(

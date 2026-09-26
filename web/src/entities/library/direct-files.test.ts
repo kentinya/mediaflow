@@ -409,6 +409,21 @@ describe("real transfer admission contract", () => {
     expect(model.outcomes[1]?.status).toBe("SKIPPED");
     expect(model.actions.filter((action) => action.available)).toHaveLength(0);
   });
+
+  it("preserves actionable waiting-for-worker evidence", () => {
+    const model = normalizeTransferProjection({
+      ...(REAL_TRANSFER_PROJECTION as Record<string, unknown>),
+      status: "QUEUED",
+      terminal: false,
+      waitingForWorker: true,
+      workerCondition: "unsupported_command",
+      workerDurableState: "live workers do not advertise this command",
+      workerNextAction: "upgrade the resident worker",
+    });
+    expect(model.waitingForWorker).toBe(true);
+    expect(model.workerCondition).toBe("unsupported_command");
+    expect(model.workerNextAction).toBe("upgrade the resident worker");
+  });
 });
 
 /**

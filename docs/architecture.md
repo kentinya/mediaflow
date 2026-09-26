@@ -4,26 +4,26 @@ This document describes the architecture implemented at the current repository h
 remaining V1.x/V2 targets from current behavior. It is organized by component and boundary; development
 Phase, Fix and Task names are historical evidence, not architecture states.
 
-## CURRENT gap / TARGET — Admitted transfer Worker lifetime (Slice 39)
+## CURRENT — Admitted transfer Worker lifetime (Slice 39 implementation)
 
-CURRENT: `_files_transfer_worker_context` constructs transfer services from Active at process entry.
-Without Active, or if initial construction fails, its lifetime context yields a no-op runner.
-Existing per-transfer reconstruction therefore cannot help that process after later activation.
-Worker registration/readiness still primarily describes startup-bound Automation capabilities;
-container Worker health repeats deployment preflight rather than checking durable registration.
+`_files_transfer_worker_context` installs both ResourceLibrary and MediaLibrary transfer consumers
+before the first Active configuration exists. The resident runner atomically claims only commands it
+advertises, then reconstructs a per-attempt application boundary from the admitted Task's persisted
+library-kind command, revision ID and digest. Published superseded revisions remain valid task pins;
+current Active is only the authority for new admission and never substitutes for an older pin.
+Missing, corrupt or temporarily unusable pins return to the durable queue with bounded recovery
+evidence and zero new Storage mutation.
 
-TARGET (authorized, pending implementation): keep an admitted-transfer consumer independently of
-Active availability. Resolve command/library kind and exact revision ID/digest from durable admission,
-validate the pinned published configuration and execution prerequisites, then construct/reuse the
-matching Resource/Media transfer service. Retain that context through execution; current Active is
-only the new-admission authority and cannot replace a task pin. Preserve OrganizerExecutor, durable
-claims, lease keepers, mutation fences and uncertainty resolution. Do not rewrite the queue or widen
-other commands' execution authority. Bounded readiness metadata may evolve with migration evidence.
+Reconstruction and provider calls run under the existing claim token and lease keeper. The keeper
+also renews the resident registration heartbeat, while mutation fences, persisted checkpoints and
+uncertainty resolution continue to prevent duplicate or automatic uncertain replay. No queue,
+OrganizerExecutor or direct-command authority was replaced.
 
-Separate service liveness, registration/heartbeat/DB/schema readiness and per-command work readiness.
+The API separates service liveness, registration/heartbeat/DB/schema readiness and per-command work readiness.
 Report current Active availability independently from support for older admitted snapshots. The
-container check must verify actual Worker readiness; it must not confuse no business Active with a
-dead consumer. API/Web transfer state uses the same bounded readiness facts and explains waiting.
+container Worker check verifies a live schema-compatible registration advertising both transfer
+commands; it does not confuse no business Active with a dead consumer. API/Web transfer state uses
+the same bounded readiness facts and explains waiting.
 All health projections remain read-only and make no provider calls or Storage mutation probes.
 
 ## Structure and dependency direction

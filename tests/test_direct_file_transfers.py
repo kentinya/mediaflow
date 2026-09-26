@@ -936,6 +936,10 @@ class TransferApiTests(TransferTestCase):
             )
             self.assertEqual(status_code, 200)
             self.assertEqual(queued_projection["status"], "QUEUED")
+            self.assertTrue(queued_projection["waitingForWorker"])
+            self.assertEqual(queued_projection["workerCondition"], "no_worker")
+            self.assertIn("worker", queued_projection["workerDurableState"])
+            self.assertNotIn("claim", json.dumps(queued_projection).lower())
             self.assertTrue(
                 any(
                     action["action"] == "cancel" and action["available"]
@@ -2976,6 +2980,10 @@ class TwoWorkerFenceTests(TransferTestCase):
                 lease_seconds=1.0,
                 worker_id="worker-a",
             )
+            registration_heartbeats: list[datetime] = []
+            first.set_worker_heartbeat(
+                lambda: registration_heartbeats.append(datetime.now(UTC)) or True
+            )
             results: list = []
             thread = threading.Thread(target=lambda: results.append(first.run_next()), daemon=True)
             thread.start()
@@ -2992,6 +3000,7 @@ class TwoWorkerFenceTests(TransferTestCase):
             self.assertIsNone(second.run_next())
             self.assertEqual(source.mutation_calls, 1)
             self.assertEqual(runtime.get_files_transfer(task_id).worker_id, "worker-a")
+            self.assertGreaterEqual(len(registration_heartbeats), 2)
             source.release.set()
             thread.join(30)
             self.assertFalse(thread.is_alive())
@@ -5417,6 +5426,98 @@ class StaleWorkerRevisionTests(TransferTestCase):
             actor="operator",
         )
         return document, service, objects, active
+
+    def test_production_resident_created_before_first_active_executes_after_activation(
+        self,
+    ) -> None:
+        """The real resident composition survives setup without replacement."""
+
+        from mediaflow.application.direct_file_transfers import DirectFileTransferService
+        from mediaflow.final_cli import _files_transfer_worker_context
+        from mediaflow.infrastructure.runtime_configuration import load_management_bootstrap
+        from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+        from mediaflow.interfaces.service_api import MediaFlowApi
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+            runtime = SQLiteTaskRepository(root / "configuration.sqlite3")
+            self.addCleanup(runtime.close)
+            bootstrap = load_management_bootstrap(document)
+            with _files_transfer_worker_context(bootstrap, str(config), runtime) as resident_worker:
+                self.assertEqual(
+                    resident_worker.commands,
+                    ("files_transfer", "media_files_transfer"),
+                )
+                _document, service, _objects, active = self._fixture(root)
+                api = MediaFlowApi(
+                    runtime,
+                    "api-secret",
+                    configuration_service=service,
+                    bootstrap_document=document,
+                    storage_browser_cursor_secret="s",
+                )
+                binding = api._prepare_runtime_binding_for_revision(active)
+                transfers = DirectFileTransferService(direct_files=binding.direct_files)
+                (root / "source" / "before-active.mkv").write_bytes(b"resident")
+                impact = transfers.transfer_impact(
+                    resource_library_id="source",
+                    paths=["before-active.mkv"],
+                    destination_resource_library_id="source",
+                    destination_directory="Movies",
+                    operation="move",
+                    conflict_mode="fail",
+                )
+                queued = transfers.submit_transfer(
+                    resource_library_id="source",
+                    paths=["before-active.mkv"],
+                    destination_resource_library_id="source",
+                    destination_directory="Movies",
+                    operation="move",
+                    conflict_mode="fail",
+                    manifest_digest=impact.manifest.digest,
+                )
+                finished = resident_worker.run_next()
+
+            self.assertIsNotNone(finished)
+            self.assertEqual(finished.status.value, "completed")
+            self.assertFalse((root / "source" / "before-active.mkv").exists())
+            self.assertEqual(
+                (root / "source" / "Movies" / "before-active.mkv").read_bytes(),
+                b"resident",
+            )
+            self.assertEqual(runtime.get_task(queued["taskId"]).status.value, "completed")
+
+    def test_lazy_attempt_closes_its_reconstructed_service(self) -> None:
+        from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+        class Attempt:
+            closed = False
+
+            def run_claimed_transfer(self, transfer, **_kwargs):
+                return transfer
+
+            def close(self):
+                self.closed = True
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _document, _service, _objects, active, api, runtime = self._api_fixture(root)
+            binding = api._prepare_runtime_binding_for_revision(active)
+            transfers = DirectFileTransferService(direct_files=binding.direct_files)
+            task_ids: list[str] = []
+            self._submit_under(transfers, root, task_ids)
+            attempt = Attempt()
+            worker = FilesTransferWorker(
+                None,
+                runtime,
+                service_factory=lambda _command, _transfer: attempt,
+                supported_commands=("files_transfer",),
+            )
+            worker.run_next()
+            self.assertTrue(attempt.closed)
 
     def _pinned_rebuilder(self, api, service):
         """Rebuild one persisted revision exactly like the resident Worker does.

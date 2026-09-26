@@ -113,8 +113,11 @@ sends a notification, or mutates Storage.
 
 Each Compose service also declares a bounded healthcheck. The healthcheck runs
 `python -m mediaflow.container_probe check --service <name>` inside the same
-container, repeats the read-only preflight, and only for the API additionally
-requests the loopback `/health` endpoint. Healthchecks have a 3-second command
+container and repeats the read-only preflight. The API additionally requests
+the loopback `/health` endpoint. The Worker additionally reads the shared runtime
+database and requires a live, schema-compatible registration advertising both
+ResourceLibrary and MediaLibrary transfer commands. This check does not require
+an Active configuration and performs no Storage or Provider call. Healthchecks have a 3-second command
 timeout, run every 10 seconds after a 15-second start period, and mark a
 service unhealthy after five consecutive failures. They never scan Storage,
 call Providers, create work, send notifications or mutate media.
@@ -205,12 +208,14 @@ implies the other signals.
      http://127.0.0.1:8080/api/v1/workers/readiness
    ```
 
-   The document reports `ready`, `condition`, `activeWorkersCount`, the exact
-   Active snapshot identity and expected runtime schema. `no_worker`,
-   `stale_worker`, `snapshot_mismatch` and `schema_mismatch` are distinct
-   fail-closed conditions, each with `durableState`, `retrySafe`, and a bounded
-   `nextAction`. A Worker bound to the exact Active snapshot and runtime schema
-   is the only ready result.
+   Compatibility fields still report `ready`, `condition`,
+   `activeWorkersCount`, the Active snapshot identity and expected runtime
+   schema for Automation work. `processAlive`, `baseReadiness`,
+   `currentActiveAvailable` and `workReadiness` separately report process,
+   registration/schema, new-admission authority and Resource/Media transfer
+   command readiness. `no_worker`, `stale_worker`, `snapshot_mismatch`,
+   `schema_mismatch` and `unsupported_command` are bounded, actionable
+   conditions. A valid older task pin does not need to match current Active.
 
 The Operator Web's **System** view shows all three signals and their bounded
 diagnostics; **Workers** and **Configuration** show the same Worker and
@@ -395,11 +400,13 @@ The named `/data` volume survives service restarts. Jobs, Tasks, configuration
 revisions, notification rows, audit and operational state remain durable.
 
 `docker compose ps` health state is service-process liveness plus the bounded
-deployment-boundary recheck. Management and Worker readiness are observed from
-the authenticated API/Web projections above. For example, the API container can
-be `healthy` while `management/readiness` says setup is required or while
-`workers/readiness` reports `no_worker`; those are expected distinct signals,
-not hidden failures.
+deployment-boundary recheck. For the Worker it also proves live registration,
+runtime-schema compatibility and both transfer command declarations. Detailed
+per-command and task-pin readiness is observed from the authenticated API/Web
+projections above. The Worker can be `healthy` before setup while
+`management/readiness` says setup is required and new transfer admission is
+unavailable. A specific admitted transfer can still wait for repair of its own
+pinned context; those are distinct signals, not hidden failures.
 
 ## Failure and recovery
 

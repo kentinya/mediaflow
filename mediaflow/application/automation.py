@@ -476,6 +476,80 @@ class ProcessingWorkerService:
             "expectedSchemaVersion": expected_schema_version,
         }
 
+    def evaluate_command_readiness(
+        self,
+        required_commands: tuple[str, ...],
+        now: datetime | None = None,
+        *,
+        runtime_schema_version: int | None = None,
+    ) -> dict[str, object]:
+        """Side-effect-free readiness for one durable command family.
+
+        Transfer work reconstructs its own immutable task pin, so this check is
+        intentionally independent of the current Active snapshot.  It answers
+        only whether a live, schema-compatible resident consumer advertises all
+        required commands.
+        """
+
+        commands = validate_worker_commands(tuple(required_commands))
+        if not commands:
+            raise ValueError("command readiness requires at least one command")
+        current_now = now or datetime.now(UTC)
+        workers = self.list_workers(current_now)
+        live_workers = [worker for worker in workers if worker.status is WorkerStatus.LIVE]
+        stale_workers = [worker for worker in workers if worker.status is WorkerStatus.STALE]
+        stopped_workers = [worker for worker in workers if worker.status is WorkerStatus.STOPPED]
+        expected_schema = (
+            runtime_schema_version
+            if runtime_schema_version is not None
+            else self._runtime_schema_version
+        )
+        schema_compatible = [
+            worker
+            for worker in live_workers
+            if expected_schema is None or worker.runtime_schema_version == expected_schema
+        ]
+        eligible = [
+            worker
+            for worker in schema_compatible
+            if all(command in worker.supported_commands for command in commands)
+        ]
+        if eligible:
+            condition = WorkerReadiness.READY.value
+            durable_state = "a live resident worker supports the requested command"
+            next_action = "none"
+        elif not live_workers:
+            unavailable = self._no_live_worker_condition(
+                stale_count=len(stale_workers), stopped_count=len(stopped_workers)
+            )
+            condition = unavailable["condition"]
+            durable_state = unavailable["durableState"]
+            next_action = unavailable["nextAction"]
+        elif not schema_compatible:
+            condition = WorkerReadiness.SCHEMA_MISMATCH.value
+            durable_state = "registered workers are live but use an incompatible runtime schema"
+            next_action = "restart resident worker services with the current MediaFlow image"
+        else:
+            condition = WorkerReadiness.UNSUPPORTED_COMMAND.value
+            durable_state = "live workers do not advertise the requested command"
+            next_action = "start or upgrade a resident worker that supports this transfer command"
+        return {
+            "ready": bool(eligible),
+            "condition": condition,
+            "category": None if eligible else condition,
+            "durableState": durable_state,
+            "sideEffects": "none",
+            "retrySafe": True,
+            "nextAction": next_action,
+            "asOf": current_now.isoformat(),
+            "requiredCommands": list(commands),
+            "eligibleWorkers": len(eligible),
+            "liveWorkers": len(live_workers),
+            "staleWorkers": len(stale_workers),
+            "stoppedWorkers": len(stopped_workers),
+            "expectedSchemaVersion": expected_schema,
+        }
+
 
 def evaluate_pending_job_operational_condition(
     readiness: dict[str, object],
@@ -519,11 +593,14 @@ class AutomationWorker:
         raw_label = label or f"worker-{self._worker_id[-6:]}"
         self._label = validate_worker_label(raw_label)
         self._heartbeat_interval_seconds = max(0.1, float(heartbeat_interval_seconds))
-        raw_commands = (
-            supported_commands
-            if supported_commands is not None
-            else tuple(c.value for c in AutomationCommand)
-        )
+        if supported_commands is not None:
+            raw_commands = supported_commands
+        else:
+            raw_commands = tuple(c.value for c in AutomationCommand)
+            if manual_organize_worker is not None:
+                raw_commands += ("manual_organize",)
+            transfer_commands = getattr(files_transfer_worker, "commands", ())
+            raw_commands += tuple(transfer_commands)
         self._supported_commands = validate_worker_commands(tuple(raw_commands))
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
@@ -538,12 +615,19 @@ class AutomationWorker:
         # and only executes transfers the API durably admitted; a missing
         # value means no Worker serves queued transfers.
         self._files_transfer_worker = files_transfer_worker
+        bind_registration_heartbeat = getattr(
+            self._files_transfer_worker, "set_worker_heartbeat", None
+        )
+        if callable(bind_registration_heartbeat):
+            bind_registration_heartbeat(self.heartbeat)
         # Preserve the legacy in-process helper path unless the caller supplies
         # the identity needed for durable Worker ownership and snapshot fencing.
         self._worker_registration_enabled = (
             worker_id is not None
             or configuration_snapshot_id is not None
             or configuration_snapshot_digest is not None
+            or manual_organize_worker is not None
+            or files_transfer_worker is not None
         )
         self._registered = False
 

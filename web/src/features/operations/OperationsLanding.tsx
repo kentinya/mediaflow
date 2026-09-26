@@ -182,6 +182,42 @@ export function OperationsLanding() {
               {readiness.nextAction && (
                 <p className="mf-dashboard-meta">{readiness.nextAction}</p>
               )}
+              {readiness.processAlive !== null && (
+                <dl className="mf-dashboard-facts">
+                  <div>
+                    <dt>Process</dt>
+                    <dd>{readiness.processAlive ? "Alive" : "Unavailable"}</dd>
+                  </div>
+                  <div>
+                    <dt>Registration / schema</dt>
+                    <dd>{readiness.baseReady ? "Ready" : "Not ready"}</dd>
+                  </div>
+                  <div>
+                    <dt>Current Active</dt>
+                    <dd>
+                      {readiness.currentActiveAvailable
+                        ? "Available for new admissions"
+                        : "Unavailable for new admissions"}
+                    </dd>
+                  </div>
+                </dl>
+              )}
+              {readiness.resourceFilesTransfer !== null && (
+                <p className="mf-dashboard-meta">
+                  ResourceLibrary transfers:{" "}
+                  {readiness.resourceFilesTransfer.ready
+                    ? "ready"
+                    : `waiting (${readiness.resourceFilesTransfer.condition})`}
+                </p>
+              )}
+              {readiness.mediaFilesTransfer !== null && (
+                <p className="mf-dashboard-meta">
+                  MediaLibrary transfers:{" "}
+                  {readiness.mediaFilesTransfer.ready
+                    ? "ready"
+                    : `waiting (${readiness.mediaFilesTransfer.condition})`}
+                </p>
+              )}
             </section>
             <section className="mf-count-section">
               <h3>Workspaces</h3>

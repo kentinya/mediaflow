@@ -5478,7 +5478,11 @@ class MediaFlowApi:
                 if error.category == "not_found":
                     raise LookupError(f"task {parts[6]!r} was not found") from None
                 raise
-            return self._response(start_response, 200, projection)
+            return self._response(
+                start_response,
+                200,
+                self._with_transfer_worker_readiness(projection, media_library=False),
+            )
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -5649,7 +5653,11 @@ class MediaFlowApi:
                 if error.category == "not_found":
                     raise LookupError(f"task {parts[6]!r} was not found") from None
                 raise
-            return self._response(start_response, 200, projection)
+            return self._response(
+                start_response,
+                200,
+                self._with_transfer_worker_readiness(projection, media_library=True),
+            )
         if parts == ["api", "v1", "files", "stats"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._file_catalog is None:
@@ -7883,6 +7891,28 @@ class MediaFlowApi:
                 "nextAction": "contact system administrator",
                 "activeWorkersCount": 0,
                 "activeSnapshotId": active_snapshot_id,
+                "processAlive": True,
+                "baseReadiness": {
+                    "ready": False,
+                    "registered": False,
+                    "liveWorkers": 0,
+                    "condition": WorkerReadiness.NO_WORKER.value,
+                },
+                "currentActiveAvailable": active_snapshot_id is not None,
+                "workReadiness": {
+                    "resourceFilesTransfer": {
+                        "ready": False,
+                        "condition": WorkerReadiness.NO_WORKER.value,
+                        "durableState": "processing worker service is unavailable",
+                        "nextAction": "contact system administrator",
+                    },
+                    "mediaFilesTransfer": {
+                        "ready": False,
+                        "condition": WorkerReadiness.NO_WORKER.value,
+                        "durableState": "processing worker service is unavailable",
+                        "nextAction": "contact system administrator",
+                    },
+                },
             }
             if not bounded:
                 document["activeSnapshotDigest"] = active_snapshot_digest
@@ -7902,10 +7932,72 @@ class MediaFlowApi:
             "activeWorkersCount": readiness.get("liveWorkers", 0),
             "activeSnapshotId": active_snapshot_id,
             "expectedRuntimeSchemaVersion": readiness.get("expectedSchemaVersion"),
+            "processAlive": True,
+            "baseReadiness": {
+                "ready": readiness.get("liveWorkers", 0) > 0
+                and readiness.get("condition") != WorkerReadiness.SCHEMA_MISMATCH.value,
+                "registered": readiness.get("totalWorkers", 0) > 0,
+                "liveWorkers": readiness.get("liveWorkers", 0),
+                "condition": readiness.get("condition"),
+            },
+            "currentActiveAvailable": active_snapshot_id is not None,
+        }
+        resource_command = direct_command_task_command(
+            FILES_TRANSFER_TASK_COMMAND, media_library=False
+        )
+        media_command = direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True)
+        document["workReadiness"] = {
+            "resourceFilesTransfer": self._worker_service.evaluate_command_readiness(
+                (resource_command,), runtime_schema_version=SCHEMA_VERSION
+            ),
+            "mediaFilesTransfer": self._worker_service.evaluate_command_readiness(
+                (media_command,), runtime_schema_version=SCHEMA_VERSION
+            ),
         }
         if not bounded:
             document["activeSnapshotDigest"] = active_snapshot_digest
         return redact_manual_value(document)
+
+    def _with_transfer_worker_readiness(
+        self, projection: dict[str, object], *, media_library: bool
+    ) -> dict[str, object]:
+        """Attach bounded command-specific waiting evidence to one transfer."""
+
+        if projection.get("terminal") is True:
+            return projection
+        command = direct_command_task_command(
+            FILES_TRANSFER_TASK_COMMAND, media_library=media_library
+        )
+        if self._worker_service is None:
+            readiness: dict[str, object] = {
+                "ready": False,
+                "condition": WorkerReadiness.NO_WORKER.value,
+                "durableState": "processing worker service is unavailable",
+                "nextAction": "restore the resident worker service; admitted work is preserved",
+            }
+        else:
+            readiness = self._worker_service.evaluate_command_readiness(
+                (command,), runtime_schema_version=SCHEMA_VERSION
+            )
+        context_blocked = projection.get("durableState") in {
+            "files_transfer_snapshot_unavailable",
+            "files_transfer_worker_kind_unavailable",
+        }
+        waiting = context_blocked or not bool(readiness.get("ready"))
+        projection["waitingForWorker"] = waiting
+        if context_blocked:
+            projection["workerCondition"] = "task_context_unavailable"
+            projection["workerDurableState"] = (
+                "the admitted transfer's pinned configuration cannot currently be reconstructed"
+            )
+            projection["workerNextAction"] = projection.get("nextAction")
+        else:
+            projection["workerCondition"] = readiness.get("condition")
+            projection["workerDurableState"] = readiness.get("durableState")
+            projection["workerNextAction"] = readiness.get("nextAction")
+            if waiting:
+                projection["nextAction"] = readiness.get("nextAction")
+        return projection
 
     def _workers_document(
         self,
