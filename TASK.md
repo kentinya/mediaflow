@@ -154,34 +154,141 @@ credentials, private configuration or user media. Do not weaken tests/assertions
 
 ### Changed Files
 
-Pending implementation.
+Production (6):
+
+- `mediaflow/application/configuration_objects.py` — the bounded `setup` authority block on the
+  Storage inventory projection, projected from the one existing
+  `ManagedConfigurationService.status_document()` plus the fixed `_V1_SETUP_PATH` constant.
+- `mediaflow/interfaces/service_api.py` — backend-authoritative `canStartSetup` on both the
+  available and unavailable inventory responses.
+- `mediaflow/interfaces/operator_ui.py` — explicit `Return to Storage management` link on the V1
+  Configuration view once a managed Active exists.
+- `web/src/entities/storage/storage-management.ts` — `PROVIDER_ROOT_LABEL`, `normalizeRootPath`
+  accepting the provider-valid empty root byte-exactly, `StorageSetupAuthority` and its strict
+  normalizer with the `SETUP_ROUTE` allowlist, and the `canStartSetup`/`setup` model fields.
+- `web/src/entities/storage/storage-form.ts` — confirmation summary names an empty remote root as
+  the provider root instead of `未填写`.
+- `web/src/features/storage/StorageManagementPage.tsx` — truthful `locationLabel`/`rootPathLabel`
+  and the new `StorageSetupHandoff` rendering the three distinct unavailable states.
+
+Tests and browser fixtures (9):
+
+- `tests/test_storage_page_local_save.py`, `tests/test_v2_storage_operations.py`,
+  `tests/test_management_setup.py`
+- `web/src/entities/storage/storage-management.test.ts`, `web/src/entities/storage/storage-form.test.ts`,
+  `web/src/shared/api/storage-management-api.test.ts`,
+  `web/src/features/storage/StorageManagementPage.test.tsx`
+- `web/tests/fake-server.mjs`, `web/tests/e2e/storage-management.spec.ts`
 
 ### Implemented
 
-Pending implementation.
+**P1 — provider-valid empty root.** The backend already accepted, stored and projected
+`rootPath: ""` (OpenList `_normalize_root` resolves `""` and `/` to the same service root), so no
+Python validation changed. The defect was frontend-only: `normalizeLocation` routed the empty
+string through the non-empty `normalizeBoundedText`, so one legal saved object made the whole
+workspace report `存储管理不可用` and read like a failed Save. A dedicated `normalizeRootPath` now
+accepts `""`, `null` and `undefined`, preserves the value byte for byte (trimming would silently
+retarget a path that addresses the same resource — `/Media/ ` and `/Media` are different entries),
+and still rejects whitespace-only, non-string, NUL and oversized roots as malformed. An empty root
+renders as `提供商根目录` in list, detail and confirmation, keeping it distinct from a stored `/`;
+a prefilled Edit keeps the stored value unchanged. Local confinement, remote traversal rejection,
+oversized-field rejection and every unrelated payload check are untouched, and no row is dropped.
+
+**P1 — setup recovery.** The inventory projection now carries a bounded `setup` block that reuses
+the single existing status document rather than creating a second authority, plus the
+backend-authoritative `canStartSetup`. The page renders three distinct states — first setup
+outstanding, existing-but-unavailable Active, and unreadable snapshot — so initialization is never
+suggested for the latter two. An administrator gets `去完成设置` into the existing V1 workflow,
+which already auto-selects Configuration on Connect and owns first-Draft creation, guided setup,
+checked validation and checked activation. A viewer gets administrator guidance and no unusable
+control. The V1 Configuration view gains an explicit return to `/ui-v2/storage`. Both links are
+fixed same-origin application routes carrying no token, and the normalizer rejects any other
+target. Reading the state is a pure read: no Draft, no check, no activation, no media work.
 
 ### Tests and Results
 
-Pending implementation; A's reproduction/baseline results are not completion evidence for this Task.
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations tests.test_storage_page_local_save tests.test_configuration_objects` — **PASS**, 128 tests, 0 skips, 24.4 s. (Task Base runs the same command at 121 tests, so this Task added 7.)
+- `cd web && npm test -- --run src/entities/storage/storage-management.test.ts src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx` — **PASS**, 113 tests (was 91).
+- `cd web && npm run test:e2e -- --grep 'Storage management'` — **PASS**, 29 Chromium tests, 0 skips, 35.1 s against the rebuilt artifact (was 24; 5 added).
+- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 1,843 tests, 7 skips, 334.8 s.
+  The +7 delta matches the focused gate exactly (121 → 128). Skips are the pre-existing isolated
+  real OpenList/SMB/S3 acceptance and endurance profiles that need external services; no production
+  service, credential or user media was used.
+- `cd web && npm test -- --run` — **PASS**, 724 tests / 47 files, 0 skips, 282.6 s.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — **PASS**.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check .` — **PASS**, 316 files formatted.
+  `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**.
+- `python3 scripts/check_governance.py` — **PASS** (also re-run against the new Head).
+  `git diff --check` — **PASS**. Secret-value audit over the staged diff — **PASS** (only the
+  pre-existing throwaway `admin-token` / `viewer-token` test labels). FFmpeg/FFprobe exclusion
+  audit over every changed file — **PASS** (no match). `config/alist.json` confirmed still ignored,
+  untracked and absent from the manifest.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-4-validation`
+  — **FAIL / PRE-EXISTING / UNRELATED**. The gate fails identically at the Task Base
+  `3779d203821930ad898fea49df2cee796c7a1c79` and at this Head, on a clean `/tmp`, with the same
+  error: `docker compose up` reports `bind source path does not exist: …/mediaflow.json` for the
+  harness's own temporary deployment root. Verified: the image builds and the compose topology
+  renders correctly (the rendered bind points at the file the harness just created, mode 0644);
+  only the daemon-side bind resolution of that short-lived path fails. `scripts/docker_smoke_test.py`,
+  `scripts/docker_release_security_smoke_test.py`, `compose.yaml` and `Dockerfile` are
+  **byte-identical** (md5) between the Task Base and this Head, and this checkpoint modifies **no**
+  deployment, packaging or compose file. Per the workflow this is reported, not self-cleared; the
+  unavailability of this gate is a judgement for B. I did not substitute an earlier checkpoint's
+  result.
 
 ### Decisions
 
-Use the existing managed authority and V1 setup journey within A's bounded correction scope.
+- Fixed the defect at the normalization boundary rather than widening the backend. The backend
+  already stores and projects the empty root correctly, and A's contract is that the frontend must
+  accept provider-valid input; changing domain validation would have altered unrelated providers.
+- Wrote a dedicated `normalizeRootPath` instead of relaxing the shared `normalizeBoundedText`.
+  The shared helper trims and rejects empty, and it is used by many other entities; changing it
+  would weaken unrelated checks. The new helper mirrors the existing `normalizeReferencePath`
+  precedent, which already accepts `""` for a library bound to the provider root.
+- Added the setup authority to the existing inventory projection rather than a new endpoint or
+  wizard. The Task and A's boundary require reusing the current authority; `/api/v1/management/readiness`
+  exists but is a second read to reconcile, and keying the affordance on `reason === "no_active"`
+  alone cannot separate an existing-but-unavailable Active, which A requires.
+- Carried only the *presence* of a setup Draft across the projection, never its revision ID, so the
+  Storage page cannot become a second place that addresses a specific Draft.
+- Made `canStartSetup` backend-authoritative rather than inferring it from `canManage`, so a viewer
+  is never shown a control it cannot use, matching V1's existing read-only branch.
+- Used plain `<a href>` for both handoffs, matching the existing `MigrationPage` V1 link, because
+  `/ui` and the V2 return are outside the `/ui-v2` router basepath. No token bridge, no return-URL
+  round trip: the existing V1 re-authentication prompt remains the continuation step.
+- Rendered the three unavailable states from distinct flags rather than the `reason` string, and
+  added a cross-check in the normalizer that rejects a readable inventory that still claims setup is
+  outstanding, so a mixed or stale response cannot push the operator into a needless initialization.
 
 ### Remaining In-Slice Work
 
-Both A P1 blockers remain unresolved until implementation and review.
+None that I know of that belongs to this Task. Both A P1 blockers are addressed in this checkpoint;
+whether the Slice's Required Outcomes are now all satisfied is B's call, and I am not asserting
+Slice status.
 
 ### Risks / Deviations
 
-None approved. Escalate any necessary change to authentication, activation or the Slice boundary.
+- The Docker release-security gate is **UNAVAILABLE** in this environment for a pre-existing reason
+  documented under Tests and Results. It is the only T4 gate that did not pass, and it is not caused
+  by this change.
+- V2 `/ui-v2/storage` → `/ui` requires the operator to re-enter the API token in the V1 console, and
+  returning re-enters it in V2. This is the existing memory-only Bearer model the Task explicitly
+  permits; I did not add a token-transfer mechanism. If B judges that friction too high, it is a
+  product decision to escalate to A, not something to fix inside this Task.
+- The e2e setup handoff navigates to a deliberately minimal V1 stand-in served by the fake server.
+  The real V1 console's create/resume/return behavior is proved by the Python operator-UI and
+  management-setup tests against the real backend; the browser proof covers the V2 side of the
+  journey and that navigation issues no mutating request.
+- Pre-existing `docs/pics/*.png` modifications (one deleted, one modified, one untracked) remain
+  outside this checkpoint and untouched; `docs/pics/储存管理.png` is unchanged.
 
 ### Checkpoint
 
 ```text
-Status: PLANNED
-Head SHA: NOT CREATED
+Status: READY FOR B REVIEW
+Head SHA: 466337c1337d0b03315d813ba258124538565cc1
 ```
+
 
 ## B Review Result
 
