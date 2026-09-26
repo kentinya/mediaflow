@@ -446,6 +446,27 @@ discovery and compatibility surface and is not used as source or execution autho
   explicit continuation authority, or repair the bounded FileIndex synchronization state. Continue
   the original Organize journey without replaying successful siblings or uncertain mutation.
 
+## TARGET — Transfer continuity and Worker readiness (Slice 39)
+
+- **Goal/entry:** from existing ResourceLibrary or MediaLibrary Files, explicitly submit Copy/Move
+  after setup without restarting a Worker that was already running.
+- **Visible state:** distinguish process alive, registered/DB/schema ready and command/pin capable.
+  Current Active availability describes new admission; older admitted work shows its own execution
+  prerequisites. Do not imply that a healthy container or API guarantees transfer execution.
+- **Action/success:** review and submit once; follow durable progress and revisit through Operations.
+  Eligible queued work proceeds when a compatible Worker is available. New B work uses B; admitted
+  and running A work keep A. Configuration publication alone starts no transfer.
+- **Failure:** show `等待可用 Worker` before or immediately after submission when applicable, with
+  no/stale Worker, unsupported command, schema mismatch or unavailable pinned context explained.
+  Invalid task snapshot/secrets blocks new mutation, never falls back or silently loses the queue.
+- **Recovery:** retain admission, known effects and independent item outcomes; offer the applicable
+  start/restore Worker, repair schema/deployment prerequisite, inspect configuration or read refresh
+  action. Do not tell users to resubmit admitted work or copy internal revision/fence identifiers.
+  Finished and uncertain operations are never replayed; slow OpenList work keeps ownership.
+
+This is an authorized target, not a claim that current startup-order and readiness gaps are fixed.
+It reuses existing Files/Operations surfaces and adds no new command or setup/authentication UI.
+
 ## Per-item failure and recovery
 
 - **Goal:** continue a failed or waiting item without hiding successful siblings or replaying unknown

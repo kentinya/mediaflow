@@ -152,6 +152,22 @@ The production artifact flow is one image, two stages, one Python runtime:
   directory has no built artifact, `/ui-v2/*` fails closed with 404 while the
   API and V1 `/ui` keep serving.
 
+## TARGET — Worker startup and transfer readiness correction (Slice 39)
+
+The existing probe and signals described below are CURRENT behavior. The authorized correction is
+not yet implemented: a Worker started with no Active must remain registered and able to consume
+later admitted transfers without restart. The Docker acceptance must start the real stack first,
+then checked-activate configuration, then submit an OpenList Move against an isolated controlled
+HTTP service; restarting the Worker after activation is not an acceptable workaround in that test.
+
+The corrected signals will distinguish process liveness, Worker registration/heartbeat plus database
+and runtime-schema readiness, and command/pinned-context work readiness. The Worker container check
+must validate actual readiness instead of only deployment preflight. A healthy queue consumer may
+have no current Active yet, but that must be an explicit business state; healthy alone never promises
+that every transfer is runnable. Files/API progress must explain waiting and the recovery action.
+Health checks must not contact OpenList or other providers, scan media, enqueue work or mutate it.
+Do not weaken Automation/manual Organize readiness or disable restart/uncertain-effect fencing.
+
 ## Health and readiness signals
 
 MediaFlow exposes three deliberately separate signals. A process can be alive
