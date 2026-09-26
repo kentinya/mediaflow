@@ -38,6 +38,9 @@ import {
   fetchStorageDetail,
   fetchStorageEdit,
   fetchStorageAuthority,
+  copyStorage,
+  setStorageEnabled,
+  removeStorage,
   saveStorage,
 } from "../../shared/api/api-client";
 import {
@@ -357,11 +360,13 @@ function InventoryTable({
   canManage,
   onView,
   onEdit,
+  onAction,
 }: {
   readonly items: readonly StorageRowItem[];
   readonly canManage: boolean;
   readonly onView: (storageId: string) => void;
   readonly onEdit: (storageId: string) => void;
+  readonly onAction: (action: "copy" | "toggle" | "remove", item: StorageRowItem) => void;
 }) {
   return (
     <div className="mf-files-table-scroll">
@@ -424,6 +429,14 @@ function InventoryTable({
                   >
                     编辑
                   </button>
+                  <details className="mf-storage-more">
+                    <summary className="mf-link-button" aria-label={`更多操作 ${item.name}`}>更多</summary>
+                    <div className="mf-storage-more-menu" role="menu">
+                      <button type="button" role="menuitem" disabled={!canManage} onClick={() => onAction("copy", item)}>复制</button>
+                      <button type="button" role="menuitem" disabled={!canManage} onClick={() => onAction("toggle", item)}>{item.enabled ? "停用" : "启用"}</button>
+                      <button type="button" role="menuitem" disabled={!canManage} onClick={() => onAction("remove", item)}>移除配置</button>
+                    </div>
+                  </details>
                 </div>
               </td>
             </tr>
@@ -1039,6 +1052,30 @@ export function StorageManagementPage() {
     });
   }, [queryClient]);
 
+  const runLifecycleAction = useCallback(async (action: "copy" | "toggle" | "remove", item: StorageRowItem) => {
+    if (!inventory?.active || !inventory.canManage) return;
+    if (action === "remove" && !window.confirm(`仅移除存储“${item.name}”的配置,物理文件不会被删除。继续?`)) return;
+    const authority = await fetchStorageAuthority(token);
+    if (!authority.ok) { setEditLoadError("无法核实当前 Active 配置,请刷新后重试。"); return; }
+    let result;
+    if (action === "copy") {
+      const newId = window.prompt("请输入新的存储 ID", `${item.id}-copy`);
+      const name = window.prompt("请输入新的存储名称", `${item.name} copy`);
+      if (!newId || !name) return;
+      result = await copyStorage(token, { storageId: item.id, newStorageId: newId, name, authority: authority.model });
+    } else if (action === "toggle") {
+      result = await setStorageEnabled(token, { storageId: item.id, enabled: !item.enabled, authority: authority.model });
+    } else {
+      result = await removeStorage(token, { storageId: item.id, authority: authority.model });
+    }
+    if (!result.ok) {
+      setEditLoadError(`操作未完成: ${result.code}。当前 Active 未改变,请根据引用或配置错误修正后重试。`);
+      return;
+    }
+    setEditLoadError(null);
+    refreshInventoryAuthority();
+  }, [inventory, token, refreshInventoryAuthority]);
+
   const closeDrawer = useCallback(() => {
     setDrawer((current) => ({ ...current, open: false }));
     setSaveError(null);
@@ -1370,6 +1407,7 @@ export function StorageManagementPage() {
                   onEdit={(id) => {
                     void openEditDrawer(id);
                   }}
+                  onAction={(action, item) => { void runLifecycleAction(action, item); }}
                 />
               )}
               {!drawer.open &&
