@@ -6,7 +6,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and t
 ```text
 Task ID: 39.5
 Parent Slice: 39
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: d74822ce509512fcc10e5802bc6cc95602c77c3b
 Difficulty: High
 Test Level: T4
@@ -193,10 +193,9 @@ new changes or failures justify the necessary rerun. Developer reports all actua
 
 ### Changed Files
 
-- `mediaflow/final_cli.py`, transfer Worker/services, Worker readiness/domain/persistence and API.
-- `mediaflow/container_probe.py`, `Dockerfile`, Docker health/lifecycle smoke harnesses.
-- typed Web transfer/Worker models, Files progress UI and Operations readiness UI.
-- focused Python/Web regressions and factual architecture/deployment/product-experience guidance.
+- `mediaflow/infrastructure/sqlite_runtime.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_direct_file_transfers.py`
 
 ### Implemented
 
@@ -210,12 +209,26 @@ new changes or failures justify the necessary rerun. Developer reports all actua
   Compose health now verifies the real registered transfer consumer without provider calls.
 - Added actionable waiting evidence to API/Web transfer progress and Operations revisit. Refresh
   never resubmits, and unavailable pinned context remains durable with zero new mutation.
+- Correction round 1: released reconstruction-blocked claims now update queue recency and are
+  selected after other eligible admitted work, so one corrupt pin cannot starve later work.
+  Readiness and transfer observation retain the last published binding and read durable progress
+  while current Active is missing; new admission still refreshes and fails closed.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — **PASS**.
+- Correction regression tests for queue fairness and Active-outage progress/readiness — **PASS**.
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_processing_worker_readiness` — **PASS**, 142 tests.
+- `.venv/bin/ruff format --check mediaflow/interfaces/service_api.py mediaflow/infrastructure/sqlite_runtime.py tests/test_direct_file_transfers.py` — **PASS**.
+- `.venv/bin/ruff check mediaflow/interfaces/service_api.py mediaflow/infrastructure/sqlite_runtime.py tests/test_direct_file_transfers.py` — **PASS**.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**.
+- `git diff --check` — **PASS**.
+- `python3 -u scripts/docker_health_smoke_test.py --image mediaflow:task39-5-health` — **PASS**.
+- `python3 -u scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task39-5-lifecycle-debug` — **PASS**.
+- `python3 -u scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task39-5-transfer` — **PASS**.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-5-security` — **PASS**.
 - Required focused Python gate — **PASS**, 273 tests.
-- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 1,847 tests, 7 existing
+- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 1,850 tests, 7 existing
   external/optional-profile skips.
 - Required focused Web gate — **PASS**, 80 tests; `cd web && npm test -- --run` — **PASS**,
   727 tests / 47 files.
@@ -254,14 +267,62 @@ All required committed-candidate Docker gates passed. Existing `docs/pics` delet
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 95d12a464dcab40a9e0d84a08f1fb8f662621047
+Head SHA: 4c78687783a345c5b02a9fc30c342cf30db50864
 ```
 
 ## B Review Result
 
+Review round: 1 (2026-09-26). Reviewed the implementation checkpoint below; current HEAD
+`a6ba822c380b29813939aec3d935ba4a02a0ef17` adds only the Developer report to that checkpoint.
+B independently reran the exact required focused Python command: **273 tests PASS** (93.220s),
+and the exact required focused Web command: **80 tests / 5 files PASS**. Governance and committed
+range whitespace checks passed. The 27-file manifest contains no private configuration or unrelated
+image changes; `config/alist.json` remains ignored/untracked. Existing user image changes are preserved.
+Full regression, browser and Docker results above remain Developer-reported, not independently
+rerun in this review; Slice Final is not reached because of the reproduced blockers below.
+
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: d74822ce509512fcc10e5802bc6cc95602c77c3b..95d12a464dcab40a9e0d84a08f1fb8f662621047
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — An unavailable older pin indefinitely blocks otherwise eligible transfers.**
+  `mediaflow/application/files_transfer_worker.py:199` releases an unreconstructable claim and
+  returns; `mediaflow/infrastructure/sqlite_runtime.py:7951` always selects the oldest admitted
+  row, while `release_files_transfer_claim` clears its lease without changing its eligibility/order.
+  Reproduction: use temporary SQLite, actual Local Storage, checked activation A, authenticated
+  Files API admission of `a.mkv`, checked activation B and admission of distinct `b.mkv`. Then
+  simulate the explicitly required persisted-pin corruption failure by changing only superseded
+  A's stored digest; B and both originally admitted authorities are otherwise untouched. Run the
+  actual `_files_transfer_worker_context` consumer in `AutomationWorker.run` for six polls.
+  `PYTHONPATH=. .venv/bin/python /tmp/mediaflow_b39_probe.py` reproduced six distinct attempts of A,
+  A=`admitted/files_transfer_snapshot_unavailable`, B=`admitted`, and no B destination. Restoring
+  A's original digest lets the same consumer complete both, proving B was executable. No adapter
+  capability or reconstruction implementation is mocked/removed. This affects ordinary Files
+  Copy/Move queue progress and violates Scope 2's explicit requirement that one incompatible entry
+  not hide eligible work, Slice RO-8/RO-9 and the recovery acceptance criteria. Fix bounded claim
+  fairness/retry eligibility while preserving the blocked admission, immutable pins and uncertain
+  mutation fences; healthy later work must progress before the older pin is repaired, and repaired
+  safe work must continue without resubmission. Add a production-composition regression including
+  both library command families and verify per-item effects are not replayed.
+
+- **P1 — Current-Active outage hides readiness and durable progress of valid pinned work.**
+  `mediaflow/interfaces/service_api.py:7880` requires current-Active runtime binding before building
+  the new readiness document; the transfer GET route also passes through the Active-bound dispatch
+  at `service_api.py:1400`. With the same real fixture, admit a third transfer under B, preserve all
+  published snapshots and simulate loss of current Active by marking B superseded. Register the
+  actual resident consumer. The same probe returns **HTTP 503 / configuration_unavailable /
+  active_missing** from both `GET /api/v1/workers/readiness` and
+  `GET /api/v1/resource-libraries/source/files/transfers/{taskId}`; neither returns command
+  readiness or durable transfer progress. The consumer then completes that exact pinned transfer
+  and creates its destination despite those failed reads. Thus an operator following Files progress
+  or Operations readiness cannot distinguish the continuing transfer from the unavailable
+  new-admission configuration. This violates Slice RO-9, Scope 4–5 and the acceptance requirements
+  to separate current Active from valid older pins and preserve progress/revisit/recovery. Decouple
+  authenticated bounded readiness and durable transfer observation from current-Active admission
+  binding, retaining RBAC, kind/scope checks, zero provider calls on readiness and fail-closed new
+  admission. Cover both ResourceLibrary and MediaLibrary API/Web outage→recovery journeys, with
+  visible real durable outcomes and no refresh resubmission; do not substitute stale Active or
+  expose mutation authority to restore these read surfaces.
