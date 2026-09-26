@@ -488,12 +488,76 @@ test.describe("Storage management", () => {
     await connect(page);
     await openStorageManagement(page);
 
-    await expect(page.getByText("尚未完成托管配置")).toBeVisible();
+    await expect(page.getByText("尚未完成首次设置")).toBeVisible();
     await expect(page.getByText(/没有可显示的存储清单/)).toBeVisible();
     // No fabricated table or rows appear behind the setup state.
     await expect(page.getByRole("table")).toHaveCount(0);
     // An explicit refresh is offered.
     await expect(page.getByRole("button", { name: "刷新" })).toBeEnabled();
+    // The recovery the state previously lacked: one explicit action that
+    // continues the existing V1 setup workflow.
+    await expect(
+      page.getByRole("link", { name: "去完成设置" }),
+    ).toHaveAttribute("href", "/ui");
+  });
+
+  test("the setup handoff reaches the workflow and returns to a refreshed inventory", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?noActive=1");
+    await connect(page);
+    await openStorageManagement(page);
+
+    // The handoff is a plain same-origin document navigation into the existing
+    // V1 configuration workflow, which owns first-Draft creation, guided setup,
+    // validation and checked activation.
+    await page.getByRole("link", { name: "去完成设置" }).click();
+    await expect(page).toHaveURL(/\/ui$/);
+    await expect(
+      page.getByRole("button", { name: "Create first Draft" }),
+    ).toBeVisible();
+    // The workflow is reachable and offers the explicit way back.
+    await expect(
+      page.getByRole("link", { name: "Return to Storage management" }),
+    ).toHaveAttribute("href", "/ui-v2/storage");
+    // No token ever crossed the navigation in a URL.
+    expect(page.url()).not.toContain("token");
+
+    // Returning re-reads the current Storage authority. Once the instance is
+    // initialized the workspace shows the real inventory, not the setup state.
+    await resetStorage(page);
+    await page
+      .getByRole("link", { name: "Return to Storage management" })
+      .click();
+    await expect(page).toHaveURL(/\/ui-v2\/storage$/);
+    await connect(page);
+    await openStorageManagement(page);
+    await expect(page.getByRole("heading", { name: "存储管理" })).toBeVisible();
+    await expect(page.getByText("本地媒体")).toBeVisible();
+    await expect(page.getByText("尚未完成首次设置")).toHaveCount(0);
+  });
+
+  test("setup navigation and return start no configuration or media work", async ({
+    page,
+  }) => {
+    const mutations: string[] = [];
+    page.on("request", (request) => {
+      if (["POST", "PUT", "DELETE", "PATCH"].includes(request.method())) {
+        mutations.push(
+          `${request.method()} ${new URL(request.url()).pathname}`,
+        );
+      }
+    });
+    await resetStorage(page, "?noActive=1");
+    await connect(page);
+    await openStorageManagement(page);
+
+    await page.getByRole("link", { name: "去完成设置" }).click();
+    await expect(page).toHaveURL(/\/ui$/);
+    // Reading the recovery state and navigating to it issues no configuration
+    // command, so it can never create a duplicate Draft, repeat a Save,
+    // activate, or start a scan, Task or Storage write.
+    expect(mutations).toEqual([]);
   });
 
   test("bounded-page Copy review resolves the source by exact ID", async ({
@@ -1012,12 +1076,85 @@ test.describe("Storage management", () => {
     await resetStorage(page, "?noActive=1");
     await connect(page);
     await openStorageManagement(page);
-    await expect(page.getByText("尚未完成托管配置")).toBeVisible();
+    await expect(page.getByText("尚未完成首次设置")).toBeVisible();
     await expect(
       page.getByRole("button", { name: "+ 添加存储" }),
     ).toBeDisabled();
     // No fabricated table appears behind the handoff state.
     await expect(page.getByRole("table")).toHaveCount(0);
+  });
+
+  test("a read-only principal gets administrator guidance, not a setup control", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?noActive=1");
+    await connect(page, READ_ONLY_TOKEN);
+    await openStorageManagement(page);
+
+    // The viewer is told the workflow exists and who owns it, and is never
+    // shown a control it cannot use.
+    await expect(page.getByText(/没有管理配置的权限/)).toBeVisible();
+    await expect(page.getByRole("link", { name: "去完成设置" })).toHaveCount(0);
+    await expect(
+      page.getByRole("link", { name: "查看设置页面" }),
+    ).toHaveAttribute("href", "/ui");
+    await expect(
+      page.getByRole("button", { name: "+ 添加存储" }),
+    ).toBeDisabled();
+  });
+
+  test("a saved empty provider root stays readable beside the other entries", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await connect(page);
+    await openStorageManagement(page);
+
+    // The object whose stored root is the provider service root is listed, and
+    // the workspace is not reported as unreadable. Before the correction this
+    // exact configuration made the whole page show 存储管理不可用.
+    const row = page.getByRole("row").filter({ hasText: "OpenList 根" });
+    await expect(row).toBeVisible();
+    await expect(page.getByText("存储管理不可用")).toHaveCount(0);
+    // The provider root is labelled truthfully and stays distinguishable from
+    // the explicit "/" the other OpenList entry stores.
+    await expect(
+      row.getByText("https://openlist.example / 提供商根目录"),
+    ).toBeVisible();
+    const slashRow = page.getByRole("row").filter({ hasText: "OpenList 媒体" });
+    await expect(slashRow.getByText("/Media")).toBeVisible();
+    // Every other configured Storage is still listed.
+    await expect(page.getByText("本地媒体")).toBeVisible();
+    await expect(page.getByText("NAS 媒体")).toBeVisible();
+    await expect(page.getByText("R2 归档")).toBeVisible();
+  });
+
+  test("a saved empty provider root round-trips through Edit and reload", async ({
+    page,
+  }) => {
+    await resetStorage(page);
+    await connect(page);
+    await openStorageManagement(page);
+
+    await editRow(page, "OpenList 根").click();
+    const drawer = storageDrawer(page, "openlist-root");
+    await expect(drawer).toBeVisible();
+    // The immutable ID is prefilled and the empty provider root is preserved
+    // rather than guessed as "/" or dropped.
+    await expect(drawer.getByLabel("名称 *")).toHaveValue("OpenList 根");
+    await drawer.getByRole("button", { name: "下一步" }).click();
+    await expect(drawer.getByLabel("根路径 *")).toHaveValue("");
+    await drawer.getByRole("button", { name: /1\s*基本信息/ }).click();
+    await expect(drawer.getByLabel("存储 ID *")).toHaveValue("openlist-root");
+
+    // A reload re-reads the same Active and the row is still readable.
+    await page.reload();
+    await connect(page);
+    await openStorageManagement(page);
+    await expect(
+      page.getByRole("row").filter({ hasText: "OpenList 根" }),
+    ).toBeVisible();
+    await expect(page.getByText("存储管理不可用")).toHaveCount(0);
   });
 
   test("controlled 1536x1024 visual evidence with drawer step 1 open and closed", async ({

@@ -5,6 +5,20 @@ import {
   normalizeStorageInventory,
 } from "./storage-management";
 
+/**
+ * The setup authority as the real projection reports it for an instance that
+ * already has a managed Active: setup is closed, and the fixed V1 route is
+ * still advertised for the recovery paths that need it.
+ */
+const settledSetup = {
+  setupRequired: false,
+  setupDraftExists: false,
+  managedActivation: true,
+  recoveryRequired: false,
+  health: "HEALTHY",
+  setupPath: "/ui",
+};
+
 /** Wire shape matching the Python operations/storage-management projections. */
 const inventoryPayload = {
   available: true,
@@ -89,6 +103,8 @@ const inventoryPayload = {
   nextAfter: null,
   families: { local: 1, s3: 1 },
   canManage: true,
+  canStartSetup: true,
+  setup: settledSetup,
 };
 
 describe("normalizeStorageInventory", () => {
@@ -158,11 +174,25 @@ describe("normalizeStorageInventory", () => {
       nextAfter: null,
       families: {},
       canManage: false,
+      canStartSetup: true,
+      // A management-only instance with no managed activation yet: first setup
+      // is genuinely outstanding, and no Draft exists to resume.
+      setup: {
+        setupRequired: true,
+        setupDraftExists: false,
+        managedActivation: false,
+        recoveryRequired: false,
+        health: "SETUP_REQUIRED",
+        setupPath: "/ui",
+      },
     });
     expect(model.available).toBe(false);
     expect(model.reason).toBe("no_active");
     expect(model.items).toEqual([]);
     expect(model.active).toBeNull();
+    expect(model.setup.setupRequired).toBe(true);
+    expect(model.setup.setupDraftExists).toBe(false);
+    expect(model.setup.setupPath).toBe("/ui");
   });
 
   it("models an over-limit page with honest truncation and a cursor", () => {
@@ -258,6 +288,208 @@ describe("normalizeStorageInventory", () => {
       }),
     ).toThrow();
     expect(() => normalizeStorageInventory(null)).toThrow();
+  });
+});
+
+describe("provider-valid empty Storage roots", () => {
+  /**
+   * A saved OpenList object whose root is the provider service root. The
+   * backend stores and projects `rootPath: ""` verbatim, so this fixture is the
+   * exact response shape a real checked Save produces.
+   */
+  function openlistItem(rootPath: unknown): unknown {
+    return {
+      id: "openlist-root",
+      name: "OpenList root",
+      type: "openlist",
+      family: "openlist",
+      enabled: false,
+      readOnly: true,
+      location: {
+        kind: "remote",
+        rootPath,
+        endpoint: "https://openlist.example",
+      },
+      capabilities: {
+        can_move: false,
+        can_copy: false,
+        can_delete: false,
+        can_hard_link: false,
+        can_soft_link: false,
+      },
+      capabilitiesKnown: false,
+      writeCapabilitySource: "unknown",
+      writeCapabilityProbe: "not_run",
+      secretReadiness: [
+        { field: "tokenEnv", env: "OPENLIST_TOKEN", state: "UNSET" },
+      ],
+      references: {
+        total: 0,
+        items: [],
+        truncated: false,
+        resourceLibraries: 0,
+        mediaLibraries: 0,
+        countedInBreakdown: 0,
+      },
+    };
+  }
+
+  function payloadWith(rootPath: unknown): unknown {
+    return {
+      ...inventoryPayload,
+      items: [openlistItem(rootPath), inventoryPayload.items[0]],
+      total: 2,
+      matched: 2,
+      returned: 2,
+      families: { local: 1, openlist: 1 },
+    };
+  }
+
+  it("accepts an empty provider root and still returns the other valid entries", () => {
+    // A disabled, unreferenced OpenList object rooted at the service root is a
+    // supported configuration. Rejecting it made the whole inventory
+    // unreadable, hiding the other valid Storage objects with it.
+    const model = normalizeStorageInventory(payloadWith(""));
+    expect(model.available).toBe(true);
+    expect(model.items.map((item) => item.id)).toEqual([
+      "openlist-root",
+      "local-source",
+    ]);
+    expect(model.items[0].location.rootPath).toBe("");
+    expect(model.items[0].enabled).toBe(false);
+  });
+
+  it("treats an absent root the same as the empty provider root", () => {
+    for (const absent of [null, undefined]) {
+      const model = normalizeStorageInventory(payloadWith(absent));
+      expect(model.items[0].location.rootPath).toBe("");
+    }
+  });
+
+  it("still accepts a slash root and a real subdirectory unchanged", () => {
+    expect(
+      normalizeStorageInventory(payloadWith("/")).items[0].location.rootPath,
+    ).toBe("/");
+    expect(
+      normalizeStorageInventory(payloadWith("media/Movies")).items[0].location
+        .rootPath,
+    ).toBe("media/Movies");
+  });
+
+  it("preserves the stored root byte for byte instead of trimming it", () => {
+    // The root is identity: `/Media/ ` and `/Media` are different entries, so
+    // trimming here would silently retarget the Storage the operator selected.
+    expect(
+      normalizeStorageInventory(payloadWith("/Media/ ")).items[0].location
+        .rootPath,
+    ).toBe("/Media/ ");
+  });
+
+  it("still rejects root values that are not a provider root", () => {
+    // Only the genuinely empty string is the service root. A whitespace-only
+    // value is malformed data, and a non-string, NUL or oversized value stays
+    // malformed rather than being coerced into a usable root.
+    for (const bad of [
+      "   ",
+      "\t\n",
+      5,
+      true,
+      ["media"],
+      "media\u0000x",
+      "x".repeat(1025),
+    ]) {
+      expect(
+        () => normalizeStorageInventory(payloadWith(bad)),
+        String(bad),
+      ).toThrow();
+    }
+  });
+});
+
+describe("Storage setup authority", () => {
+  const setupRequiredPayload = {
+    ...inventoryPayload,
+    available: false,
+    reason: "no_active",
+    authority: null,
+    active: null,
+    items: [],
+    total: 0,
+    matched: 0,
+    truncated: false,
+    returned: 0,
+    hasMore: false,
+    nextAfter: null,
+    families: {},
+  };
+
+  it("carries the bounded setup flags and the fixed recovery route", () => {
+    const model = normalizeStorageInventory({
+      ...setupRequiredPayload,
+      setup: {
+        setupRequired: true,
+        setupDraftExists: true,
+        managedActivation: false,
+        recoveryRequired: false,
+        health: "SETUP_REQUIRED",
+        setupPath: "/ui",
+      },
+    });
+    expect(model.setup.setupRequired).toBe(true);
+    expect(model.setup.setupDraftExists).toBe(true);
+    expect(model.setup.setupPath).toBe("/ui");
+  });
+
+  it("rejects a return target that is not an allowlisted application route", () => {
+    // An arbitrary redirect could send the operator off-origin, so only the
+    // one fixed same-origin setup route is accepted.
+    for (const setupPath of [
+      "https://evil.example/ui",
+      "//evil.example/ui",
+      "/ui/../admin",
+      "/ui-v2/storage",
+      "",
+    ]) {
+      expect(
+        () =>
+          normalizeStorageInventory({
+            ...inventoryPayload,
+            setup: { ...settledSetup, setupPath },
+          }),
+        setupPath,
+      ).toThrow();
+    }
+  });
+
+  it("rejects a readable inventory that still claims setup is outstanding", () => {
+    expect(() =>
+      normalizeStorageInventory({
+        ...inventoryPayload,
+        setup: { ...settledSetup, setupRequired: true },
+      }),
+    ).toThrow();
+  });
+
+  it("rejects malformed setup flags rather than defaulting them", () => {
+    for (const key of [
+      "setupRequired",
+      "setupDraftExists",
+      "managedActivation",
+      "recoveryRequired",
+    ]) {
+      expect(() =>
+        normalizeStorageInventory({
+          ...setupRequiredPayload,
+          setup: { ...settledSetup, [key]: "yes" },
+        }),
+      ).toThrow();
+    }
+    expect(() =>
+      normalizeStorageInventory({
+        ...setupRequiredPayload,
+        setup: undefined,
+      }),
+    ).toThrow();
   });
 });
 

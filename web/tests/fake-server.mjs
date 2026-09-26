@@ -5476,6 +5476,40 @@ const STORAGE_FIXTURE = [
     },
   },
   {
+    id: "openlist-root",
+    name: "OpenList 根",
+    type: "openlist",
+    family: "openlist",
+    enabled: false,
+    readOnly: true,
+    // An empty stored root is the provider service root. It is a supported,
+    // already-saved configuration and is deliberately different from the
+    // explicit "/" the entry above stores.
+    location: {
+      kind: "remote",
+      rootPath: "",
+      endpoint: "https://openlist.example",
+    },
+    declaredCapabilities: {
+      can_move: false,
+      can_copy: false,
+      can_delete: false,
+      can_hard_link: false,
+      can_soft_link: false,
+    },
+    secretReadiness: [
+      { field: "tokenEnv", env: "MF_OPENLIST_ROOT_TOKEN", state: "UNSET" },
+    ],
+    references: {
+      total: 0,
+      items: [],
+      truncated: false,
+      resourceLibraries: 0,
+      mediaLibraries: 0,
+      countedInBreakdown: 0,
+    },
+  },
+  {
     id: "r2-archive",
     name: "R2 归档",
     type: "r2",
@@ -5529,6 +5563,12 @@ const STORAGE_REFERENCE_ENTRIES = {
     truncated: false,
   },
   "openlist-media": {
+    resourceLibraries: [],
+    mediaLibraries: [],
+    total: 0,
+    truncated: false,
+  },
+  "openlist-root": {
     resourceLibraries: [],
     mediaLibraries: [],
     total: 0,
@@ -5846,6 +5886,10 @@ const STORAGE_FIXTURE_OPTIONS = {
     maxConcurrency: 4,
     maxRetries: 2,
     pageSize: 100,
+  },
+  "openlist-root": {
+    baseUrl: "https://openlist.example",
+    tokenEnv: "MF_OPENLIST_ROOT_TOKEN",
   },
   "r2-archive": {
     bucket: "archive",
@@ -6308,6 +6352,34 @@ function storageInventoryMatches(storage, query, family) {
   );
 }
 
+/**
+ * The setup authority the Storage workspace renders its recovery state from.
+ *
+ * It mirrors the real projection: a management-only instance with no managed
+ * activation has an outstanding first setup, and the recovery route is one
+ * fixed same-origin application path that carries no token or identifier.
+ */
+function storageSetupAuthority(state) {
+  if (state.noActive) {
+    return {
+      setupRequired: true,
+      setupDraftExists: false,
+      managedActivation: false,
+      recoveryRequired: false,
+      health: "SETUP_REQUIRED",
+      setupPath: "/ui",
+    };
+  }
+  return {
+    setupRequired: false,
+    setupDraftExists: false,
+    managedActivation: true,
+    recoveryRequired: false,
+    health: "HEALTHY",
+    setupPath: "/ui",
+  };
+}
+
 function storageInventoryDocument(state, canManage, search) {
   if (state.noActive) {
     return {
@@ -6326,6 +6398,9 @@ function storageInventoryDocument(state, canManage, search) {
       query: search.query,
       family: search.family,
       canManage,
+      // The permission to start the first Draft is backend-authoritative.
+      canStartSetup: canManage,
+      setup: storageSetupAuthority(state),
       actions: {
         check: {
           available: false,
@@ -6371,6 +6446,8 @@ function storageInventoryDocument(state, canManage, search) {
     query: search.query,
     family: search.family,
     canManage,
+    canStartSetup: canManage,
+    setup: storageSetupAuthority(state),
     actions: {
       check: {
         available: false,
@@ -13064,10 +13141,25 @@ const server = createServer(async (req, res) => {
     return;
   }
   if (url.pathname === "/ui") {
+    // A minimal stand-in for the real V1 operator console: it owns the
+    // existing setup workflow and is the only place first-Draft creation,
+    // guided setup, validation and checked activation happen. The e2e proof
+    // uses it to show the Storage handoff reaches the real workflow and that
+    // returning afterwards re-reads the current Storage authority. The
+    // interactive console itself is proved by the Python operator-UI tests.
     const body = Buffer.from(`<!doctype html>
 <html lang="en">
   <head><meta charset="utf-8"><title>MediaFlow V1 Web UI</title></head>
-  <body><main><h1>MediaFlow V1 Web UI</h1><p>Current Web continuation.</p></main></body>
+  <body>
+    <main>
+      <h1>MediaFlow V1 Web UI</h1>
+      <p>Current Web continuation.</p>
+      <h2>Setup required</h2>
+      <button data-view="configuration" id="create-first-draft">Create first Draft</button>
+      <button data-view="configuration" id="resume-setup-draft" hidden>Resume setup Draft</button>
+      <a id="back-to-storage" href="/ui-v2/storage">Return to Storage management</a>
+    </main>
+  </body>
 </html>`);
     sendFile(res, body, CONTENT_TYPES[".html"]);
     return;

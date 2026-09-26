@@ -21,12 +21,14 @@ import { useStorageSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
 import {
+  PROVIDER_ROOT_LABEL,
   STORAGE_FAMILIES,
   type StorageCheckResultModel,
   type StorageDetailModel,
   type StorageFamily,
   type StorageActiveIdentity,
   type StorageInventoryModel,
+  type StorageSetupAuthority,
 } from "../../entities/storage/storage-management";
 import type {
   StorageFieldValue,
@@ -154,9 +156,19 @@ function checkFailureMessage(code: string): string {
   }
 }
 
+/**
+ * Render one provider-safe location for display.
+ *
+ * The stored root characters are shown exactly as the Active snapshot holds
+ * them. Only a genuinely empty provider root gets the explicit provider-root
+ * label, so the operator can tell the service root apart from a stored `/` or a
+ * real subdirectory without opening the detail view.
+ */
 function locationLabel(location: StorageDetailSafeLocation): string {
+  const root = location.rootPath;
+  const emptyRoot = root === "";
   if (location.kind === "local") {
-    return location.rootPath === "" ? "/" : location.rootPath;
+    return emptyRoot ? "/" : root;
   }
   const parts: string[] = [];
   if (location.endpoint) parts.push(location.endpoint);
@@ -166,11 +178,26 @@ function locationLabel(location: StorageDetailSafeLocation): string {
     );
   }
   if (location.bucket) parts.push(location.bucket);
+  const rootLabel = emptyRoot ? PROVIDER_ROOT_LABEL : root;
   if (parts.length === 0) {
-    return location.rootPath === "" ? "/" : location.rootPath;
+    return rootLabel;
   }
-  const prefix = parts.join(" · ");
-  return location.rootPath === "" ? prefix : `${prefix} / ${location.rootPath}`;
+  return `${parts.join(" · ")} / ${rootLabel}`;
+}
+
+/**
+ * Label one stored root for operator-facing text outside the location cell.
+ *
+ * Local roots are execution-environment paths and are never empty, so they are
+ * shown as stored. A remote provider that is deliberately rooted at its service
+ * root shows the explicit provider-root label instead of an empty cell or a
+ * misleading `/`.
+ */
+function rootPathLabel(type: string, rootPath: string): string {
+  if (type !== "local" && rootPath === "") {
+    return PROVIDER_ROOT_LABEL;
+  }
+  return rootPath === "" ? "/" : rootPath;
 }
 
 interface StorageDetailSafeLocation {
@@ -1042,6 +1069,120 @@ function toDetailViewModel(
   };
 }
 
+/**
+ * The Storage workspace's recovery state when no inventory can be read.
+ *
+ * Three durable states must stay distinguishable, because repeating setup is
+ * the wrong answer for two of them:
+ *
+ * - first setup is genuinely outstanding — an administrator continues the
+ *   existing V1 configuration workflow, and returns here afterwards;
+ * - a managed Active exists but is temporarily unavailable — the operator waits
+ *   and refreshes; initialization is not the problem;
+ * - the Active snapshot is unreadable — recovery is a configuration decision,
+ *   not a first run.
+ *
+ * The link below is a plain anchor, not a router link, because the destination
+ * is a different document outside the `/ui-v2` basepath. It carries no token:
+ * both consoles keep the API token in memory only, so the existing V1
+ * authentication prompt remains the continuation step. Nothing here creates a
+ * Draft, runs a check, activates configuration or starts media work — the
+ * action only navigates.
+ */
+function StorageSetupHandoff({
+  setup,
+  reason,
+  canStartSetup,
+  isFetching,
+  onRefresh,
+}: {
+  readonly setup: StorageSetupAuthority;
+  readonly reason: string | null;
+  readonly canStartSetup: boolean;
+  readonly isFetching: boolean;
+  readonly onRefresh: () => void;
+}) {
+  const refreshButton = (
+    <button
+      type="button"
+      className="mf-button mf-button-secondary"
+      onClick={onRefresh}
+      disabled={isFetching}
+    >
+      {isFetching ? "刷新中..." : "刷新"}
+    </button>
+  );
+  if (setup.setupRequired) {
+    const draftExists = setup.setupDraftExists;
+    return (
+      <StatusBanner variant="warning" title="尚未完成首次设置">
+        <p>
+          当前还没有已激活的托管配置,因此没有可显示的存储清单。首次设置会在现有配置向导中
+          {draftExists ? "继续已有的设置草稿" : "创建第一个设置草稿"}
+          ,完成校验并激活后回到本页查看真实清单。
+        </p>
+        <p>
+          前往设置只会打开配置页面;本页不会自动创建草稿、运行检查或激活配置。
+        </p>
+        {canStartSetup ? (
+          <div className="mf-actions">
+            <a className="mf-button mf-button-primary" href={setup.setupPath}>
+              去完成设置
+            </a>
+            {refreshButton}
+          </div>
+        ) : (
+          <>
+            <p>当前账号没有管理配置的权限,无法创建或激活设置草稿。</p>
+            <div className="mf-actions">
+              <a className="mf-button mf-button-primary" href={setup.setupPath}>
+                查看设置页面
+              </a>
+              {refreshButton}
+            </div>
+          </>
+        )}
+      </StatusBanner>
+    );
+  }
+  if (setup.recoveryRequired) {
+    // A managed Active was published before and is not usable right now. The
+    // configuration is not missing, so repeating initialization would be wrong.
+    return (
+      <StatusBanner variant="error" title="已激活配置暂不可用">
+        <p>
+          系统已存在已激活的托管配置,但当前无法读取该快照,因此不能显示存储清单。这不是首次设置;
+          请检查配置状态,恢复后刷新重试。
+        </p>
+        <div className="mf-actions">
+          {refreshButton}
+          <a className="mf-button mf-button-secondary" href={setup.setupPath}>
+            打开配置页面排查
+          </a>
+        </div>
+      </StatusBanner>
+    );
+  }
+  return (
+    <StatusBanner
+      variant="error"
+      title={reason === "malformed" ? "配置快照无法解析" : "存储管理暂不可用"}
+    >
+      <p>
+        {reason === "malformed"
+          ? "已激活的配置快照无法解析,存储清单不能被信任地呈现。已有配置未被本次读取修改;请在配置页面核实后重试。"
+          : "托管 Active 配置快照暂不可用,存储清单无法读取。请稍后刷新重试。"}
+      </p>
+      <div className="mf-actions">
+        {refreshButton}
+        <a className="mf-button mf-button-secondary" href={setup.setupPath}>
+          打开配置页面排查
+        </a>
+      </div>
+    </StatusBanner>
+  );
+}
+
 export function StorageManagementPage() {
   const token = useAuthToken();
   const queryClient = useQueryClient();
@@ -1562,7 +1703,7 @@ export function StorageManagementPage() {
         const current = await fetchStorageEdit(token, id);
         if (current.ok) {
           setSaveError(
-            `已核实当前存储：${current.model.values.name}，${providerTypeLabel(current.model.values.type)}，根路径 ${current.model.values.rootPath || "/"}。当前 Active 已变化；请核对保留的输入后再明确保存，或关闭并重新编辑。`,
+            `已核实当前存储：${current.model.values.name}，${providerTypeLabel(current.model.values.type)}，${rootPathLabel(current.model.values.type, current.model.values.rootPath)}。当前 Active 已变化；请核对保留的输入后再明确保存，或关闭并重新编辑。`,
           );
           setDrawer((previous) => ({
             ...previous,
@@ -1625,7 +1766,6 @@ export function StorageManagementPage() {
             );
           }
           if (!data.available) {
-            const setupState = data.reason === "no_active";
             return (
               <>
                 <InventoryHeader
@@ -1633,26 +1773,13 @@ export function StorageManagementPage() {
                   available={false}
                   onAdd={openAddDrawer}
                 />
-                <StatusBanner
-                  variant="warning"
-                  title={setupState ? "尚未完成托管配置" : "存储管理暂不可用"}
-                >
-                  <p>
-                    {setupState
-                      ? "当前没有已激活的托管配置,因此没有可显示的存储清单。请先完成首次设置并激活配置。"
-                      : "托管 Active 配置快照暂不可用,存储清单无法读取。请稍后刷新重试。"}
-                  </p>
-                  <div className="mf-actions">
-                    <button
-                      type="button"
-                      className="mf-button mf-button-secondary"
-                      onClick={refresh}
-                      disabled={isFetching}
-                    >
-                      {isFetching ? "刷新中..." : "刷新"}
-                    </button>
-                  </div>
-                </StatusBanner>
+                <StorageSetupHandoff
+                  setup={data.setup}
+                  reason={data.reason}
+                  canStartSetup={data.canStartSetup}
+                  isFetching={isFetching}
+                  onRefresh={refresh}
+                />
               </>
             );
           }

@@ -560,6 +560,19 @@ APP_JS = b"""(() => {
     content.append(table(['Revision', 'Status', 'Version', 'Digest', 'Updated'],
       revisions.map(item => [item.revisionId, item.status, item.version,
         item.digest, item.updatedAt]), index => showConfigurationRevision(revisions[index])));
+    // A managed runtime now exists, so the operator can return to the Storage
+    // workspace that reads the exact Active configuration published above. This
+    // is a plain same-origin navigation: it refetches the Storage page's own
+    // authority on load, carries no token or revision identifier, and performs
+    // no configuration, Storage or media operation.
+    if (data.active && data.active.revisionId) {
+      content.append(text('h3', 'Storage workspace'));
+      content.append(text('p',
+        'Review the configured Storage locations in the V2 Storage management page. ' +
+        'It reads the exact Active configuration above and does not change it.',
+        'warning'));
+      content.append(backToStorageLink());
+    }
   }
   function guidedInput(label, value, type = 'text') {
     const wrapper = text('label', label);
@@ -4561,6 +4574,16 @@ APP_JS = b"""(() => {
   }
   function actionButton(label, action) {
     const button = text('button', label); button.addEventListener('click', action); return button;
+  }
+  // A plain same-origin link, not a click handler: returning to the V2 Storage
+  // workspace is a document navigation that re-reads that page's own Active
+  // authority. The target is a fixed application route, never an operator
+  // supplied redirect, and it carries no token, so the V2 console's existing
+  // memory-only authentication prompt remains the continuation step.
+  function backToStorageLink() {
+    const link = text('a', 'Return to Storage management');
+    link.href = '/ui-v2/storage';
+    return link;
   }
   async function openFileFromSource(storageId, resourceLibraryId, path) {
     if (!storageId || !path) {

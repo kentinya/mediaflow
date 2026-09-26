@@ -12749,6 +12749,7 @@ class MediaFlowApi:
                         },
                     },
                     "canManage": manage,
+                    "canStartSetup": (ApiPermission.MANAGE_CONFIGURATION in principal.permissions),
                 },
             )
         return self._response(
@@ -12756,6 +12757,7 @@ class MediaFlowApi:
             200,
             {
                 **inventory,
+                "canStartSetup": (ApiPermission.MANAGE_CONFIGURATION in principal.permissions),
                 "actions": {
                     "check": {
                         "available": False,

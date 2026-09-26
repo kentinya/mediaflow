@@ -161,6 +161,14 @@ def __getattr__(name: str) -> object:
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
+# The existing V1 operator console owns first-Draft creation/resume, the guided
+# setup flow, checked validation and checked activation.  The V2 Storage
+# workspace only continues that journey, so it links to this one fixed
+# same-origin route.  It is a constant, never an operator-supplied redirect
+# target, and it carries no token, claim or revision identifier.
+_V1_SETUP_PATH = "/ui"
+
+
 class _DestinationPreviewFailure(ValueError):
     def __init__(self, category: str, message: str) -> None:
         super().__init__(message)
@@ -6823,6 +6831,7 @@ class ConfigurationObjectService:
             "nextAfter": None,
             "query": query,
             "family": family,
+            "setup": self._storage_setup_authority(),
         }
         try:
             active = self._managed.active()
@@ -6886,6 +6895,51 @@ class ConfigurationObjectService:
             "nextAfter": (str(window[-1].get("id", "")) if has_more and window else None),
             "query": query,
             "family": family,
+            "setup": self._storage_setup_authority(),
+        }
+
+    def _storage_setup_authority(self) -> dict[str, object]:
+        """Project the existing setup authority without duplicating it.
+
+        The Storage workspace must tell a genuine first-setup state apart from
+        an existing-but-unavailable Active and from an unreadable snapshot, and
+        it must not present any of them as an actionable inventory.  That
+        distinction already exists in ``ManagedConfigurationService``: this
+        projection reuses its one status document rather than creating a second
+        source of truth, and carries only bounded, secret-free flags plus the
+        fixed, same-origin route that continues the existing V1 setup workflow.
+
+        It is a pure read.  It never creates a Draft, runs a check, activates
+        configuration or starts media work, so a page render, refresh or return
+        can never produce a duplicate Draft or replay a publication.
+        """
+
+        try:
+            status = self._managed.status_document()
+        except Exception:
+            # The Storage read that called this already failed closed.  A status
+            # document that cannot be read must not change that outcome, and it
+            # must never be reported as "setup is still available".
+            return {
+                "setupRequired": False,
+                "setupDraftExists": False,
+                "managedActivation": False,
+                "recoveryRequired": False,
+                "health": None,
+                "setupPath": _V1_SETUP_PATH,
+            }
+        return {
+            "setupRequired": status.get("setupRequired") is True,
+            # An unfinished setup is resumed, not repeated.  Only the presence
+            # of the existing Draft crosses the projection; its identity stays
+            # in the configuration authority that owns it.
+            "setupDraftExists": isinstance(status.get("setupDraft"), dict),
+            "managedActivation": status.get("managedActivation") is True,
+            "recoveryRequired": status.get("recoveryRequired") is True,
+            "health": status.get("health"),
+            # A fixed same-origin application route, never an operator-supplied
+            # redirect target, and it carries no token or internal identifier.
+            "setupPath": _V1_SETUP_PATH,
         }
 
     @classmethod

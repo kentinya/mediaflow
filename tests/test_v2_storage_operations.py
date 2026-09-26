@@ -673,11 +673,153 @@ class StorageOperationsJourney(unittest.TestCase):
                 self.assertIsNone(inventory["authority"])
                 self.assertEqual(inventory["items"], [])
                 self.assertIsNotNone(inventory["actions"]["check"]["reason"])
+                # The recovery handoff the Storage workspace renders. It reuses
+                # the same setup authority the V1 workflow already exposes and
+                # points at one fixed same-origin route, so it cannot become an
+                # arbitrary redirect or a second initialization authority.
+                setup = inventory["setup"]
+                self.assertTrue(setup["setupRequired"])
+                self.assertFalse(setup["setupDraftExists"])
+                self.assertFalse(setup["managedActivation"])
+                self.assertFalse(setup["recoveryRequired"])
+                self.assertEqual(setup["setupPath"], "/ui")
+                # The permission to start the first Draft is backend
+                # authoritative, not a client judgement.
+                self.assertTrue(inventory["canStartSetup"])
                 _assert_document_clean(inventory)
             finally:
                 task_repository.close()
                 repository.close()
         finally:
+            directory.cleanup()
+
+    def test_setup_authority_is_read_only_and_permission_scoped(self) -> None:
+        """Reading the recovery state changes nothing and grants nothing.
+
+        The Storage page renders setup, resume and recovery from this
+        projection, so the read itself must not create a Draft, activate
+        configuration, run a check or start media work, and a viewer must not be
+        told it may start setup.
+        """
+
+        self.configuration_repository.close()
+        self.repository.close()
+        self.objects._setup_check_executor.shutdown(wait=True)
+        self.directory.cleanup()
+        directory = tempfile.TemporaryDirectory()
+        try:
+            root = Path(directory.name)
+            repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+            task_repository = SQLiteTaskRepository(str(root / "runtime.sqlite3"))
+            configuration = ManagedConfigurationService(
+                repository,
+                bootstrap_database_path=str(root / "runtime.sqlite3"),
+                bootstrap_document={"persistence": {"databasePath": str(root / "runtime.sqlite3")}},
+                management_only=True,
+            )
+            admin = ResolvedApiPrincipal(ADMIN_TOKEN, ADMIN_TOKEN, frozenset(ApiPermission))
+            viewer = ResolvedApiPrincipal(
+                VIEWER_TOKEN, VIEWER_TOKEN, frozenset({ApiPermission.READ})
+            )
+            api = MediaFlowApi(
+                task_repository,
+                None,
+                principals=(admin, viewer),
+                configuration_service=configuration,
+                bootstrap_document={"persistence": {"databasePath": str(root / "runtime.sqlite3")}},
+                management_only=True,
+            )
+            try:
+                status, inventory = _request(api, INVENTORY_ROUTE)
+                self.assertEqual(status, 200)
+                self.assertTrue(inventory["setup"]["setupRequired"])
+                # An administrator can continue the existing workflow.
+                self.assertTrue(inventory["canStartSetup"])
+                # Repeating the read, as a refresh or a reconnect does, is
+                # idempotent and never produced a Draft.
+                status, again = _request(api, INVENTORY_ROUTE)
+                self.assertEqual(status, 200)
+                self.assertTrue(again["setup"]["setupRequired"])
+                self.assertFalse(again["setup"]["setupDraftExists"])
+                self.assertIsNone(configuration.active())
+                # Reading the recovery state never created a setup Draft, so a
+                # later explicit first-Draft command still has one winner.
+                self.assertEqual(tuple(repository.list_revisions(limit=10)), ())
+                # No media or Storage work was started by reading.
+                connection = sqlite3.connect(root / "runtime.sqlite3")
+                try:
+                    self.assertEqual(
+                        connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 0
+                    )
+                finally:
+                    connection.close()
+
+                # A viewer sees the same truthful state but may not start setup.
+                status, viewer_inventory = _request(api, INVENTORY_ROUTE, token=VIEWER_TOKEN)
+                self.assertEqual(status, 200)
+                self.assertTrue(viewer_inventory["setup"]["setupRequired"])
+                self.assertFalse(viewer_inventory["canStartSetup"])
+                self.assertFalse(viewer_inventory["canManage"])
+                _assert_document_clean(viewer_inventory)
+            finally:
+                task_repository.close()
+                repository.close()
+        finally:
+            directory.cleanup()
+
+    def test_unavailable_active_is_distinct_from_first_setup(self) -> None:
+        """An existing-but-unavailable Active is never presented as setup.
+
+        Repeating initialization would be the wrong recovery for an instance
+        that already published a managed Active, so the projection reports a
+        recovery instead of an outstanding first setup.
+        """
+
+        directory = tempfile.TemporaryDirectory()
+        try:
+            root = Path(directory.name)
+            repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+            task_repository = SQLiteTaskRepository(str(root / "runtime.sqlite3"))
+            configuration = ManagedConfigurationService(
+                repository,
+                bootstrap_database_path=str(root / "runtime.sqlite3"),
+                bootstrap_document={"persistence": {"databasePath": str(root / "runtime.sqlite3")}},
+                management_only=True,
+            )
+            # A managed activation really happened, and the Active row then
+            # became unreadable: the authority is missing, not never
+            # established. This is the state repeating initialization would
+            # destroy rather than repair.
+            document = _document(root)
+            document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
+            draft = configuration.import_draft(document, actor="bootstrap")
+            validated = configuration.validate(draft.revision_id, actor="bootstrap")
+            configuration.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="bootstrap",
+            )
+            self.assertTrue(configuration.has_managed_activation())
+            with patch.object(
+                SQLiteConfigurationRepository, "get_active_revision", return_value=None
+            ):
+                objects = ConfigurationObjectService(configuration)
+                try:
+                    inventory = objects.active_storage_management()
+                finally:
+                    objects._setup_check_executor.shutdown(wait=True)
+            self.assertFalse(inventory["available"])
+            self.assertEqual(inventory["reason"], "no_active")
+            # The managed-activation marker is what makes this a recovery rather
+            # than a first run, so Storage never tells the operator to start
+            # over an established authority.
+            self.assertTrue(inventory["setup"]["managedActivation"])
+            self.assertFalse(inventory["setup"]["setupRequired"])
+            self.assertTrue(inventory["setup"]["recoveryRequired"])
+            self.assertEqual(inventory["setup"]["setupPath"], "/ui")
+        finally:
+            repository.close()
+            task_repository.close()
             directory.cleanup()
 
     # ------------------------------------------------------------------

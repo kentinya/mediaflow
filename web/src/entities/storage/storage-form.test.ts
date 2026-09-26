@@ -19,6 +19,7 @@ import {
   type StorageFormValues,
   type StorageProviderType,
 } from "./storage-form";
+import { PROVIDER_ROOT_LABEL } from "./storage-management";
 
 /**
  * Entity proof for the typed Storage Add/Edit form (Slice 39, RO-3).
@@ -602,5 +603,31 @@ describe("Storage confirmation summary", () => {
       expect(() => storageSummary(form, false)).not.toThrow();
       expect(storageSummary(form, false).length).toBeGreaterThanOrEqual(6);
     }
+  });
+
+  it("names an empty remote root as the provider root instead of a blank field", () => {
+    // A remote provider rooted at its service root is a complete, correct
+    // configuration. Reporting it as "未填写" would make a correct candidate
+    // look like the operator forgot something.
+    const entry = storageSummary(
+      values({
+        id: "openlist-root",
+        name: "OpenList root",
+        type: "openlist",
+        rootPath: "",
+      }),
+      false,
+    ).find((item) => item.label === "根路径 / 位置");
+    expect(entry?.value).toBe(PROVIDER_ROOT_LABEL);
+  });
+
+  it("still reports a missing Local root as unfilled", () => {
+    // A Local root is required, so the honest summary is that it is not filled
+    // in rather than a provider-root label that could never apply to it.
+    const entry = storageSummary(
+      values({ id: "local-1", name: "Local", type: "local", rootPath: "" }),
+      false,
+    ).find((item) => item.label === "本地根路径");
+    expect(entry?.value).toBe("未填写");
   });
 });

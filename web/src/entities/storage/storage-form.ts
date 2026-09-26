@@ -22,6 +22,7 @@ import {
   normalizeIdentityText,
   readRecord,
 } from "../shared/normalize";
+import { PROVIDER_ROOT_LABEL } from "./storage-management";
 
 export const STORAGE_TYPES = [
   "local",
@@ -931,7 +932,13 @@ export function storageSummary(
     },
     {
       label: values.type === "local" ? "本地根路径" : "根路径 / 位置",
-      value: values.rootPath.trim() || "未填写",
+      // An empty remote root is a deliberate provider-root configuration, not
+      // missing input; saying "未填写" here would make a correct candidate look
+      // incomplete. Local roots are required and are never empty.
+      value:
+        values.type !== "local" && values.rootPath.trim() === ""
+          ? PROVIDER_ROOT_LABEL
+          : values.rootPath.trim() || "未填写",
     },
     { label: "状态", value: values.enabled ? "启用" : "停用" },
     { label: "只读", value: values.readOnly ? "是" : "否" },

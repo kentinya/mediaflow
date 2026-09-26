@@ -1538,6 +1538,215 @@ class StoragePageLocalSaveTests(unittest.TestCase):
                 app_body(notes="Storage has no notes field"), actor="operator"
             )
 
+    def test_provider_root_survives_checked_save_inventory_detail_and_edit(self) -> None:
+        """A provider-valid empty root completes the whole typed round trip.
+
+        OpenList resolves both ``""`` and ``/`` to its service root, so an
+        unreferenced disabled object with an empty root is a supported
+        configuration rather than a malformed one. This drives the real
+        application/API projection through Add, checked Save, the refreshed
+        full inventory, the detail view and a prefilled Edit, and proves the
+        stored root is preserved byte for byte at every step. It uses the real
+        managed Active runtime and real Local adapters, not a hand-authored
+        frontend payload.
+        """
+
+        self.objects._storage_adapters["openlist-empty-root"] = ZeroMutationStorage(
+            "openlist-empty-root"
+        )
+        status, created = request(
+            self.api,
+            SAVE_ROUTE,
+            method="POST",
+            body=self.add_body(
+                storageId="openlist-empty-root",
+                name="OpenList root",
+                type="openlist",
+                # The empty string is the provider service root, not a missing
+                # value, and is deliberately different from an explicit "/".
+                rootPath="",
+                readOnly=True,
+                enabled=False,
+                options={
+                    "baseUrl": "https://openlist.example",
+                    "tokenEnv": "MF_OPENLIST_TOKEN",
+                },
+            ),
+        )
+        self.assertEqual(status, 200, created)
+        self.assertEqual(created["storage"]["rootPath"], "")
+        self.assertEqual(created["sideEffects"], "configuration_only")
+        self.assertFalse(created["storage"]["enabled"])
+        # The stored configuration is exactly what was submitted; nothing was
+        # silently rewritten to "/" or dropped.
+        self.assertEqual(self.storage_of("openlist-empty-root")["rootPath"], "")
+
+        # The refreshed full inventory keeps the object beside the other valid
+        # entries instead of dropping the row.
+        status, inventory = request(self.api, INVENTORY_ROUTE)
+        self.assertEqual(status, 200, inventory)
+        self.assertTrue(inventory["available"], inventory)
+        by_id = {item["id"]: item for item in inventory["items"]}
+        self.assertIn("openlist-empty-root", by_id)
+        # The remote location keeps the provider-relative root exactly. The
+        # OpenList service URL is an approved deployment coordinate the
+        # projection allowlists; either way the root is the stored empty value.
+        location = by_id["openlist-empty-root"]["location"]
+        self.assertEqual(location["kind"], "remote")
+        self.assertEqual(location["rootPath"], "")
+        # The already-existing valid entries are still readable.
+        self.assertIn("source-storage", by_id)
+        self.assertEqual(
+            by_id["source-storage"]["location"],
+            {"kind": "local", "rootPath": str(self.root / "source")},
+        )
+        self.assert_no_secret_values(inventory)
+
+        # Detail binds the same empty root to the exact Active configuration.
+        status, detail = request(
+            self.api,
+            "/api/v1/operations/storage-management/storage/openlist-empty-root",
+        )
+        self.assertEqual(status, 200, detail)
+        self.assertEqual(detail["storage"]["location"]["rootPath"], "")
+        self.assertEqual(
+            detail["activeConfiguration"]["revisionId"],
+            inventory["active"]["revisionId"],
+        )
+        self.assert_no_secret_values(detail)
+
+        # A prefilled Edit carries the stored value forward instead of guessing
+        # a substitute root, so reopening and saving keeps the same object.
+        status, projection = request(self.api, f"{SAVE_ROUTE}/openlist-empty-root/edit")
+        self.assertEqual(status, 200, projection)
+        self.assertEqual(projection["storage"]["rootPath"], "")
+        stored = projection["storage"]
+        status, updated = request(
+            self.api,
+            f"{SAVE_ROUTE}/openlist-empty-root",
+            method="PUT",
+            body={
+                # The typed edit candidate carries the immutable Storage ID the
+                # form opened, not the projection's object field name.
+                "storageId": stored["id"],
+                "name": stored["name"],
+                "type": stored["type"],
+                "rootPath": stored["rootPath"],
+                "readOnly": stored["readOnly"],
+                "enabled": stored["enabled"],
+                "options": stored["options"],
+                "expectedRevisionId": projection["active"]["revisionId"],
+                "expectedVersion": projection["active"]["revisionSequence"],
+                "expectedDigest": projection["active"]["digest"],
+            },
+        )
+        self.assertEqual(status, 200, updated)
+        self.assertEqual(updated["storage"]["rootPath"], "")
+        self.assertEqual(self.storage_of("openlist-empty-root")["rootPath"], "")
+
+        # No media content, Storage mutation or workflow work happened.
+        self.assertEqual(self.source.mutations, [])
+        self.assertEqual(self.target.mutations, [])
+
+    def test_slash_provider_root_and_local_confinement_are_unchanged(self) -> None:
+        """Accepting the empty root does not widen any other root rule.
+
+        An explicit ``/`` is the same OpenList service root and still saves, an
+        empty *Local* root is still rejected by confinement, an oversized or
+        traversing remote root is still rejected, and no row is silently
+        omitted from the inventory when a candidate is refused.
+        """
+
+        self.objects._storage_adapters["openlist-slash-root"] = ZeroMutationStorage(
+            "openlist-slash-root"
+        )
+        status, created = request(
+            self.api,
+            SAVE_ROUTE,
+            method="POST",
+            body=self.add_body(
+                storageId="openlist-slash-root",
+                name="OpenList slash",
+                type="openlist",
+                rootPath="/",
+                readOnly=True,
+                enabled=False,
+                options={
+                    "baseUrl": "https://openlist.example",
+                    "tokenEnv": "MF_OPENLIST_TOKEN",
+                },
+            ),
+        )
+        self.assertEqual(status, 200, created)
+        # The stored `/` is preserved exactly, so it stays distinguishable from
+        # the empty provider root in the projection.
+        self.assertEqual(self.storage_of("openlist-slash-root")["rootPath"], "/")
+        status, inventory = request(self.api, INVENTORY_ROUTE)
+        by_id = {item["id"]: item for item in inventory["items"]}
+        self.assertEqual(by_id["openlist-slash-root"]["location"]["rootPath"], "/")
+
+        before = self.configuration.active().revision_id
+        # Local confinement is unchanged: an empty Local root names no
+        # directory inside the execution environment and stays refused.
+        status, rejected = request(
+            self.api,
+            SAVE_ROUTE,
+            method="POST",
+            body=self.add_body(
+                storageId="local-empty-root",
+                name="Local empty",
+                type="local",
+                rootPath="",
+            ),
+        )
+        self.assertEqual(status, 400, rejected)
+        # A traversing remote root is still refused by the domain validator.
+        status, rejected = request(
+            self.api,
+            SAVE_ROUTE,
+            method="POST",
+            body=self.add_body(
+                storageId="openlist-escape",
+                name="OpenList escape",
+                type="openlist",
+                rootPath="../etc",
+                enabled=False,
+                options={
+                    "baseUrl": "https://openlist.example",
+                    "tokenEnv": "MF_OPENLIST_TOKEN",
+                },
+            ),
+        )
+        self.assertEqual(status, 400, rejected)
+        # An oversized root is still refused rather than truncated.
+        status, rejected = request(
+            self.api,
+            SAVE_ROUTE,
+            method="POST",
+            body=self.add_body(
+                storageId="openlist-oversized",
+                name="OpenList oversized",
+                type="openlist",
+                rootPath="m" * 5000,
+                enabled=False,
+                options={
+                    "baseUrl": "https://openlist.example",
+                    "tokenEnv": "MF_OPENLIST_TOKEN",
+                },
+            ),
+        )
+        self.assertEqual(status, 400, rejected)
+        # Every refused candidate left the previous Active and the inventory
+        # untouched, with no row silently removed.
+        self.assertEqual(self.configuration.active().revision_id, before)
+        status, inventory = request(self.api, INVENTORY_ROUTE)
+        self.assertEqual(status, 200, inventory)
+        ids = {item["id"] for item in inventory["items"]}
+        self.assertNotIn("local-empty-root", ids)
+        self.assertNotIn("openlist-escape", ids)
+        self.assertIn("openlist-slash-root", ids)
+        self.assertIn("source-storage", ids)
+
 
 if __name__ == "__main__":
     unittest.main()
