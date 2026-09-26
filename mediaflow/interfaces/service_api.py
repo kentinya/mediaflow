@@ -1397,7 +1397,22 @@ class MediaFlowApi:
             and not task_read_route
             and not worker_route
         ):
-            binding = self._refresh_configuration_binding()
+            # Transfer observation is a durable read of an already-admitted
+            # task.  Keep the last published binding so a missing current
+            # Active cannot hide valid older pinned progress; admission and
+            # other workflow routes still refresh and fail closed normally.
+            transfer_observation = (
+                method == "GET"
+                and len(parts) in {7}
+                and parts[4:6] == ["files", "transfers"]
+                and tuple(parts[:3])
+                in {
+                    ("api", "v1", "resource-libraries"),
+                    ("api", "v1", "media-libraries"),
+                }
+            )
+            if not transfer_observation:
+                binding = self._refresh_configuration_binding()
         # --- V2 Manual Scan/Preview operations routes (bounded, server-bound) ---
         if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -7877,9 +7892,22 @@ class MediaFlowApi:
         a fingerprint value.
         """
         self._require(principal, ApiPermission.READ)
-        self._refresh_configuration_binding()
+        # Readiness describes the resident process and command consumers.  It
+        # must remain observable while current Active is unavailable because
+        # already-admitted transfers may still execute their immutable pins.
         active_snapshot_id = self._runtime_binding.snapshot_id
         active_snapshot_digest = self._runtime_binding.snapshot_digest
+        if self._configuration_service is not None:
+            try:
+                active = self._configuration_service.active()
+            except Exception:
+                active = None
+            if active is None:
+                active_snapshot_id = None
+                active_snapshot_digest = None
+            else:
+                active_snapshot_id = active.revision_id
+                active_snapshot_digest = active.digest
         if self._worker_service is None:
             document: dict[str, object] = {
                 "ready": False,
