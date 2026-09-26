@@ -2230,7 +2230,10 @@ class ConfigurationObjectService:
                     if item.get("storageId") == storage_id and item.get("enabled", True) is True:
                         raise ResourceLibrarySaveError(
                             "storage_disable_referenced",
-                            f"cannot disable Storage {storage_id!r} while an enabled {section} depends on it",
+                            (
+                                f"cannot disable Storage {storage_id!r} while an enabled "
+                                f"{section} depends on it"
+                            ),
                             status=409,
                             durable_state="active_preserved",
                             next_action=f"repoint or disable the affected {section}, then retry",
@@ -2314,9 +2317,7 @@ class ConfigurationObjectService:
                 durable_state="active_preserved",
                 next_action="correct the blocking configuration, then retry removal",
             )
-        self._checked_successor_evidence(
-            validated, actor=actor, code_prefix="storage_removal"
-        )
+        self._checked_successor_evidence(validated, actor=actor, code_prefix="storage_removal")
         try:
             return self.activate_checked(
                 validated.revision_id,
@@ -2356,7 +2357,7 @@ class ConfigurationObjectService:
         self._managed.verify_integrity(active)
         if (
             active.revision_id != expected_revision_id
-            or active.version != expected_version
+            or (active.revision_sequence or active.version) != expected_version
             or active.digest != expected_digest
         ):
             raise ResourceLibrarySaveError(

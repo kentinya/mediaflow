@@ -38,11 +38,13 @@ import {
   fetchStorageDetail,
   fetchStorageEdit,
   fetchStorageAuthority,
+  fetchStorageInventory,
   copyStorage,
   setStorageEnabled,
   removeStorage,
   saveStorage,
 } from "../../shared/api/api-client";
+import type { StorageSaveAuthority } from "../../shared/api/api-client";
 import {
   STORAGE_INVENTORY_QUERY_KEY,
   storageInventoryQueryOptions,
@@ -366,7 +368,10 @@ function InventoryTable({
   readonly canManage: boolean;
   readonly onView: (storageId: string) => void;
   readonly onEdit: (storageId: string) => void;
-  readonly onAction: (action: "copy" | "toggle" | "remove", item: StorageRowItem) => void;
+  readonly onAction: (
+    action: "copy" | "toggle" | "remove",
+    item: StorageRowItem,
+  ) => void;
 }) {
   return (
     <div className="mf-files-table-scroll">
@@ -430,11 +435,37 @@ function InventoryTable({
                     编辑
                   </button>
                   <details className="mf-storage-more">
-                    <summary className="mf-link-button" aria-label={`更多操作 ${item.name}`}>更多</summary>
+                    <summary
+                      className="mf-link-button"
+                      aria-label={`更多操作 ${item.name}`}
+                    >
+                      更多
+                    </summary>
                     <div className="mf-storage-more-menu" role="menu">
-                      <button type="button" role="menuitem" disabled={!canManage} onClick={() => onAction("copy", item)}>复制</button>
-                      <button type="button" role="menuitem" disabled={!canManage} onClick={() => onAction("toggle", item)}>{item.enabled ? "停用" : "启用"}</button>
-                      <button type="button" role="menuitem" disabled={!canManage} onClick={() => onAction("remove", item)}>移除配置</button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!canManage}
+                        onClick={() => onAction("copy", item)}
+                      >
+                        复制
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!canManage}
+                        onClick={() => onAction("toggle", item)}
+                      >
+                        {item.enabled ? "停用" : "启用"}
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={!canManage}
+                        onClick={() => onAction("remove", item)}
+                      >
+                        移除配置
+                      </button>
                     </div>
                   </details>
                 </div>
@@ -944,6 +975,14 @@ export function StorageManagementPage() {
   const drawerInvokerIdRef = useRef<string | null>(null);
   const editInvokerRef = useRef<HTMLElement | null>(null);
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+  const [lifecycle, setLifecycle] = useState<{
+    readonly action: "copy" | "remove";
+    readonly item: StorageRowItem;
+    readonly authority: StorageSaveAuthority;
+    readonly newId: string;
+    readonly name: string;
+    readonly unknown: boolean;
+  } | null>(null);
 
   // Search and the provider filter are applied by the backend over the
   // complete Active object set, not over one already-truncated page.
@@ -1052,29 +1091,119 @@ export function StorageManagementPage() {
     });
   }, [queryClient]);
 
-  const runLifecycleAction = useCallback(async (action: "copy" | "toggle" | "remove", item: StorageRowItem) => {
-    if (!inventory?.active || !inventory.canManage) return;
-    if (action === "remove" && !window.confirm(`仅移除存储“${item.name}”的配置,物理文件不会被删除。继续?`)) return;
-    const authority = await fetchStorageAuthority(token);
-    if (!authority.ok) { setEditLoadError("无法核实当前 Active 配置,请刷新后重试。"); return; }
-    let result;
-    if (action === "copy") {
-      const newId = window.prompt("请输入新的存储 ID", `${item.id}-copy`);
-      const name = window.prompt("请输入新的存储名称", `${item.name} copy`);
-      if (!newId || !name) return;
-      result = await copyStorage(token, { storageId: item.id, newStorageId: newId, name, authority: authority.model });
-    } else if (action === "toggle") {
-      result = await setStorageEnabled(token, { storageId: item.id, enabled: !item.enabled, authority: authority.model });
-    } else {
-      result = await removeStorage(token, { storageId: item.id, authority: authority.model });
-    }
+  const runLifecycleAction = useCallback(
+    async (action: "copy" | "toggle" | "remove", item: StorageRowItem) => {
+      if (!inventory?.active || !inventory.canManage) return;
+      const authority = await fetchStorageAuthority(token);
+      if (!authority.ok) {
+        setEditLoadError("无法核实当前 Active 配置,请刷新后重试。");
+        return;
+      }
+      if (action === "copy") {
+        setLifecycle({
+          action,
+          item,
+          authority: authority.model,
+          newId: `${item.id}-copy`,
+          name: `${item.name} copy`,
+          unknown: false,
+        });
+        return;
+      }
+      if (
+        action === "remove" &&
+        !window.confirm(
+          `仅移除存储“${item.name}”的配置,物理文件不会被删除。当前确认绑定到已读取的 Active,继续?`,
+        )
+      )
+        return;
+      const result =
+        action === "toggle"
+          ? await setStorageEnabled(token, {
+              storageId: item.id,
+              enabled: !item.enabled,
+              authority: authority.model,
+            })
+          : await removeStorage(token, {
+              storageId: item.id,
+              authority: authority.model,
+            });
+      if (!result.ok) {
+        const details = result.details;
+        setEditLoadError(
+          `操作未完成: ${result.code}。${details?.nextAction ?? "当前 Active 状态可能已变化,请先刷新核实后再继续。"}`,
+        );
+        if (
+          [
+            "transport_unavailable",
+            "malformed_response",
+            "internal_error",
+            "service_unavailable",
+          ].includes(result.code)
+        ) {
+          setLifecycle({
+            action: "remove",
+            item,
+            authority: authority.model,
+            newId: "",
+            name: "",
+            unknown: true,
+          });
+        }
+        refreshInventoryAuthority();
+        return;
+      }
+      setEditLoadError(null);
+      refreshInventoryAuthority();
+    },
+    [inventory, token, refreshInventoryAuthority],
+  );
+
+  const submitCopy = useCallback(async () => {
+    if (lifecycle === null || lifecycle.action !== "copy") return;
+    const result = await copyStorage(token, {
+      storageId: lifecycle.item.id,
+      newStorageId: lifecycle.newId,
+      name: lifecycle.name,
+      authority: lifecycle.authority,
+    });
     if (!result.ok) {
-      setEditLoadError(`操作未完成: ${result.code}。当前 Active 未改变,请根据引用或配置错误修正后重试。`);
+      setEditLoadError(
+        `复制未完成: ${result.code}。${result.details?.nextAction ?? "请修正输入后重试。"}`,
+      );
+      setLifecycle((current) =>
+        current === null
+          ? null
+          : {
+              ...current,
+              unknown: [
+                "transport_unavailable",
+                "malformed_response",
+                "internal_error",
+                "service_unavailable",
+              ].includes(result.code),
+            },
+      );
+      refreshInventoryAuthority();
       return;
     }
+    setLifecycle(null);
     setEditLoadError(null);
     refreshInventoryAuthority();
-  }, [inventory, token, refreshInventoryAuthority]);
+  }, [lifecycle, token, refreshInventoryAuthority]);
+
+  const verifyLifecycle = useCallback(async () => {
+    const current = await fetchStorageInventory(token);
+    if (!current.available) {
+      setEditLoadError("无法核实当前 Active 状态,请确认 API 可用后重试。");
+      return;
+    }
+    setLifecycle(null);
+    setEditLoadError(
+      "已核实当前 Active 清单;如需继续,请从当前行重新发起明确操作。",
+    );
+    refreshInventoryAuthority();
+  }, [token, refreshInventoryAuthority]);
 
   const closeDrawer = useCallback(() => {
     setDrawer((current) => ({ ...current, open: false }));
@@ -1369,6 +1498,100 @@ export function StorageManagementPage() {
                   </div>
                 </StatusBanner>
               )}
+              {lifecycle !== null && (
+                <div
+                  className="mf-files-drawer"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-label={
+                    lifecycle.action === "copy" ? "复制存储" : "操作结果核实"
+                  }
+                >
+                  {lifecycle.action === "copy" && !lifecycle.unknown ? (
+                    <>
+                      <h2>复制存储“{lifecycle.item.name}”</h2>
+                      <p>
+                        复制配置,不会复制物理文件。启用状态、只读意图和已批准的引用将按当前
+                        Active 保留。
+                      </p>
+                      <label>
+                        新存储 ID
+                        <input
+                          value={lifecycle.newId}
+                          onChange={(event) =>
+                            setLifecycle(
+                              (current) =>
+                                current && {
+                                  ...current,
+                                  newId: event.target.value,
+                                },
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        新存储名称
+                        <input
+                          value={lifecycle.name}
+                          onChange={(event) =>
+                            setLifecycle(
+                              (current) =>
+                                current && {
+                                  ...current,
+                                  name: event.target.value,
+                                },
+                            )
+                          }
+                        />
+                      </label>
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-primary"
+                          onClick={() => {
+                            void submitCopy();
+                          }}
+                        >
+                          保存复制
+                        </button>
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() => setLifecycle(null)}
+                        >
+                          取消
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <h2>需要核实当前 Active</h2>
+                      <p>
+                        操作结果未能确认,系统不会自动重放。请先读取当前 Active
+                        清单,再从当前对象重新发起操作。
+                      </p>
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-primary"
+                          onClick={() => {
+                            void verifyLifecycle();
+                          }}
+                        >
+                          核实当前状态
+                        </button>
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() => setLifecycle(null)}
+                        >
+                          关闭
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
               <ProviderCards
                 families={data.families}
                 selected={familyFilter}
@@ -1407,7 +1630,9 @@ export function StorageManagementPage() {
                   onEdit={(id) => {
                     void openEditDrawer(id);
                   }}
-                  onAction={(action, item) => { void runLifecycleAction(action, item); }}
+                  onAction={(action, item) => {
+                    void runLifecycleAction(action, item);
+                  }}
                 />
               )}
               {!drawer.open &&
