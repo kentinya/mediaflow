@@ -9,22 +9,22 @@ paths and example records are synthetic fixture data and are not product truth.
 Slice ID: 39
 Name: Storage Management Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: ACTIVE
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
 Implementation Head: 466337c1337d0b03315d813ba258124538565cc1
-Contract Revision: 2026-09-25 A review corrections — checked activation, removal, layout and reference; no notes
+Contract Revision: 2026-09-26 A-authorized expansion — resident transfer execution and truthful readiness
 ```
 
-> Task 39.4 has passed B review and the corrected Head is returned to A. The earlier A decision
-> and superseded Closure Packet remain historical; B does not declare Slice completion or A PASS.
-> See [B Correction Return](#b-correction-return--task-394) for current evidence and remaining
-> non-blocking notes. Required Outcomes, Required Surfaces, Safety Invariants, deferrals and
-> Slice Base are unchanged.
+> A has reopened Slice 39 for the user's explicitly requested Worker/readiness scope expansion.
+> Tasks 39.1–39.4 remain passed; their reviews and the prior return to A remain historical.
+> New RO-8/RO-9 are not implemented or accepted. Slice Base and prior Implementation Head remain
+> unchanged. See A Scope Activation below; this is not an A PASS or a Slice 38 reactivation.
 
 Slice 38 is `PASS / CLOSED`. Its Base, Implementation Head, Closure Packet and A Final Review are
 historical facts and remain unchanged. This Slice starts from the repository HEAD immediately after
-that closure. It does not reopen MediaLibrary/ResourceLibrary Files, replace the Storage adapters,
-or redesign the general Configuration page.
+that closure. It does not reopen Slice 38, replace the Storage adapters or redesign general Configuration.
+The explicit 2026-09-26 expansion below includes the existing ResourceLibrary/MediaLibrary
+transfer execution and waiting-state integration; unrelated Files features remain outside scope.
 
 ## User Goal
 
@@ -32,6 +32,76 @@ An authenticated, authorized operator can understand which Storage locations Med
 to use, add or maintain one safely, see which libraries depend on it, run a bounded read-only check,
 and recover from invalid or unavailable configuration without confusing a Draft with the runtime
 Active configuration or changing media contents.
+
+After explicit setup/activation, the same resident Worker can execute separately admitted Files
+Copy/Move without a restart. Operators can distinguish a living process from a Worker able to run
+their transfer and can recover queued work without silently repeating media changes.
+
+## A Scope Activation — 2026-09-26 Worker continuity
+
+The user authorized this agent to act as A and then B ("给你A的权限处理对应文件并代替B规划Task")
+and explicitly selected this Slice ("直接合入39吧"). This discloses the role-separation exception:
+the same agent owns this Contract decision and the subsequent Task planning; this is not an
+independent final review or acceptance of completed implementation. The earlier proposal to reactivate Slice 38
+was not executed. Slice 38 and its closure ledger stay unchanged.
+
+A materially expands Slice 39 from Storage configuration to the existing admitted-transfer runtime
+handoff after configuration publication. Retain RO-1–RO-7, their accepted Tasks and all existing
+safety invariants. Add RO-8/RO-9 and only the necessary transfer/health surfaces and tests. The
+original Base stays `d02539e49d5c99c3e3c0c70de5e994e42824a18e`; no new Slice or new processing engine.
+
+Current P1 evidence at `f3799c181b0ddbd7f2769ec47b63b2fa5ed6cb7c`:
+
+- The production `_files_transfer_worker_context` yields `_NullFilesTransferWorker` for the entire
+  resident lifetime when no Active exists at entry, or initial runtime construction fails.
+- `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-a39-worker-startup-probe.py` uses actual minimal
+  bootstrap, SQLite, Local Storage, checked activation and real ResourceLibrary Move admission.
+  Start before Active → checked activation → admission → three polls: runner remains
+  `_NullFilesTransferWorker`, transfer remains `admitted`, source remains and destination is absent.
+  Constructing a new context after activation yields `FilesTransferWorker`. No production media,
+  credential, disabled capability or altered production implementation is used. This reproduces
+  the startup-order defect with Local; OpenList is required regression/acceptance, not claimed as
+  separately reproduced by this probe.
+- `AutomationWorker` enables registration only when an explicit worker ID or snapshot identity is
+  supplied; the resident CLI supplies no explicit ID in the bootstrap case. Its current default
+  commands describe Automation jobs, not sufficient proof of transfer consumption. The worker
+  container probe repeats deployment preflight without inspecting its registration/DB/schema.
+  These production paths require coherent readiness correction, not a cosmetic healthy label.
+
+Boundary decisions:
+
+- Keep the transfer consumer present before first activation and during current-Active outages.
+  Resolve each admitted task's command/library kind plus immutable revision ID and digest into
+  its execution context; validate persisted admission, snapshot integrity and current execution
+  prerequisites before OrganizerExecutor. Reuse existing claims, checkpoint/recovery and adapters.
+- Current Active governs new admission. A switch A→B gives newly admitted work B; admitted A work
+  and in-flight A work keep A. Missing/broken *current* Active blocks new admission but is not alone
+  grounds to reject a valid pinned A transfer. Missing/corrupt/digest-mismatched/unpublished task
+  snapshots or unavailable required credentials fail before any new Storage mutation, with a
+  bounded durable blocked/failure state and recovery. Never substitute current Active, JSON or Draft.
+- Worker readiness is per service/command: (1) liveness, (2) registration/heartbeat, database and
+  schema readiness, (3) work readiness including current Active availability, supported command
+  families, pinned-snapshot reconstruction and bounded mismatch reasons. A live incompatible
+  Worker cannot make a pending transfer appear executable. No Active alone need not mark a healthy
+  queue consumer dead. Declare which signal Compose evaluates; it must verify actual Worker
+  readiness, not only valid mounts/config files. Do not conflate other services' healthy flags.
+- Show `等待可用 Worker` or an equally clear state with reason, durable admission state and next
+  action before or immediately after submission, in transfer progress and on durable revisit.
+  Distinguish no/stale Worker, unsupported command, schema mismatch and unavailable pinned context.
+  Refresh reports new evidence; it never resubmits. Backend remains the single permission/authority
+  source. Existing compatible admitted work resumes automatically only before uncertain mutation.
+- Preserve lease renewal and mutation fences during blocked OpenList requests and reconstruction;
+  no newer owner or Active switch may retarget in-flight work. Restart preserves completed effects
+  and resolves uncertain ones without replay. Do not attempt impossible blanket rollback of already
+  completed effects if a credential disappears mid-transfer; report actual partial/uncertain state.
+- Scope includes ResourceLibrary and MediaLibrary transfer consumers, bounded registration/readiness
+  persistence if needed, CLI/container health, existing API/Web transfer/Operations projections,
+  and actual Docker startup-order coverage. Automation/manual Organize and other worker roles must
+  remain compatible; a wholesale runtime scheduler, auth redesign or transfer redesign is excluded.
+
+After this Contract checkpoint B plans one coherent High/T4 Task. After that Task passes, B evaluates
+all current RO-1–RO-9 and runs the expanded Slice-final expectations before a new Closure Packet.
+The prior A-correction return shortcut for Task 39.4 does not cover these new outcomes.
 
 ## A Scope Decisions
 
@@ -81,10 +151,11 @@ management browser proof.
 Applicable stable requirements include `REQ-STO-001` through `REQ-STO-007`, `REQ-CONFIG-001` through
 `REQ-CONFIG-010` and `REQ-CONFIG-012`, `REQ-WEB-001`, `REQ-WEB-004`, `REQ-WEB-005`, `REQ-WEB-006`,
 `REQ-WEB-007`, `REQ-API-001` through `REQ-API-003`, and `REQ-SAFE-004` through `REQ-SAFE-007`.
-The canonical Storage definition, adapter capability model, path semantics, credential redaction,
+The Worker expansion additionally implements `REQ-TASK-010` and `REQ-DEPLOY-008`, refining existing
+`REQ-TASK-009` and `REQ-DEPLOY-005`. The canonical Storage definition, adapter capability model, path semantics, credential redaction,
 reference blocking and immutable Active rules remain authoritative.
 
-The page manages configuration. It must not use FileIndex, scan a ResourceLibrary, make live
+The Storage page itself manages configuration. It must not use FileIndex, scan a ResourceLibrary, make live
 Metadata Provider requests, create media-processing Jobs/Tasks, execute an Organizer task or mutate
 Storage. Checked activation must retain its applicable exact-successor gates: read-only Storage
 checks, the offline Recognition Strategy Test and destination precheck. The offline test and
@@ -162,6 +233,11 @@ data are not acceptance criteria; the hierarchy and interaction relationships ab
 - Matching typed API behavior for list/detail/reference, Add/Edit/copy/enable/disable/delete and
   checks. Web is not allowed to bypass the existing API permission, validator, audit, evidence,
   concurrency or activation rules.
+
+- Existing ResourceLibrary and MediaLibrary transfer submission/progress and durable Operations
+  revisit, with backend-authoritative waiting/readiness explanation and recovery.
+- Resident Worker registration/heartbeat, authenticated command-aware readiness API and bounded
+  Compose/container health signal; no separate dashboard or credential-entry surface is required.
 
 ## Required Outcomes
 
@@ -255,6 +331,27 @@ Storage adapters and OrganizerExecutor behavior remain compatible. Storage page 
 Tasks, scan, call Providers or mutate Storage; only existing explicit organizer/file-command paths
 retain mutation authority.
 
+### RO-8 — Resident transfer execution across configuration lifecycle
+
+A Worker started before first activation remains able to consume later admitted ResourceLibrary
+and MediaLibrary Copy/Move, including OpenList Move, without restart. Each admitted command executes
+under its own validated immutable snapshot and library kind; later Active switches never redirect
+older/in-flight work. Missing current Active prevents new admission while valid older pins remain
+executable. Invalid task snapshot/authority/schema or missing required credentials prevents new
+Storage mutations and exposes safe recovery. Completed/uncertain operations are never replayed;
+lease renewal and mutation fences remain effective through slow provider requests and restart.
+
+### RO-9 — Truthful health and actionable waiting for transfer execution
+
+Liveness, registration/DB/schema readiness and command-specific work readiness remain separate and
+bounded. Readiness identifies current Active availability, actual supported command families and
+snapshot mismatch/reconstruction blockers, including the valid ability to execute older admitted
+pins. Container health checks actual service readiness and documents which signal it represents;
+healthy never alone claims every transfer can run. Web/API visibly distinguish admission from
+execution and promptly show waiting reason, durable state and a meaningful next action. Repairing
+readiness lets eligible queued work proceed without resubmission; refresh/health reads neither
+probe Storage mutation nor create work.
+
 ## Safety and Correctness Invariants
 
 1. Storage adapters remain behind the domain/application Storage ports. The page never calls a local
@@ -290,6 +387,14 @@ retain mutation authority.
 12. Unknown results are not automatically retried. A read check may be explicitly rerun only after
     its durable state and safe repeatability are clear; save/activation never silently replays.
 
+13. A transfer's command/library kind, revision ID/digest and admitted authority determine execution.
+    Current Active is never a fallback for an invalid pin, and no Active switch rebinds in-flight work.
+14. Slow or uncertain provider operations retain ownership/mutation fences. A replacement Worker
+    cannot replay an uncertain operation; known completed effects remain terminal after restart.
+15. Health/readiness evaluation is bounded and secret-free, with no provider scan/read/write probe,
+    Task admission, activation or implicit Worker subprocess start. Runtime compatibility must be
+    checked against the applicable command/task, not inferred from a healthy API or another worker.
+
 ## Explicitly Deferred / Excluded
 
 - Storage notes input, display, persistence and search are excluded by the user's correction, not
@@ -301,10 +406,12 @@ retain mutation authority.
   configuration import/export, backup/restore, System Settings and Webhook management.
 - New Storage providers (WebDAV, SFTP, FTP, OSS, COS or other adapters), provider switching and
   complete Secret Store/Docker Secrets integration.
-- Storage Files/FileIndex browsing, ResourceLibrary/MediaLibrary file operations, media-processing
+- New Storage Files/FileIndex browsing and new ResourceLibrary/MediaLibrary file operations, media-processing
   workflows and page-level Scan/Preview/Organize, thumbnails, capacity/full-library statistics and
   media playback. The required offline activation checks and internal Parser/Recognition/Naming/
-  Classification/Planner calculations defined above remain in scope.
+  Classification/Planner calculations defined above remain in scope. The explicitly authorized
+  existing-transfer Worker/readiness correction under RO-8/RO-9 is also in scope; it adds no new
+  file command, scan or Organize capability.
 - Arbitrary host filesystem browsing, recursive root scans, content indexing, upload/download or
   automatic root directory creation. Existing bounded Storage Browser/path selection remains a
   separate setup/configuration capability.
@@ -329,6 +436,11 @@ retain mutation authority.
 | AC-7 | API and Web share permissions, application behavior, redaction, audit, lifecycle and error/recovery semantics; existing V1/V2 journeys and adapters remain green. |
 | AC-8 | The supplied reference is committed unchanged and available in another checkout. Controlled screenshots at `1536 x 1024` with drawer step 1 open and closed, plus narrow-screen/keyboard/focus evidence, demonstrate the specified hierarchy, search slot, table/actions and drawer regions. The no-notes override applies; pixel equality and sample data are not acceptance criteria. |
 | AC-9 | Final Base..Head evidence covers focused and full regression, browser journeys, typecheck/lint/format/build, governance, secret/private-file audit, FFmpeg/FFprobe exclusion and any configuration/packaging gates material to changed persistence or API composition. |
+
+| AC-10 | Start Worker before any Active; checked-activate later; admit OpenList Move; the same process/container executes it. ResourceLibrary and MediaLibrary commands stay kind-scoped. |
+| AC-11 | New B work uses B; admitted/in-flight A work stays A through activation/restart. Invalid pinned context/secrets cannot cause a new Storage mutation; successful and uncertain effects are never replayed. |
+| AC-12 | Process health, registration/DB/schema readiness and command/pin work readiness differ truthfully. Transfer submission/progress/revisit exposes waiting reason and recovery, including unsupported commands and missing/stale Workers. |
+| AC-13 | Slow OpenList calls retain live leases and mutation fences; Docker proves start → first activation → admitted Move without restarting the Worker. Existing Storage, Files, Automation/manual Organize and security behavior remains green. |
 
 ## Final Validation Expectations
 
@@ -362,6 +474,29 @@ states, narrow width and keyboard/focus behavior. Nonzero raster differences and
 synthetic records are not independent blockers; hierarchy, labels, state truthfulness and working
 controls are.
 
+The Worker expansion additionally requires the following regression matrix with actual production
+assembly, durable SQLite and controlled local/fake providers (no production credentials/media):
+
+1. Worker starts first, then first checked activation, then OpenList Move; same process executes.
+2. Active A→B: new admissions execute B.
+3. Work admitted under A before the switch still executes A.
+4. Switch during a Move never changes that running transfer's bound context.
+5. No current Active: new admission fails with zero mutation; an intact admitted pin may execute.
+   Missing/corrupt/digest-mismatched pinned revision or required secret fails closed before mutation.
+6. Restart does not repeat confirmed completion or uncertain operations; independent item evidence
+   and safe not-started continuation remain correct.
+7. OpenList requests held beyond a short test lease retain heartbeat, ownership and mutation fences;
+   competing/restarted Workers cannot overlap or publish stale completion.
+8. Docker uses the actual image/entrypoint/worker loop and controlled OpenList HTTP service: start
+   all containers with no Active → checked-activate → explicitly admit Move → verify outcome and
+   unchanged Worker container/process identity. Test delayed call/restart boundaries separately;
+   restarting Worker after activation does not satisfy this acceptance.
+
+Also test registration/database/schema/command mismatch and Web waiting/recovery for both library
+kinds. Run full Python/Web and affected browser regressions, health/transfer/release-security Docker
+gates, and migration/upgrade compatibility if durable registration fields change. Health probes
+must not call the OpenList service. Report all unavailable gates and skips honestly.
+
 ## Delegated Factual Updates and Stop Rule
 
 B may replace the explicit no-active Task notice with one coherent Task after this Contract and its
@@ -369,17 +504,18 @@ B may replace the explicit no-active Task notice with one coherent Task after th
 evidence delegated by this Contract, but cannot expand provider scope, add write probes, weaken
 Active/reference/safety rules, change Base or declare the Slice closed.
 
-After every Task PASS, B must reevaluate RO-1 through RO-7. Once all Required Outcomes and acceptance
+After every Task PASS, B must reevaluate RO-1 through RO-9. Once all Required Outcomes and acceptance
 criteria are satisfied, B stops planning, emits the Closure Packet with decision `SLICE READY FOR A
 REVIEW`, and leaves A to review Base..Head and reconcile CURRENT documents. P2 wording, optional
 visual polish or a future write-probe idea is not a reason to create another Task.
 
 ## Implementation Task Handoff
 
-A requests one coherent Storage configuration readability/recovery correction for the blockers in
-A Final Review. Root `TASK.md` owns the actual implementation Task state. B uses this A review's
+The earlier A readability/recovery correction is completed by Task 39.4. The current A Scope
+Activation requests one coherent admitted-transfer execution/readiness Task for RO-8/RO-9.
+Root `TASK.md` owns the actual implementation Task state. B uses this A scope activation's
 committed checkpoint as the new Task Base, preserves every passed Task's history, and returns the
-corrected checkpoint to A after Task review. No implementation is authorized by a draft document
+expanded Slice to A only after Task review and the current Slice-final expectations. No implementation is authorized by a draft document
 alone; the Contract and Task must pass governance before Developer execution.
 
 ## B Post-handoff Findings
@@ -567,10 +703,12 @@ Explicitly Deferred:
   configuration import/export, backup/restore, System Settings and Webhook management.
 - New Storage providers (WebDAV, SFTP, FTP, OSS, COS or other adapters), provider switching and
   complete Secret Store/Docker Secrets integration.
-- Storage Files/FileIndex browsing, ResourceLibrary/MediaLibrary file operations, media-processing
+- New Storage Files/FileIndex browsing and new ResourceLibrary/MediaLibrary file operations, media-processing
   workflows and page-level Scan/Preview/Organize, thumbnails, capacity/full-library statistics and
   media playback. The required offline activation checks and internal Parser/Recognition/Naming/
-  Classification/Planner calculations defined above remain in scope.
+  Classification/Planner calculations defined above remain in scope. The explicitly authorized
+  existing-transfer Worker/readiness correction under RO-8/RO-9 is also in scope; it adds no new
+  file command, scan or Organize capability.
 - Arbitrary host filesystem browsing, recursive root scans, content indexing, upload/download or
   automatic root directory creation. Existing bounded Storage Browser/path selection remains a
   separate setup/configuration capability.

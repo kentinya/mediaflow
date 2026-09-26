@@ -8,16 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`. Slice 38 — **MediaLibrary Files Workspace and Route Separation** —
-is `PASS / CLOSED` under [`SLICE.md`](../SLICE.md) after A's 2026-09-25 review from Base
-`9e801ae4485bc95d714a8902bf45bf37896fbc2a` through Implementation Head
-`7d4503e45dc3aa79628ed0d98e887167e1e7c529`. The reviewed delivery includes focused
-ResourceLibrary/MediaLibrary page-local editing with checked atomic activation. There is no active
-implementation Task; A selects the next large Slice in a later planning turn. Slice 37
-remains `PASS / CLOSED` after A's 2026-09-23 review through
-`aa54854c442d117c7eb23ae9800045c423db1368`; its complete Contract/final review is retained at
-`9e801ae4485bc95d714a8902bf45bf37896fbc2a:SLICE.md` in Git. This pointer records current
-post-closure state and is not a Task history log.
+V2 remains active on `main`. Slice 39 — **Storage Management Workspace** — is ACTIVE under
+[`SLICE.md`](../SLICE.md). A recorded the user's 2026-09-26 explicit scope expansion for resident
+transfer continuity, truthful Worker health and Web/API waiting recovery after Tasks 39.1–39.4.
+The prior Slice 39 return to A is not a closure; B plans the next coherent Task after A's checkpoint.
+Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
+and Implementation Head `7d4503e45dc3aa79628ed0d98e887167e1e7c529`; Slice 37's closure is also
+unchanged. This is only the current-development pointer; the closure ledger below is not rewritten.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`
