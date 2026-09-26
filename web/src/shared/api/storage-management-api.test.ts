@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  copyStorage,
   editStorage,
   fetchStorageCheckRun,
   fetchStorageDetail,
   fetchStorageEdit,
   fetchStorageInventory,
+  removeStorage,
   saveStorage,
+  setStorageEnabled,
   StorageManagementApiError,
 } from "./api-client";
 import { authStore } from "./auth-store";
@@ -578,5 +581,107 @@ describe("Storage Add/Edit command API", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.code).toBe("transport_unavailable");
+  });
+});
+
+describe("Storage lifecycle command API", () => {
+  it("sends copy, state change and removal with the exact Active fence", async () => {
+    const fetchMock = vi.fn(async (...args: [string, RequestInit?]) =>
+      String(args[0]).endsWith("/copy") || String(args[0]).endsWith("/disable")
+        ? jsonResponse(STORAGE_SAVE_PAYLOAD)
+        : jsonResponse({ removed: { id: "nas-media" } }),
+    );
+
+    expect(
+      (
+        await copyStorage(
+          "t",
+          {
+            storageId: "nas-media",
+            newStorageId: "nas-copy",
+            name: "NAS Copy",
+            authority: storageAuthority,
+          },
+          fetchMock,
+        )
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await setStorageEnabled(
+          "t",
+          {
+            storageId: "nas-media",
+            enabled: false,
+            authority: storageAuthority,
+          },
+          fetchMock,
+        )
+      ).ok,
+    ).toBe(true);
+    expect(
+      (
+        await removeStorage(
+          "t",
+          { storageId: "nas-media", authority: storageAuthority },
+          fetchMock,
+        )
+      ).ok,
+    ).toBe(true);
+
+    const requests = fetchMock.mock.calls.map(([url, init]) => ({
+      url: String(url),
+      method: init?.method,
+      body: JSON.parse(String(init?.body)),
+    }));
+    expect(requests).toEqual([
+      {
+        url: "/api/v1/storages/nas-media/copy",
+        method: "POST",
+        body: {
+          newStorageId: "nas-copy",
+          name: "NAS Copy",
+          ...storageAuthority,
+        },
+      },
+      {
+        url: "/api/v1/storages/nas-media/disable",
+        method: "POST",
+        body: { enabled: false, ...storageAuthority },
+      },
+      {
+        url: "/api/v1/storages/nas-media",
+        method: "DELETE",
+        body: storageAuthority,
+      },
+    ]);
+  });
+
+  it("retains lifecycle rejection details for actionable recovery", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(
+        {
+          error: {
+            code: "storage_remove_stale",
+            message: "the displayed Storage changed",
+            details: {
+              durableState: "active_winner_preserved",
+              nextAction: "refresh and review the changed Storage",
+            },
+          },
+        },
+        409,
+      ),
+    );
+    const result = await removeStorage(
+      "t",
+      { storageId: "nas-media", authority: storageAuthority },
+      fetchMock,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.code).toBe("storage_remove_stale");
+    expect(result.details?.durableState).toBe("active_winner_preserved");
+    expect(result.details?.nextAction).toContain("review the changed Storage");
   });
 });

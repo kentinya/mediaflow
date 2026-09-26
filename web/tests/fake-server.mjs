@@ -6650,10 +6650,14 @@ const server = createServer(async (req, res) => {
   const storageEditMatch = url.pathname.match(
     /^\/api\/v1\/storages\/([^/]+)\/edit$/,
   );
+  const storageLifecycleMatch = url.pathname.match(
+    /^\/api\/v1\/storages\/([^/]+)\/(copy|enable|disable)$/,
+  );
   const storageItemMatch = url.pathname.match(/^\/api\/v1\/storages\/([^/]+)$/);
   const storageCollectionRoute = url.pathname === "/api/v1/storages";
   if (
     storageEditMatch !== null ||
+    storageLifecycleMatch !== null ||
     storageItemMatch !== null ||
     storageCollectionRoute
   ) {
@@ -6732,7 +6736,160 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (
+      (storageLifecycleMatch !== null && req.method === "POST") ||
+      (storageItemMatch !== null && req.method === "DELETE")
+    ) {
+      if (!permissions.canManage) {
+        sendJson(res, 403, {
+          error: {
+            code: "forbidden",
+            message:
+              "principal lacks configuration management and activation authority",
+          },
+        });
+        return;
+      }
+      const parsed = await readBoundedJsonBody(req, res);
+      if (!parsed.ok) return;
+      const fields = parsed.document;
+      const storageId = decodeURIComponent(
+        storageLifecycleMatch?.[1] ?? storageItemMatch[1],
+      );
+      const action = storageLifecycleMatch?.[2] ?? "remove";
+      const fixture = storageFixture(commandState);
+      const existingIndex = fixture.findIndex((item) => item.id === storageId);
+      if (
+        fields.expectedRevisionId !== commandState.active.revisionId ||
+        fields.expectedVersion !== commandState.active.revisionSequence ||
+        fields.expectedDigest !== commandState.digest
+      ) {
+        storageRejected(
+          res,
+          409,
+          `storage_${action}_stale`,
+          "the Active configuration changed after the operator reviewed the Storage",
+          {
+            durableState: "active_winner_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "refresh and review the changed Storage before trying again",
+          },
+        );
+        return;
+      }
+      if (existingIndex < 0) {
+        storageRejected(res, 404, "storage_not_found", "Storage not found", {
+          durableState: "active_preserved",
+          sideEffects: "none",
+          retrySafe: true,
+          nextAction: "refresh the Active Storage inventory",
+        });
+        return;
+      }
+      const source = fixture[existingIndex];
+      if (action === "copy") {
+        const newId = String(fields.newStorageId ?? "");
+        const name = String(fields.name ?? "");
+        if (!/^[a-z0-9][a-z0-9_-]*$/.test(newId) || name.trim() === "") {
+          storageRejected(
+            res,
+            400,
+            "invalid_request",
+            "invalid copy identity",
+            {
+              durableState: "active_preserved",
+              sideEffects: "none",
+              retrySafe: true,
+              nextAction: "correct the new ID and name",
+            },
+          );
+          return;
+        }
+        if (fixture.some((item) => item.id === newId)) {
+          storageRejected(res, 409, "storage_duplicate", "Storage ID exists", {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "choose a different Storage ID",
+          });
+          return;
+        }
+        const copied = {
+          ...source,
+          id: newId,
+          name,
+          references: {
+            total: 0,
+            items: [],
+            truncated: false,
+            resourceLibraries: 0,
+            mediaLibraries: 0,
+            countedInBreakdown: 0,
+          },
+          options: { ...(source.options ?? storageFixtureOptions(source)) },
+        };
+        sendJson(res, 200, storageSaveSuccess(commandState, copied));
+        return;
+      }
+      if (action === "disable" && source.references.total > 0) {
+        storageRejected(
+          res,
+          409,
+          "storage_disable_referenced",
+          "enabled libraries still depend on this Storage",
+          {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "repoint or disable the affected libraries, then retry",
+          },
+        );
+        return;
+      }
+      if (action === "enable" || action === "disable") {
+        const changed = {
+          ...source,
+          enabled: action === "enable",
+          options: { ...(source.options ?? storageFixtureOptions(source)) },
+        };
+        sendJson(res, 200, storageSaveSuccess(commandState, changed));
+        return;
+      }
+      if (source.references.total > 0) {
+        storageRejected(
+          res,
+          409,
+          "storage_referenced",
+          "libraries still reference this Storage",
+          {
+            durableState: "active_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "repoint every dependent library, then retry removal",
+          },
+        );
+        return;
+      }
+      fixture.splice(existingIndex, 1);
+      commandState.published += 1;
+      commandState.active = {
+        ...commandState.active,
+        revisionId: `storage-active-rev-e2e-${String(commandState.published + 3).padStart(3, "0")}`,
+        version: commandState.active.version + 1,
+        revisionSequence: commandState.active.revisionSequence + 1,
+      };
+      commandState.digest = `e2e-digest-${commandState.published + 3}`;
+      sendJson(res, 200, {
+        removed: { id: storageId },
+        active: commandState.active,
+        sideEffects: "configuration_only",
+      });
+      return;
+    }
+    if (
       storageEditMatch !== null ||
+      storageLifecycleMatch !== null ||
       (storageItemMatch !== null && req.method !== "PUT") ||
       (storageCollectionRoute && req.method !== "POST")
     ) {
