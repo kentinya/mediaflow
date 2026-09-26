@@ -5434,15 +5434,31 @@ export interface StorageLifecycleCommandOptions {
 
 export async function copyStorage(
   token: string | null,
-  options: StorageLifecycleCommandOptions & { readonly newStorageId: string; readonly name: string },
+  options: StorageLifecycleCommandOptions & {
+    readonly newStorageId: string;
+    readonly name: string;
+  },
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<StorageSaveModel>> {
-  if (!isSafeIdentifier(options.storageId) || !STORAGE_ID.test(options.newStorageId) || options.name.trim() === "") {
+  if (
+    !isSafeIdentifier(options.storageId) ||
+    !STORAGE_ID.test(options.newStorageId) ||
+    options.name.trim() === ""
+  ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
-  return submitAutomationMutation(token, "POST", `${STORAGE_COMMAND_BASE}/${encodeURIComponent(options.storageId)}/copy`, {
-    newStorageId: options.newStorageId, name: options.name, storageId: options.storageId, ...options.authority,
-  }, normalizeStorageSave, fetchImpl);
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `${STORAGE_COMMAND_BASE}/${encodeURIComponent(options.storageId)}/copy`,
+    {
+      newStorageId: options.newStorageId,
+      name: options.name,
+      ...options.authority,
+    },
+    normalizeStorageSave,
+    fetchImpl,
+  );
 }
 
 export async function setStorageEnabled(
@@ -5450,21 +5466,52 @@ export async function setStorageEnabled(
   options: StorageLifecycleCommandOptions & { readonly enabled: boolean },
   fetchImpl: FetchLike = fetch,
 ): Promise<AutomationMutationResult<StorageSaveModel>> {
-  if (!isSafeIdentifier(options.storageId) || typeof options.enabled !== "boolean") {
+  if (
+    !isSafeIdentifier(options.storageId) ||
+    typeof options.enabled !== "boolean"
+  ) {
     return { ok: false, status: 400, code: "invalid_request" };
   }
-  return submitAutomationMutation(token, "POST", `${STORAGE_COMMAND_BASE}/${encodeURIComponent(options.storageId)}/${options.enabled ? "enable" : "disable"}`, {
-    enabled: options.enabled, ...options.authority,
-  }, normalizeStorageSave, fetchImpl);
+  return submitAutomationMutation(
+    token,
+    "POST",
+    `${STORAGE_COMMAND_BASE}/${encodeURIComponent(options.storageId)}/${options.enabled ? "enable" : "disable"}`,
+    {
+      enabled: options.enabled,
+      ...options.authority,
+    },
+    normalizeStorageSave,
+    fetchImpl,
+  );
 }
 
 export async function removeStorage(
   token: string | null,
   options: StorageLifecycleCommandOptions,
   fetchImpl: FetchLike = fetch,
-): Promise<AutomationMutationResult<{ readonly removed: { readonly id: string } }>> {
-  if (!isSafeIdentifier(options.storageId)) return { ok: false, status: 400, code: "invalid_request" };
-  return submitAutomationMutation(token, "DELETE", `${STORAGE_COMMAND_BASE}/${encodeURIComponent(options.storageId)}`, { ...options.authority }, (payload) => ({
-    removed: { id: String((payload as Record<string, unknown>).removed && ((payload as Record<string, unknown>).removed as Record<string, unknown>).id) },
-  }), fetchImpl);
+): Promise<
+  AutomationMutationResult<{ readonly removed: { readonly id: string } }>
+> {
+  if (!isSafeIdentifier(options.storageId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitAutomationMutation(
+    token,
+    "DELETE",
+    `${STORAGE_COMMAND_BASE}/${encodeURIComponent(options.storageId)}`,
+    { ...options.authority },
+    (payload) => ({
+      removed: {
+        id: String(
+          (payload as Record<string, unknown>).removed &&
+            (
+              (payload as Record<string, unknown>).removed as Record<
+                string,
+                unknown
+              >
+            ).id,
+        ),
+      },
+    }),
+    fetchImpl,
+  );
 }
