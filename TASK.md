@@ -200,7 +200,7 @@ exact commands, totals, skips and unavailable external gates.
 - PASS — `cd web && npm run test:e2e -- --grep 'Storage management'` (24 Chromium tests).
 - PASS — `cd web && npm run lint && npm run typecheck && npm run format:check && npm run build` (existing Vite bundle-size advisory only).
 - PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`.
-- PASS — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-3-r4-validation` against the exact committed candidate (release-security smoke acceptance passed).
+- SKIP — `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-3-r4-validation` was not rerun for this Web-only correction; the prior checkpoint's release-security result remains recorded above as historical evidence.
 
 ### Decisions
 
