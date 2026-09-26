@@ -216,6 +216,24 @@ Plans and evidence retain Storage identity plus Storage-relative paths. A host m
 embedded into a remote Storage logical path. Local adapter confinement rejects absolute or escaping
 logical paths and resolves existing links before access.
 
+### OpenList service root and current Web recovery limitation
+
+For OpenList, an empty `rootPath` or `/` denotes the provider's service root. It is not a Local host
+root. The Storage workspace must display this as a provider root and preserve it through Save,
+inventory, detail and Edit. Local and other provider path validators retain their own rules.
+
+A confirmed V2 defect currently rejects a saved empty root while decoding the inventory, although
+Save and the inventory API can both succeed. The resulting malformed-response message does not
+prove that Save failed, that the token is wrong, or that the instance lacks an Active configuration.
+Do not repeat Add automatically. A temporary support workaround is to inspect the existing entry in
+V1 `/ui` Configuration and change this OpenList root to `/` through the normal checked publication
+flow. No direct database edit, configuration reset or physical-file migration is required.
+The code correction and regression acceptance are tracked in the
+[B post-handoff findings](../SLICE.md#b-post-handoff-findings); this documentation change does not fix
+the parser. For genuine setup-required state, use the existing V1 Configuration first-setup flow;
+the discoverable V2 entry/return target is specified in
+[Product Experience](product-experience.md#target--discoverable-v2-setup-and-return-journey).
+
 ## Validation and evidence
 
 Validation uses the same normalized runtime loader that constructs production policy and Storage

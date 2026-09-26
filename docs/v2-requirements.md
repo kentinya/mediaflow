@@ -30,6 +30,11 @@ page-local editing requirements through its reviewed implementation head. The st
 below describe the delivered authority and journey boundaries; future Slice contracts still own
 any further refinement.
 
+The setup entries and orchestration specified by `V2-SETUP-001/002` are a target, not a delivered
+V2 wizard. The existing V1 setup handoff can be used during migration. A owns implementation scope
+and sequencing; these requirements do not silently expand Slice 39's Configuration deferral.
+`V2-STO-001` makes existing provider-valid root semantics explicit across Web surfaces.
+
 ## Stable V2 requirements
 
 | ID | Requirement | Acceptance meaning |
@@ -38,6 +43,9 @@ any further refinement.
 | V2-UX-002 | Safety, authority and data-integrity controls must be delivered with the lowest practical operator friction. | Scope validation, capability checks, limits, authorization binding, short-lived/scoped execution authority where required and backend permission enforcement are automatically composed by the product wherever technically safe. Extra interaction occurs only at meaningful authority, ambiguity, uncertain-effect or irreversible/destructive boundaries. |
 | V2-UX-003 | Implementation mechanisms must not define the operator journey. | Bearer tokens, execution tokens, revision IDs, locks, claims, checkpoints, grants or fencing mechanisms do not by themselves justify mandatory user exposure. They remain backend-authoritative and may be surfaced when useful for diagnosis/support, without weakening `V2-AUTH-*`, `V2-SAFE-*` or other authority requirements. |
 | V2-WEB-001 | V2 Operator Web is a first-class product surface for the operator journeys selected by the active V2 program. | Required operator outcomes are delivered through a discoverable Web surface, not only through internal APIs or CLI commands. |
+| V2-SETUP-001 | First setup is one system-level journey reachable after authentication, from System Settings and from setup-required business pages. | Offer Start or Continue according to the existing setup state, retain an Initialization and Configuration entry, and give Storage's no-Active empty state a direct setup action. Viewers receive an administrator handoff. The operator can return to the originating page and see actual runtime readiness. |
+| V2-SETUP-002 | The setup journey presents business steps while retaining the complete managed publication boundary. | Connect Storage, configure libraries and required policies, check the configuration and explicitly finish. Reuse the existing Draft, complete graph validation, exact Storage/strategy/destination evidence and atomic runtime binding; preserve progress on failure, verify unknown outcomes and never auto-start media work or require raw revision-token handling. |
+| V2-STO-001 | Every provider-valid Storage root round-trips through typed Save, inventory, detail and Edit. | OpenList's empty root and `/` both represent its service root; render a clear provider-root label without dropping the row or rejecting the whole inventory. Existing saved empty-root entries remain readable. Other provider and Local confinement rules stay intact; failed list rendering never implies Save rollback or triggers automatic resubmission. |
 | V2-AUTH-001 | During the current V2 program, the existing API-principal Bearer-token model and RBAC remain the identity/authentication and role/permission authorization boundary. | A scoped execution grant, execution unlock, step-up authorization or equivalent mutation-admission authority may be layered on top when required by an approved V2 journey, but it does not replace principal identity, authentication or RBAC. V2 does not silently introduce a new username/password identity system, OIDC integration, session or cookie authority. |
 | V2-AUTH-002 | The API principal token remains memory-only in the browser during the current identity architecture. | The token is not persisted in `localStorage`, `sessionStorage`, IndexedDB, URLs/query strings or frontend-managed authentication cookies. |
 | V2-AUTH-003 | Python remains the authoritative backend for domain behavior, execution authority and storage mutation. | Frontend code does not duplicate or move domain decisions, execution permission or Storage mutation out of the Python application; `OrganizerExecutor` remains the sole Storage mutator. |

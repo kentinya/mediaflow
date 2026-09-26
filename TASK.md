@@ -3,8 +3,18 @@
 ```text
 Parent Slice: 39 — Storage Management Workspace
 Status: NO ACTIVE IMPLEMENTATION TASK
-Next Action: A FINAL REVIEW
+Next Action: B PLANS A-REQUESTED CORRECTION TASK
 ```
+
+## Post-handoff correction notice
+
+The user reported a legal empty-root OpenList configuration that breaks the V2 Storage inventory;
+B reproduced it after submitting the packet. The historical `Slice Required Outcomes all satisfied:
+YES` below is superseded by the [B post-handoff findings](SLICE.md#b-post-handoff-findings).
+Those findings also record the requested first-setup entry and return experience. The passed Task
+is not reopened and no implementation Task is active at this A checkpoint. A has recorded
+FIX REQUIRED and a bounded correction scope in [A Final Review](SLICE.md#a-final-review).
+B next plans one correction Task from that committed checkpoint. No production fix is implemented.
 
 ## B Review Result
 
