@@ -20,10 +20,17 @@ import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 
+from mediaflow.application.automation import ProcessingWorkerService
 from mediaflow.container_entrypoint import (
     container_preflight_errors,
     load_environment_file,
 )
+from mediaflow.domain.task_persistence import (
+    FILES_TRANSFER_TASK_COMMAND,
+    direct_command_task_command,
+)
+from mediaflow.infrastructure.runtime_configuration import load_management_bootstrap
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 
 PROBE_SERVICE_COMMANDS: dict[str, tuple[str, ...]] = {
     "api": ("api", "serve-production"),
@@ -121,6 +128,38 @@ def liveness_error(
     return None
 
 
+def worker_readiness_error(*, environ: Mapping[str, str] | None = None) -> str | None:
+    """Return bounded registration/schema/command readiness for Compose.
+
+    This reads only the shared runtime database.  It never loads an Active
+    configuration, creates a Storage adapter or calls a provider, so a Worker
+    can be healthy before first activation while still proving that the real
+    resident process registered both transfer consumers.
+    """
+
+    environment = probe_environment(environ)
+    configured = environment.get("MEDIAFLOW_CONFIG", "/config/mediaflow.json")
+    try:
+        with open(configured, encoding="utf-8") as stream:
+            document = json.load(stream)
+        database_path = load_management_bootstrap(document).database_path
+        with SQLiteTaskRepository(database_path) as repository:
+            service = ProcessingWorkerService(repository, runtime_schema_version=SCHEMA_VERSION)
+            commands = (
+                direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=False),
+                direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True),
+            )
+            readiness = service.evaluate_command_readiness(
+                commands, runtime_schema_version=SCHEMA_VERSION
+            )
+    except (OSError, ValueError, RuntimeError):
+        return "worker registration database or runtime schema is unavailable"
+    if not readiness.get("ready"):
+        condition = str(readiness.get("condition", "unavailable"))[:64]
+        return f"resident worker is not transfer-ready ({condition})"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m mediaflow.container_probe",
@@ -151,6 +190,11 @@ def main(argv: list[str] | None = None) -> int:
         for error in errors:
             sys.stderr.write(f"- {error}\n")
         return 1
+    if arguments.service == "worker":
+        error = worker_readiness_error()
+        if error is not None:
+            sys.stderr.write(f"MediaFlow healthcheck failed: {error}\n")
+            return 1
     if arguments.url is not None:
         try:
             error = liveness_error(arguments.url, timeout=arguments.timeout)

@@ -430,6 +430,13 @@ class DirectFileTransferService:
         #: reconstruct that revision, which leaves the transfer claimable.
         self._runtime_factory = runtime_factory
 
+    def close(self) -> None:
+        """Release adapters owned by this attempt's direct-command boundary."""
+
+        close = getattr(self._direct, "close", None)
+        if callable(close):
+            close()
+
     # ------------------------------------------------------------------
     # Kind-pinned identity
     # ------------------------------------------------------------------
@@ -2231,6 +2238,13 @@ class DirectFileTransferService:
         }
         if uncertain:
             document["durableState"] = "mutation_effect_uncertain"
+        elif transfer is not None and transfer.error and not terminal:
+            # A recoverable Worker/reconstruction blocker is durable queue
+            # evidence, not a terminal business failure.  Revisit and refresh
+            # must keep explaining why the admitted work is waiting.
+            document["durableState"] = transfer.error
+            if transfer.next_action:
+                document["nextAction"] = transfer.next_action
         return document
 
     # ------------------------------------------------------------------

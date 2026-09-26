@@ -636,6 +636,10 @@ export interface TransferProjectionModel {
   readonly version: string;
   readonly nextAction: string;
   readonly durableState?: string;
+  readonly waitingForWorker?: boolean;
+  readonly workerCondition?: string;
+  readonly workerDurableState?: string;
+  readonly workerNextAction?: string;
 }
 
 function normalizeTransferOperation(value: unknown): TransferOperation {
@@ -753,6 +757,18 @@ export function normalizeTransferProjection(
     nextAction: expectString(record, "nextAction"),
     ...(typeof record.durableState === "string"
       ? { durableState: record.durableState }
+      : {}),
+    ...(typeof record.waitingForWorker === "boolean"
+      ? { waitingForWorker: record.waitingForWorker }
+      : {}),
+    ...(typeof record.workerCondition === "string"
+      ? { workerCondition: record.workerCondition }
+      : {}),
+    ...(typeof record.workerDurableState === "string"
+      ? { workerDurableState: record.workerDurableState }
+      : {}),
+    ...(typeof record.workerNextAction === "string"
+      ? { workerNextAction: record.workerNextAction }
       : {}),
   };
 }

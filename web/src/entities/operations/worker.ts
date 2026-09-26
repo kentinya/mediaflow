@@ -17,7 +17,7 @@ import {
   normalizeOptionalText,
   readRecord,
 } from "../shared/normalize";
-import { JOB_COMMANDS, type JobCommand } from "./job";
+import { JOB_COMMANDS } from "./job";
 
 export const WORKER_READINESS_CONDITIONS = [
   "ready",
@@ -25,6 +25,7 @@ export const WORKER_READINESS_CONDITIONS = [
   "stale_worker",
   "snapshot_mismatch",
   "schema_mismatch",
+  "unsupported_command",
 ] as const;
 export type WorkerReadinessCondition =
   (typeof WORKER_READINESS_CONDITIONS)[number];
@@ -42,6 +43,18 @@ export interface WorkerReadinessModel {
   readonly nextAction: string | null;
   readonly activeWorkersCount: number;
   readonly expectedRuntimeSchemaVersion: number | null;
+  readonly processAlive: boolean | null;
+  readonly baseReady: boolean | null;
+  readonly currentActiveAvailable: boolean | null;
+  readonly resourceFilesTransfer: WorkerCommandReadiness | null;
+  readonly mediaFilesTransfer: WorkerCommandReadiness | null;
+}
+
+export interface WorkerCommandReadiness {
+  readonly ready: boolean;
+  readonly condition: string;
+  readonly durableState: string;
+  readonly nextAction: string | null;
 }
 
 export interface WorkerSummary {
@@ -51,9 +64,17 @@ export interface WorkerSummary {
   readonly lastHeartbeatAt: string | null;
   readonly registeredAt: string | null;
   readonly heartbeatIntervalSeconds: number;
-  readonly supportedCommands: readonly JobCommand[];
+  readonly supportedCommands: readonly WorkerCommand[];
   readonly runtimeSchemaVersion: number | null;
 }
+
+export const WORKER_COMMANDS = [
+  ...JOB_COMMANDS,
+  "manual_organize",
+  "files_transfer",
+  "media_files_transfer",
+] as const;
+export type WorkerCommand = (typeof WORKER_COMMANDS)[number];
 
 export interface WorkerListModel {
   readonly workers: readonly WorkerSummary[];
@@ -113,6 +134,25 @@ function optionalCount(
   }
 }
 
+function optionalFlag(
+  source: Record<string, unknown>,
+  field: string,
+): boolean | null {
+  if (source[field] === null || source[field] === undefined) return null;
+  return flag(source, field);
+}
+
+function commandReadiness(value: unknown): WorkerCommandReadiness | null {
+  if (value === null || value === undefined) return null;
+  const source = readRecord(value, "worker_command_readiness");
+  return {
+    ready: flag(source, "ready"),
+    condition: text(source, "condition"),
+    durableState: text(source, "durableState"),
+    nextAction: optionalText(source, "nextAction"),
+  };
+}
+
 export function normalizeWorkerReadiness(
   payload: unknown,
 ): WorkerReadinessModel {
@@ -144,6 +184,14 @@ export function normalizeWorkerReadiness(
   if (ready && category !== null) {
     fail();
   }
+  const base =
+    source["baseReadiness"] === undefined
+      ? null
+      : readRecord(source["baseReadiness"], "baseReadiness");
+  const work =
+    source["workReadiness"] === undefined
+      ? null
+      : readRecord(source["workReadiness"], "workReadiness");
   return {
     ready,
     condition,
@@ -157,6 +205,11 @@ export function normalizeWorkerReadiness(
       source,
       "expectedRuntimeSchemaVersion",
     ),
+    processAlive: optionalFlag(source, "processAlive"),
+    baseReady: base === null ? null : optionalFlag(base, "ready"),
+    currentActiveAvailable: optionalFlag(source, "currentActiveAvailable"),
+    resourceFilesTransfer: commandReadiness(work?.["resourceFilesTransfer"]),
+    mediaFilesTransfer: commandReadiness(work?.["mediaFilesTransfer"]),
   };
 }
 
@@ -164,13 +217,13 @@ function normalizeWorkerSummary(
   source: Record<string, unknown>,
 ): WorkerSummary {
   let status: WorkerStatus;
-  let supportedCommands: readonly JobCommand[];
+  let supportedCommands: readonly WorkerCommand[];
   try {
     status = normalizeEnum(source["status"], "worker.status", WORKER_STATUSES);
     supportedCommands = normalizeEnumArray(
       source["supported_commands"],
       "worker.supported_commands",
-      JOB_COMMANDS,
+      WORKER_COMMANDS,
     );
   } catch {
     return fail();

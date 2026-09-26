@@ -480,6 +480,7 @@ class PersistentTaskRepository(Protocol):
         worker_id: str,
         claim_token: str,
         lease_seconds: float,
+        supported_commands: tuple[str, ...] | None = None,
     ) -> PersistentFilesTransfer | None: ...
     def begin_files_transfer(self, transfer_id: str, claim_token: str, now: datetime) -> bool: ...
     def heartbeat_files_transfer_claim(

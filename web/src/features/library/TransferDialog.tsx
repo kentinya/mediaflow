@@ -133,7 +133,11 @@ export function transferStatusMessage(model: {
   readonly succeededItems: number;
   readonly skippedItems?: number;
   readonly failedItems: number;
+  readonly waitingForWorker?: boolean;
 }): string {
+  if (model.waitingForWorker) {
+    return "等待可用 Worker；传输已安全排队，无需重新提交。";
+  }
   switch (model.status) {
     case "SUCCESS":
       return `传输完成 ${model.succeededItems} 项；结果已记录。`;
@@ -569,6 +573,17 @@ export function TransferDialog({
                 <p className="mf-dialog-error" role="alert">
                   存在不确定的结果（例如移动源删除未确认）；请刷新目录核实，未自动重试。
                 </p>
+              )}
+              {projection.waitingForWorker && (
+                <div className="mf-dialog-error" role="status">
+                  <strong>等待可用 Worker</strong>
+                  {projection.workerDurableState && (
+                    <p>{projection.workerDurableState}</p>
+                  )}
+                  {projection.workerNextAction && (
+                    <p>{projection.workerNextAction}</p>
+                  )}
+                </div>
               )}
               {actionError !== null && (
                 <p className="mf-dialog-error" role="alert">

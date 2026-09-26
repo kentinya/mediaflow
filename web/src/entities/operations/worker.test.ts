@@ -13,6 +13,28 @@ const READY = {
   activeSnapshotId: "snap-1",
   activeSnapshotDigest: "digest-1",
   expectedRuntimeSchemaVersion: 33,
+  processAlive: true,
+  baseReadiness: {
+    ready: true,
+    registered: true,
+    liveWorkers: 1,
+    condition: "ready",
+  },
+  currentActiveAvailable: false,
+  workReadiness: {
+    resourceFilesTransfer: {
+      ready: true,
+      condition: "ready",
+      durableState: "a live worker supports the command",
+      nextAction: "none",
+    },
+    mediaFilesTransfer: {
+      ready: false,
+      condition: "unsupported_command",
+      durableState: "live workers do not advertise the command",
+      nextAction: "upgrade the resident worker",
+    },
+  },
 };
 
 describe("normalizeWorkerReadiness", () => {
@@ -21,6 +43,10 @@ describe("normalizeWorkerReadiness", () => {
     expect(model.ready).toBe(true);
     expect(model.condition).toBe("ready");
     expect(model.category).toBeNull();
+    expect(model.processAlive).toBe(true);
+    expect(model.currentActiveAvailable).toBe(false);
+    expect(model.resourceFilesTransfer?.ready).toBe(true);
+    expect(model.mediaFilesTransfer?.condition).toBe("unsupported_command");
   });
 
   it("never models an Active snapshot digest", () => {
@@ -100,6 +126,21 @@ describe("normalizeWorkerList", () => {
   it("accepts a modelled worker list", () => {
     const model = normalizeWorkerList({ workers: [worker()], count: 1 });
     expect(model.workers[0]?.supportedCommands).toEqual(["scan", "preview"]);
+  });
+
+  it("models the resident transfer command families", () => {
+    const model = normalizeWorkerList({
+      workers: [
+        worker({
+          supported_commands: ["files_transfer", "media_files_transfer"],
+        }),
+      ],
+      count: 1,
+    });
+    expect(model.workers[0]?.supportedCommands).toEqual([
+      "files_transfer",
+      "media_files_transfer",
+    ]);
   });
 
   it("rejects an unknown supported command instead of coercing it", () => {

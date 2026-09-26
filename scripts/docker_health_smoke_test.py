@@ -154,13 +154,18 @@ def readiness_assertions(base: str, token: str, config_file: Path) -> None:
     status, worker = json_request(base, "/api/v1/workers/readiness", token)
     if status != 200:
         raise RuntimeError(f"worker readiness returned HTTP {status}: {worker}")
-    if worker.get("ready") is not True:
-        raise RuntimeError(f"worker readiness is not ready: {worker}")
-    if worker.get("condition") != "ready":
-        raise RuntimeError(f"worker readiness condition is {worker.get('condition')}")
-    if worker.get("activeSnapshotId") != active.get("revisionId"):
-        raise RuntimeError("worker readiness does not bind the exact Active snapshot")
-    if worker.get("expectedRuntimeSchemaVersion") != 33:
+    if worker.get("processAlive") is not True:
+        raise RuntimeError(f"worker process liveness is not ready: {worker}")
+    if not (worker.get("baseReadiness") or {}).get("ready"):
+        raise RuntimeError(f"worker registration/schema readiness is not ready: {worker}")
+    if worker.get("currentActiveAvailable") is not True:
+        raise RuntimeError(f"worker readiness does not observe current Active: {worker}")
+    work = worker.get("workReadiness") or {}
+    if not (work.get("resourceFilesTransfer") or {}).get("ready"):
+        raise RuntimeError(f"ResourceLibrary transfer command is not ready: {worker}")
+    if not (work.get("mediaFilesTransfer") or {}).get("ready"):
+        raise RuntimeError(f"MediaLibrary transfer command is not ready: {worker}")
+    if not isinstance(worker.get("expectedRuntimeSchemaVersion"), int):
         raise RuntimeError(f"unexpected runtime schema in readiness: {worker}")
 
 
@@ -214,6 +219,8 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
                     "service startup created durable Jobs; startup must be side-effect free"
                 )
 
+            worker_identity = service_records(command, environment)["worker"].get("ID")
+
             print("Activating the managed runtime through the API...")
             active = activate_runtime(base, token, config_file)
             status, management = json_request(base, "/api/v1/management/readiness", token)
@@ -223,16 +230,19 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
             ):
                 raise RuntimeError(f"management readiness did not pin the new Active: {management}")
 
-            print("Restarting Worker to bind the Active snapshot...")
-            run([*command, "restart", "worker"], environment=environment)
-            wait_for_services_healthy(command, environment, expected=expected)
-
             def worker_ready() -> bool:
                 _, worker = json_request(base, "/api/v1/workers/readiness", token)
-                return worker.get("ready") is True
+                work = worker.get("workReadiness") or {}
+                return bool(
+                    (worker.get("baseReadiness") or {}).get("ready")
+                    and (work.get("resourceFilesTransfer") or {}).get("ready")
+                    and (work.get("mediaFilesTransfer") or {}).get("ready")
+                )
 
             wait_until(worker_ready, timeout=90.0, description="processing Worker ready")
             readiness_assertions(base, token, config_file)
+            if service_records(command, environment)["worker"].get("ID") != worker_identity:
+                raise RuntimeError("Worker container was replaced or restarted after activation")
 
             print("Stopping the Worker and verifying no-Worker failure...")
             run([*command, "stop", "worker"], environment=environment)

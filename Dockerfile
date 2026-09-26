@@ -39,7 +39,7 @@ COPY pyproject.toml ./
 COPY mediaflow ./mediaflow
 COPY --from=web-build /build/web/dist /opt/mediaflow/web/dist
 
-RUN python -m pip install --no-cache-dir --no-compile --disable-pip-version-check . \
+RUN python -m pip install --no-cache-dir --no-compile --disable-pip-version-check '.[openlist]' \
     && mkdir -p /data /config \
     && chown -R "${MEDIAFLOW_UID}:${MEDIAFLOW_GID}" /data /config /opt/mediaflow \
     && find /usr/local/lib/python3.13/site-packages -type d -name __pycache__ \

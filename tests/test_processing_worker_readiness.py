@@ -292,6 +292,30 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
                 self.assertEqual(workers[0].configuration_snapshot_digest, active.digest)
                 self.assertEqual(workers[0].runtime_schema_version, SCHEMA_VERSION)
 
+    def test_cli_worker_registers_transfer_consumers_before_first_active(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            runtime = root / "runtime.sqlite3"
+            document = _example_document()
+            document["persistence"]["databasePath"] = str(runtime)
+            config = root / "bootstrap.json"
+            config.write_text(json.dumps(document), encoding="utf-8")
+
+            output, errors = io.StringIO(), io.StringIO()
+            status = final_main(
+                ["--config", str(config), "worker", "run-next"],
+                stdout=output,
+                stderr=errors,
+            )
+            self.assertEqual(status, 0, errors.getvalue())
+            with SQLiteTaskRepository(runtime) as repository:
+                workers = repository.list_workers()
+                self.assertEqual(len(workers), 1)
+                self.assertIsNone(workers[0].configuration_snapshot_id)
+                self.assertIn("files_transfer", workers[0].supported_commands)
+                self.assertIn("media_files_transfer", workers[0].supported_commands)
+                self.assertEqual(workers[0].runtime_schema_version, SCHEMA_VERSION)
+
     # AC2: Liveness and readiness
     def test_heartbeat_progression_and_stale_evaluation(self) -> None:
         start = datetime(2026, 1, 1, tzinfo=UTC)
@@ -357,6 +381,50 @@ class TestProcessingWorkerReadiness(unittest.TestCase):
         self.assertEqual(readiness["condition"], WorkerReadiness.SCHEMA_MISMATCH.value)
         self.assertIn("schema", readiness["durableState"])
         self.assertEqual(readiness["expectedSchemaVersion"], SCHEMA_VERSION)
+
+    def test_transfer_readiness_is_command_specific_and_snapshot_independent(self) -> None:
+        now = datetime.now(UTC)
+        self.service.register_worker(
+            worker_id="automation-only",
+            label="automation-only",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("scan",),
+            configuration_snapshot_id="old-active",
+            configuration_snapshot_digest="old-digest",
+            runtime_schema_version=SCHEMA_VERSION,
+            now=now,
+        )
+        unsupported = self.service.evaluate_command_readiness(
+            ("files_transfer",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertFalse(unsupported["ready"])
+        self.assertEqual(unsupported["condition"], "unsupported_command")
+
+        self.service.register_worker(
+            worker_id="transfer-worker",
+            label="transfer-worker",
+            heartbeat_interval_seconds=5.0,
+            supported_commands=("files_transfer", "media_files_transfer"),
+            configuration_snapshot_id=None,
+            configuration_snapshot_digest=None,
+            runtime_schema_version=SCHEMA_VERSION,
+            now=now,
+        )
+        ready = self.service.evaluate_command_readiness(
+            ("files_transfer",), now=now, runtime_schema_version=SCHEMA_VERSION
+        )
+        self.assertTrue(ready["ready"])
+        self.assertEqual(ready["condition"], "ready")
+
+        status, document = _request(
+            self.api, "GET", "/api/v1/workers/readiness", token="api-secret"
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(document["processAlive"])
+        self.assertTrue(document["baseReadiness"]["registered"])
+        self.assertFalse(document["currentActiveAvailable"])
+        self.assertTrue(document["workReadiness"]["resourceFilesTransfer"]["ready"])
+        self.assertTrue(document["workReadiness"]["mediaFilesTransfer"]["ready"])
 
     def test_stopped_worker_is_not_reported_as_never_registered(self) -> None:
         self.service.register_worker(

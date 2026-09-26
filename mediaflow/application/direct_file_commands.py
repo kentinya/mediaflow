@@ -226,6 +226,19 @@ class DirectFileCommandService:
     def open_storage(self, library: ResourceLibrary | MediaLibrary) -> Storage:
         return self._open_storage(library)
 
+    def close(self) -> None:
+        """Close Storage adapters opened by this immutable runtime boundary."""
+
+        storages = tuple(self._storage_cache.values())
+        self._storage_cache.clear()
+        for storage in storages:
+            close = getattr(storage, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+
     def rebind_to_revision(
         self, revision_id: str, revision_digest: str
     ) -> DirectFileCommandService | None:

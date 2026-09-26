@@ -97,6 +97,8 @@ class FilesTransferWorker:
         repository=None,
         *,
         media_transfer_service=None,
+        service_factory: Callable[[str, object], object | None] | None = None,
+        supported_commands: tuple[str, ...] | None = None,
         lease_seconds: float = DEFAULT_TRANSFER_LEASE_SECONDS,
         clock: Callable[[], datetime] | None = None,
         worker_id: str | None = None,
@@ -114,6 +116,10 @@ class FilesTransferWorker:
                 direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True)
             ] = media_transfer_service
         self._services = services
+        self._service_factory = service_factory
+        self._supported_commands = tuple(
+            dict.fromkeys(supported_commands if supported_commands is not None else services)
+        )
         #: The pre-existing single-service attribute, retained so a Worker that
         #: serves exactly one kind keeps its historical behavior and any caller
         #: inspecting it sees the boundary it was built with.
@@ -123,6 +129,14 @@ class FilesTransferWorker:
         self._clock = clock or (lambda: datetime.now(UTC))
         self._worker_id = worker_id or f"files-transfer-{secrets.token_hex(6)}"
         self._notice = notice or (lambda line: sys.stderr.write(line))
+        self._worker_heartbeat: Callable[[], bool] | None = None
+
+    def set_worker_heartbeat(self, heartbeat: Callable[[], bool]) -> None:
+        """Keep the resident registration live during slow reconstruction/I/O."""
+
+        if not callable(heartbeat):
+            raise ValueError("files transfer worker heartbeat must be callable")
+        self._worker_heartbeat = heartbeat
 
     def service_for(self, command: str | None):
         """The one kind-pinned service that may execute a claimed Task command."""
@@ -135,7 +149,7 @@ class FilesTransferWorker:
     def commands(self) -> tuple[str, ...]:
         """The durable Task commands this Worker can lawfully execute."""
 
-        return tuple(sorted(self._services))
+        return tuple(sorted(self._supported_commands))
 
     @property
     def worker_id(self) -> str:
@@ -168,6 +182,7 @@ class FilesTransferWorker:
             worker_id=self._worker_id,
             claim_token=claim_token,
             lease_seconds=self._lease_seconds,
+            supported_commands=self.commands if self._service_factory is not None else None,
         )
         if claimed is None:
             # No ordinary work is claimable.  One transfer may still hold an
@@ -178,15 +193,20 @@ class FilesTransferWorker:
             claimed = self._claim_expired_mutation(claim_token)
             if claimed is None:
                 return None
-        service = self._service_for_transfer(claimed)
         keeper = self._start_lease_keeper(claimed.transfer_id, claim_token)
+        service = None
         try:
+            service = self._service_for_transfer(claimed)
             if service is None:
                 # No configured boundary of this Worker may lawfully execute the
                 # claimed transfer's kind.  It is returned to the claimable queue
                 # with bounded readiness evidence instead of being consumed as a
                 # business failure: an eligible Worker continues it later.
-                self._release_incompatible(claimed.transfer_id, claim_token)
+                self._release_incompatible(
+                    claimed.transfer_id,
+                    claim_token,
+                    snapshot_unavailable=self._service_factory is not None,
+                )
                 return None
             return service.run_claimed_transfer(
                 claimed,
@@ -200,6 +220,13 @@ class FilesTransferWorker:
             return None
         finally:
             keeper.stop()
+            if self._service_factory is not None and service is not None:
+                close = getattr(service, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
 
     def _service_for_transfer(self, transfer):
         """The one kind-pinned service that may execute a claimed transfer.
@@ -220,9 +247,20 @@ class FilesTransferWorker:
             # boundary here: fall back to the single configured service only
             # when this Worker serves exactly one kind, otherwise fail closed.
             return self._service if len(self._services) == 1 else None
-        return self.service_for(getattr(task, "command", None))
+        command = getattr(task, "command", None)
+        if not isinstance(command, str) or command not in self._supported_commands:
+            return None
+        if self._service_factory is not None:
+            return self._service_factory(command, transfer)
+        return self.service_for(command)
 
-    def _release_incompatible(self, transfer_id: str, claim_token: str) -> None:
+    def _release_incompatible(
+        self,
+        transfer_id: str,
+        claim_token: str,
+        *,
+        snapshot_unavailable: bool = False,
+    ) -> None:
         """Return one claimed transfer this Worker cannot execute to the queue."""
 
         requeue = getattr(self._repository, "release_files_transfer_claim", None)
@@ -233,9 +271,16 @@ class FilesTransferWorker:
                 transfer_id,
                 claim_token=claim_token,
                 now=self._clock(),
-                error="files_transfer_worker_kind_unavailable",
+                error=(
+                    "files_transfer_snapshot_unavailable"
+                    if snapshot_unavailable
+                    else "files_transfer_worker_kind_unavailable"
+                ),
                 next_action=(
-                    "wait for a Worker configured with this transfer's library kind, "
+                    "repair the admitted transfer's pinned configuration or required "
+                    "credentials; the preserved queue entry will continue automatically"
+                    if snapshot_unavailable
+                    else "wait for a Worker configured with this transfer's library kind, "
                     "or inspect the Active configuration"
                 ),
             )
@@ -251,6 +296,7 @@ class FilesTransferWorker:
             worker_id=self._worker_id,
             claim_token=claim_token,
             lease_seconds=self._lease_seconds,
+            supported_commands=self.commands if self._service_factory is not None else None,
         )
 
     def _start_lease_keeper(self, transfer_id: str, claim_token: str):
@@ -267,8 +313,12 @@ class FilesTransferWorker:
         non-replayable even if the keeper can no longer renew the lease.
         """
 
-        interval = max(0.05, self._lease_seconds / 3.0)
+        # Registration freshness is a shorter-lived operational signal than a
+        # transfer claim (normally 5s vs 300s).  Cap the keeper interval so a
+        # slow provider call cannot leave the real resident Worker looking stale.
+        interval = min(1.0, max(0.05, self._lease_seconds / 3.0))
         heartbeat = self._heartbeat
+        worker_heartbeat = self._worker_heartbeat
         notice = self._notice
 
         class _LeaseKeeper:
@@ -282,6 +332,8 @@ class FilesTransferWorker:
                 while not self._stop.wait(interval):
                     try:
                         renewed = heartbeat(transfer_id, claim_token)
+                        if worker_heartbeat is not None:
+                            worker_heartbeat()
                     except Exception:
                         renewed = False
                     if renewed:

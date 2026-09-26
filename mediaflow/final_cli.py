@@ -9,7 +9,6 @@ import os
 import re
 import secrets
 import signal
-import sys
 import threading
 import time
 from collections.abc import Callable
@@ -87,11 +86,13 @@ from mediaflow.domain.recognition_review import RecognitionReviewStatus, Recogni
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.task_persistence import (
+    FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
     TaskItemStatus,
+    direct_command_task_command,
 )
 from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
@@ -3609,55 +3610,34 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
             library_kind=(LibraryKind.MEDIA if media_library else LibraryKind.RESOURCE),
         )
 
-    with SQLiteConfigurationRepository(configuration.database_path) as configuration_repository:
-        active = configuration_repository.get_active_revision()
-        if active is None:
-            # No Active configuration: there is no admitted transfer this
-            # Worker may lawfully execute, and nothing claimable exists.
-            yield _NullFilesTransferWorker()
-            return
-        try:
-            runtime = _configuration(
-                configured_path, snapshot_id=active.revision_id, snapshot_digest=active.digest
-            )
-            direct_files = DirectFileCommandService(
-                active_revision=active,
-                runtime_configuration=runtime,
-                task_repository=repository,
-                revision_rebuilder=reconstruct,
-            )
-            direct_media_files = DirectFileCommandService(
-                active_revision=active,
-                runtime_configuration=runtime,
-                task_repository=repository,
-                revision_rebuilder=reconstruct,
-                library_kind=LibraryKind.MEDIA,
-            )
-            transfers = DirectFileTransferService(
-                direct_files=direct_files,
-                runtime_factory=lambda revision_id, digest: reconstruct(
-                    revision_id, digest, media_library=False
-                ),
-            )
-            media_transfers = DirectFileTransferService(
-                direct_files=direct_media_files,
-                runtime_factory=lambda revision_id, digest: reconstruct(
-                    revision_id, digest, media_library=True
-                ),
-            )
-        except Exception as error:
-            # An unhealthy Active configuration must not disable this Worker's
-            # other duties (queued Jobs, admitted manual executions): a
-            # transfer admitted against it stays claimable and is executed
-            # only when a lawful Active execution context exists again.  A
-            # pinned transfer is never executed against a different snapshot.
-            sys.stderr.write(
-                "files transfer runner unavailable with the current Active configuration "
-                f"({type(error).__name__[:48]}); admitted transfers stay claimable\n"
-            )
-            yield _NullFilesTransferWorker()
-            return
-        yield FilesTransferWorker(transfers, repository, media_transfer_service=media_transfers)
+    resource_command = direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=False)
+    media_command = direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True)
+
+    def service_for(command: str, transfer):
+        """Build one attempt boundary from the claimed transfer's durable pin."""
+
+        media_library = command == media_command
+        if command not in {resource_command, media_command}:
+            return None
+        direct = reconstruct(
+            transfer.configuration_snapshot_id,
+            transfer.configuration_snapshot_digest,
+            media_library=media_library,
+        )
+        if direct is None:
+            return None
+        return DirectFileTransferService(direct_files=direct)
+
+    # The resident consumer exists before the first Active configuration and
+    # throughout later Active outages.  It opens no provider here: each claim
+    # is reconstructed from its own immutable revision/digest after ownership
+    # has been acquired, and all Storage adapters remain attempt-scoped.
+    yield FilesTransferWorker(
+        None,
+        repository,
+        service_factory=service_for,
+        supported_commands=(resource_command, media_command),
+    )
 
 
 class _NullFilesTransferWorker:
