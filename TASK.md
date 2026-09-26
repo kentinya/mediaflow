@@ -193,36 +193,68 @@ new changes or failures justify the necessary rerun. Developer reports all actua
 
 ### Changed Files
 
-Pending implementation.
+- `mediaflow/final_cli.py`, transfer Worker/services, Worker readiness/domain/persistence and API.
+- `mediaflow/container_probe.py`, `Dockerfile`, Docker health/lifecycle smoke harnesses.
+- typed Web transfer/Worker models, Files progress UI and Operations readiness UI.
+- focused Python/Web regressions and factual architecture/deployment/product-experience guidance.
 
 ### Implemented
 
-Pending implementation.
+- Installed both transfer consumers before first Active and changed the resident boundary to claim
+  by durable command, then reconstruct one exact revision/digest/library-kind context per attempt.
+  Current Active remains new-admission authority; older valid pins continue without substitution.
+- Preserved claims, lease renewal, mutation fences, checkpoints and uncertain-effect resolution;
+  slow provider work also renews resident registration, and attempt-scoped adapters are closed.
+- Made production Worker registration independent of Active and declared both transfer commands.
+  Readiness separates process, registration/schema, current Active and per-command work readiness;
+  Compose health now verifies the real registered transfer consumer without provider calls.
+- Added actionable waiting evidence to API/Web transfer progress and Operations revisit. Refresh
+  never resubmits, and unavailable pinned context remains durable with zero new mutation.
 
 ### Tests and Results
 
-Pending implementation. A's Local startup-order reproduction is defect evidence, not delivery or
-OpenList/Docker acceptance evidence.
+- `python3 scripts/check_governance.py` — **PASS**.
+- Required focused Python gate — **PASS**, 273 tests.
+- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 1,847 tests, 7 existing
+  external/optional-profile skips.
+- Required focused Web gate — **PASS**, 80 tests; `cd web && npm test -- --run` — **PASS**,
+  727 tests / 47 files.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — **PASS**.
+- Required browser gate for Files and MediaLibrary — **PASS**, 61 Chromium tests.
+- Ruff format/lint, compileall, `git diff --check`, governance and manifest/private-config audits —
+  **PASS**.
+- `python3 -u scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task39-5-lifecycle-debug`
+  — **PASS**: containers first, checked activation, unchanged Worker identity, real local HTTP
+  OpenList Move, slow request beyond stale threshold, one mutation and matching durable result.
+- `python3 -u scripts/docker_health_smoke_test.py --image mediaflow:task39-5-lifecycle-debug` —
+  **PASS**.
+- `python3 -u scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task39-5-validation`
+  — **PASS**.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-5-validation`
+  — **PASS**.
 
 ### Decisions
 
-Reuse existing transfer admission, durable pinning, claims, fences and Executor. Report any required
-persistence evolution and compatibility rationale; raise any material scope change to B/A.
+Reused existing admission, pinning, claims, fences and Executor. Command-filtered claims apply to
+the new lazy dispatcher while legacy single-service incompatibility evidence remains compatible.
+The production image installs `.[openlist]` because real OpenList execution otherwise lacks its HTTP
+adapter dependency. No durable schema change or migration was required.
 
 ### Remaining In-Slice Work
 
-RO-8/RO-9 and associated acceptance/regression matrix.
+No additional implementation work is known inside this Task. B decides whether Slice RO-8/RO-9 and
+the full Slice outcomes are satisfied.
 
 ### Risks / Deviations
 
-No deviations approved. The same agent's A scope decision and B planning are explicitly authorized
-and disclosed; future implementation and acceptance roles remain governed by the workflow.
+All required committed-candidate Docker gates passed. Existing `docs/pics` delete/modify/untracked changes are preserved and excluded. No credentials,
+`config/alist.json`, FFmpeg/FFprobe dependency or private path was added.
 
 ### Checkpoint
 
 ```text
-Status: PLANNED
-Head SHA: NOT CREATED
+Status: READY FOR B REVIEW
+Head SHA: 95d12a464dcab40a9e0d84a08f1fb8f662621047
 ```
 
 ## B Review Result
