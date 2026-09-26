@@ -1,18 +1,13 @@
-# NO ACTIVE IMPLEMENTATION TASK
+# Task 39.5 — Resident transfer continuity and truthful Worker readiness
 
-Task 39.4 passed B review. Slice 39 is returned to A for final review of the correction.
-The completed Task and Developer report below are retained as review evidence, not active work.
-
-# Task 39.4 — Restore Storage inventory and setup recovery
-
-This Task follows [the development workflow](docs/development-workflow.md) and implements the
-bounded correction requested by [A Final Review](SLICE.md#a-final-review).
+This Task follows [the development workflow](docs/development-workflow.md) and the checkpointed
+[A Scope Activation](SLICE.md#a-scope-activation--2026-09-26-worker-continuity).
 
 ```text
-Task ID: 39.4
+Task ID: 39.5
 Parent Slice: 39
 Status: PLANNED
-Task Base: 3779d203821930ad898fea49df2cee796c7a1c79
+Task Base: d74822ce509512fcc10e5802bc6cc95602c77c3b
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -20,334 +15,221 @@ Planner / Reviewer: B
 
 ## Goal
 
-Restore the Storage workspace's configuration-read and recovery journey: every provider-valid
-OpenList root remains usable after Save and reload, and an operator without an initial managed
-runtime can enter the existing setup workflow, continue it and return to the actual Active Storage
-inventory. Resolve both A P1 blockers within existing RO-2/RO-3/RO-6 and API/Web parity under RO-7.
+Complete Slice 39 RO-8/RO-9: an operator can start the deployment, finish setup/activate configuration,
+and explicitly submit a ResourceLibrary or MediaLibrary transfer that the already-running Worker
+executes under the admitted immutable snapshot. Health and transfer progress truthfully explain
+whether work can run, why it is waiting and how to recover without resubmission or uncertain replay.
 
 ## Why This Task Exists
 
-A rejected the previously submitted Slice at checkpoint
-`3779d203821930ad898fea49df2cee796c7a1c79` after real reproductions established two broken states of
-the same workspace: a legal saved OpenList configuration makes inventory decoding fail, and the
-setup-required state tells the operator to initialize without providing its recovery handoff.
+The real resident composition creates a no-op transfer runner for its entire lifetime if there is
+no Active at startup or initial Active construction fails. A reproduced the legitimate sequence
+with temporary SQLite, actual Local Storage and checked activation: after Move admission, three
+polls of the original runner leave the transfer `admitted`; a newly constructed runner is functional.
+The existing per-task runtime rebuilder cannot help when the resident consumer was never installed.
 
-The real API accepts an unreferenced disabled OpenList object with `rootPath: ""` in a complete
-Local-backed managed runtime. Save and inventory return 200, but the production Web normalizer
-rejects that empty path. An otherwise identical `/` projection succeeds. Separately, a real
-management-only instance exposes no setup action in the Storage page body, while V1 Configuration
-already supports first-Draft creation/resume after authentication. These are production-supported
-states, not future-adapter or reduced-capability scenarios.
+Bootstrap registration also depends on worker ID/snapshot presence; current registration and
+readiness primarily describe Automation commands. Worker container health currently checks deployment
+preflight, which cannot prove that the Worker is registered or able to consume this command. These
+are one user journey failure across runtime composition, persistence, API, Web and deployment.
 
-This is one coherent readability/recovery correction, not a Task for one field or link. The three
-passed Tasks and their Bases remain historical. Task Base is the actual committed A-review Head;
-Slice Base remains `d02539e49d5c99c3e3c0c70de5e994e42824a18e`. No implementation has begun.
-High/T4 reflects validation of Active-state truth and recovery across V1/V2 authentication and
-checked publication; the correction must reuse those authorities rather than redesign them.
+A explicitly included this correction in Slice 39; Slice 38 remains closed. This is the fifth
+coherent Task, not a Task per assertion, health field or regression. Reuse the existing transfer
+queue and safety machinery; avoid a generic scheduler/runtime framework. Earlier Task Bases and
+PASS decisions remain unchanged. High/T4 is required by actual media mutation, snapshot authority,
+leases, restart recovery, durable registration and container execution.
 
 ## Implementation Scope
 
-Existing application/API projections → typed Web normalization and display → existing setup
-handoff/return → integration and browser proof. No new domain model, repository or setup engine.
+Durable admitted authority → resident claim/reconstruction → existing transfer service/Executor →
+command-aware readiness and progress → API/Web → actual container lifecycle and regression tests.
 
-- Inspect `normalizeLocation` and the inventory/detail projections it consumes. Accept the empty
-  string when it is a valid provider root; keep other required field types, lengths and shapes
-  strict. OpenList empty and `/` mean its service root. Preserve root values through prefilled Edit
-  and show a clear provider-root label in list/detail/confirmation where needed. Existing valid
-  non-empty roots and other providers retain their established semantics; Local confinement stays
-  unchanged. Do not replace every missing/invalid value with `/` or drop the offending row.
-- Complete the saved-configuration round trip: Add → checked Save → refreshed full inventory →
-  detail → Edit → reload. Existing empty-root entries must become readable after deploying the fix
-  without re-saving, deleting/recreating configuration, editing SQLite or moving media. A failed
-  follow-up read does not prove that Save was rolled back; preserve known results and existing
-  explicit unknown-outcome verification without automatically repeating Add/Save/activation.
-- Give a genuinely setup-required Storage empty state an explicit `去完成设置` action or equivalent
-  that reaches the existing V1 `/ui` Configuration workflow. Reuse existing management readiness,
-  first-Draft creation/resume and checked activation. A small existing-V1 entry/return affordance
-  and bounded read-projection adjustment are allowed if necessary. The entry must not merely
-  create another migration dead end or make the user discover the required page independently.
-- Retain/resume unfinished setup. Provide an explicit path back to `/ui-v2/storage` after completing
-  the existing workflow; refetch current authority on return/reconnect. Navigation and page reads
-  must not create a Draft, run checks, activate or start media work. Draft creation remains explicit;
-  duplicate navigation must not produce duplicate initialization. No global post-login onboarding
-  or native V2 setup wizard is included.
-- Keep no initial setup, existing-but-unavailable Active, malformed inventory and denied authority
-  distinct. An administrator gets the applicable existing setup/configuration recovery path; a
-  viewer gets truthful administrator guidance without mutation controls. Retain correctable input
-  and permission/error information. Never infer that an empty or malformed list means initialization
-  should be repeated.
-- Preserve memory-only Bearer authentication and backend RBAC. Existing V1 re-authentication is
-  acceptable; do not put tokens in URLs, browser persistence or a new handoff mechanism. Return
-  targets must be fixed or same-origin allowlisted application routes. Complete the keyboard and
-  narrow-screen action/return interaction using existing components.
-- Preserve A's Contract, deferrals, Roadmap and reference image. Keep all pre-existing unrelated
-  image changes and private configuration outside the implementation checkpoint. Record factual
-  resolution of the known defect in configuration guidance as part of the completed behavior;
-  Developer does not edit the A-owned Slice or change B's criteria to make the Task pass.
+1. **Resident assembly and snapshot binding.** Inspect the complete CLI startup and worker loop,
+   including `_configuration`, `_managed_snapshot_reference`, `_files_transfer_worker_context`,
+   `AutomationWorker` and `FilesTransferWorker`; do not fix only an isolated constructor that the
+   real entrypoint cannot reach. With valid deployment/DB/schema, install and register the transfer
+   consumer before any Active and keep it available during current-Active outages. Build the
+   Resource/Media execution boundary from each admitted Task's durable command/kind, revision ID,
+   digest and authority. Validate published snapshot/integrity, roots, capabilities, applicable
+   permissions/secret readiness and confinement before any mutation. Bind the context for the whole
+   attempt; close per-attempt resources reliably. A bounded reuse/cache is optional, not required.
+2. **Admission versus execution.** Current Active remains authoritative for new admission. Existing
+   admitted A work must remain executable from valid A when Active becomes B or disappears. Invalid
+   task pins, unavailable required credentials, incompatible schema or unknown command fail closed
+   with durable, bounded blocked/failure evidence. Never substitute current Active, JSON, a Draft or
+   the other library kind. Preserve a still-valid admitted queue entry where recovery is possible;
+   do not silently discard work, busy-loop or let one incompatible entry hide all eligible work.
+3. **Ownership and restart.** Reuse atomic claims, owner tokens, lease keeper, persisted per-item
+   checkpoints, mutation fences and uncertainty resolution. Ownership must cover reconstruction and
+   slow provider calls. A later activation must not alter an in-flight attempt. Completed effects
+   remain terminal; uncertain effects are resolved/explained without automatic mutation replay.
+   Losing ownership blocks new effects/stale completion; do not claim that an already-issued remote
+   operation can be undone. Retain pause/resume/cancel and safe not-started continuation semantics.
+4. **Truthful health.** Make registration/heartbeat independent of business Active in production.
+   Distinguish process liveness, registration/DB/schema readiness, and command/pin work readiness.
+   Expose actual supported Resource/Media transfer commands separately from other Worker duties,
+   current Active availability and bounded compatibility/reconstruction blockers. A healthy worker
+   for another command cannot satisfy this transfer. Integrate the real container probe/Compose
+   signal with service readiness, document exactly what healthy means, and avoid making no Active
+   alone equivalent to a dead consumer. Probe/health reads perform no provider calls or mutations.
+   Reuse current registration storage/projections; narrowly necessary durable evolution is allowed
+   with migration/upgrade evidence, never an unversioned silent schema change.
+5. **Visible waiting and recovery.** Reuse existing authenticated transfer submission/progress,
+   Files and Operations revisit, Worker readiness API and typed Web models. Retain asynchronous
+   durable admission; show `等待可用 Worker` or equivalent before or immediately after submission
+   when work cannot yet be consumed. Explain no/stale Worker, unsupported command, DB/schema or
+   unavailable pinned context, distinguish not admitted/admitted/running/partial/uncertain, and
+   give the relevant safe next action. Refresh never resubmits. Repairing readiness lets safe
+   eligible work continue without another submission. Viewer/read-only observation and backend
+   permission checks stay authoritative; no internal tokens/digests as ordinary user input.
+6. **Integration and documentation.** Cover both library kinds and their existing API/Web paths,
+   plus compatibility with Automation jobs and admitted manual Organize. Use actual OpenList
+   adapter HTTP against a controlled local service for the mandatory Move/slow-request proof.
+   Extend an existing Docker harness or add `scripts/docker_files_transfer_lifecycle_smoke_test.py`
+   with an `--image` option; use the committed image/entrypoint/real worker loop. Update factual
+   deployment/API/architecture guidance necessary to describe delivered behavior, clearly separating
+   remaining targets. Do not change A-owned Slice/requirement scope, Roadmap or acceptance criteria.
 
 ## Acceptance Criteria
 
-- [ ] A legitimate OpenList object with an empty root, including an already-saved disabled entry,
-      appears alongside other valid entries in inventory and detail. `/` and a valid subdirectory
-      also work. The UI labels the provider root truthfully and prefilled Edit preserves its value;
-      reload and subsequent operations do not produce a malformed-inventory error.
-- [ ] Actual checked Add/Save followed by API inventory and Web decoding completes the round trip.
-      The regression uses real application/API projections, not only hand-authored frontend JSON.
-      No configuration/data rewrite is needed for existing empty-root entries. Unrelated malformed
-      types/oversized fields and invalid Local roots remain rejected; no row is silently omitted.
-- [ ] An authenticated administrator on a fresh instance can use the Storage empty-state action to
-      reach existing first setup, explicitly create or resume its configuration and complete the
-      existing checked publication. Returning to Storage shows the actual initialized inventory.
-      An existing incomplete setup survives navigation/reload/reconnect and can be continued.
-- [ ] The journey includes an explicit reachable return from setup to Storage. Keyboard, narrow
-      layout and normal authentication continuation work. Tokens never cross URLs/persistent
-      browser storage; arbitrary return URLs are not accepted. A viewer cannot create or activate
-      setup and receives a meaningful administrator handoff.
-- [ ] Missing setup, unavailable Active and malformed read states remain distinguishable. Invalid
-      fields, failed checks, stale authority and unknown activation outcomes retain truthful durable
-      state and the existing safe correction/verification path. Navigation/read/return never creates
-      duplicate Drafts, silently retries Save/activation or starts scans, media Tasks or Storage writes.
-- [ ] Existing inventory/search/provider filtering, Add/Edit, row lifecycle actions, diagnostics,
-      V1 setup and general Configuration remain compatible. Full graph validation, exact evidence,
-      runtime publication, references, audit and confinement are unchanged. The assigned gates pass
-      with truthful totals/skips and any externally unavailable validation explicitly reported.
+- [ ] With no initial Active, a valid production Worker remains running and durably registered.
+      First checked activation followed by OpenList Move executes without restarting/replacing
+      that Worker. Both ResourceLibrary and MediaLibrary command dispatch are supported and isolated.
+- [ ] Active A→B gives new admissions B. Already-admitted A and a Move blocked in a provider call
+      during activation remain on A. Distinct roots/provider observations prove actual use, not
+      just a revision label; equal library IDs do not cross Resource/Media authority.
+- [ ] Missing/unusable current Active rejects new admission with zero Storage mutation, while a
+      valid older admitted pin can still execute. Missing/corrupt/digest-mismatched/unpublished task
+      snapshots and required missing secrets cause zero new Storage mutation and actionable durable
+      evidence, with no fallback. Existing partial effects are reported truthfully, not rolled back
+      in the UI or automatically replayed.
+- [ ] Worker restart, competing ownership and lease expiry do not duplicate confirmed effects or
+      replay uncertain operations. OpenList requests held longer than the configured test lease
+      retain both relevant heartbeat/lease and mutation exclusion, and stale owners cannot publish
+      over successors. Genuine process failure still permits the existing safe resolution path.
+- [ ] Health reports liveness, base readiness and work readiness separately. No/stale registration,
+      database failure, runtime schema mismatch, unsupported command and unavailable task context
+      cannot be falsely reported as eligible execution. Current Active health does not veto a valid
+      older pin. Compose verifies actual Worker readiness and its documented semantics match results.
+- [ ] Real API/Web transfer submission, progress, reconnect and Operations revisit promptly show
+      waiting reason/durable state/next action, and converge to actual progress after recovery without
+      resubmission. A live Worker for a different command is not sufficient. Readiness reads and
+      refresh generate no Storage access/probe, configuration publication or media work.
+- [ ] Docker proves containers first → first checked activation → admitted OpenList Move with
+      unchanged Worker container/process identity. Actual source/destination effects and durable
+      results agree. A local HTTP provider may control timing/data; the application/consumer must
+      not be replaced by a fake, `run-next`, or a Worker restart after activation.
+- [ ] Required T4 gates pass with honest totals, skips and unavailable gates. Existing Storage
+      configuration, Files, both transfer kinds, Automation/manual Organize, redaction/RBAC,
+      boundedness, RecognitionType C identity and OrganizerExecutor-only mutation stay intact.
 
 ## Required Tests
 
-Use temporary state, actual Local adapters and fake/local OpenList services where reads are needed.
-A disabled OpenList root-listing case is valid and needs no external provider. Never use production
-credentials, private configuration or user media. Do not weaken tests/assertions or add hidden skips.
+Add regression tests to the existing relevant suites or a coherent new lifecycle suite. Use
+synchronization/events for concurrency, bounded timeouts and real SQLite/production composition.
+Do not hide a production capability in a test double to manufacture a defect. Do not use production
+SMB/OpenList/S3/TMDB services, private config/credentials or user media. Do not remove or loosen tests.
 
-- Focused Python/API integration:
-  `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations tests.test_storage_page_local_save tests.test_configuration_objects`.
-  Cover provider-root Save/inventory/detail consistency and actual fresh/resumable setup authority.
-- Focused Web normalization/API/component tests:
-  `cd web && npm test -- --run src/entities/storage/storage-management.test.ts src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx`.
-  Cover empty/slash/non-empty roots, real backend response fixtures, existing saved entries,
-  unrelated malformed payload rejection and the distinct setup/unavailable/denied states.
-- Browser integration:
-  `cd web && npm run test:e2e -- --grep 'Storage management'` plus any affected V1/setup browser
-  coverage introduced by the correction. Prove the complete round trip and setup handoff, resume,
-  explicit completion, return, authenticated refresh, viewer denial and no side effects on
-  navigation. At least one integration proof uses the actual application/API and temporary managed
-  state for the return to an initialized inventory; a mocked button destination alone is insufficient.
-- `.venv/bin/python -m unittest discover -s tests` for complete Python regression.
-- `cd web && npm test -- --run` for complete Web regression.
+Mandatory lifecycle matrix (all eight user-requested cases):
+
+| Case | Required proof |
+|---|---|
+| 1. Worker before first activation | Real resident entrypoint/composition, then checked activation and OpenList Move; no restart. |
+| 2. New work after A→B | Admit after switching; observe execution against distinct B configuration. |
+| 3. Queued A work after A→B | Admit before switching; observe execution against A, including Worker reconstruction. |
+| 4. Switch during Move | Hold an actual adapter request, publish B, release request; same A attempt/fence throughout. |
+| 5. Missing/corrupt context or secrets | Missing current Active blocks new admission; intact A may execute. Missing/bad task pin, digest, schema or required credentials produces zero new mutations and truthful recovery. |
+| 6. Restart | Completed and uncertain checkpoints do not reissue mutation; safe not-started siblings retain independent continuation. |
+| 7. Slow OpenList | Hold request beyond a short configured lease; observe continued heartbeat/fence, reject competitor and stale completion, retain safe process-death resolution. |
+| 8. Docker production order | Start all services without Active; activate through real checked API; submit Move and verify outcome with the same Worker process/container. |
+
+Exact existing gates:
+
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_processing_worker_readiness tests.test_container_probe tests.test_container_deployment tests.test_openlist_storage tests.test_configuration_snapshot tests.test_manual_organize_execution tests.test_automation_job_fencing`
+  plus the new lifecycle module if one is added; include negative registration/command/schema and
+  API parity cases and inspect persisted outcome/mutation counts, not only function calls.
+- `cd web && npm test -- --run src/entities/operations/worker.test.ts src/shared/api/operations-api.test.ts src/features/library/StorageFilesPage.test.tsx src/features/library/MediaLibraryTransfers.test.tsx src/features/operations/OperationsRouter.test.tsx`
+  plus new/affected typed waiting/progress component tests. Cover initial admission, durable revisit,
+  recovery, viewer permissions, malformed/denied API, no retry-on-refresh and keyboard/narrow layout.
+- `cd web && npm run build && npm run test:e2e -- tests/e2e/library-files.spec.ts tests/e2e/medialib-transfers.spec.ts tests/e2e/medialib-files.spec.ts`
+  plus affected Operations/Worker browser coverage. At least one complete waiting→available→execution
+  journey uses the real API/Worker and temporary state; resettable fake status alone is insufficient.
+- `.venv/bin/python -m unittest discover -s tests` and `cd web && npm test -- --run`.
 - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`.
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check .` and
   `.venv/bin/python -m compileall -q mediaflow tests scripts`.
-- `python3 scripts/check_governance.py`, `git diff --check`, exact checkpoint/private-file audit,
-  secret-output audit and FFmpeg/FFprobe exclusion audit. No unrelated images or `config/alist.json`.
-- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-4-validation`
-  against the committed candidate, covering the Python-served V1/V2 composition. Report actual
-  failure/unavailability instead of substituting an earlier checkpoint's result. No new migration
-  gate is required unless the actual implementation changes persistence, which is outside this
-  planned read/handoff correction and must first be raised to B/A.
+- `python3 scripts/check_governance.py`, `git diff --check`, exact Base..Head manifest review,
+  secret/private-config audit and FFmpeg/FFprobe exclusion audit.
+- `python3 -u scripts/docker_health_smoke_test.py --image mediaflow:task39-5-health`.
+- `python3 -u scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task39-5-transfer`.
+- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-5-security`.
+- If adding the lifecycle harness:
+  `python3 -u scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task39-5-lifecycle`.
+  If extending an existing harness instead, record its exact command and identify where the full
+  startup-order/OpenList matrix runs. All Docker evidence must use the committed candidate. A
+  harness that restarts Worker after activation cannot stand in for the new mandatory sequence.
+- If durable registration/schema changes: additionally run
+  `.venv/bin/python -m unittest tests.test_migration_rehearsal tests.test_upgrade_preflight` and
+  prove previous-schema upgrade, already-admitted work preservation, no migration-time mutation and
+  fail-closed incompatible-schema startup/recovery. Document the exact artifact migration command.
+
+Unavailable Docker/external validation is reported with the real error, never converted into PASS
+or silently skipped. No broad full-suite reruns are needed after an unchanged successful gate;
+new changes or failures justify the necessary rerun. Developer reports all actual outcomes to B.
 
 ## Non-goals
 
-- Full native V2 first-setup wizard, global post-login onboarding, general Configuration or System
-  Settings redesign, new identity/session/token-transfer mechanisms or secret-value entry.
-- New configuration authority, activation shortcuts, schema/data migration, automatic initialization,
-  workflow defaults, media jobs, Storage mutation, write probes or provider additions/switching.
-- Broad normalizer refactoring, label-only polish, new per-field/per-test Tasks or changing the Slice
-  Contract/Base, passed Task history, reference image or unrelated/private files.
-- Declaring Slice PASS/CLOSED. This is an A-requested correction: after Task PASS, B returns Slice
-  status to READY FOR A REVIEW with the corrected Head and evidence, without issuing A acceptance.
+- New transfer command/mode, overwrite fallback, cross-kind Resource↔Media transfers, bulk queue
+  migration, universal rollback, automatic uncertain-effect replay or weakened lease/fence checks.
+- A new scheduler, queue, repository authority, provider, generic runtime framework, distributed
+  worker platform, secret store, hot secret rotation, identity/session system or token handoff.
+- Automatic setup/activation or transfer submission; new scan/Preview/Organize semantics; general
+  Configuration/Operations redesign. Preserve other worker roles and existing admitted work.
+- Moving Slice Base, reopening passed Tasks or Slice 38, editing user/reference images, private
+  `config/alist.json`, or declaring Slice PASS/CLOSED. After PASS B reevaluates RO-1–RO-9 and performs
+  Slice Final; the prior Task 39.4 correction-return exception does not close this expanded scope.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-Production (6):
-
-- `mediaflow/application/configuration_objects.py` — the bounded `setup` authority block on the
-  Storage inventory projection, projected from the one existing
-  `ManagedConfigurationService.status_document()` plus the fixed `_V1_SETUP_PATH` constant.
-- `mediaflow/interfaces/service_api.py` — backend-authoritative `canStartSetup` on both the
-  available and unavailable inventory responses.
-- `mediaflow/interfaces/operator_ui.py` — explicit `Return to Storage management` link on the V1
-  Configuration view once a managed Active exists.
-- `web/src/entities/storage/storage-management.ts` — `PROVIDER_ROOT_LABEL`, `normalizeRootPath`
-  accepting the provider-valid empty root byte-exactly, `StorageSetupAuthority` and its strict
-  normalizer with the `SETUP_ROUTE` allowlist, and the `canStartSetup`/`setup` model fields.
-- `web/src/entities/storage/storage-form.ts` — confirmation summary names an empty remote root as
-  the provider root instead of `未填写`.
-- `web/src/features/storage/StorageManagementPage.tsx` — truthful `locationLabel`/`rootPathLabel`
-  and the new `StorageSetupHandoff` rendering the three distinct unavailable states.
-
-Tests and browser fixtures (9):
-
-- `tests/test_storage_page_local_save.py`, `tests/test_v2_storage_operations.py`,
-  `tests/test_management_setup.py`
-- `web/src/entities/storage/storage-management.test.ts`, `web/src/entities/storage/storage-form.test.ts`,
-  `web/src/shared/api/storage-management-api.test.ts`,
-  `web/src/features/storage/StorageManagementPage.test.tsx`
-- `web/tests/fake-server.mjs`, `web/tests/e2e/storage-management.spec.ts`
+Pending implementation.
 
 ### Implemented
 
-**P1 — provider-valid empty root.** The backend already accepted, stored and projected
-`rootPath: ""` (OpenList `_normalize_root` resolves `""` and `/` to the same service root), so no
-Python validation changed. The defect was frontend-only: `normalizeLocation` routed the empty
-string through the non-empty `normalizeBoundedText`, so one legal saved object made the whole
-workspace report `存储管理不可用` and read like a failed Save. A dedicated `normalizeRootPath` now
-accepts `""`, `null` and `undefined`, preserves the value byte for byte (trimming would silently
-retarget a path that addresses the same resource — `/Media/ ` and `/Media` are different entries),
-and still rejects whitespace-only, non-string, NUL and oversized roots as malformed. An empty root
-renders as `提供商根目录` in list, detail and confirmation, keeping it distinct from a stored `/`;
-a prefilled Edit keeps the stored value unchanged. Local confinement, remote traversal rejection,
-oversized-field rejection and every unrelated payload check are untouched, and no row is dropped.
-
-**P1 — setup recovery.** The inventory projection now carries a bounded `setup` block that reuses
-the single existing status document rather than creating a second authority, plus the
-backend-authoritative `canStartSetup`. The page renders three distinct states — first setup
-outstanding, existing-but-unavailable Active, and unreadable snapshot — so initialization is never
-suggested for the latter two. An administrator gets `去完成设置` into the existing V1 workflow,
-which already auto-selects Configuration on Connect and owns first-Draft creation, guided setup,
-checked validation and checked activation. A viewer gets administrator guidance and no unusable
-control. The V1 Configuration view gains an explicit return to `/ui-v2/storage`. Both links are
-fixed same-origin application routes carrying no token, and the normalizer rejects any other
-target. Reading the state is a pure read: no Draft, no check, no activation, no media work.
+Pending implementation.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations tests.test_storage_page_local_save tests.test_configuration_objects` — **PASS**, 128 tests, 0 skips, 24.4 s. (Task Base runs the same command at 121 tests, so this Task added 7.)
-- `cd web && npm test -- --run src/entities/storage/storage-management.test.ts src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx` — **PASS**, 113 tests (was 91).
-- `cd web && npm run test:e2e -- --grep 'Storage management'` — **PASS**, 29 Chromium tests, 0 skips, 35.1 s against the rebuilt artifact (was 24; 5 added).
-- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 1,843 tests, 7 skips, 334.8 s.
-  The +7 delta matches the focused gate exactly (121 → 128). Skips are the pre-existing isolated
-  real OpenList/SMB/S3 acceptance and endurance profiles that need external services; no production
-  service, credential or user media was used.
-- `cd web && npm test -- --run` — **PASS**, 724 tests / 47 files, 0 skips, 282.6 s.
-- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — **PASS**.
-- `.venv/bin/ruff format --check . && .venv/bin/ruff check .` — **PASS**, 316 files formatted.
-  `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**.
-- `python3 scripts/check_governance.py` — **PASS** (also re-run against the new Head).
-  `git diff --check` — **PASS**. Secret-value audit over the staged diff — **PASS** (only the
-  pre-existing throwaway `admin-token` / `viewer-token` test labels). FFmpeg/FFprobe exclusion
-  audit over every changed file — **PASS** (no match). `config/alist.json` confirmed still ignored,
-  untracked and absent from the manifest.
-- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:task39-4-validation`
-  — **FAIL / PRE-EXISTING / UNRELATED**. The gate fails identically at the Task Base
-  `3779d203821930ad898fea49df2cee796c7a1c79` and at this Head, on a clean `/tmp`, with the same
-  error: `docker compose up` reports `bind source path does not exist: …/mediaflow.json` for the
-  harness's own temporary deployment root. Verified: the image builds and the compose topology
-  renders correctly (the rendered bind points at the file the harness just created, mode 0644);
-  only the daemon-side bind resolution of that short-lived path fails. `scripts/docker_smoke_test.py`,
-  `scripts/docker_release_security_smoke_test.py`, `compose.yaml` and `Dockerfile` are
-  **byte-identical** (md5) between the Task Base and this Head, and this checkpoint modifies **no**
-  deployment, packaging or compose file. Per the workflow this is reported, not self-cleared; the
-  unavailability of this gate is a judgement for B. I did not substitute an earlier checkpoint's
-  result.
+Pending implementation. A's Local startup-order reproduction is defect evidence, not delivery or
+OpenList/Docker acceptance evidence.
 
 ### Decisions
 
-- Fixed the defect at the normalization boundary rather than widening the backend. The backend
-  already stores and projects the empty root correctly, and A's contract is that the frontend must
-  accept provider-valid input; changing domain validation would have altered unrelated providers.
-- Wrote a dedicated `normalizeRootPath` instead of relaxing the shared `normalizeBoundedText`.
-  The shared helper trims and rejects empty, and it is used by many other entities; changing it
-  would weaken unrelated checks. The new helper mirrors the existing `normalizeReferencePath`
-  precedent, which already accepts `""` for a library bound to the provider root.
-- Added the setup authority to the existing inventory projection rather than a new endpoint or
-  wizard. The Task and A's boundary require reusing the current authority; `/api/v1/management/readiness`
-  exists but is a second read to reconcile, and keying the affordance on `reason === "no_active"`
-  alone cannot separate an existing-but-unavailable Active, which A requires.
-- Carried only the *presence* of a setup Draft across the projection, never its revision ID, so the
-  Storage page cannot become a second place that addresses a specific Draft.
-- Made `canStartSetup` backend-authoritative rather than inferring it from `canManage`, so a viewer
-  is never shown a control it cannot use, matching V1's existing read-only branch.
-- Used plain `<a href>` for both handoffs, matching the existing `MigrationPage` V1 link, because
-  `/ui` and the V2 return are outside the `/ui-v2` router basepath. No token bridge, no return-URL
-  round trip: the existing V1 re-authentication prompt remains the continuation step.
-- Rendered the three unavailable states from distinct flags rather than the `reason` string, and
-  added a cross-check in the normalizer that rejects a readable inventory that still claims setup is
-  outstanding, so a mixed or stale response cannot push the operator into a needless initialization.
+Reuse existing transfer admission, durable pinning, claims, fences and Executor. Report any required
+persistence evolution and compatibility rationale; raise any material scope change to B/A.
 
 ### Remaining In-Slice Work
 
-None that I know of that belongs to this Task. Both A P1 blockers are addressed in this checkpoint;
-whether the Slice's Required Outcomes are now all satisfied is B's call, and I am not asserting
-Slice status.
+RO-8/RO-9 and associated acceptance/regression matrix.
 
 ### Risks / Deviations
 
-- The Docker release-security gate is **UNAVAILABLE** in this environment for a pre-existing reason
-  documented under Tests and Results. It is the only T4 gate that did not pass, and it is not caused
-  by this change.
-- V2 `/ui-v2/storage` → `/ui` requires the operator to re-enter the API token in the V1 console, and
-  returning re-enters it in V2. This is the existing memory-only Bearer model the Task explicitly
-  permits; I did not add a token-transfer mechanism. If B judges that friction too high, it is a
-  product decision to escalate to A, not something to fix inside this Task.
-- The e2e setup handoff navigates to a deliberately minimal V1 stand-in served by the fake server.
-  The real V1 console's create/resume/return behavior is proved by the Python operator-UI and
-  management-setup tests against the real backend; the browser proof covers the V2 side of the
-  journey and that navigation issues no mutating request.
-- Pre-existing `docs/pics/*.png` modifications (one deleted, one modified, one untracked) remain
-  outside this checkpoint and untouched; `docs/pics/储存管理.png` is unchanged.
+No deviations approved. The same agent's A scope decision and B planning are explicitly authorized
+and disclosed; future implementation and acceptance roles remain governed by the workflow.
 
 ### Checkpoint
 
 ```text
-Status: PASS
-Head SHA: 466337c1337d0b03315d813ba258124538565cc1
+Status: PLANNED
+Head SHA: NOT CREATED
 ```
-
 
 ## B Review Result
 
 ```text
-Reviewed: 3779d203821930ad898fea49df2cee796c7a1c79..466337c1337d0b03315d813ba258124538565cc1
-Decision: PASS
+Reviewed: PENDING
+Decision: PENDING
 Slice Required Outcomes all satisfied: PENDING
-Next: SLICE READY FOR A REVIEW
+Next: PENDING
 ```
-
-
-The Slice-wide field remains PENDING under the user's explicit A-correction return rule: B reviews
-this correction and returns it to A without independently deciding Slice completion again. This
-is not an outstanding Task blocker and does not revive the superseded Closure Packet.
-
-B independently reviewed the actual Base..Head production/test diff and confirmed both A blockers
-are corrected in the current legal production assembly. No test was deleted, assertion weakened,
-skip hidden, credential added or frozen Contract changed. The only commit after the implementation
-Head changes the Developer report. No production fix was made during this review.
-
-B validation (2026-09-26):
-
-- Required focused Python: PASS, 128 tests, 0 skips; full Python: PASS, 1,843 tests, 7 existing
-  isolated external/endurance skips. Logs: `/tmp/b394-focused.log`, `/tmp/b394-python.log`.
-- Required focused Web: PASS, 113 tests; full Web: PASS, 724 tests in 47 files, 0 skips.
-  Logs: `/tmp/b394-web-focused.log`, `/tmp/b394-web.log`.
-- Storage browser gate: initial 28 passed / 1 failed at the new setup test's pre-authentication
-  URL assertion; focused recheck 1 passed; complete unchanged rerun 29 passed / 0 skipped.
-  Logs: `/tmp/b394-e2e.log`, `/tmp/b394-e2e-targeted.log`, `/tmp/b394-e2e-rerun.log`.
-  The existing AuthBoundary legitimately redirects to the connection entry before restoring
-  Storage after authentication. A real same-version browser journey confirms this continuation.
-  The timing-dependent test assertion is P2, not a production journey failure; it was not changed
-  or retried invisibly. Preserve it in A's known non-blocking review notes.
-- Typecheck, lint, Prettier, build, Ruff format/check, compileall, diff checks and pre-handoff
-  governance: PASS. Existing jsdom scrollTo notices, ResourceWarnings and bundle-size advisory
-  remain visible. No schema/migration or deployment manifest change.
-- Docker release-security: PASS on this candidate via
-  `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b394-review`.
-  Log: `/tmp/b394-docker.log`. The Developer's earlier bind-mount failure did not reproduce;
-  this new actual pass supersedes gate unavailability for this handoff, not the historical report.
-- Real application integration: `PYTHONPATH=. .venv/bin/python /tmp/b394-server.py` and
-  `node /tmp/b394-realjourney.mjs` PASS. SQLite management-only bootstrap, real Local adapters,
-  current Python-served V1/V2 and synthetic credentials; no fake V1 page or seeded check evidence.
-  Storage → V1 login → explicit first Draft → reconnect/resume same Draft → complete example
-  graph via existing V1 Advanced JSON editor → Validate → actual API read checks/offline strategy/
-  destination precheck → explicit V1 checked activation → return/re-auth → current Storage list.
-  The existing advanced editor only supplies the fixture graph; no new setup wizard is claimed.
-  Actual page-local Save then added disabled OpenList objects with empty, `/` and `media` roots;
-  the real Web rendered all entries. Existing empty-root Edit preserved the empty value and reload
-  succeeded. Log: `/tmp/b394-realjourney.log`; screenshot: `/tmp/b394-return.png`.
-- Exact manifest/private-file audit: PASS. `config/alist.json` remains ignored/untracked; unrelated
-  user image changes and the frozen reference image are untouched. No FFmpeg/FFprobe dependency,
-  token bridge, new mutation authority or automatic initialization was introduced.
-
-Non-blocking reconciliation for A: update the now-historical empty-root defect/workaround wording
-in configuration guidance and the factual no-CTA wording in Product Experience; retain the native
-V2 wizard/global onboarding target and all current deferrals. No further implementation Task.
