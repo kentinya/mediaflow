@@ -57,7 +57,7 @@ from mediaflow.infrastructure.local_storage import LocalStorage
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.service_api import MediaFlowApi
 from tests.test_configuration_objects import example_document
 
@@ -800,6 +800,117 @@ class CrossStorageTransferTests(TransferTestCase):
 class TransferApiTests(TransferTestCase):
     def _activate(self, root: Path, *, storage_adapters=None):
         return super()._activate(root, storage_adapters=storage_adapters)
+
+    def test_unavailable_pinned_transfer_does_not_monopolize_claim_queue(self) -> None:
+        """A released reconstruction blocker yields to a later eligible item."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            transfers = self._transfers(api, active)
+            (root / "source" / "a.mkv").write_bytes(b"a")
+            (root / "source" / "b.mkv").write_bytes(b"b")
+            (root / "source" / "Movies").mkdir()
+            queued = []
+            for name in ("a.mkv", "b.mkv"):
+                impact = transfers.transfer_impact(
+                    resource_library_id="source",
+                    paths=[name],
+                    destination_resource_library_id="source",
+                    destination_directory="Movies",
+                    operation="copy",
+                )
+                queued.append(
+                    transfers.submit_transfer(
+                        resource_library_id="source",
+                        paths=[name],
+                        destination_resource_library_id="source",
+                        destination_directory="Movies",
+                        operation="copy",
+                        conflict_mode="fail",
+                        manifest_digest=impact.manifest.digest,
+                    )
+                )
+            first = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-a",
+                claim_token="token-a",
+                lease_seconds=3600.0,
+            )
+            self.assertEqual(first.task_id, queued[0]["taskId"])
+            self.assertTrue(
+                runtime.release_files_transfer_claim(
+                    first.transfer_id,
+                    claim_token="token-a",
+                    now=datetime.now(UTC),
+                    error="files_transfer_snapshot_unavailable",
+                    next_action="repair the pinned configuration",
+                )
+            )
+            second = runtime.claim_next_files_transfer(
+                datetime.now(UTC),
+                worker_id="worker-b",
+                claim_token="token-b",
+                lease_seconds=3600.0,
+            )
+            self.assertIsNotNone(second)
+            self.assertEqual(second.task_id, queued[1]["taskId"])
+
+    def test_transfer_progress_remains_readable_when_current_active_is_missing(self) -> None:
+        """Durable pinned progress is observable during a current-Active outage."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _active, runtime = self._activate(root)
+            (root / "source" / "a.mkv").write_bytes(b"media")
+            (root / "source" / "Movies").mkdir()
+            _status, impact = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
+            )
+            status, admitted = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfers",
+                method="POST",
+                body={
+                    "operation": "copy",
+                    "paths": ["a.mkv"],
+                    "destinationResourceLibraryId": "source",
+                    "destinationDirectory": "Movies",
+                    "conflictMode": "fail",
+                    "manifestDigest": impact["manifestDigest"],
+                },
+            )
+            self.assertEqual(status, 202)
+            repository = api._configuration_service._repository
+            repository._connection.execute(
+                "UPDATE managed_configuration_revisions SET status='superseded' "
+                "WHERE status='active'"
+            )
+            repository._connection.commit()
+            runtime.register_worker(
+                worker_id="resident-transfer",
+                label="resident-transfer",
+                heartbeat_interval_seconds=5.0,
+                supported_commands=("files_transfer", "media_files_transfer"),
+                configuration_snapshot_id=None,
+                configuration_snapshot_digest=None,
+                runtime_schema_version=SCHEMA_VERSION,
+                now=datetime.now(UTC),
+            )
+            status, readiness = request(api, "/api/v1/workers/readiness")
+            self.assertEqual(status, 200, readiness)
+            self.assertFalse(readiness["currentActiveAvailable"])
+            self.assertTrue(readiness["workReadiness"]["resourceFilesTransfer"]["ready"])
+            self.assertTrue(readiness["workReadiness"]["mediaFilesTransfer"]["ready"])
+            status, progress = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/transfers/{admitted['taskId']}",
+            )
+            self.assertEqual(status, 200, progress)
+            self.assertEqual(progress["taskId"], admitted["taskId"])
+            self.assertIn(progress["status"], {"QUEUED", "RUNNING"})
 
     def test_real_admission_matches_the_shared_contract_fixture(self) -> None:
         """The real Python API admission document is the shared TS contract.

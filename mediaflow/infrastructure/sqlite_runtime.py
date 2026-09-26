@@ -7954,7 +7954,11 @@ class SQLiteTaskRepository:
                      OR files_transfers.claim_expires_at <= ?)
                 AND files_transfers.mutation_state IS NULL
                 {command_predicate}
-                ORDER BY files_transfers.created_at, files_transfers.transfer_id LIMIT 1""",
+                -- A reconstruction failure releases its claim and updates
+                -- updated_at.  Prefer the least recently attempted row so an
+                -- unavailable pinned context cannot monopolize the queue.
+                ORDER BY files_transfers.updated_at, files_transfers.created_at,
+                    files_transfers.transfer_id LIMIT 1""",
                 (
                     FilesTransferStatus.ADMITTED.value,
                     FilesTransferStatus.RUNNING.value,
@@ -8029,7 +8033,8 @@ class SQLiteTaskRepository:
                 AND (files_transfers.claim_expires_at IS NULL
                      OR files_transfers.claim_expires_at <= ?)
                 {command_predicate}
-                ORDER BY files_transfers.created_at, files_transfers.transfer_id LIMIT 1""",
+                ORDER BY files_transfers.updated_at, files_transfers.created_at,
+                    files_transfers.transfer_id LIMIT 1""",
                 (
                     FilesTransferStatus.ADMITTED.value,
                     FilesTransferStatus.RUNNING.value,
