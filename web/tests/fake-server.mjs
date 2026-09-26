@@ -5572,6 +5572,7 @@ function storageState(session) {
       storages: null,
       digest: "e2e-digest-3",
       saveFail: null,
+      copyFail: null,
       published: 0,
     };
     STORAGE_STATES.set(key, value);
@@ -6574,7 +6575,7 @@ const server = createServer(async (req, res) => {
       }
       if (
         document.expectedRevisionId !== state.active.revisionId ||
-        document.expectedVersion !== state.active.version
+        document.expectedVersion !== state.active.revisionSequence
       ) {
         sendJson(res, 409, {
           error: {
@@ -6789,6 +6790,29 @@ const server = createServer(async (req, res) => {
       }
       const source = fixture[existingIndex];
       if (action === "copy") {
+        if (
+          commandState.copyFail === "dependency" ||
+          fields.newStorageId === "retained-stale-copy-recheck"
+        ) {
+          commandState.copyFail = null;
+          storageRejected(
+            res,
+            409,
+            "storage_storage_check_failed",
+            "a required read-only Storage check did not pass",
+            {
+              affectedStorageId: "media-target",
+              affectedStorageName: "Media target",
+              failureCategory: "not_found",
+              candidateState: "not_published",
+              durableState: "active_preserved",
+              sideEffects: "read_only_evidence_only",
+              retrySafe: true,
+              nextAction: "repair the target root, then retry",
+            },
+          );
+          return;
+        }
         const newId = String(fields.newStorageId ?? "");
         const name = String(fields.name ?? "");
         if (!/^[a-z0-9][a-z0-9_-]*$/.test(newId) || name.trim() === "") {
@@ -12940,6 +12964,7 @@ const server = createServer(async (req, res) => {
       )
         ? params.get("saveFail")
         : null,
+      copyFail: params.get("copyFail") === "dependency" ? "dependency" : null,
       published: 0,
     });
     res.setHeader(

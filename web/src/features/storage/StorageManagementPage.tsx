@@ -46,6 +46,7 @@ import {
   saveStorage,
 } from "../../shared/api/api-client";
 import type { StorageSaveAuthority } from "../../shared/api/api-client";
+import type { AutomationMutationFailureDetails } from "../../shared/api/api-client";
 import {
   STORAGE_INVENTORY_QUERY_KEY,
   storageInventoryQueryOptions,
@@ -94,6 +95,36 @@ function activeMatchesAuthority(
     active.revisionId === authority.expectedRevisionId &&
     (active.revisionSequence ?? active.version) === authority.expectedVersion
   );
+}
+
+function lifecycleFailureMessage(
+  action: "copy" | "toggle" | "remove",
+  code: string,
+  details?: AutomationMutationFailureDetails,
+): string {
+  const label =
+    action === "copy" ? "复制" : action === "remove" ? "移除" : "状态变更";
+  const affected = details?.affectedStorageName
+    ? `失败依赖: ${details.affectedStorageName} (${details.affectedStorageId ?? "未知 ID"})。`
+    : details?.affectedStorageId
+      ? `失败依赖: ${details.affectedStorageId}。`
+      : "";
+  const cause = details?.failureCategory
+    ? `原因: ${details.failureCategory}。`
+    : "";
+  const durable = details?.durableState
+    ? `当前状态: ${details.durableState}。`
+    : "";
+  const candidate = details?.candidateState
+    ? `候选状态: ${details.candidateState}。`
+    : "";
+  const next =
+    details?.nextAction ?? "请刷新当前 Active 后重新审核，再明确提交。";
+  const recovery =
+    code === "storage_storage_check_failed"
+      ? "请修复上述依赖的挂载、权限或凭据引用,返回本页面后再次明确提交。"
+      : next;
+  return `${label}未完成: ${code}。${affected}${cause}${durable}${candidate}${recovery}`;
 }
 
 /**
@@ -993,6 +1024,7 @@ export function StorageManagementPage() {
     readonly newId: string;
     readonly name: string;
     readonly unknown: boolean;
+    readonly needsReview: boolean;
   } | null>(null);
 
   // Search and the provider filter are applied by the backend over the
@@ -1126,6 +1158,7 @@ export function StorageManagementPage() {
           newId: `${item.id}-copy`,
           name: `${item.name} copy`,
           unknown: false,
+          needsReview: false,
         });
         return;
       }
@@ -1149,9 +1182,7 @@ export function StorageManagementPage() {
             });
       if (!result.ok) {
         const details = result.details;
-        setEditLoadError(
-          `操作未完成: ${result.code}。${details?.nextAction ?? "当前 Active 状态可能已变化,请先刷新核实后再继续。"}`,
-        );
+        setEditLoadError(lifecycleFailureMessage(action, result.code, details));
         if (
           [
             "transport_unavailable",
@@ -1167,7 +1198,11 @@ export function StorageManagementPage() {
             newId: "",
             name: "",
             unknown: true,
+            needsReview: false,
           });
+        }
+        if (action === "remove" && result.code === "storage_remove_stale") {
+          setLifecycle(null);
         }
         refreshInventoryAuthority();
         return;
@@ -1188,7 +1223,7 @@ export function StorageManagementPage() {
     });
     if (!result.ok) {
       setEditLoadError(
-        `复制未完成: ${result.code}。${result.details?.nextAction ?? "请修正输入后重试。"}`,
+        lifecycleFailureMessage("copy", result.code, result.details),
       );
       setLifecycle((current) =>
         current === null
@@ -1201,6 +1236,7 @@ export function StorageManagementPage() {
                 "internal_error",
                 "service_unavailable",
               ].includes(result.code),
+              needsReview: result.code === "storage_copy_stale",
             },
       );
       refreshInventoryAuthority();
@@ -1210,6 +1246,47 @@ export function StorageManagementPage() {
     setEditLoadError(null);
     refreshInventoryAuthority();
   }, [lifecycle, token, refreshInventoryAuthority]);
+
+  const reviewCopy = useCallback(async () => {
+    if (lifecycle === null || lifecycle.action !== "copy") return;
+    const [authority, current] = await Promise.all([
+      fetchStorageAuthority(token),
+      fetchStorageInventory(token),
+    ]);
+    if (!authority.ok || !current.available || current.active === null) {
+      setEditLoadError(
+        "无法刷新当前 Active,请确认 API 可用后重试。已保留复制输入。",
+      );
+      return;
+    }
+    if (!activeMatchesAuthority(current.active, authority.model)) {
+      setEditLoadError(
+        "Active 在刷新过程中再次变化,请重新刷新并审核。已保留复制输入。",
+      );
+      return;
+    }
+    const item = current.items.find(
+      (candidate) => candidate.id === lifecycle.item.id,
+    );
+    if (item === undefined) {
+      setEditLoadError(
+        "当前复制源已不在 Active 配置中。请刷新后选择现有存储。已保留复制输入。",
+      );
+      return;
+    }
+    const reviewedItem = toRowItem({ ...current, items: [item] })[0];
+    setLifecycle((existing) =>
+      existing === null
+        ? null
+        : {
+            ...existing,
+            item: reviewedItem,
+            authority: authority.model,
+            needsReview: false,
+          },
+    );
+    setEditLoadError(null);
+  }, [lifecycle, token]);
 
   const verifyLifecycle = useCallback(async () => {
     const current = await fetchStorageInventory(token);
@@ -1533,6 +1610,14 @@ export function StorageManagementPage() {
                         复制配置,不会复制物理文件。启用状态、只读意图和已批准的引用将按当前
                         Active 保留。
                       </p>
+                      {lifecycle.needsReview && (
+                        <StatusBanner variant="error" title="复制源已变化">
+                          <p>
+                            已保留新存储 ID
+                            和名称。请刷新并审核当前复制源后,再明确保存。
+                          </p>
+                        </StatusBanner>
+                      )}
                       <label>
                         新存储 ID
                         <input
@@ -1570,9 +1655,21 @@ export function StorageManagementPage() {
                           onClick={() => {
                             void submitCopy();
                           }}
+                          disabled={lifecycle.needsReview}
                         >
                           保存复制
                         </button>
+                        {lifecycle.needsReview && (
+                          <button
+                            type="button"
+                            className="mf-button mf-button-secondary"
+                            onClick={() => {
+                              void reviewCopy();
+                            }}
+                          >
+                            刷新并审核复制源
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="mf-button mf-button-secondary"

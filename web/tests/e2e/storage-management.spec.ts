@@ -449,6 +449,38 @@ test.describe("Storage management", () => {
     await expect(drawer.getByText(/Bearer /)).toHaveCount(0);
   });
 
+  test("copy failure names the dependency and stale copy has explicit review recovery", async ({
+    page,
+  }) => {
+    await resetStorage(page, "?copyFail=dependency");
+    await connect(page);
+    await openStorageManagement(page);
+    const row = page.getByRole("row").filter({ hasText: "本地媒体" });
+    await row.getByLabel(/更多操作/).click();
+    await row.getByRole("menuitem", { name: "复制" }).click();
+    const copy = page.getByRole("dialog", { name: "复制存储" });
+    await copy.getByLabel("新存储 ID").fill("retained-stale-copy-recheck");
+    await copy.getByLabel("新存储名称").fill("Retained Stale Copy");
+    await copy.getByRole("button", { name: "保存复制" }).click();
+    await expect(page.getByText(/失败依赖: Media target/)).toBeVisible();
+    await expect(page.getByText(/原因: not_found/)).toBeVisible();
+    await expect(copy.getByLabel("新存储 ID")).toHaveValue(
+      "retained-stale-copy-recheck",
+    );
+
+    await page.evaluate(async () => {
+      await fetch("/__test__/advance-storage-active", { method: "POST" });
+    });
+    await copy.getByRole("button", { name: "保存复制" }).click();
+    await expect(copy.getByText(/复制源已变化/)).toBeVisible();
+    await expect(copy.getByRole("button", { name: "保存复制" })).toBeDisabled();
+    await copy.getByRole("button", { name: "刷新并审核复制源" }).click();
+    await expect(copy.getByRole("button", { name: "保存复制" })).toBeEnabled();
+    await expect(copy.getByLabel("新存储 ID")).toHaveValue(
+      "retained-stale-copy-recheck",
+    );
+  });
+
   test("setup state without an Active configuration is a truthful handoff", async ({
     page,
   }) => {

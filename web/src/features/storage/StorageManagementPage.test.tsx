@@ -932,6 +932,111 @@ function stubWorkspace(options: {
 }
 
 describe("Storage lifecycle actions", () => {
+  it("shows the failing dependency and durable states for copy admission", async () => {
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_R2],
+      onSave: () => [
+        409,
+        errorPayload("storage_storage_check_failed", {
+          affectedStorageId: "media-target",
+          affectedStorageName: "Media target",
+          failureCategory: "not_found",
+          candidateState: "not_published",
+          durableState: "active_preserved",
+          nextAction: "repair the target root, then retry",
+        }),
+      ],
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+    const copy = await screen.findByRole("dialog", { name: "复制存储" });
+    await userEvent.click(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    );
+    expect(await screen.findByText(/失败依赖: Media target/)).toBeVisible();
+    expect(screen.getByText(/原因: not_found/)).toBeVisible();
+    expect(screen.getByText(/当前状态: active_preserved/)).toBeVisible();
+    expect(screen.getByText(/候选状态: not_published/)).toBeVisible();
+    expect(
+      screen.getByText(/请修复上述依赖的挂载、权限或凭据引用/),
+    ).toBeVisible();
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(1);
+  });
+
+  it("retains stale copy input until an explicit source review", async () => {
+    let stale = true;
+    const fetchMock = stubWorkspace({
+      items: [STORAGE_R2],
+      onSave: () => {
+        if (stale) {
+          stale = false;
+          return [
+            409,
+            errorPayload("storage_copy_stale", {
+              durableState: "active_preserved",
+              candidateState: "not_published",
+              nextAction: "refresh and review the action again",
+            }),
+          ];
+        }
+        return [200, saveResponsePayload()];
+      },
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/storage");
+    await userEvent.click(await screen.findByLabelText("更多操作 R2 media"));
+    await userEvent.click(screen.getByRole("menuitem", { name: "复制" }));
+    const copy = await screen.findByRole("dialog", { name: "复制存储" });
+    await userEvent.clear(within(copy).getByLabelText("新存储 ID"));
+    await userEvent.type(
+      within(copy).getByLabelText("新存储 ID"),
+      "retained-stale-copy-recheck",
+    );
+    await userEvent.clear(within(copy).getByLabelText("新存储名称"));
+    await userEvent.type(
+      within(copy).getByLabelText("新存储名称"),
+      "Retained Stale Copy",
+    );
+    await userEvent.click(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    );
+    expect(await screen.findByText(/复制源已变化/)).toBeVisible();
+    expect(within(copy).getByLabelText("新存储 ID")).toHaveValue(
+      "retained-stale-copy-recheck",
+    );
+    expect(within(copy).getByLabelText("新存储名称")).toHaveValue(
+      "Retained Stale Copy",
+    );
+    expect(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    ).toBeDisabled();
+    await userEvent.click(
+      within(copy).getByRole("button", { name: "刷新并审核复制源" }),
+    );
+    expect(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    ).toBeEnabled();
+    expect(within(copy).getByLabelText("新存储 ID")).toHaveValue(
+      "retained-stale-copy-recheck",
+    );
+    expect(within(copy).getByLabelText("新存储名称")).toHaveValue(
+      "Retained Stale Copy",
+    );
+    await userEvent.click(
+      within(copy).getByRole("button", { name: "保存复制" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog", { name: "复制存储" })).toBeNull(),
+    );
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(2);
+  });
+
   it("rejects a row from an older Active before removal confirmation", async () => {
     const confirm = vi.fn(() => true);
     vi.stubGlobal("confirm", confirm);
