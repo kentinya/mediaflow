@@ -590,11 +590,12 @@ class NotificationTargetIdentityTests(ResidentDeploymentFixture):
             repository._connection.execute(
                 "INSERT INTO notification_deliveries VALUES "
                 "('000-kept','kept','event-2','schedule.emitted','{}','pending',0,"
-                "?,?,?,NULL,NULL,NULL)",
+                "?,?,?,NULL,NULL,NULL,?)",
                 (
                     datetime.now(UTC).isoformat(),
                     datetime.now(UTC).isoformat(),
                     datetime.now(UTC).isoformat(),
+                    self._definition(kept).target_digest,
                 ),
             )
             repository._connection.commit()

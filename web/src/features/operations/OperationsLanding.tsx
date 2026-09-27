@@ -12,6 +12,7 @@
  * control.
  */
 
+import { ResidentServiceStatus } from "./ResidentServiceStatus";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -169,6 +170,7 @@ export function OperationsLanding() {
               <h2>Operations</h2>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
+            <ResidentServiceStatus />
             <section className="mf-count-section">
               <h3>Worker readiness</h3>
               <p className="mf-dashboard-meta">

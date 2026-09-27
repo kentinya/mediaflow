@@ -68,7 +68,7 @@ class NotificationPublisher:
     def __init__(
         self,
         repository: NotificationRepository,
-        webhooks: tuple[WebhookDefinition, ...],
+        webhooks: tuple[WebhookDefinition, ...] | Callable[[], tuple[WebhookDefinition, ...]],
     ) -> None:
         self._repository = repository
         self._webhooks = webhooks
@@ -86,7 +86,8 @@ class NotificationPublisher:
             separators=(",", ":"),
         )
         created = []
-        for webhook in self._webhooks:
+        webhooks = self._webhooks() if callable(self._webhooks) else self._webhooks
+        for webhook in webhooks:
             if not webhook.enabled or event.event_type not in webhook.events:
                 continue
             now = event.occurred_at.astimezone(UTC)
@@ -101,6 +102,7 @@ class NotificationPublisher:
                 now,
                 now,
                 now,
+                target_digest=webhook.target_digest,
             )
             if self._repository.create_delivery(delivery):
                 created.append(delivery)
@@ -206,6 +208,7 @@ class NotificationWorker:
             now,
             now - timedelta(seconds=self._delivery_lease_seconds),
             webhook_ids=self.available_webhook_ids(targets),
+            target_digests={key: value[0].target_digest for key, value in targets.items()},
         )
         if delivery is None:
             return None
@@ -220,6 +223,10 @@ class NotificationWorker:
                 delivery, NotificationDeliveryStatus.DEAD_LETTER, "configuration", None
             )
         definition, secret = target
+        if not definition.enabled or delivery.target_digest != definition.target_digest:
+            return self._finish(
+                delivery, NotificationDeliveryStatus.DEAD_LETTER, "target_changed", None
+            )
         timestamp = str(int(self._clock().timestamp()))
         body = delivery.body.encode("utf-8")
         request = build_signed_request(

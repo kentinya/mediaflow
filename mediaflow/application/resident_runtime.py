@@ -198,24 +198,24 @@ class ResidentLoop:
     def note(self, reason: str, detail: str = "") -> None:
         """Record a bounded waiting state from inside a loop step."""
 
-        note_resident_waiting(
-            self._runtime,
-            self._service,
-            self._instance_id,
-            reason=reason,
-            detail=detail,
-            stdout=self._stdout,
-        )
+        try:
+            note_resident_waiting(
+                self._runtime,
+                self._service,
+                self._instance_id,
+                reason=reason,
+                detail=detail,
+                stdout=self._stdout,
+            )
+        except Exception:
+            # Reporting uses the same database as work. A failed report must
+            # neither terminate the process nor permit the failed step to continue.
+            pass
 
     def clear_waiting(self) -> None:
         """Return to the normal "running, nothing to report" state."""
 
-        note_resident_waiting(
-            self._runtime,
-            self._service,
-            self._instance_id,
-            reason=ResidentServiceWaiting.NONE.value,
-        )
+        self.note(ResidentServiceWaiting.NONE.value)
 
     def run(self, stop_requested: Callable[[], bool], sleep: Callable[[float], None]) -> int:
         processed = 0
@@ -223,7 +223,13 @@ class ResidentLoop:
             while not stop_requested():
                 worked = 0
                 try:
-                    worked = self._step(self)
+                    schema = self._runtime.service._repository.schema_version
+                    if schema != SCHEMA_VERSION:
+                        self.note(
+                            "schema_unsupported", "run the explicit upgrade/recovery workflow"
+                        )
+                    else:
+                        worked = self._step(self)
                 except Exception as error:  # noqa: BLE001 - deliberate boundary
                     reason, detail = self._reason_for(error)
                     self.note(reason, detail)
@@ -232,10 +238,21 @@ class ResidentLoop:
                 if not worked:
                     sleep(self._poll_seconds)
         finally:
-            self._runtime.service.stop(self._instance_id)
+            try:
+                self._runtime.service.stop(self._instance_id)
+            except Exception:
+                # During an outage the durable heartbeat expires naturally.
+                pass
         return processed
 
     def _reason_for(self, error: BaseException) -> tuple[str, str]:
+        import sqlite3
+
+        if isinstance(error, sqlite3.Error):
+            return (
+                ResidentServiceWaiting.DATABASE_UNAVAILABLE.value,
+                "database unavailable; restore access and this service will retry safely",
+            )
         if self._describe is not None:
             reason, detail = self._describe(error)
             return reason, detail

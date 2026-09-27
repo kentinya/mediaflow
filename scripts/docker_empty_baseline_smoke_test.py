@@ -29,12 +29,14 @@ import ssl
 import subprocess
 import tempfile
 import time
-from http.server import BaseHTTPRequestHandler, HTTPServer
+import urllib.parse
+import urllib.request
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
 
 from docker_smoke_test import free_port, http_request, run, wait_until
-from make_deployment_config import make_management_bootstrap
+from make_deployment_config import make_deployment_configuration, make_management_bootstrap
 
 ROOT = Path(__file__).resolve().parents[1]
 PROJECT_PREFIX = "mediaflow-empty-baseline"
@@ -170,6 +172,7 @@ class WebhookReceiver:
 
     def __init__(self) -> None:
         self.received: list[dict] = []
+        self.response_status = 200
         # The certificate is written next to the stack rather than into the
         # platform temporary directory: a container only sees host paths that
         # were bind-mounted, and a host ``/tmp`` the daemon cannot resolve would
@@ -194,7 +197,7 @@ class WebhookReceiver:
                         "body": json.loads(body) if body else None,
                     }
                 )
-                self.send_response(200)
+                self.send_response(receiver.response_status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(b'{"ok":true}')
@@ -267,7 +270,7 @@ class WebhookReceiver:
                 "-subj",
                 f"/CN={host}",
                 "-addext",
-                f"subjectAltName={alternative},DNS:localhost,IP:127.0.0.1",
+                f"subjectAltName={alternative},DNS:localhost,IP:127.0.0.1,DNS:api.themoviedb.org",
             ],
             check=True,
             capture_output=True,
@@ -283,6 +286,70 @@ class WebhookReceiver:
     def stop(self) -> None:
         self._server.shutdown()
         shutil.rmtree(self.directory, ignore_errors=True)
+
+
+class LocalMetadataProxy:
+    """Terminating local TLS fixture; never forwards a request to an external host."""
+
+    def __init__(self, receiver: WebhookReceiver):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(receiver.certificate))
+        self.requests = []
+        requests = self.requests
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_CONNECT(self):  # noqa: N802
+                if self.path != "api.themoviedb.org:443":
+                    self.send_error(403)
+                    return
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.flush()
+                self.connection = context.wrap_socket(self.connection, server_side=True)
+                self.rfile = self.connection.makefile("rb")
+                self.wfile = self.connection.makefile("wb")
+                self.handle_one_request()
+
+            def do_GET(self):  # noqa: N802
+                requests.append(self.path)
+                movie = {
+                    "id": 1,
+                    "title": "Acceptance Movie",
+                    "original_title": "Acceptance Movie",
+                    "release_date": "2025-01-01",
+                    "original_language": "en",
+                    "overview": "Isolated acceptance",
+                    "genre_ids": [28],
+                    "genres": [{"id": 28, "name": "Action"}],
+                    "production_countries": [{"iso_3166_1": "US", "name": "United States"}],
+                    "imdb_id": "tt0000001",
+                    "runtime": 100,
+                }
+                if self.path.startswith("/3/search/movie"):
+                    document = {"page": 1, "results": [movie], "total_pages": 1, "total_results": 1}
+                elif self.path.startswith("/3/movie/1"):
+                    document = movie
+                else:
+                    self.send_error(404)
+                    return
+                body = json.dumps(document).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                self.wfile.flush()
+
+            def log_message(self, *arguments):
+                pass
+
+        self.server = ThreadingHTTPServer(("0.0.0.0", 0), Handler)
+        self.thread = Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
 
 
 class Stack:
@@ -442,6 +509,37 @@ class Stack:
             raise RuntimeError(f"expected {len(ALL_SERVICES)} services, got {sorted(by_service)}")
         return by_service
 
+    def process_ids(self) -> dict:
+        code = (
+            "import json; "
+            "from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository; "
+            "r=SQLiteTaskRepository('/data/mediaflow.sqlite3',read_only=True); "
+            "print(json.dumps({x.service:x.instance_id for x in r.list_resident_services() "
+            "if x.status.value!='stopped'}))"
+        )
+        result = run(
+            [*self.compose, "exec", "-T", "api", "python", "-c", code], environment=self.environment
+        )
+        containers = self.container_ids()
+        processes = {
+            name: run(
+                [
+                    "docker",
+                    "inspect",
+                    "--format",
+                    "{{.State.Pid}} {{.State.StartedAt}} {{.RestartCount}}",
+                    identifier,
+                ],
+                environment=self.environment,
+            ).stdout.strip()
+            for name, identifier in containers.items()
+        }
+        return {
+            "containers": containers,
+            "processes": processes,
+            "registrations": json.loads(result.stdout),
+        }
+
     def wait_healthy(self) -> None:
         def healthy() -> bool:
             records = run(
@@ -559,6 +657,26 @@ class Stack:
                 },
             )
 
+        if document.get("classificationPolicies"):
+            for recognition in document.get("recognitionTypes", []):
+                self.json_api(
+                    f"/api/v1/configuration/revisions/{revision_id}/destination-precheck",
+                    method="POST",
+                    body={
+                        **base,
+                        "recognitionType": recognition["id"],
+                        "sample": {
+                            "title": "Acceptance Movie",
+                            "mediaType": "tv" if recognition["id"] == "B" else "movie",
+                            "year": 2025,
+                            "extension": "mkv",
+                            "season": 1,
+                            "episode": 1,
+                            "genres": ["Action"],
+                        },
+                    },
+                )
+
     token_env = "MEDIAFLOW_API_TOKEN"
 
 
@@ -662,6 +780,40 @@ def assert_waiting(stack: Stack, *, services: tuple[str, ...]) -> None:
             raise RuntimeError(f"{service} waits without naming a bounded reason")
 
 
+def assert_real_web_status(stack: Stack) -> None:
+    code = """
+        import {chromium, expect} from '@playwright/test';
+        const browser = await chromium.launch({headless:true});
+        try {
+            const page = await browser.newPage({viewport:{width:390,height:844}});
+            await page.goto(process.env.MF_TEST_BASE + '/ui-v2/operations');
+            await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
+            const response = page.waitForResponse(
+                r => r.url().endsWith('/api/v1/management/readiness'));
+            await page.getByRole('button', {name:'Connect', exact:true}).click();
+            if ((await response).status() !== 200) throw new Error('readiness request failed');
+            const region = page.getByRole('region', {name:'常驻服务状态'});
+            await expect(region).toContainText('notification-worker');
+            await expect(region).toContainText('基础设施就绪');
+            await expect(region).toContainText('等待业务配置');
+            await expect(region.getByRole('link', {name:'前往系统设置'})).toBeVisible();
+            const stores = await page.evaluate(
+                () => JSON.stringify([localStorage, sessionStorage]));
+            if(stores.includes(process.env.MF_TEST_TOKEN)) throw new Error('token persisted');
+        } finally { await browser.close(); }
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", code],
+        cwd=ROOT / "web",
+        env={**os.environ, "MF_TEST_BASE": stack.base, "MF_TEST_TOKEN": stack.token},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise RuntimeError("real Python-served browser status failed: " + result.stderr)
+    print("   real Python-served Web renders service health, waiting and Settings recovery")
+
+
 def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -> None:
     suffix = f"{os.getpid()}-{int(time.time())}"
     # The receiver address and its certificate must both be settled *before*
@@ -705,6 +857,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
 
         assert_waiting(stack, services=CONFIGURATION_DEPENDENT_SERVICES)
         print("   Scheduler and Notification Worker wait with a bounded reason")
+        assert_real_web_status(stack)
 
         before = read_durable_counts(stack)
         if before != {"jobs": 0, "deliveries": 0, "tasks": 0}:
@@ -723,7 +876,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             raise RuntimeError(f"empty activation created durable work: {after_activation}")
         print("   empty Active published; no media work, delivery or mutation started")
 
-        identities = stack.container_ids()
+        identities = stack.process_ids()
         print("   publishing an eligible schedule + webhook without restarting...")
         receiver.received.clear()
 
@@ -753,7 +906,7 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             timeout=120.0,
             description="a signed webhook delivery from the resident Notification Worker",
         )
-        after_publication = stack.container_ids()
+        after_publication = stack.process_ids()
         if after_publication != identities:
             raise RuntimeError(
                 f"configuration publication replaced containers: {identities} -> "
@@ -767,6 +920,51 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         if signed["event"] != "schedule.emitted":
             raise RuntimeError(f"unexpected delivery event {signed['event']!r}")
         print(f"   signed {signed['event']} delivery reached the controlled receiver")
+
+        # A real 503 creates a durable retry through the production transport.
+        receiver.response_status = 503
+        retries = []
+
+        def has_retry():
+            retries[:] = stack.json_api("/api/v1/notifications?status=retry")["items"]
+            return bool(retries)
+
+        wait_until(has_retry, timeout=90, description="real transport retry")
+        saved = retries[0]
+        stack.successor(
+            lambda document: document["notifications"]["webhooks"][0].update(
+                url=webhook_url.replace("/hook", "/replacement")
+            )
+        )
+        receiver.response_status = 200
+        time.sleep(12)
+        current = stack.json_api("/api/v1/notifications/" + saved["deliveryId"])
+        if current["status"] != "retry" or current["retrySafe"] is not False:
+            raise RuntimeError("changed target did not preserve its blocked durable retry")
+        if any(
+            item["eventId"] == saved["eventId"] and item["path"] == "/replacement"
+            for item in receiver.received
+        ):
+            raise RuntimeError("old event was silently sent to the replacement recipient")
+        stack.successor(
+            lambda document: document["notifications"]["webhooks"][0].update(url=webhook_url)
+        )
+        wait_until(
+            lambda: (
+                stack.json_api("/api/v1/notifications/" + saved["deliveryId"])["status"]
+                == "delivered"
+            ),
+            timeout=90,
+            description="restored original recipient recovery",
+        )
+        print(
+            "   old retry stayed blocked after URL change and recovered only at its original target"
+        )
+        final_identities = stack.process_ids()
+        if final_identities != identities:
+            raise RuntimeError("a resident process restarted across target publication/recovery")
+        print("   process identities before: " + json.dumps(identities, sort_keys=True))
+        print("   process identities after: " + json.dumps(final_identities, sort_keys=True))
 
         counts = read_durable_counts(stack)
         if counts["jobs"] < 1:
@@ -791,11 +989,61 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
             print(f"   keeping stack {stack.name} for inspection")
 
 
-def accept_media_stack(image: str, keep: bool) -> None:
+def wait_job(stack: Stack, admitted: dict) -> None:
+    identifier = admitted.get("job_id") or admitted.get("jobId")
+
+    def complete():
+        current = stack.json_api(f"/api/v1/jobs/{identifier}")
+        status = current["status"]
+        if status in {"failed", "cancelled"}:
+            raise RuntimeError(f"admitted {current.get('command')} failed: {current}")
+        return status == "completed"
+
+    wait_until(complete, timeout=120, description="resident Job completion")
+
+
+def complete_transfer(
+    stack: Stack, kind: str, source: str, destination: str, path: str, destination_field: str
+) -> None:
+    prefix = f"/api/v1/{kind}/{source}/files"
+    query = urllib.parse.urlencode(
+        {"path": path, "to": destination, "toPath": "", "operation": "copy", "conflict": "fail"}
+    )
+    impact = stack.json_api(prefix + "/transfer-impact?" + query)
+    admitted = stack.json_api(
+        prefix + "/transfers",
+        method="POST",
+        body={
+            "operation": "copy",
+            "paths": [path],
+            destination_field: destination,
+            "destinationDirectory": "",
+            "conflictMode": "fail",
+            "manifestDigest": impact["manifestDigest"],
+        },
+    )
+
+    def complete():
+        current = stack.json_api(prefix + "/transfers/" + admitted["taskId"])
+        if current.get("terminal") and current["status"] != "SUCCESS":
+            raise RuntimeError(f"isolated transfer failed: {current}")
+        return current["status"] == "SUCCESS"
+
+    wait_until(complete, timeout=120, description=kind + " resident Copy completion")
+
+
+def accept_media_stack(image: str, keep: bool, receiver: WebhookReceiver) -> None:
     """A separate stack proves real media work with mounts present before start."""
 
     suffix = f"{os.getpid()}-{int(time.time())}"
-    stack = Stack(f"{PROJECT_PREFIX}-media-{suffix}", image, media=True)
+    proxy = LocalMetadataProxy(receiver)
+    stack = Stack(f"{PROJECT_PREFIX}-media-{suffix}", image, media=True, receiver=receiver)
+    with stack.environment_file.open("a") as stream:
+        stream.write(
+            f"TMDB_ACCESS_TOKEN=fake-local-metadata\n"
+            f"HTTPS_PROXY=http://{receiver._reachable_host}:{proxy.server.server_port}\n"
+            "NO_PROXY=localhost,127.0.0.1\n"
+        )
     try:
         print("== optional media-mount stack ==")
         result = run(
@@ -821,6 +1069,7 @@ def accept_media_stack(image: str, keep: bool) -> None:
         stack.up()
         stack.wait_healthy()
         stack.wait_api()
+        identities = stack.process_ids()
         stack.activate(empty_baseline_document(stack))
         status = stack.json_api("/api/v1/configuration")
         if not status["emptyActive"]:
@@ -830,30 +1079,54 @@ def accept_media_stack(image: str, keep: bool) -> None:
         # An empty Active has no ResourceLibrary, so a Scan is correctly refused.
         # The point of this stack is that a *populated* Active reaches real
         # media through the optional mounts, so the library is configured here.
-        source_file = stack.source_root / "Acceptance.Movie.2025.mkv"
+        source_file = stack.source_root / "movies" / "Acceptance.Movie.2025.mkv"
+        source_file.parent.mkdir(exist_ok=True)
         source_file.write_bytes(b"not-real-media")
 
         def configure_library(document: dict) -> None:
-            document["storages"] = [
+            full = make_deployment_configuration()
+            full["api"] = document["api"]
+            full["api"]["remoteExecution"] = {"enabled": True, "maximumTtlSeconds": 900}
+            full["recognitionRules"] = [
                 {
-                    "id": "acceptance-source",
-                    "name": "Acceptance source",
-                    "type": "local",
-                    "rootPath": "/media/incoming",
-                    "readOnly": True,
+                    "id": "acceptance",
+                    "name": "Acceptance",
+                    "priority": 100,
+                    "score": 100,
+                    "stopOnMatch": True,
+                    "condition": {"field": "extension", "operator": "equals", "value": "mkv"},
+                    "outputRecognitionType": "A",
                 }
             ]
-            document["resourceLibraries"] = [
+            full["resourceLibraries"][0]["extensions"] = ["mkv"]
+            full["resourceLibraries"].append(
                 {
-                    "id": "acceptance-library",
-                    "name": "Acceptance library",
-                    "storageId": "acceptance-source",
-                    "storagePath": "",
-                    "displayRootPath": "/media/incoming",
+                    "id": "resource-destination",
+                    "name": "Resource destination",
+                    "storageId": "media-target",
+                    "storagePath": "resource-copies",
                     "enabled": True,
                 }
-            ]
+            )
+            full["mediaLibraries"].append(
+                {
+                    "id": "media-destination",
+                    "name": "Media destination",
+                    "storageId": "media-target",
+                    "rootPath": "media-copies",
+                }
+            )
+            for policy in full["organizePolicies"]:
+                policy["operation"] = "COPY"
+            document.clear()
+            document.update(full)
 
+        (stack.target_root / "resource-copies").mkdir()
+        (stack.target_root / "media-copies").mkdir()
+        (stack.target_root / "Movies").mkdir()
+        (stack.target_root / "TV Shows").mkdir()
+        for directory in stack.target_root.iterdir():
+            directory.chmod(0o777)
         stack.successor(configure_library)
         print("   published a ResourceLibrary over the confined media mount")
 
@@ -867,7 +1140,8 @@ def accept_media_stack(image: str, keep: bool) -> None:
         # is the boundary this Task owns: a ResourceLibrary transfer admitted
         # against the published Active must be consumed by an already-running
         # Worker with no restart and no mount change.
-        source_file = stack.source_root / "Acceptance.Movie.2025.mkv"
+        source_file = stack.source_root / "movies" / "Acceptance.Movie.2025.mkv"
+        source_file.parent.mkdir(exist_ok=True)
         source_file.write_bytes(b"not-real-media")
         status = stack.json_api("/api/v1/configuration")
         if not status.get("runtimeConfigured"):
@@ -895,8 +1169,91 @@ def accept_media_stack(image: str, keep: bool) -> None:
             description="the resident Worker reporting transfer readiness",
         )
         print("   resident Worker reports ResourceLibrary transfer readiness")
+        for command in ("scan", "preview"):
+            admitted = stack.json_api("/api/v1/jobs", method="POST", body={"command": command})
+            wait_job(stack, admitted)
+        if list(stack.target_root.rglob("*.mkv")):
+            raise RuntimeError("Scan/Preview mutated the isolated destination")
+        issued = run(
+            [
+                *stack.compose,
+                "exec",
+                "-T",
+                "api",
+                "mediaflow",
+                "--config",
+                "/config/mediaflow.json",
+                "execution-authorizations",
+                "issue",
+                "--ttl-seconds",
+                "300",
+                "--max-items",
+                "1",
+                "--actor",
+                "isolated-acceptance",
+            ],
+            environment=stack.environment,
+        )
+        ticket = next(
+            line.removeprefix("Token: ")
+            for line in issued.stdout.splitlines()
+            if line.startswith("Token: ")
+        )
+        request = urllib.request.Request(
+            stack.base + "/api/v1/jobs",
+            data=json.dumps({"command": "organize", "execute": True, "limit": 1}).encode(),
+            headers={
+                "Authorization": "Bearer " + stack.token,
+                "X-MediaFlow-Execution-Token": ticket,
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=10) as response:
+            admitted = json.load(response)
+        wait_job(stack, admitted)
+        organized = list((stack.target_root / "Movies").rglob("*.mkv"))
+        if len(organized) != 1 or organized[0].read_bytes() != source_file.read_bytes():
+            raise RuntimeError(
+                "Organize did not produce exactly the authorized file copy: "
+                + json.dumps(stack.json_api("/api/v1/tasks"))
+                + " files="
+                + str(list(stack.target_root.rglob("*")))
+            )
+        if not proxy.requests:
+            raise RuntimeError("production TMDB client did not reach the controlled TLS fixture")
+        complete_transfer(
+            stack,
+            "resource-libraries",
+            "source",
+            "resource-destination",
+            source_file.relative_to(stack.source_root).as_posix(),
+            "destinationResourceLibraryId",
+        )
+        complete_transfer(
+            stack,
+            "media-libraries",
+            "movies",
+            "media-destination",
+            organized[0].relative_to(stack.target_root / "Movies").as_posix(),
+            "destinationMediaLibraryId",
+        )
+        if not list((stack.target_root / "resource-copies").rglob("*.mkv")):
+            raise RuntimeError("ResourceLibrary Copy produced no destination file")
+        if not list((stack.target_root / "media-copies").rglob("*.mkv")):
+            raise RuntimeError("MediaLibrary Copy produced no destination file")
+        final_identities = stack.process_ids()
+        if identities != final_identities:
+            raise RuntimeError("a resident process restarted across setup/publication/work")
+        print("   process identities before: " + json.dumps(identities, sort_keys=True))
+        print("   process identities after: " + json.dumps(final_identities, sort_keys=True))
+        print(
+            "   Scan, Preview, Organize and both library Copy operations completed; same processes"
+        )
+
         print("== optional media-mount stack PASSED ==")
     finally:
+        proxy.stop()
         if not keep:
             stack.down()
         else:
@@ -918,7 +1275,7 @@ def main() -> int:
     receiver.start()
     try:
         accept_media_free_stack(arguments.image, receiver, arguments.keep)
-        accept_media_stack(arguments.image, arguments.keep)
+        accept_media_stack(arguments.image, arguments.keep, receiver)
     finally:
         receiver.stop()
     return 0

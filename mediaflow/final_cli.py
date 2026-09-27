@@ -3257,33 +3257,47 @@ def _resident_infrastructure_defaults() -> tuple[float, float, float]:
     return (300.0, 5.0, 5.0)
 
 
-def _current_runtime_configuration(configured_path: str | None) -> RuntimeConfiguration | None:
-    """Return the current valid Active runtime, or ``None`` when unavailable.
+class ResidentConfigurationUnavailable(RuntimeError):
+    def __init__(self, reason: str) -> None:
+        super().__init__("resident configuration is unavailable; restore the named prerequisite")
+        self.reason = reason
 
-    This is the single "what should I do right now" resolution used by every
-    resident admission boundary.  It returns ``None`` — rather than raising —
-    for every ordinary first-setup and recovery state (no Active yet, an
-    unreadable Active, a corrupt digest, an unsupported schema, a document that
-    no longer loads), because all of them mean exactly the same thing to a
-    resident process: there is nothing to admit yet.
 
-    Once managed authority exists, a *managed* Active is the only admissible
-    source, and a broken one yields ``None`` rather than falling back.  Before
-    managed authority exists at all, the complete JSON bootstrap document is
-    still a supported pre-activation runtime, so it is returned unchanged; that
-    compatibility path carries no snapshot identity and therefore cannot be
-    mistaken for published authority.
-    """
+def _resolve_resident_configuration(configured_path: str | None) -> RuntimeConfiguration | None:
+    import sqlite3
 
     try:
         configuration = _configuration(configured_path)
-    except Exception:
-        return None
-    if getattr(configuration, "configuration_snapshot_id", None):
-        return configuration
+    except sqlite3.Error as error:
+        raise ResidentConfigurationUnavailable("database_unavailable") from error
+    except RuntimeSnapshotUnavailable as error:
+        reason = (
+            "schema_unsupported"
+            if error.reason == "schema_unsupported"
+            else "configuration_unavailable"
+        )
+        raise ResidentConfigurationUnavailable(reason) from error
+    except Exception as error:
+        raise ResidentConfigurationUnavailable("configuration_unavailable") from error
     if isinstance(configuration, ManagementBootstrapConfiguration):
         return None
     return configuration
+
+
+def _current_runtime_configuration(configured_path: str | None) -> RuntimeConfiguration | None:
+    try:
+        return _resolve_resident_configuration(configured_path)
+    except ResidentConfigurationUnavailable:
+        return None
+
+
+def _resident_failure_reason(error: BaseException) -> tuple[str, str]:
+    if isinstance(error, ResidentConfigurationUnavailable):
+        return error.reason, str(error)
+    return (
+        "configuration_unavailable",
+        "service work is blocked; inspect configuration and durable work",
+    )
 
 
 def _current_managed_runtime_configuration(
@@ -3324,6 +3338,13 @@ def _scheduler_waiting_reason(configuration: RuntimeConfiguration | None) -> tup
     return (ResidentServiceWaiting.NONE.value, "")
 
 
+def _resident_snapshot_reference(path: str | None) -> tuple[str, str] | None:
+    try:
+        return _managed_snapshot_reference(path)
+    except Exception:
+        return None
+
+
 def _run_worker(
     configuration,
     arguments,
@@ -3347,11 +3368,12 @@ def _run_worker(
     The existing per-command consumers are preserved untouched: queued Jobs
     still load their own pinned revision after the claim boundary, admitted
     manual Organize executions and both library-kind transfers still
-    reconstruct their own immutable pin, and a Worker that cannot reconstruct a
-    pin still leaves that work claimable rather than consuming it as a failure.
+    reconstruct their own immutable pin. Invalid pins are handled by those
+    consumers' existing durable failure and recovery rules before mutation.
     """
 
     from mediaflow.application.resident_runtime import (
+        ResidentLoop,
         build_resident_runtime,
         register_resident_process,
         resident_instance_id,
@@ -3359,47 +3381,44 @@ def _run_worker(
 
     _, default_poll, _ = _resident_infrastructure_defaults()
     runtime = build_resident_runtime(configuration.database_path)
-    worker_snapshot = _managed_snapshot_reference(configured_path)
+    worker_snapshot = _resident_snapshot_reference(configured_path)
     instance_id = resident_instance_id("worker")
     resident_id = worker_snapshot[0] if worker_snapshot is not None else None
-    register_resident_process(
-        runtime,
-        "worker",
-        instance_id,
-        heartbeat_interval_seconds=5.0,
-        snapshot_id=resident_id,
-    )
+
     with SQLiteTaskRepository(configuration.database_path) as repository:
-        # One-off worker (run-next): peek the next pending job and bind to its
-        # snapshot so the claim fence matches exactly.  A pinned Job that was
-        # submitted under an older Active snapshot is therefore claimed by a
-        # Worker registered to that snapshot, not to the current Active.
-        # The resident worker (run) always binds to the Active snapshot.
-        bound_snapshot_id = None
-        bound_snapshot_digest = None
-        if arguments.worker_command == "run-next":
-            next_row = repository._connection.execute(
-                "SELECT configuration_snapshot_id, configuration_snapshot_digest "
-                "FROM automation_jobs WHERE status=? "
-                "ORDER BY created_at, job_id LIMIT 1",
-                ("pending",),
-            ).fetchone()
-            if next_row is not None:
-                bound_snapshot_id = next_row["configuration_snapshot_id"]
-                bound_snapshot_digest = next_row["configuration_snapshot_digest"]
-            # Fall back to Active snapshot if the next job is unpinned
-            if bound_snapshot_id is None and worker_snapshot is not None:
-                bound_snapshot_id, bound_snapshot_digest = worker_snapshot
-        else:
-            # Resident worker: bind to current Active snapshot
-            if worker_snapshot is not None:
-                bound_snapshot_id, bound_snapshot_digest = worker_snapshot
+
+        def pending_snapshot() -> tuple[str | None, str | None]:
+            # Select a pending pin before registering; the repository still claims
+            # only the exact registered pin, and the handler validates publication,
+            # digest, schema and current execution authority before any effect.
+            with repository._lock:
+                row = repository._connection.execute(
+                    "SELECT configuration_snapshot_id, configuration_snapshot_digest "
+                    "FROM automation_jobs WHERE status='pending' "
+                    "ORDER BY created_at, job_id LIMIT 1"
+                ).fetchone()
+            if row is not None:
+                return row["configuration_snapshot_id"], row["configuration_snapshot_digest"]
+            try:
+                return _managed_snapshot_reference(configured_path) or (None, None)
+            except Exception:
+                # Current Active does not authorize previously admitted transfers;
+                # their independent consumers reconstruct their own durable pins.
+                return (None, None)
+
         with _manual_organize_worker_context(
             configuration, configured_path, repository
         ) as manual_organize_worker:
             with _files_transfer_worker_context(
                 configuration, configured_path, repository
             ) as files_transfer_worker:
+                register_resident_process(
+                    runtime,
+                    "worker",
+                    instance_id,
+                    heartbeat_interval_seconds=5.0,
+                    snapshot_id=resident_id,
+                )
                 # The resident Worker records its own presence through the same
                 # heartbeat the resident registry reads, so a slow provider call
                 # or a long claim never makes the deployment look stopped.
@@ -3409,8 +3428,7 @@ def _run_worker(
                         job, configured_path, cancelled, repository=repository
                     ),
                     _worker_notification_publisher(repository, configured_path),
-                    configuration_snapshot_id=bound_snapshot_id,
-                    configuration_snapshot_digest=bound_snapshot_digest,
+                    configuration_snapshot_resolver=pending_snapshot,
                     runtime_schema_version=SCHEMA_VERSION,
                     manual_organize_worker=manual_organize_worker,
                     files_transfer_worker=files_transfer_worker,
@@ -3436,25 +3454,56 @@ def _run_worker(
                 poll = getattr(arguments, "poll_seconds", None) or getattr(
                     configuration, "worker_poll_seconds", default_poll
                 )
-                resident_heartbeat = lambda: _resident_worker_heartbeat(  # noqa: E731
-                    runtime, instance_id
-                )
                 original_heartbeat = worker_service.heartbeat
 
                 def heartbeat(now=None) -> bool:
-                    """Keep both registration records live from one call site."""
-
                     kept = original_heartbeat(now)
-                    resident_heartbeat()
+                    _resident_worker_heartbeat(runtime, instance_id)
                     return kept
 
                 worker_service.heartbeat = heartbeat
-                processed = _run_resident(
-                    lambda stop: worker_service.run(
-                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
-                    )
+                files_transfer_worker.set_worker_heartbeat(heartbeat)
+
+                def step(loop: ResidentLoop) -> int:
+                    if worker_service._registered and not worker_service.heartbeat():
+                        raise RuntimeError("worker registration unavailable")
+                    worked = worker_service.run_next() is not None
+                    if not worked:
+                        worked = (
+                            worker_service._run_manual_organize_work()
+                            or worker_service._run_files_transfer_work()
+                        )
+                    if worked:
+                        loop.clear_waiting()
+                    else:
+                        current = _resolve_resident_configuration(configured_path)
+                        if current is None:
+                            loop.note(
+                                "unconfigured", "waiting for published business configuration"
+                            )
+                        else:
+                            loop.clear_waiting()
+                    return int(worked)
+
+                loop = ResidentLoop(
+                    runtime,
+                    "worker",
+                    instance_id,
+                    heartbeat_interval_seconds=5.0,
+                    poll_seconds=poll,
+                    stdout=stdout,
+                    step=step,
+                    describe=_resident_failure_reason,
                 )
-                runtime.service.stop(instance_id)
+                try:
+                    processed = _run_resident(
+                        lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds))
+                    )
+                finally:
+                    try:
+                        worker_service.stop()
+                    except Exception:
+                        pass
                 stdout.write(f"Worker stopped; processed={processed}\n")
                 return 0
 
@@ -3481,8 +3530,11 @@ def _worker_notification_publisher(
     remains responsible for delivery.
     """
 
-    resolved = _current_runtime_configuration(configured_path)
-    return NotificationPublisher(repository, getattr(resolved, "webhooks", ()) if resolved else ())
+    def webhooks():
+        resolved = _current_runtime_configuration(configured_path)
+        return getattr(resolved, "webhooks", ()) if resolved else ()
+
+    return NotificationPublisher(repository, webhooks)
 
 
 def _run_scheduler(
@@ -3515,15 +3567,9 @@ def _run_scheduler(
 
     heartbeat_seconds, default_poll, _ = _resident_infrastructure_defaults()
     runtime = build_resident_runtime(configuration.database_path)
-    snapshot = _managed_snapshot_reference(configured_path)
+    snapshot = _resident_snapshot_reference(configured_path)
     instance_id = resident_instance_id("scheduler")
-    register_resident_process(
-        runtime,
-        "scheduler",
-        instance_id,
-        heartbeat_interval_seconds=5.0,
-        snapshot_id=snapshot[0] if snapshot is not None else None,
-    )
+
     current = _current_runtime_configuration(configured_path)
     # Only the resident ``run`` loop accepts a poll override; the one-shot
     # inspection commands always use the configured (or bounded default) cadence.
@@ -3571,11 +3617,16 @@ def _run_scheduler(
                 configuration_snapshot_version=(
                     getattr(resolved, "configuration_snapshot_version", None) if resolved else None
                 ),
-                configuration_snapshot_resolver=lambda: _managed_scheduler_configuration(
-                    configured_path
-                ),
+                configuration_snapshot_resolver=lambda: _scheduler_snapshot_from_runtime(resolved),
             )
 
+        register_resident_process(
+            runtime,
+            "scheduler",
+            instance_id,
+            heartbeat_interval_seconds=5.0,
+            snapshot_id=snapshot[0] if snapshot is not None else None,
+        )
         if arguments.scheduler_command == "list":
             definitions = current.automation_schedules if current is not None else ()
             stdout.write(render_schedules(definitions, repository.list_schedule_states()))
@@ -3608,7 +3659,7 @@ def _run_scheduler(
             advanced.
             """
 
-            resolved = _current_runtime_configuration(configured_path)
+            resolved = _resolve_resident_configuration(configured_path)
             reason, detail = _scheduler_waiting_reason(resolved)
             loop.note(reason, detail)
             if resolved is None:
@@ -3623,6 +3674,7 @@ def _run_scheduler(
             poll_seconds=poll,
             stdout=stdout,
             step=step,
+            describe=_resident_failure_reason,
         )
         emitted = _run_resident(lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds)))
         stdout.write(f"Scheduler stopped; emitted={emitted}\n")
@@ -3654,15 +3706,9 @@ def _run_notification_worker(
 
     _, default_poll, _ = _resident_infrastructure_defaults()
     runtime = build_resident_runtime(configuration.database_path)
-    snapshot = _managed_snapshot_reference(configured_path)
+    snapshot = _resident_snapshot_reference(configured_path)
     instance_id = resident_instance_id("notification-worker")
-    register_resident_process(
-        runtime,
-        "notification-worker",
-        instance_id,
-        heartbeat_interval_seconds=5.0,
-        snapshot_id=snapshot[0] if snapshot is not None else None,
-    )
+
     current = _current_runtime_configuration(configured_path)
     # Only the resident ``run`` loop accepts a poll override; ``run-next`` always
     # uses the configured (or bounded default) cadence.
@@ -3684,10 +3730,13 @@ def _run_notification_worker(
         signed and reporting success afterwards would be false.
         """
 
-        resolved = _current_runtime_configuration(configured_path)
+        resolved = _resolve_resident_configuration(configured_path)
         if resolved is None:
-            raise ValueError("no valid Active delivery configuration is published")
-        return resolved.resolve_webhook_targets()
+            return {}
+        try:
+            return resolved.resolve_webhook_targets()
+        except ValueError as error:
+            raise ResidentConfigurationUnavailable("secret_unavailable") from error
 
     with SQLiteTaskRepository(configuration.database_path) as repository:
         delivery_worker = NotificationWorker(
@@ -3696,16 +3745,23 @@ def _run_notification_worker(
             UrllibWebhookTransport(),
             delivery_lease_seconds=lease,
         )
+        register_resident_process(
+            runtime,
+            "notification-worker",
+            instance_id,
+            heartbeat_interval_seconds=5.0,
+            snapshot_id=snapshot[0] if snapshot is not None else None,
+        )
         if arguments.notification_worker_command == "run-next":
             try:
                 delivery = delivery_worker.run_next()
-            except ValueError as error:
+            except ResidentConfigurationUnavailable as error:
                 # Waiting is a normal resident outcome, not a failed run: the
                 # durable delivery is untouched and stays claimable.
                 stdout.write(f"Notification worker is waiting: {error}\n")
                 return 0
             if delivery is None:
-                stdout.write("No due notification deliveries\n")
+                stdout.write("Notification worker waiting: no due deliverable notifications\n")
                 return 0
             stdout.write(render_notification(delivery))
             return 0 if delivery.status.value in {"delivered", "retry"} else 1
@@ -3713,8 +3769,8 @@ def _run_notification_worker(
         def step(loop: ResidentLoop) -> int:
             try:
                 targets = delivery_worker.resolve_targets()
-            except ValueError as error:
-                loop.note(ResidentServiceWaiting.SECRET_UNAVAILABLE.value, str(error))
+            except ResidentConfigurationUnavailable as error:
+                loop.note(error.reason, str(error))
                 return 0
             if not targets:
                 loop.note(
@@ -3733,6 +3789,7 @@ def _run_notification_worker(
             poll_seconds=poll,
             stdout=stdout,
             step=step,
+            describe=_resident_failure_reason,
         )
         processed = _run_resident(lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds)))
         stdout.write(f"Notification worker stopped; processed={processed}\n")
@@ -4411,7 +4468,13 @@ def _managed_scheduler_configuration(
     # makes the resident path fail closed while the one-shot commands below
     # still support the pre-activation compatibility runtime.
     configuration = _current_managed_runtime_configuration(path)
-    if configuration is None:
+    return _scheduler_snapshot_from_runtime(configuration)
+
+
+def _scheduler_snapshot_from_runtime(configuration) -> SchedulerConfigurationSnapshot | None:
+    """Pin occurrence and notification publication to the same resolved runtime."""
+
+    if configuration is None or not getattr(configuration, "configuration_snapshot_id", None):
         return None
     return SchedulerConfigurationSnapshot(
         configuration.configuration_snapshot_id,

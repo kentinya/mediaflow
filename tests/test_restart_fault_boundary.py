@@ -415,6 +415,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                             NOW,
                             NOW,
                             NOW if status == NotificationDeliveryStatus.DELIVERED else None,
+                            target_digest=definition.target_digest,
                         )
                     )
                 first_process.create_delivery(
@@ -429,6 +430,7 @@ class RestartFaultBoundaryTests(unittest.TestCase):
                         NOW,
                         NOW - timedelta(seconds=301),
                         NOW - timedelta(seconds=301),
+                        target_digest=definition.target_digest,
                     )
                 )
 

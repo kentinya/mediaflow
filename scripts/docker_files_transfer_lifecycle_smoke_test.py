@@ -158,7 +158,13 @@ def prepare(root: Path, api_token: str, openlist_token: str, port: int) -> tuple
     target_root.chmod(0o777)
     document = json.loads(
         subprocess.check_output(
-            [sys.executable, str(ROOT / "scripts" / "make_deployment_config.py")], text=True
+            [
+                sys.executable,
+                str(ROOT / "scripts" / "make_deployment_config.py"),
+                "--mode",
+                "media",
+            ],
+            text=True,
         )
     )
     document["api"] = {
@@ -324,6 +330,8 @@ def lifecycle(project: str, image: str, keep: bool) -> None:
             "compose",
             "-f",
             str(ROOT / "compose.yaml"),
+            "-f",
+            str(ROOT / "compose.media-mounts.yaml"),
             "-f",
             str(override),
             "--project-name",

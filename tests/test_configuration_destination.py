@@ -686,7 +686,7 @@ class ManagedDestinationPreviewJourneyTests(unittest.TestCase):
                 # Runtime schema 38 adds the durable owner generation on
                 # file_locks so a stale Worker can never release a
                 # replacement Worker's source exclusion.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 38)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 39)
 
 
 if __name__ == "__main__":

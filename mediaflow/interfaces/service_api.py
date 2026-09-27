@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hmac
 import json
+import os
 import re
 import threading
 from collections.abc import Callable, Iterable
@@ -420,6 +421,9 @@ class MediaFlowApi:
         self._notification_deliveries = NotificationDeliveryService(
             self._repository,
             audit_repository=self._repository,
+            target_resolver=(
+                self._notification_recovery_targets if configuration_service else None
+            ),
         )
         self._bootstrap_document = bootstrap_document
         from mediaflow.infrastructure.runtime_configuration import (
@@ -7848,6 +7852,19 @@ class MediaFlowApi:
     def _require(principal: ResolvedApiPrincipal, permission: ApiPermission) -> None:
         if permission not in principal.permissions:
             raise ApiPermissionDenied(f"principal lacks {permission.value} permission")
+
+    def _notification_recovery_targets(self):
+        service = self._configuration_service
+        active = service.active()
+        if active is None:
+            return {}
+        service.verify_integrity(active)
+        runtime = service._load_for_runtime(active.document)
+        return {
+            item.webhook_id: item
+            for item in runtime.webhooks
+            if item.enabled and os.environ.get(item.secret_env)
+        }
 
     def _configuration_status_document(
         self,

@@ -211,7 +211,10 @@ class ResidentServiceService:
         schema_matched = [
             item for item, _ in live if item.runtime_schema_version == self._runtime_schema_version
         ]
-        if schema_matched:
+        database_schema = getattr(self._repository, "schema_version", self._runtime_schema_version)
+        if database_schema != self._runtime_schema_version:
+            condition = ResidentServiceReadiness.SCHEMA_MISMATCH.value
+        elif schema_matched:
             condition = ResidentServiceReadiness.READY.value
         elif live:
             condition = ResidentServiceReadiness.SCHEMA_MISMATCH.value

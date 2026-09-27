@@ -392,6 +392,8 @@ def compose_command(project: str, context: Path) -> list[str]:
         "compose",
         "-f",
         str(context / "compose.yaml"),
+        "-f",
+        str(context / "compose.media-mounts.yaml"),
         "--project-name",
         project,
     ]
@@ -409,6 +411,8 @@ def assert_compose_configuration(
             "compose",
             "-f",
             str(context / "compose.yaml"),
+            "-f",
+            str(context / "compose.media-mounts.yaml"),
             "config",
             "--format",
             "json",
@@ -1505,7 +1509,12 @@ def unsupported_host_access_failure(image: str, canaries) -> None:
         config = root / "unsafe.json"
         document = json.loads(
             subprocess.check_output(
-                [sys.executable, str(ROOT / "scripts" / "make_deployment_config.py")],
+                [
+                    sys.executable,
+                    str(ROOT / "scripts" / "make_deployment_config.py"),
+                    "--mode",
+                    "media",
+                ],
                 cwd=ROOT,
                 text=True,
             )
