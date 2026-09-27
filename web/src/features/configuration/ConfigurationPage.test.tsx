@@ -266,4 +266,93 @@ describe("V2 configuration route", () => {
       checked: true,
     });
   });
+
+  it("uses Active revisionVersion when creating a successor Draft", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push({ input, init });
+      if (init?.method === "PUT")
+        return response({
+          revisionId: "draft-2",
+          draftVersion: 1,
+          sections: {},
+        });
+      if (input.includes("/revisions/active-1"))
+        return response({ revisionId: "active-1", version: 99, document: {} });
+      if (input.includes("/system/settings"))
+        return response({
+          isActive: true,
+          revisionId: "active-1",
+          revisionVersion: 7,
+          draftVersion: 7,
+          sections: {
+            General: {
+              locale: {
+                label: "语言",
+                value: "zh-CN",
+                valueType: "string",
+                boundary: "hot_consumed",
+              },
+            },
+          },
+        });
+      return response({
+        authority: "MANAGED",
+        setupRequired: false,
+        active: { revisionId: "active-1", version: 99, digest: "digest-1" },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "查看 Active JSON" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "保存设置 Draft" }),
+    );
+    await waitFor(() =>
+      expect(calls.some((call) => call.init?.method === "PUT")).toBe(true),
+    );
+    const save = calls.find((call) => call.init?.method === "PUT");
+    expect(JSON.parse(String(save?.init?.body))).toMatchObject({
+      expectedActiveRevisionId: "active-1",
+      expectedActiveVersion: 7,
+    });
+  });
+
+  it("shows the durable first-Draft conflict and resume identity", async () => {
+    const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
+      init?.method === "POST"
+        ? response(
+            {
+              error: {
+                details: {
+                  revisionId: "draft-existing",
+                  durableState: "setup_draft_preserved",
+                },
+              },
+            },
+            409,
+          )
+        : response({
+            authority: "MANAGED",
+            setupRequired: true,
+            setupDraft: null,
+            canManageConfiguration: true,
+            canActivateConfiguration: true,
+          }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "创建首个 Draft" }),
+    );
+    expect(
+      await screen.findByText(/首个 Draft 已存在 \(draft-existing\)/),
+    ).toBeVisible();
+  });
 });

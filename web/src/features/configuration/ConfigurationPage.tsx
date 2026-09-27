@@ -14,6 +14,7 @@ import {
   fetchSystemSettings,
   saveSystemSettings,
   validateRevision,
+  ConfigurationConflictError,
 } from "../../shared/api/configuration-api";
 
 const QUERY_KEY = ["configuration-status"] as const;
@@ -68,6 +69,7 @@ export function ConfigurationPage() {
     null,
   );
   const [selectedVersion, setSelectedVersion] = useState(0);
+  const [activeRevisionVersion, setActiveRevisionVersion] = useState(0);
   const [settingPath, setSettingPath] = useState("");
   const [settingValue, setSettingValue] = useState("");
   const mutation = useMutation({
@@ -76,8 +78,19 @@ export function ConfigurationPage() {
       setMessage("操作已完成,请重新检查当前配置状态。");
       void client.invalidateQueries({ queryKey: QUERY_KEY });
     },
-    onError: () =>
-      setMessage("操作未完成。原有 Active 保持不变,请刷新状态后按提示恢复。"),
+    onError: (error) => {
+      if (error instanceof ConfigurationConflictError) {
+        const revision = text(error.details?.revisionId, "");
+        setMessage(
+          revision
+            ? `首个 Draft 已存在 (${revision});原有 Draft 已保留,请恢复该 Draft 后继续。`
+            : "首个 Draft 已存在;原有 Draft 已保留,请刷新并恢复后继续。",
+        );
+        void client.invalidateQueries({ queryKey: QUERY_KEY });
+        return;
+      }
+      setMessage("操作未完成。原有 Active 保持不变,请刷新状态后按提示恢复。");
+    },
   });
   return (
     <AuthorizedReadBoundary query={query} unavailableTitle="配置状态不可用">
@@ -115,6 +128,11 @@ export function ConfigurationPage() {
             setSelectedVersion(
               Number(settingsDetail.draftVersion ?? detail.version ?? 0),
             );
+            if (settingsDetail.isActive === true) {
+              setActiveRevisionVersion(
+                Number(settingsDetail.revisionVersion ?? 0),
+              );
+            }
             setSettings(settingsDetail);
             const first = settingFields(settingsDetail)[0];
             if (first) {
@@ -144,7 +162,9 @@ export function ConfigurationPage() {
           const body = editingActive
             ? {
                 expectedActiveRevisionId: selected,
-                expectedActiveVersion: Number(active?.version),
+                expectedActiveVersion:
+                  activeRevisionVersion ||
+                  Number(active?.revisionSequence ?? active?.version),
                 expectedActiveDigest: text(active?.digest),
                 edits: [{ fieldPath: settingPath, value }],
               }
