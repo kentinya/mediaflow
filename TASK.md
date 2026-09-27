@@ -10,6 +10,6 @@ Slice Required Outcomes all satisfied: YES
 Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
-Task 39.5's full implementation report and B Review Result are preserved in Git history. The
-current Slice Closure Packet is recorded in [`SLICE.md`](SLICE.md); no new implementation Task may
-be planned until A completes the final Slice review.
+Task 39.5's full implementation report and B Review Result are preserved in Git history. Slice 39
+is PASS / CLOSED; the next legal action is A selects the next large Slice, after which B may plan
+the first Task inside that new Contract.

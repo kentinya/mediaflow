@@ -13,7 +13,7 @@ V2 remains active on `main`; Slice 39 — **Storage Management Workspace** — i
 Implementation Head `f458646d3dac280b118a511c60ec53a5d3075d67` after A's 2026-09-27 final review.
 The next legal action is A selects the next large Slice. Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
 and Implementation Head `7d4503e45dc3aa79628ed0d98e887167e1e7c529`; Slice 37's closure is also
-unchanged. This is only the current-development pointer; the closure ledger below is not rewritten.
+unchanged. This pointer summarizes current development; the ledger below records closed Slices.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`
