@@ -95,6 +95,98 @@ class ReadOnlyStorage:
 
 
 class MediaLibraryActivationTests(unittest.TestCase):
+    def test_browse_only_media_library_does_not_require_destination_precheck(self) -> None:
+        document = {
+            "mediaLibraries": [
+                {
+                    "id": "movies",
+                    "name": "Movies",
+                    "storageId": "media",
+                    "rootPath": "Movies",
+                    "enabled": True,
+                }
+            ],
+            "recognitionTypes": [],
+            "recognitionTypePolicies": [],
+            "namingPolicies": [],
+            "classificationPolicies": [],
+            "organizePolicies": [],
+        }
+        self.assertFalse(ConfigurationObjectService._destination_precheck_applicable(document))
+
+    def test_empty_setup_active_can_add_storage_then_browse_only_media_library(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = str(root / "configuration.sqlite3")
+            bootstrap = {
+                "version": 1,
+                "persistence": {"databasePath": database},
+                "api": {
+                    "principals": [{"id": "admin", "tokenEnv": "MF_ADMIN", "roles": ["admin"]}]
+                },
+            }
+            config_repository = SQLiteConfigurationRepository(database)
+            self.addCleanup(config_repository.close)
+            service = ManagedConfigurationService(
+                config_repository,
+                bootstrap_database_path=database,
+                bootstrap_document=bootstrap,
+                management_only=True,
+            )
+            objects = ConfigurationObjectService(service)
+            draft = service.create_first_draft(actor="operator")
+            validated = service.validate(draft.revision_id, actor="operator")
+            active = objects.activate_checked(
+                validated.revision_id, expected_version=validated.version, actor="operator"
+            )
+            runtime_repository = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(runtime_repository.close)
+            principal = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
+            api = MediaFlowApi(
+                runtime_repository,
+                None,
+                principals=(principal,),
+                configuration_service=service,
+                bootstrap_document=bootstrap,
+                management_only=True,
+            )
+            local_root = root / "media"
+            local_root.mkdir()
+            status, saved_storage = request(
+                api,
+                "/api/v1/storages",
+                method="POST",
+                body={
+                    "storageId": "media",
+                    "name": "Media",
+                    "type": "local",
+                    "rootPath": str(local_root),
+                    "readOnly": False,
+                    "enabled": True,
+                    "options": {},
+                    "expectedRevisionId": active.revision_id,
+                    "expectedVersion": active.revision_sequence or active.version,
+                    "expectedDigest": active.digest,
+                },
+            )
+            self.assertEqual(status, 200, saved_storage)
+            after_storage = service.active()
+            status, saved_library = request(
+                api,
+                "/api/v1/media-libraries",
+                method="POST",
+                body={
+                    "mediaLibraryId": "movies",
+                    "name": "Movies",
+                    "enabled": True,
+                    "storageId": "media",
+                    "rootPath": "Movies",
+                },
+            )
+            self.assertEqual(status, 200, saved_library)
+            self.assertEqual(service.active().document["mediaLibraries"][0]["id"], "movies")
+            self.assertNotEqual(service.active().revision_id, after_storage.revision_id)
+
     def _document(self, root: Path) -> dict[str, object]:
         document = example_document()
         document["persistence"]["databasePath"] = str(root / "configuration.sqlite3")

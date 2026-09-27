@@ -109,58 +109,64 @@ existing authenticated configuration/readiness API and Settings projection → f
 ## Developer Completion Report
 
 ### Changed Files
-`mediaflow/infrastructure/strategy_user_configuration.py`, `mediaflow/application/configuration_snapshot.py`, `mediaflow/infrastructure/configuration_snapshot.py`, `mediaflow/interfaces/service_api.py`, `tests/test_runtime_strategy_configuration.py`
+`mediaflow/infrastructure/strategy_user_configuration.py`, `mediaflow/application/configuration_snapshot.py`, `mediaflow/infrastructure/configuration_snapshot.py`, `mediaflow/interfaces/service_api.py`, `mediaflow/application/configuration_objects.py`, `tests/test_runtime_strategy_configuration.py`, `tests/test_media_library_activation.py`
 
 ### Implemented
-允许 managed runtime 使用显式空业务集合；保留数组、对象、唯一性、路径和声明引用校验，不加载 development/default strategy。配置状态/API readiness 现在区分空 Active，并提供不含秘密的能力状态与下一步。补充 starter 空 runtime 和 malformed collection 回归测试。
+允许 managed runtime 使用显式空业务集合；保留数组、对象、唯一性、路径和声明引用校验，不加载 development/default strategy。配置状态/API readiness 现在区分空 Active，并提供不含秘密的能力状态与下一步。Destination precheck 仅在启用 MediaLibrary 存在且有完整启用的 RecognitionType → Naming → Classification 指向该库 → Organize 链时适用；空 Active 可先保存 Storage 和 browse-only MediaLibrary。补充 starter、nested webhook 与空 Active → Storage → MediaLibrary API 回归测试。
 
 ### Tests and Results
- - `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_objects tests.test_configuration_snapshot tests.test_runtime_strategy_configuration tests.test_configuration_status` — PASS (143)
+ - `.venv/bin/python -m unittest tests.test_configuration_destination_activation tests.test_media_library_activation tests.test_configuration_objects tests.test_management_setup tests.test_runtime_strategy_configuration` — PASS (126)
  - B blocker reproduction command from `config/strategy.example.json` — PASS (`notification` is `CONFIGURED`)
- - Correction-focused configuration suite — PASS (144)
- - `.venv/bin/python -m unittest discover -s tests` — PASS (1855 tests; 7 skips)
+ - Empty setup Active → Storage → browse-only MediaLibrary API regression — PASS
+ - `.venv/bin/python -m unittest discover -s tests` — PASS (1857 tests; 7 skips)
  - `cd web && npm test -- --run` — PASS (727 tests, 47 files)
  - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS
  - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
+ - `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
+ - `python3 scripts/check_governance.py` — PASS
  - `git diff --check` — PASS; `config/alist.json` absent; no FFmpeg/FFprobe dependency added
  - `tests.test_runtime_configuration` — UNAVAILABLE (module does not exist; corresponding `tests.test_runtime_strategy_configuration` ran)
 
 ### Decisions
-空策略集合表示合法未配置能力；只有 populated objects 才触发对应 runtime/reference checks。状态投影只暴露 bounded capability labels and next actions，不暴露文档内容、路径、凭据或 token。
+空策略集合表示合法未配置能力；只有 populated objects 才触发对应 runtime/reference checks。Destination evidence 对 browse-only 库不适用；声明但损坏的依赖仍由完整 runtime validation 拒绝。状态投影只暴露 bounded capability labels and next actions，不暴露文档内容、路径、凭据或 token。
 
 ### Remaining In-Slice Work
 Resident Worker/Scheduler/Notification lifecycle and deployment/Compose changes remain outside this Task.
 
 ### Risks / Deviations
-Original checkpoint full discovery had two failures: the governance test rejected the then-working-tree Task metadata, and release-security documentation required its gate command; the latter was documented, Task metadata was normalized, and current full discovery passes. Web test runner emitted existing jsdom `scrollTo` notices only.
+Correction 初次全量回归发现省略 `mediaLibraries` section 时的新 helper 抛错；按原有“无 destination 不适用”行为修复后重新跑全量并通过。Earlier checkpoint's governance/release-document failures were resolved before this correction. Existing Web checks remain from the prior checkpoint; this correction changes no Web source/projection. Docker smoke passed against isolated stack.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: af05e7e981f951ba3d1c4bd04e367536099bb562
+Head SHA: [pending correction checkpoint]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 6e3ce501239aebdf8a03f7a37989bf105cf0b42d
+Reviewed: 7b13fd488b37f7a542914a23a45ac17d48d25b7c
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- `notification` capability readiness is incorrectly reported as `UNCONFIGURED` for valid
-  configurations using the supported `notifications.webhooks` shape. Evidence: the committed
-  production fixture `config/strategy.example.json` contains a Webhook under
-  `notifications.webhooks`, and `load_runtime_configuration` explicitly supports that legacy
-  location, but `_business_capability_status` only counts the top-level `webhooks` key at
-  `mediaflow/application/configuration_snapshot.py:47-60`. Reproduce with
-  `.venv/bin/python -c 'import json; from mediaflow.application.configuration_snapshot import
-  _business_capability_status; d=json.load(open("config/strategy.example.json"));
-  print(_business_capability_status(d)["items"]["notification"])'`: it reports
-  `UNCONFIGURED`. Project notification state using the same supported source as runtime loading
-  (including `notifications.webhooks`) and add a regression assertion for that shape.
+- The shared checked-successor applicability gate still rejects a valid browse/transfer-only
+  MediaLibrary when the empty Active has no RecognitionType or policy chain. Evidence from the
+  current production application path: after creating and checked-activating the real first-setup
+  empty Draft, `ConfigurationObjectService.save_storage` successfully publishes one Local Storage,
+  then `save_media_library` with `{id: "movies", name: "Movies", storageId: "media",
+  rootPath: "Movies", enabled: true}` returns `media_library_evidence_failed` with
+  `the successor has no usable RecognitionType for destination checking`; the previous Active is
+  preserved. The same path is reachable through `POST /api/v1/media-libraries`. This violates Slice
+  40 RO-2's Destination precheck applicability (a browse-only MediaLibrary does not need invented
+  Recognition/policy objects), RO-4's destination-library-only incremental configuration, and this
+  Task's acceptance criterion requiring one shared applicability decision. Update the shared gate
+  and checked-activation requirement so destination evidence is required only for an enabled
+  destination with a declared naming/classification/organize chain; preserve strict failure for a
+  declared broken dependency and add an API/application regression for empty Active -> Storage ->
+  browse-only MediaLibrary publication.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
