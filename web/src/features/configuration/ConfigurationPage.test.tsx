@@ -124,18 +124,25 @@ describe("V2 configuration route", () => {
   });
 
   it("keeps settings mutation unavailable to a read-only principal", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        response({
-          authority: "MANAGED",
-          setupRequired: true,
-          setupDraft: { revisionId: "draft-1", version: 1 },
-          canManageConfiguration: false,
-          canActivateConfiguration: false,
-        }),
-      ),
-    );
+    const fetchMock = vi.fn(async (input: string) => {
+      if (input.includes("/revisions/draft-1"))
+        return response({ revisionId: "draft-1", version: 2, document: {} });
+      if (input.includes("/system/settings"))
+        return response({
+          revisionId: "draft-1",
+          revisionVersion: 1,
+          draftVersion: 3,
+          sections: {},
+        });
+      return response({
+        authority: "MANAGED",
+        setupRequired: true,
+        setupDraft: { revisionId: "draft-1", version: 1 },
+        canManageConfiguration: false,
+        canActivateConfiguration: false,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
     authStore.setToken("viewer-token");
     renderApp("/ui-v2/configuration");
     expect(
@@ -144,5 +151,119 @@ describe("V2 configuration route", () => {
     expect(
       screen.queryByRole("button", { name: "创建首个 Draft" }),
     ).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "恢复 Draft" }));
+    expect(await screen.findByText(/只能查看此 Draft/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "验证 Draft" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "checked-activate" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders bounded recovery when a selected revision cannot be read", async () => {
+    const fetchMock = vi.fn(async (input: string) => {
+      if (
+        input.includes("/revisions/draft-1") ||
+        input.includes("/system/settings")
+      )
+        return response({ error: { code: "not_found" } }, 404);
+      return response({
+        authority: "MANAGED",
+        setupRequired: true,
+        setupDraft: { revisionId: "draft-1", version: 1 },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "恢复 Draft" }),
+    );
+    expect(await screen.findByText(/Revision 或设置读取失败/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
+  });
+
+  it("keeps the mutable draftVersion through edit, validate and checked activation", async () => {
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push({ input, init });
+      if (init?.method === "PUT")
+        return response({
+          revisionId: "draft-1",
+          revisionVersion: 2,
+          draftVersion: 4,
+          sections: {
+            General: {
+              locale: {
+                label: "语言",
+                value: "en-US",
+                valueType: "string",
+                boundary: "hot_consumed",
+              },
+            },
+          },
+        });
+      if (input.endsWith("/validate"))
+        return response({ revisionId: "draft-1", version: 2 });
+      if (input.endsWith("/activate"))
+        return response({ revisionId: "draft-1", version: 2 });
+      if (input.includes("/revisions/draft-1"))
+        return response({ revisionId: "draft-1", version: 2, document: {} });
+      if (input.includes("/system/settings"))
+        return response({
+          revisionId: "draft-1",
+          revisionVersion: 2,
+          draftVersion: 3,
+          sections: {
+            General: {
+              locale: {
+                label: "语言",
+                value: "zh-CN",
+                valueType: "string",
+                boundary: "hot_consumed",
+              },
+            },
+          },
+        });
+      return response({
+        authority: "MANAGED",
+        setupRequired: true,
+        setupDraft: { revisionId: "draft-1", version: 1 },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "恢复 Draft" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "保存设置 Draft" }),
+    );
+    await waitFor(() =>
+      expect(calls.some((call) => call.init?.method === "PUT")).toBe(true),
+    );
+    const save = calls.find((call) => call.init?.method === "PUT");
+    expect(JSON.parse(String(save?.init?.body))).toMatchObject({
+      revisionId: "draft-1",
+      expectedVersion: 3,
+    });
+    await userEvent.click(screen.getByRole("button", { name: "验证 Draft" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "checked-activate" }),
+    );
+    await waitFor(() =>
+      expect(calls.some((call) => call.input.endsWith("/activate"))).toBe(true),
+    );
+    const activation = calls.find((call) => call.input.endsWith("/activate"));
+    expect(JSON.parse(String(activation?.init?.body))).toMatchObject({
+      expectedVersion: 4,
+      checked: true,
+    });
   });
 });
