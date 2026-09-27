@@ -138,7 +138,7 @@ Original checkpoint full discovery had two failures: the governance test rejecte
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending correction checkpoint]
+Head SHA: af05e7e981f951ba3d1c4bd04e367536099bb562
 ```
 
 ## B Review Result
