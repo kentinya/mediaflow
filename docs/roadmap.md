@@ -25,6 +25,7 @@ only in [the development workflow](development-workflow.md).
 | 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit, organize continuation and post-mutation reconciliation without introducing a second authority; remove the direct browser Upload/Download vertical; correct formal classification `library/path` destination parity with CLI; repair stale ResourceLibrary directory-tree state after Files refresh; make the manual Organize editor derive downstream policies from RecognitionType | PASS / CLOSED | 33 and existing Files foundation |
 | 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library create/edit/remove and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving and extending the Files journey with checked ResourceLibrary/MediaLibrary editing | PASS / CLOSED | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
 | 39 — Storage Management Workspace | Deliver the V2 Storage management journey from the supplied reference: bounded provider inventory and references, typed Local/SMB/OpenList/S3/R2 configuration, page-local checked Active Add/Edit/copy/enable/disable/remove, and zero-mutation Connection/Read diagnostics; complete the existing admitted-transfer Worker handoff across first activation/configuration changes, with truthful health and waiting-state recovery | PASS / CLOSED | 38 and existing managed-configuration/Storage foundations |
+| 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | ACTIVE | 39 closure and existing managed-configuration/operations foundations |
 
 ## Current boundary
 
@@ -94,8 +95,11 @@ Web-native exact manual Organize, scheduled Automation and Notification delivery
 includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
 projection and separate destructive confirmations; the second restores Worker reconstruction of the
 exact pinned source authority and fail-closed pre-mutation revalidation. Slice 39 is the most
-recently closed large Slice. The next legal action is A selects the next large Slice. This Roadmap does not retain
-the retired Slice 34–36 program rows.
+recently closed large Slice. Slice 40 is the current ACTIVE Contract for V2 Settings, legal empty
+business Active and resident service configuration readiness. It preserves business-page successor
+publication and excludes a mandatory media-business setup wizard, wholesale policy-page migration
+and V1 retirement. B plans its first Task after the Contract checkpoint. This Roadmap does not
+retain the retired Slice 34–36 program rows.
 
 ## Roadmap rules
 

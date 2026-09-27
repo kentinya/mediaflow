@@ -8,10 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 39 — **Storage Management Workspace** — is PASS / CLOSED under
-[`SLICE.md`](../SLICE.md) at Base `d02539e49d5c99c3e3c0c70de5e994e42824a18e` and
-Implementation Head `f458646d3dac280b118a511c60ec53a5d3075d67` after A's 2026-09-27 final review.
-The next legal action is A selects the next large Slice. Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
+V2 remains active on `main`; Slice 40 — **V2 Settings and Empty-Baseline Startup** — is the ACTIVE
+Contract in [`SLICE.md`](../SLICE.md), with no implementation Task yet. Next: B plans its first Task
+after the Contract checkpoint and governance check. Slice 39 remains PASS / CLOSED at Base
+`d02539e49d5c99c3e3c0c70de5e994e42824a18e` and Implementation Head
+`f458646d3dac280b118a511c60ec53a5d3075d67` after A's 2026-09-27 final review; its full Contract and
+review remain in Git. Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
 and Implementation Head `7d4503e45dc3aa79628ed0d98e887167e1e7c529`; Slice 37's closure is also
 unchanged. This pointer summarizes current development; the ledger below records closed Slices.
 

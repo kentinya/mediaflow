@@ -2,14 +2,12 @@
 
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
-Parent Slice: 39 — Storage Management Workspace
-Last Task: 39.5 — Resident transfer continuity and truthful Worker readiness
-Last Task Decision: PASS
-Last Task Head: f458646d3dac280b118a511c60ec53a5d3075d67
-Slice Required Outcomes all satisfied: YES
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Parent Slice: 40 — V2 Settings and Empty-Baseline Startup
+Implementation: NOT STARTED
+Next Action: B PLANS THE FIRST IMPLEMENTATION TASK
 ```
 
-Task 39.5's full implementation report and B Review Result are preserved in Git history. Slice 39
-is PASS / CLOSED; the next legal action is A selects the next large Slice, after which B may plan
-the first Task inside that new Contract.
+Slice 39 is PASS / CLOSED. Its passed Tasks, implementation reports and reviews remain in Git.
+A has selected Slice 40; after its Contract and Roadmap are checkpointed and governance passes,
+B may plan the first coherent Task within that Contract. This notice does not authorize coding
+or pre-plan B's Task boundaries, Task Base or implementation details.
