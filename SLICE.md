@@ -9,9 +9,9 @@ paths and example records are synthetic fixture data and are not product truth.
 Slice ID: 39
 Name: Storage Management Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Implementation Head: 466337c1337d0b03315d813ba258124538565cc1
+Implementation Head: f458646d3dac280b118a511c60ec53a5d3075d67
 Contract Revision: 2026-09-26 A-authorized expansion — resident transfer execution and truthful readiness
 ```
 
@@ -913,3 +913,106 @@ Documentation Reconciliation Needed:
   native V2 setup target is delivered.
 - A owns the new full Base..Head acceptance, Closure Packet reconciliation and any final closure.
   B has not reopened an earlier passed Task, moved any Base or declared the Slice PASS/CLOSED.
+
+## Current Closure Packet — Task 39.5
+
+```text
+Slice: 39 — Storage Management Workspace
+Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
+Head SHA: f458646d3dac280b118a511c60ec53a5d3075d67
+```
+
+Required Outcomes:
+
+- RO-1 COMPLETE — V2 Storage workspace, shared shell/search, provider summaries, bounded table and
+  four-step Add/Edit journey.
+- RO-2 COMPLETE — Truthful bounded inventory, provider-safe location identity, references and
+  secret-free detail/readiness projections.
+- RO-3 COMPLETE — Typed six-provider Add/Edit, immutable IDs, exact-Active checked publication and
+  preservation of prior Active on failure.
+- RO-4 COMPLETE — Checked copy, enable/disable and reference-safe removal with explicit recovery.
+- RO-5 COMPLETE — Zero-mutation Connection/Read diagnostics with bounded evidence and recovery.
+- RO-6 COMPLETE — Actionable setup, validation, provider, authority, stale and unknown-result
+  recovery states without raw secrets or implementation-token ceremony.
+- RO-7 COMPLETE — Shared API/Web authority, RBAC, redaction, audit, concurrency and regression
+  compatibility.
+- RO-8 COMPLETE — A resident Worker started before Active consumes ResourceLibrary and MediaLibrary
+  Copy/Move, including controlled OpenList Move, under each admitted immutable snapshot and kind.
+- RO-9 COMPLETE — Liveness, registration/schema and command/pin readiness are distinct; waiting
+  reasons, durable state and recovery remain visible across outage/restart without resubmission.
+
+Required Surfaces:
+
+- COMPLETE — `/ui-v2/storage`, shared navigation/search, provider summaries, six-column inventory,
+  detail/readiness and typed Add/Edit drawer.
+- COMPLETE — Bounded references, zero-mutation diagnostics, matching API/Web lifecycle and recovery.
+- COMPLETE — ResourceLibrary/MediaLibrary transfer submission/progress and durable Operations revisit.
+- COMPLETE — Resident Worker registration/heartbeat, authenticated command-aware readiness and
+  Compose/container health signal.
+
+Implemented:
+
+- Task 39.5 — Resident transfer continuity, exact pinned reconstruction, command-aware Worker
+  readiness, durable outage/restart progress projection and Docker startup-order lifecycle proof.
+- Tasks 39.1–39.4 — Previously passed Storage inventory, typed checked publication, safe row actions,
+  and provider-root/setup recovery foundations.
+
+Tasks completed:
+
+- 39.1
+- 39.2
+- 39.3
+- 39.4
+- 39.5 — PASS at `f458646d3dac280b118a511c60ec53a5d3075d67`
+
+Final Tests:
+
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_processing_worker_readiness tests.test_container_probe tests.test_container_deployment tests.test_openlist_storage tests.test_configuration_snapshot tests.test_manual_organize_execution tests.test_automation_job_fencing`: PASS, 277 tests.
+- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,850 tests, 7 existing optional/external skips.
+- `cd web && npm test -- --run`: PASS, 727 tests / 47 files.
+- Required focused Web gate: PASS, 80 tests / 5 files.
+- Required browser selection: PASS, 61 Chromium tests.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: PASS.
+- Ruff format/lint, compileall, governance and `git diff --check`: PASS.
+- Docker lifecycle startup-order/OpenList Move: PASS with unchanged Worker identity.
+- Docker health/readiness, transfer-impact and release-security smoke gates: PASS.
+- No schema change; migration gate not applicable. No production remote service, credential or user
+  media was used. Full manifest/private-config and FFmpeg/FFprobe audits passed for the reviewed
+  implementation range.
+
+Safety Evidence:
+
+- Resident claims, leases, mutation fences, per-item checkpoints and uncertain-effect resolution are
+  retained through reconstruction, restart and slow provider calls; completed effects are terminal
+  and uncertain effects are not replayed.
+- Current Active controls new admission; admitted work retains its exact revision/digest and library
+  kind. Missing/corrupt context, unavailable credentials and unsupported commands fail closed before
+  new Storage mutation.
+- Durable transfer reads use a kind-pinned, zero-Storage read projection when API restart has no
+  process-local Active binding. RBAC, redaction and cross-kind isolation remain backend-authoritative.
+- Health probes verify registration/command readiness without provider calls, configuration writes or
+  media work. OrganizerExecutor remains the only mutation boundary.
+
+Known Non-blocking Issues:
+
+- Existing SQLite `ResourceWarning` messages, jsdom `scrollTo()` notices and the Vite bundle-size
+  advisory remain non-fatal; no current P0/P1 blocker was found.
+- Later documentation/report commits after the reviewed implementation Head include unrelated user
+  image work; they are not part of this packet's Base..Head implementation range and must remain
+  outside A's product acceptance diff.
+
+Explicitly Deferred:
+
+- Unchanged from the Contract: mutation-based Storage write probes, general Configuration migration,
+  native V2 setup wizard/global onboarding, new providers/Secret Store integration, new file commands,
+  scheduler/worker platform redesign, automatic uncertain replay and new identity/session systems.
+
+Documentation Reconciliation Needed:
+
+- A should reconcile CURRENT architecture, deployment and Product Experience facts with resident
+  transfer continuity/readiness and the durable outage/restart projection, while retaining the
+  zero-mutation diagnostic boundary and existing deferrals.
+- A owns the final Base..Head review, any Roadmap/Progress reconciliation and Slice PASS/CLOSED
+  decision. This packet does not declare closure.
+
+Decision: SLICE READY FOR A REVIEW
