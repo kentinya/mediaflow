@@ -15,10 +15,10 @@ Implementation Head: f458646d3dac280b118a511c60ec53a5d3075d67
 Contract Revision: 2026-09-26 A-authorized expansion — resident transfer execution and truthful readiness
 ```
 
-> A has reopened Slice 39 for the user's explicitly requested Worker/readiness scope expansion.
-> Tasks 39.1–39.4 remain passed; their reviews and the prior return to A remain historical.
-> New RO-8/RO-9 are not implemented or accepted. Slice Base and prior Implementation Head remain
-> unchanged. See A Scope Activation below; this is not an A PASS or a Slice 38 reactivation.
+> A activated the user's explicitly requested Worker/readiness scope expansion. Tasks 39.1–39.4
+> remain passed; their reviews and the prior return to A remain historical. RO-8/RO-9 are implemented
+> and accepted at the reviewed Implementation Head below. Slice Base and the prior Implementation
+> Head remain unchanged; this is not a Slice 38 reactivation.
 
 Slice 38 is `PASS / CLOSED`. Its Base, Implementation Head, Closure Packet and A Final Review are
 historical facts and remain unchanged. This Slice starts from the repository HEAD immediately after
