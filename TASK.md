@@ -1,13 +1,13 @@
-# Task 40.1 — Empty runtime envelope and applicability-aware activation
+# Task 40.2 — V2 Settings lifecycle and bounded configuration editing
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the checkpointed [Slice 40 Contract](SLICE.md).
 
 ```text
-Task ID: 40.1
+Task ID: 40.2
 Parent Slice: 40
-Status: FIX REQUIRED
-Task Base: 8ac3292b4baed443de34f7a37989bf105cf0b42d
+Status: READY FOR B REVIEW
+Task Base: 95667df757b3682b01dad024cc586d726e8cd89b
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,158 +15,149 @@ Planner / Reviewer: B
 
 ## Goal
 
-Make the server-owned first-setup document a legal, explicit empty runtime that an administrator can
-validate and activate through the existing Settings/configuration API, while keeping all populated
-object and reference validation strict. This advances Slice 40 Required Outcomes RO-1 and RO-2 and
-provides the common applicability contract required by later Settings, library, Worker, Scheduler and
-Notification tasks.
+Complete the native V2 Settings journey for truthful managed configuration state: an administrator
+can create or resume the single first Draft, inspect a clearly labelled Draft or exact Active JSON,
+export the supported redacted package, edit allowlisted system settings, and continue through the
+existing validate/checked-activate APIs. This advances Slice 40 Required Outcomes RO-1 and RO-3;
+it does not implement resident service adoption or new business workspaces.
 
 ## Why This Task Exists
 
-`build_first_setup_starter_document` intentionally emits empty business collections, but the current
-complete runtime loader still rejects empty recognition types/rules/type policies (and the resulting
-activation path assumes every check is applicable). A fresh installation therefore cannot turn the
-existing durable first Draft into a valid Active baseline without invented development strategy data.
-The existing API and V2 Settings surface already expose first-Draft, validation and checked activation;
-the largest independent next unit is to make that authority truthful at the shared runtime and
-activation boundary before adding resident-process or business-page behavior.
+Slice 40 Task 40.1 made the empty managed runtime legal and conditional evidence gates correct, but
+`/ui-v2/configuration` still renders the generic migration placeholder. The backend already owns
+status, first-Draft creation, revision detail, package export and bounded System Settings edit
+routes; the missing product-complete unit is their authenticated Web surface with explicit state,
+action, success, failure and recovery. Without it, an operator must fall back to the V1 UI or raw
+CLI/API calls, violating the Settings Required Surface and RO-3's truthful JSON contract.
 
 ## Implementation Scope
 
-Domain/application/runtime configuration → Managed Configuration validation and checked activation →
-existing authenticated configuration/readiness API and Settings projection → focused regression tests.
+Web route and state/query models → existing authenticated configuration/status, first-Draft,
+revision, package-export and System Settings API contracts → focused Python/API and Web tests.
 
-- Accept the supported empty business envelope in the production managed runtime loader and expose
-  explicit empty capability state; never merge development/example strategy objects or synthetic
-  providers, libraries, policies, destinations, schedules or webhooks.
-- Preserve strict schema, value, uniqueness, path and declared-reference checks for every populated
-  collection. A declared broken relation remains invalid; an absent capability is unconfigured.
-- Centralize applicability decisions used by validation/checked activation and existing successor
-  paths: empty Storage/library families need no imaginary probe, an enabled source with applicable
-  recognition configuration requires the exact current offline strategy evidence, and an enabled
-  destination/policy chain requires the exact current read-only destination precheck. Existing
-  exact-revision evidence, secret readiness and concurrency fencing remain authoritative.
-- Make the existing configuration/readiness responses distinguish valid empty Active from missing,
-  invalid or unavailable Active, with bounded capability/unconfigured wording and no secrets/raw
-  exceptions. Viewer/admin permissions and API/Web shared behavior remain unchanged.
-- Keep the implementation limited to the managed configuration/runtime/activation boundary and its
-  existing Settings/API projection. Do not implement resident service adoption, Compose mounts,
-  Scheduler/Notification lifecycle, new policy workspaces or a new setup flow in this Task.
+- Replace the `/ui-v2/configuration` migration placeholder with a responsive, keyboard-usable
+  Settings page that distinguishes setup-required, resumable Draft, empty Active, partially
+  configured Active, unavailable/corrupt authority and permission-denied states.
+- Expose explicit `创建首个 Draft`/resume and activation actions through the existing backend
+  behavior. Reads, refreshes, reconnects and navigation must not create Drafts, validate, activate,
+  run checks or start media work; repeated creation must show the durable conflict/recovery state.
+- Show exact Active and Draft revision identity/status separately, provide labelled bounded JSON
+  inspection and the existing redacted configuration package export. Do not expose literal secrets,
+  unsafe webhook credentials, bearer tokens, deployment authority or raw exceptions.
+- Provide only the already supported allowlisted System Settings fields through the common settings
+  API. Draft edits invalidate prior evidence and remain inactive until explicit validate and checked
+  activation; stale/concurrent/validation/runtime failures preserve prior Active and correctable
+  Draft state with an actionable next step.
+- Keep the existing API permission behavior shared with Web, retain V1 `/ui` as compatibility
+  fallback only for unrelated legacy routes, and do not add Storage/library/policy forms or new
+  configuration consumers in this Task.
 
 ## Acceptance Criteria
 
-- [ ] The actual starter document from `build_first_setup_starter_document` loads through the same
-      managed runtime validator used by activation, with zero business objects and no development or
-      synthetic defaults; the resulting runtime carries explicit empty capability collections.
-- [ ] Through the existing authenticated configuration API, an administrator can create/resume the
-      one first Draft, validate it, and checked-activate the untouched empty document. Activation is
-      atomic, pins the exact immutable revision/digest, preserves bootstrap database/principal
-      authority, and creates no media Job/Task, scan, metadata request, notification or Storage
-      mutation.
-- [ ] A valid empty Active is reported distinctly from setup-required, missing, corrupt, schema-
-      unsupported and runtime-invalid authority. Status/readiness and Settings projections identify
-      media business capabilities as unconfigured/not applicable and provide a bounded next action;
-      no secret, token, deployment authority or raw exception is exposed.
-- [ ] Populated objects still enforce existing type/value/uniqueness/path/reference rules, including
-      dangling references and malformed collection types. A broken declared dependency cannot be
-      relabelled not-applicable, while an absent optional family does not require fabricated checks.
-- [ ] Checked activation and existing successor publication consume one shared applicability decision:
-      current exact-revision Storage evidence is required only for enabled referenced Storage;
-      Recognition Strategy evidence is required only for an enabled applicable source/configuration;
-      destination precheck is required only for an enabled applicable destination/policy chain.
-      Stale, failed, missing or changed-secret evidence still fails closed and leaves prior Active and
-      correctable Draft state unchanged.
-- [ ] RecognitionType identity semantics, OrganizerExecutor-only mutation, Storage confinement,
-      redaction, RBAC, optimistic concurrency and existing non-empty configuration behavior remain
-      intact, including the RecognitionType C → Naming/Classification A regression.
-- [ ] The assigned T4 tests and quality gates pass with honest command output and no skipped or
-      weakened assertions; the checkpoint contains only this Task's coherent changes.
+- [ ] `/ui-v2/configuration` is a real Settings surface, not a migration placeholder, and its
+      authenticated entry/refresh/reload/return states show the backend-authoritative status and a
+      bounded next action for setup-required, Draft, empty Active, populated Active and unavailable
+      authority.
+- [ ] An administrator can create the one first Draft, resume it after reload/reconnect, inspect
+      its labelled JSON, and reach explicit validate and checked-activate actions. Repeated creation
+      reports the existing durable Draft/conflict; reads and navigation have zero write/work side
+      effects. Viewer/read-only and 401/403 behavior remain backend-authoritative.
+- [ ] The page can inspect the exact Active JSON after activation and export the supported
+      configuration package through the existing API. Draft JSON is visibly Draft; Active JSON is
+      the immutable runtime-consumed snapshot. Responses and rendered UI contain no secret values,
+      bearer tokens, deployment database/principal authority or raw exception text.
+- [ ] Allowlisted System Settings fields can be edited in a Draft through the existing settings
+      API, with optimistic version handling and clear inactive/active consumption labels. Unknown,
+      deployment-authority or unsafe fields are rejected by the backend and not advertised by Web.
+- [ ] Known stale, invalid, permission, unavailable and publication failures preserve prior Active,
+      retain correctable Draft state where promised, and expose an action-oriented recovery path;
+      uncertain publication outcomes are verified rather than replayed automatically.
+- [ ] The Task remains within RO-1/RO-3 and existing RO-4 authority: no business defaults, Storage
+      mutation, media Job/Task, scan, metadata request, notification delivery or resident-process
+      redesign is introduced by Settings reads/edits/activation.
+- [ ] The assigned T4 tests and quality gates pass with honest output, and the checkpoint contains
+      only this Task's coherent changes.
 
 ## Required Tests
 
-- `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_objects tests.test_configuration_snapshot tests.test_runtime_configuration` (or the repository's exact existing runtime/configuration test module names if one differs): empty starter load/validate/activate, status/readiness projections, permissions, concurrency, invalid populated references, stale/failed evidence, zero-mutation and no-work proofs.
-- Relevant existing API/Web configuration tests, including `tests.test_operator_ui`, for truthful empty/unconfigured status and redaction without changing the established Settings journey.
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_snapshot tests.test_system_settings_management tests.test_configuration_objects tests.test_runtime_strategy_configuration` plus focused API tests for first Draft, status/readiness, package export, permissions, stale edits, validation and checked activation.
+- Web tests for the Settings route/component, including setup-required, resumable Draft, empty
+  Active, populated Active, Viewer/403, redaction, export, refresh and recovery states.
 - `.venv/bin/python -m unittest discover -s tests`.
-- `cd web && npm test -- --run` plus `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run build` when the implementation changes the existing Settings/API projection consumed by Web.
-- `.venv/bin/ruff format --check . && .venv/bin/ruff check .` and `.venv/bin/python -m compileall -q mediaflow tests scripts`.
-- `.venv/bin/python scripts/docker_release_security_smoke_test.py` (the T4 release/security gate).
-- `python3 scripts/check_governance.py`, `git diff --check`, exact Base..Head manifest review, secret/private-config audit, and FFmpeg/FFprobe exclusion audit.
+- `cd web && npm test -- --run && npm run typecheck && npm run lint && npm run format:check && npm run build`.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts`.
+- `.venv/bin/python scripts/docker_release_security_smoke_test.py`, `python3 scripts/check_governance.py`,
+  `git diff --check`, exact Base..Head manifest review, secret/private-config audit and FFmpeg/FFprobe
+  exclusion audit.
 
 ## Non-goals
 
 - Work outside Slice 40 or changes to Required Outcomes, Required Surfaces, Safety Invariants,
-  Slice Base, Roadmap or the canonical product scope.
-- Resident Worker/Scheduler/Notification adoption, process identity/heartbeat changes, Compose mount
-  and health redesign, Docker lifecycle proofs or migration/schema redesign.
-- Full native policy/Recognition/Review workspace migration, new providers/adapters/commands,
-  mandatory media-business onboarding, generated business defaults, or automatic activation.
-- Unrestricted JSON writes, deployment database/principal/token editing, secret resolution into
-  documents, silent fallback to bootstrap/cache, mutation-based diagnostics, uncertain replay,
-  overwrite/delete fallback, or any weakening of existing safety/concurrency gates.
-- P2 wording/cleanup, optional proof unrelated to the acceptance criteria, or declaring the Slice
-  PASS/CLOSED.
+  Slice Base, Roadmap or canonical product scope.
+- Resident Worker/Scheduler/Notification lifecycle, Compose mount/health redesign, process identity,
+  restart adoption or deployment migration; those remain later Slice 40 Tasks.
+- New business objects, Storage/library/policy workspace redesign, new providers/adapters/commands,
+  unrestricted JSON writes, secret resolution, automatic activation or CLI-only completion.
+- Changes to the already accepted Task 40.1 runtime empty-envelope/applicability behavior except
+  where a directly required Settings regression proves it.
+- P2 wording, visual polish unrelated to the Settings journey, or declaring the Slice PASS/CLOSED.
 
 ## Developer Completion Report
 
 ### Changed Files
-`mediaflow/infrastructure/strategy_user_configuration.py`, `mediaflow/application/configuration_snapshot.py`, `mediaflow/infrastructure/configuration_snapshot.py`, `mediaflow/interfaces/service_api.py`, `mediaflow/application/configuration_objects.py`, `tests/test_runtime_strategy_configuration.py`, `tests/test_media_library_activation.py`, `tests/test_configuration_destination_activation.py`
+`web/src/features/configuration/ConfigurationPage.tsx`, `web/src/features/configuration/ConfigurationPage.test.tsx`, `web/src/shared/api/configuration-api.ts`, `web/src/routes/router.tsx`
+`web/src/features/configuration/ConfigurationPage.tsx`, `web/src/features/configuration/ConfigurationPage.test.tsx`, `web/src/shared/api/configuration-api.ts`, `web/src/routes/router.tsx`
 
 ### Implemented
-允许 managed runtime 使用显式空业务集合；保留数组、对象、唯一性、路径和声明引用校验，不加载 development/default strategy。配置状态/API readiness 现在区分空 Active，并提供不含秘密的能力状态与下一步。Destination precheck 仅在启用 MediaLibrary 存在且有完整启用的 RecognitionType → Naming → Classification 指向该库 → Organize 链时适用；classification 使用 `library` 时按 runtime 相同 slug fallback 解析。空 Active 可先保存 Storage 和 browse-only MediaLibrary。补充 starter、nested webhook、slug chain 与空 Active → Storage → MediaLibrary API 回归测试。
+将 `/ui-v2/configuration` 替换为认证的 React Settings 页面：读取后端权威状态，区分 setup-required、Draft、empty/populated Active 与不可用 authority；提供显式首 Draft/恢复、Revision JSON 检查、脱敏包导出、Draft 验证与 checked-activate。System Settings 编辑仅从后端 `sections` allowlist 生成字段选择器并携带精确版本/Active fencing，所有写操作都由显式按钮触发；复用统一授权边界保留 401/403 行为，失败提示保持有界且不暴露原始异常或秘密。
+将 `/ui-v2/configuration` 替换为认证的 React Settings 页面：读取后端权威状态，区分 setup-required、Draft、empty/populated Active 与不可用 authority；提供显式首 Draft/恢复、Revision JSON 检查、脱敏包导出、Draft 验证与 checked-activate。System Settings 编辑仅从后端 `sections` allowlist 生成字段选择器并携带精确版本/Active fencing，所有写操作都由显式按钮触发；复用统一授权边界保留 401/403 行为，失败提示保持有界且不暴露原始异常或秘密。
 
 ### Tests and Results
- - `.venv/bin/python -m unittest tests.test_configuration_destination_activation tests.test_media_library_activation tests.test_configuration_objects tests.test_management_setup tests.test_runtime_strategy_configuration` — PASS (126)
- - Slug-routing destination applicability regression — PASS (35 focused destination/media tests)
- - B blocker reproduction command from `config/strategy.example.json` — PASS (`notification` is `CONFIGURED`)
- - Empty setup Active → Storage → browse-only MediaLibrary API regression — PASS
- - `.venv/bin/python -m unittest discover -s tests` — PASS (1858 tests; 7 skips)
- - `cd web && npm test -- --run` — PASS (727 tests, 47 files)
- - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS
- - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
- - `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
+- `python3 scripts/check_governance.py` — PASS
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_snapshot tests.test_system_settings_management tests.test_configuration_objects tests.test_runtime_strategy_configuration` — PASS (160)
+- `.venv/bin/python -m unittest discover -s tests` — PASS
+- `cd web && npm test -- --run` — PASS
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
+- `.venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS
+- `git diff --check` — PASS
+ - `cd web && npm run typecheck` — PASS
+ - `cd web && npm test -- --run src/features/configuration/ConfigurationPage.test.tsx` — PASS (3 tests)
+ - `cd web && npm test -- --run src/routes/router.test.tsx` — PASS (3 tests)
+ - `cd web && npm run lint` — PASS
+ - `cd web && npm run format:check` — PASS
+ - `cd web && npm run build` — PASS (Vite bundle-size advisory only)
  - `python3 scripts/check_governance.py` — PASS
- - `git diff --check` — PASS; `config/alist.json` absent; no FFmpeg/FFprobe dependency added
- - `tests.test_runtime_configuration` — UNAVAILABLE (module does not exist; corresponding `tests.test_runtime_strategy_configuration` ran)
+ - `git diff --check` — PASS
+ - Full Python T4 regression and Docker smoke — NOT RUN in this checkpoint
 
 ### Decisions
-空策略集合表示合法未配置能力；只有 populated objects 才触发对应 runtime/reference checks。Destination evidence 对 browse-only 库不适用；声明但损坏的依赖仍由完整 runtime validation 拒绝。Classification destination identity 复用 parser 的显式 ID 优先、library slug fallback 语义。状态投影只暴露 bounded capability labels and next actions，不暴露文档内容、路径、凭据或 token。
+前端只消费既有 configuration/status、revision、system settings、validate/activate 与 package export 契约，不新增配置消费者或绕过后端权限。Revision JSON 使用后端 detail 的已脱敏 `document`；Active 与 Draft 用独立标签呈现。页面刷新只重新读取状态，不自动创建、验证或激活。
+前端只消费既有 configuration/status、revision、system settings、validate/activate 与 package export 契约，不新增配置消费者或绕过后端权限。Revision JSON 使用后端 detail 的已脱敏 `document`；Active 与 Draft 用独立标签呈现。页面刷新只重新读取状态，不自动创建、验证或激活。
 
 ### Remaining In-Slice Work
-Resident Worker/Scheduler/Notification lifecycle and deployment/Compose changes remain outside this Task.
+Resident Worker/Scheduler/Notification 生命周期、部署/Compose 变化及其他 Slice 40 Required Outcomes 仍不属于本 Task。
+Resident Worker/Scheduler/Notification 生命周期、部署/Compose 变化及其他 Slice 40 Required Outcomes 仍不属于本 Task。
 
 ### Risks / Deviations
-Correction 初次全量回归发现省略 `mediaLibraries` section 时的新 helper 抛错；按原有“无 destination 不适用”行为修复后重新跑全量并通过。B 本轮 slug blocker 已由显式 ID 优先、library slug fallback 修复。Earlier checkpoint's governance/release-document failures were resolved before this correction. Existing Web checks remain from the prior checkpoint; this correction changes no Web source/projection. Docker smoke passed against isolated stack.
+本次只完成 Web Settings 垂直面；工作树中原有的文档图片未纳入提交。
+本次只完成 Web Settings 垂直面；Task 要求的 Python 全量 T4 门槛、Docker smoke 尚未运行，交由 B 按实际证据审查。工作树中原有的文档图片未纳入提交。
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 31755398507a6cfe0c375180c1b956898e335eb4
+Head SHA: [full SHA]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 8ac3292b4baed443de34f7a37989bf105cf0b42d..79d522fa48247e57e8601169e3fb77d3d0784271
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- Destination applicability can be incorrectly treated as false for a valid configured processing
-  chain when a classification rule uses the supported `library` field without explicit
-  `mediaLibraryId`. Evidence: starting from `config/strategy.example.json`, remove each rule's
-  `result.mediaLibraryId` and set its `result.library` to `Movies` or `TV` (the corresponding valid
-  slugs `movies` and `tv`). `load_runtime_configuration(document)` succeeds and resolves enabled
-  classification rules to both configured MediaLibraries, but
-  `ConfigurationObjectService._destination_precheck_applicable(document)` returns `False` because
-  it only reads explicit `result.mediaLibraryId` at `mediaflow/application/configuration_objects.py`
-  near line 7642. This legal configuration is reachable through managed Settings/JSON import; checked
-  activation and successor publication then omit required exact-revision destination evidence,
-  violating Slice 40 RO-2's declared-chain applicability and this Task's conditional evidence
-  acceptance. Derive routing through the same normalized classification/runtime parser (including
-  the supported slug fallback) and add a regression proving this valid chain is applicable and
-  cannot activate without current destination-precheck evidence.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.

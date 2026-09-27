@@ -10,6 +10,7 @@ import {
 import { DashboardPage } from "../features/dashboard/DashboardPage";
 import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
+import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { StorageManagementPage } from "../features/storage/StorageManagementPage";
 import { MediaLibraryFilesPage } from "../features/library/MediaLibraryFilesPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
@@ -284,7 +285,7 @@ const reviewRoute = createRoute({
 const configurationRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "configuration",
-  component: MigrationPage,
+  component: ConfigurationPage,
 });
 
 const storageManagementRoute = createRoute({
