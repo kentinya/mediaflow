@@ -1094,6 +1094,190 @@ class MediaLibraryTransferTests(unittest.TestCase):
             task = _runtime_task(api, result["taskId"])
             self.assertEqual(task.command, FILES_TRANSFER_TASK_COMMAND)
 
+    def _restart_api(self, root: Path, runtime) -> MediaFlowApi:
+        """A brand-new API instance over the same durable repositories.
+
+        The ordinary API process/container restart during configuration
+        recovery: only the SQLite configuration and Task databases carry over,
+        never the previous instance's in-memory Active binding.
+        """
+
+        configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+        self.addCleanup(configuration_repository.close)
+        return MediaFlowApi(
+            runtime,
+            None,
+            principals=(
+                ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+            ),
+            configuration_service=ManagedConfigurationService(
+                configuration_repository,
+                bootstrap_database_path=str(root / "configuration.sqlite3"),
+            ),
+            bootstrap_document=self._document(root),
+            storage_browser_cursor_secret="media-transfer-test-secret",
+        )
+
+    @staticmethod
+    def _set_active_status(api: MediaFlowApi, revision_id: str, status: str) -> None:
+        """Move the durable Active pointer (outage simulation and its repair)."""
+
+        repository = api._configuration_service._repository
+        repository._connection.execute(
+            "UPDATE managed_configuration_revisions SET status=? WHERE revision_id=?",
+            (status, revision_id),
+        )
+        repository._connection.commit()
+
+    def test_media_transfer_progress_survives_api_restart_during_active_outage(self) -> None:
+        """The MediaLibrary revisit keeps its durable view across a restart.
+
+        Admission happens under checked Active A through the authenticated
+        media route; the current Active then disappears and the API is
+        reconstructed over the same repositories.  The operator's progress
+        poll must still see the admitted media Task's durable state and
+        waiting reason, must not see the superseded snapshot presented as
+        current Active, must stay kind-pinned (the ResourceLibrary route can
+        never serve this media Task), must perform zero Storage access, and
+        must admit nothing new.  Repairing Active converges the same Task to
+        real execution without any resubmission.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, active, runtime = self._activate(root)
+            (root / "target" / "Movies" / "m.mkv").write_bytes(b"media")
+
+            _status, impact = request(
+                api,
+                "/api/v1/media-libraries/movies/files/transfer-impact"
+                "?path=m.mkv&to=tv&toPath=&operation=copy&conflict=fail",
+            )
+            self.assertEqual(_status, 200, impact)
+            status, admitted = request(
+                api,
+                "/api/v1/media-libraries/movies/files/transfers",
+                method="POST",
+                body={
+                    "operation": "copy",
+                    "paths": ["m.mkv"],
+                    "destinationMediaLibraryId": "tv",
+                    "destinationDirectory": "",
+                    "conflictMode": "fail",
+                    "manifestDigest": impact["manifestDigest"],
+                },
+            )
+            self.assertEqual(status, 202, admitted)
+            task_id = admitted["taskId"]
+            self._set_active_status(api, active.revision_id, "superseded")
+
+            restarted = self._restart_api(root, runtime)
+            status, progress = request(
+                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, progress)
+            self.assertEqual(progress["taskId"], task_id)
+            self.assertEqual(progress["status"], "QUEUED")
+            self.assertEqual(progress["mediaLibraryId"], "movies")
+            self.assertEqual(progress["destinationMediaLibraryId"], "tv")
+            self.assertNotIn("resourceLibraryId", progress)
+            self.assertEqual(progress["topLevelPaths"], ["m.mkv"])
+            self.assertEqual(progress["terminal"], False)
+            self.assertEqual(progress["sideEffects"], "none")
+            self.assertIsNone(restarted._runtime_binding.snapshot_id)
+            # Truthful waiting evidence, not a hidden failure.
+            self.assertTrue(progress["waitingForWorker"], progress)
+            self.assertIn(progress["workerCondition"], {"no_worker", "stale_registration"})
+            self.assertTrue(progress["nextAction"])
+
+            # Cross-kind isolation survives the restart: this media Task is
+            # never readable through the ResourceLibrary route.
+            cross, _body = request(
+                restarted, f"/api/v1/resource-libraries/movies/files/transfers/{task_id}"
+            )
+            self.assertEqual(cross, 404)
+            # The other kind's durable read cannot serve a media Task either
+            # way, and an unknown identity keeps its 404.
+            missing, _body = request(
+                restarted, "/api/v1/media-libraries/movies/files/transfers/no-such-task"
+            )
+            self.assertEqual(missing, 404)
+            denied, _body = request(
+                restarted,
+                f"/api/v1/media-libraries/movies/files/transfers/{task_id}",
+                token="viewer-token",
+            )
+            self.assertEqual(denied, 200)
+            forbidden, _body = request(
+                restarted,
+                f"/api/v1/media-libraries/movies/files/transfers/{task_id}",
+                token="nope-token",
+            )
+            self.assertEqual(forbidden, 401)
+
+            # New media admission during the outage still fails closed.
+            refused, _body = request(
+                restarted,
+                "/api/v1/media-libraries/movies/files/transfers",
+                method="POST",
+                body={
+                    "operation": "copy",
+                    "paths": ["m.mkv"],
+                    "destinationMediaLibraryId": "tv",
+                    "destinationDirectory": "",
+                    "conflictMode": "fail",
+                    "manifestDigest": "t1.00000000000000000000000000000000",
+                },
+            )
+            self.assertEqual(refused, 503)
+
+            # A refresh changes nothing: one media Task, no Storage effect.
+            status, again = request(
+                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, again)
+            self.assertEqual(again["version"], progress["version"])
+            self.assertEqual(
+                sum(
+                    task.command == MEDIA_TRANSFER_COMMAND for task in runtime.list_tasks(limit=100)
+                ),
+                1,
+            )
+            self.assertFalse((root / "target" / "TV Shows" / "m.mkv").exists())
+
+            # Repaired Active converges the same Task to real execution.
+            self._set_active_status(restarted, active.revision_id, "active")
+            status, repaired = request(
+                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, repaired)
+            self.assertEqual(repaired["status"], "QUEUED")
+            self.assertIsNotNone(restarted._runtime_binding.direct_media_transfers)
+            worker = FilesTransferWorker(
+                None,
+                runtime,
+                media_transfer_service=self._media_transfers(restarted, active),
+                lease_seconds=3600.0,
+                worker_id="resident-after-repair",
+            )
+            finished = worker.run_next()
+            self.assertIsNotNone(finished)
+            status, done = request(
+                restarted, f"/api/v1/media-libraries/movies/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, done)
+            self.assertTrue(done["terminal"], done)
+            self.assertEqual(done["succeededItems"], 1, done)
+            self.assertEqual((root / "target" / "TV Shows" / "m.mkv").read_bytes(), b"media")
+            self.assertTrue((root / "target" / "Movies" / "m.mkv").exists())
+            self.assertEqual(
+                sum(
+                    task.command == MEDIA_TRANSFER_COMMAND for task in runtime.list_tasks(limit=100)
+                ),
+                1,
+            )
+
     def test_media_transfer_routes_fail_closed_without_an_active_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

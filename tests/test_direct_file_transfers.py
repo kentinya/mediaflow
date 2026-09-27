@@ -142,6 +142,69 @@ class _TruncatingTarget(LocalStorage):
         super().write(path, data, overwrite=overwrite)
 
 
+class _AuditedLocalStorage(LocalStorage):
+    """A local provider recording every Storage call it receives.
+
+    Reads count as well as mutations, so a durable-observation test can prove
+    the read performed no provider access at all, not merely no change.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.calls: list[str] = []
+
+    def _record(self, name: str) -> None:
+        self.calls.append(name)
+
+    def list(self, path: str):
+        self._record("list")
+        return super().list(path)
+
+    def list_page(self, path: str, *, limit: int, cursor: str | None = None):
+        self._record("list_page")
+        return super().list_page(path, limit=limit, cursor=cursor)
+
+    def stat(self, path: str):
+        self._record("stat")
+        return super().stat(path)
+
+    def exists(self, path: str) -> bool:
+        self._record("exists")
+        return super().exists(path)
+
+    def read(self, path: str):
+        self._record("read")
+        return super().read(path)
+
+    def write(self, path, data, *, overwrite: bool = False) -> None:
+        self._record("write")
+        return super().write(path, data, overwrite=overwrite)
+
+    def create_directory(self, path: str) -> None:
+        self._record("create_directory")
+        return super().create_directory(path)
+
+    def move(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        self._record("move")
+        return super().move(source, target, overwrite=overwrite)
+
+    def copy(self, source: str, target: str, *, overwrite: bool = False) -> None:
+        self._record("copy")
+        return super().copy(source, target, overwrite=overwrite)
+
+    def delete(self, path: str) -> None:
+        self._record("delete")
+        return super().delete(path)
+
+    def hard_link(self, source: str, target: str) -> None:
+        self._record("hard_link")
+        return super().hard_link(source, target)
+
+    def soft_link(self, source: str, target: str) -> None:
+        self._record("soft_link")
+        return super().soft_link(source, target)
+
+
 class _CountingExecutor(OrganizerExecutor):
     """Executor double that records the mutation boundaries actually crossed."""
 
@@ -911,6 +974,204 @@ class TransferApiTests(TransferTestCase):
             self.assertEqual(status, 200, progress)
             self.assertEqual(progress["taskId"], admitted["taskId"])
             self.assertIn(progress["status"], {"QUEUED", "RUNNING"})
+
+    def _restart_api(self, root: Path, runtime, *, storage_adapters=None) -> MediaFlowApi:
+        """A brand-new API instance over the same durable repositories.
+
+        This is the ordinary API process/container restart: nothing carries
+        over the previous instance's in-memory Active binding, only the SQLite
+        configuration and Task databases do.
+        """
+
+        configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+        self.addCleanup(configuration_repository.close)
+        return MediaFlowApi(
+            runtime,
+            None,
+            principals=(
+                ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission)),
+                ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+            ),
+            configuration_service=ManagedConfigurationService(
+                configuration_repository,
+                bootstrap_database_path=str(root / "configuration.sqlite3"),
+            ),
+            bootstrap_document=self._document(root),
+            storage_adapters=storage_adapters,
+            storage_browser_cursor_secret="transfer-test-secret",
+        )
+
+    @staticmethod
+    def _set_active_status(api: MediaFlowApi, revision_id: str, status: str) -> None:
+        """Move the durable Active pointer (outage simulation and its repair)."""
+
+        repository = api._configuration_service._repository
+        repository._connection.execute(
+            "UPDATE managed_configuration_revisions SET status=? WHERE revision_id=?",
+            (status, revision_id),
+        )
+        repository._connection.commit()
+
+    def _admit_through_api(self, api: MediaFlowApi, root: Path) -> str:
+        (root / "source" / "a.mkv").write_bytes(b"media")
+        (root / "source" / "Movies").mkdir(exist_ok=True)
+        _status, impact = request(
+            api,
+            "/api/v1/resource-libraries/source/files/transfer-impact"
+            "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
+        )
+        status, admitted = request(
+            api,
+            "/api/v1/resource-libraries/source/files/transfers",
+            method="POST",
+            body={
+                "operation": "copy",
+                "paths": ["a.mkv"],
+                "destinationResourceLibraryId": "source",
+                "destinationDirectory": "Movies",
+                "conflictMode": "fail",
+                "manifestDigest": impact["manifestDigest"],
+            },
+        )
+        self.assertEqual(status, 202, admitted)
+        return admitted["taskId"]
+
+    def test_transfer_progress_survives_api_restart_during_active_outage(self) -> None:
+        """A restarted API with no Active binding still serves the durable view.
+
+        The outage→recovery journey: admission under checked Active A, loss of
+        current Active, then an API restart (the normal container restart while
+        configuration is still unavailable).  The progress read must keep
+        showing the admitted Task's durable waiting/progress state instead of
+        a 503 that hides everything, must not present the superseded snapshot
+        as current Active, must touch no Storage, and must not admit anything
+        by refreshing.  Repairing Active then converges the same read onto the
+        live binding and the already-admitted Task executes without
+        resubmission.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "destination").mkdir(parents=True, exist_ok=True)
+            providers = {
+                "source-storage": _AuditedLocalStorage("source-storage", root / "source"),
+                "media-target": _AuditedLocalStorage("media-target", root / "destination"),
+            }
+            api, active, runtime = self._activate(root, storage_adapters=providers)
+            task_id = self._admit_through_api(api, root)
+            self._set_active_status(api, active.revision_id, "superseded")
+            for provider in providers.values():
+                provider.calls.clear()
+
+            restarted = self._restart_api(root, runtime, storage_adapters=providers)
+            status, progress = request(
+                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, progress)
+            self.assertEqual(progress["taskId"], task_id)
+            self.assertEqual(progress["status"], "QUEUED")
+            self.assertEqual(progress["taskStatus"], "pending")
+            self.assertEqual(progress["terminal"], False)
+            self.assertEqual(progress["sideEffects"], "none")
+            # The read names the admitted scope from durable state only.
+            self.assertEqual(progress["resourceLibraryId"], "source")
+            self.assertEqual(progress["destinationResourceLibraryId"], "source")
+            self.assertEqual(progress["topLevelPaths"], ["a.mkv"])
+            # The superseded snapshot is never presented as current Active.
+            self.assertIsNone(restarted._runtime_binding.snapshot_id)
+            # Truthful waiting evidence explains why nothing runs yet.
+            self.assertTrue(progress["waitingForWorker"], progress)
+            self.assertIn(progress["workerCondition"], {"no_worker", "stale_registration"})
+            self.assertTrue(progress["nextAction"])
+            # A media Task is never readable through the ResourceLibrary route,
+            # and an unknown Task keeps its durable 404.
+            missing, _body = request(
+                restarted, "/api/v1/resource-libraries/source/files/transfers/no-such-task"
+            )
+            self.assertEqual(missing, 404)
+            # RBAC stays authoritative on the durable read.
+            denied, _body = request(
+                restarted,
+                f"/api/v1/resource-libraries/source/files/transfers/{task_id}",
+                token="nope-token",
+            )
+            self.assertEqual(denied, 401)
+            # Refresh never resubmits: still exactly one admitted Task and the
+            # media scope is untouched.
+            status, again = request(
+                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, again)
+            self.assertEqual(again["version"], progress["version"])
+            self.assertEqual(
+                sum(task.command == "files_transfer" for task in runtime.list_tasks(limit=100)),
+                1,
+            )
+            self.assertTrue((root / "source" / "a.mkv").exists())
+            self.assertFalse((root / "source" / "Movies" / "a.mkv").exists())
+            # The durable observation performed zero provider access at all.
+            for provider in providers.values():
+                self.assertEqual(provider.calls, [])
+            # New admission during the outage still fails closed with zero effect.
+            refused, _body = request(
+                restarted,
+                "/api/v1/resource-libraries/source/files/transfers",
+                method="POST",
+                body={
+                    "operation": "copy",
+                    "paths": ["a.mkv"],
+                    "destinationResourceLibraryId": "source",
+                    "destinationDirectory": "Movies",
+                    "conflictMode": "fail",
+                    "manifestDigest": "t1.00000000000000000000000000000000",
+                },
+            )
+            self.assertEqual(refused, 503)
+            self.assertEqual(
+                sum(task.command == "files_transfer" for task in runtime.list_tasks(limit=100)),
+                1,
+            )
+            for provider in providers.values():
+                self.assertEqual(provider.calls, [])
+
+            # Repaired Active: the same instance's next read converges onto the
+            # live binding, and the already-admitted Task then executes with no
+            # resubmission and no second Task.
+            self._set_active_status(restarted, active.revision_id, "active")
+            status, repaired = request(
+                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, repaired)
+            self.assertEqual(repaired["status"], "QUEUED")
+            self.assertIsNotNone(restarted._runtime_binding.direct_transfers)
+            from mediaflow.application.files_transfer_worker import FilesTransferWorker
+
+            worker = FilesTransferWorker(
+                restarted._runtime_binding.direct_transfers,
+                runtime,
+                lease_seconds=3600.0,
+                worker_id="resident-after-repair",
+            )
+            finished = worker.run_next()
+            self.assertIsNotNone(finished)
+            status, done = request(
+                restarted, f"/api/v1/resource-libraries/source/files/transfers/{task_id}"
+            )
+            self.assertEqual(status, 200, done)
+            self.assertTrue(done["terminal"], done)
+            self.assertEqual(done["succeededItems"], 1, done)
+            # A Copy keeps its source and produces exactly one destination.
+            self.assertEqual((root / "source" / "Movies" / "a.mkv").read_bytes(), b"media")
+            self.assertTrue((root / "source" / "a.mkv").exists())
+            self.assertEqual(
+                sum(task.command == "files_transfer" for task in runtime.list_tasks(limit=100)),
+                1,
+            )
+            # After Active was repaired, the only provider calls are the transfer's
+            # own verified effects — the observation reads stayed provider-free.
+            self.assertIn("copy", providers["source-storage"].calls)
+            self.assertNotIn("read", providers["source-storage"].calls)
 
     def test_real_admission_matches_the_shared_contract_fixture(self) -> None:
         """The real Python API admission document is the shared TS contract.

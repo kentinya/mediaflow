@@ -31,6 +31,7 @@ from mediaflow.application.direct_file_commands import (
 from mediaflow.application.direct_file_transfers import (
     DirectFileTransferError,
     DirectFileTransferService,
+    durable_transfer_read_service,
 )
 from mediaflow.application.execution_authorization import ExecutionAuthorizationService
 from mediaflow.application.file_catalog import FileCatalogFilter, FileCatalogService
@@ -1413,6 +1414,17 @@ class MediaFlowApi:
             )
             if not transfer_observation:
                 binding = self._refresh_configuration_binding()
+            else:
+                # One progress read converges back to the live binding as soon
+                # as a valid Active exists again, and a lost or unreadable
+                # Active never turns into a lost durable view: this process
+                # keeps its last published binding (or none at all after a
+                # restart), and the route below still answers from durable
+                # Task state.
+                try:
+                    binding = self._refresh_configuration_binding()
+                except Exception:
+                    binding = self._runtime_binding
         # --- V2 Manual Scan/Preview operations routes (bounded, server-bound) ---
         if parts == ["api", "v1", "operations", "manual-actions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
@@ -5484,11 +5496,12 @@ class MediaFlowApi:
             # backend-advertised lifecycle actions; it never needs a raw
             # execution token and never learns claim/lease internals.
             self._require(principal, ApiPermission.READ)
-            if binding.direct_transfers is None:
+            transfers = self._durable_transfer_reader(binding, media_library=False)
+            if transfers is None:
                 return self._files_browser_unavailable(start_response)
             self._require_empty_query(environ, "Files transfer status")
             try:
-                projection = binding.direct_transfers.transfer_projection(parts[6])
+                projection = transfers.transfer_projection(parts[6])
             except DirectFileTransferError as error:
                 if error.category == "not_found":
                     raise LookupError(f"task {parts[6]!r} was not found") from None
@@ -5659,11 +5672,12 @@ class MediaFlowApi:
             # service, so an equal ResourceLibrary ID cannot read a media
             # transfer (or the reverse).
             self._require(principal, ApiPermission.READ)
-            if binding.direct_media_transfers is None:
+            transfers = self._durable_transfer_reader(binding, media_library=True)
+            if transfers is None:
                 return self._files_browser_unavailable(start_response)
             self._require_empty_query(environ, "MediaLibrary transfer status")
             try:
-                projection = binding.direct_media_transfers.transfer_projection(parts[6])
+                projection = transfers.transfer_projection(parts[6])
             except DirectFileTransferError as error:
                 if error.category == "not_found":
                     raise LookupError(f"task {parts[6]!r} was not found") from None
@@ -7985,6 +7999,28 @@ class MediaFlowApi:
         if not bounded:
             document["activeSnapshotDigest"] = active_snapshot_digest
         return redact_manual_value(document)
+
+    def _durable_transfer_reader(self, binding, *, media_library: bool):
+        """The transfer-status reader for this request's kind, bound or durable.
+
+        While this process has an Active runtime binding it serves its own
+        kind-pinned transfer service, exactly as before.  When it has none —
+        the normal API restart during a current-Active outage — the read falls
+        back to the bounded durable projection of the admitted Task over this
+        process's own Task repository.  The fallback never substitutes another
+        process's or snapshot's authority: it resolves no library, opens no
+        Storage, mutates nothing, keeps the kind's own Task command filter, and
+        does not present a superseded snapshot as current Active.  Admission
+        and every other workflow route still require the real binding and keep
+        failing closed.
+        """
+
+        bound = binding.direct_media_transfers if media_library else binding.direct_transfers
+        if bound is not None:
+            return bound
+        if self._repository is None:
+            return None
+        return durable_transfer_read_service(self._repository, media_library=media_library)
 
     def _with_transfer_worker_readiness(
         self, projection: dict[str, object], *, media_library: bool
