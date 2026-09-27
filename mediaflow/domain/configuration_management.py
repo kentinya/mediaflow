@@ -37,6 +37,92 @@ CONFIGURATION_REFERENCE_EVIDENCE_LIMIT = 32
 CONFIGURATION_SETUP_CHECK_PATH_LIMIT = 4096
 CONFIGURATION_STRATEGY_RESULT_LIMIT = 32 * 1024
 
+#: Deployment-owned startup authority inside a managed configuration document:
+#: the durable database locator and the API principal/role/token identity live
+#: with the deployment bootstrap file and environment.  They are never managed
+#: configuration, never portable, and never accepted from an imported or
+#: advanced-edited document that omits them.
+DEPLOYMENT_AUTHORITY_SECTIONS: frozenset[str] = frozenset({"persistence"})
+DEPLOYMENT_AUTHORITY_API_FIELDS: frozenset[str] = frozenset({"principals", "tokenEnv"})
+
+
+def portable_managed_configuration_document(document: object) -> dict[str, object]:
+    """One shared bounded projection of a managed configuration document.
+
+    The selected revision's identity (revision ID, version, digest, status)
+    stays with the response envelope that carries this document, and every
+    supported managed family is preserved exactly as stored.  Deployment
+    startup authority — the database locator and the API principal/token
+    identity — is excluded; permitted deployment status remains a separate,
+    secret-free surface rather than part of the managed document.  ``api``
+    keeps managed System Settings such as ``remoteExecution``.
+    """
+
+    if not isinstance(document, dict):
+        raise ValueError("managed configuration document must be an object")
+    projected: dict[str, object] = {}
+    for key, value in document.items():
+        if key in DEPLOYMENT_AUTHORITY_SECTIONS:
+            continue
+        if key == "api" and isinstance(value, dict):
+            managed_api = {
+                field: copy.deepcopy(item)
+                for field, item in value.items()
+                if field not in DEPLOYMENT_AUTHORITY_API_FIELDS
+            }
+            if managed_api:
+                projected["api"] = managed_api
+            continue
+        projected[key] = copy.deepcopy(value)
+    return projected
+
+
+def bind_deployment_authority(
+    document: object,
+    *,
+    database_path: str | None = None,
+    bootstrap_document: object = None,
+) -> dict[str, object]:
+    """Rebind omitted deployment startup authority to the receiving deployment.
+
+    Portable exports and displayed JSON omit the database locator and API
+    principal identity, so a managed edit or import of such a document must
+    bind those fields back to this deployment's own authority before the
+    document is persisted.  Only *omitted* authority is filled: an authority
+    value that a caller explicitly supplied is left untouched so existing
+    fail-closed validation (for example the immutable database locator check)
+    still rejects it rather than silently accepting it.
+    """
+
+    if not isinstance(document, dict):
+        raise ValueError("managed configuration document must be an object")
+    bound = {key: copy.deepcopy(value) for key, value in document.items()}
+    if "persistence" not in bound:
+        source_path = database_path if isinstance(database_path, str) else None
+        if not source_path and isinstance(bootstrap_document, dict):
+            persistence = bootstrap_document.get("persistence")
+            if isinstance(persistence, dict) and isinstance(persistence.get("databasePath"), str):
+                source_path = persistence["databasePath"]
+        if source_path:
+            bound["persistence"] = {"databasePath": source_path}
+    api = bound.get("api")
+    has_identity = isinstance(api, dict) and any(
+        field in api for field in DEPLOYMENT_AUTHORITY_API_FIELDS
+    )
+    if not has_identity and isinstance(bootstrap_document, dict):
+        source_api = bootstrap_document.get("api")
+        if isinstance(source_api, dict):
+            identity = {
+                field: copy.deepcopy(item)
+                for field, item in source_api.items()
+                if field in DEPLOYMENT_AUTHORITY_API_FIELDS
+            }
+            if identity:
+                merged = dict(api) if isinstance(api, dict) else {}
+                merged.update(identity)
+                bound["api"] = merged
+    return bound
+
 
 class ManagedConfigurationStatus(StrEnum):
     """Lifecycle state of a user-managed, immutable configuration revision."""

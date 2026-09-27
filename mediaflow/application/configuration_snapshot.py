@@ -19,6 +19,8 @@ from mediaflow.domain.configuration_management import (
     ManagedConfigurationRevision,
     ManagedConfigurationStatus,
     RuntimeSnapshotUnavailable,
+    bind_deployment_authority,
+    portable_managed_configuration_document,
 )
 from mediaflow.domain.notification import (
     redact_webhook_urls,
@@ -318,7 +320,14 @@ class ManagedConfigurationService:
             "setupDraft": status["setupDraft"],
             "setupBlockers": status["setupBlockers"],
             "nextAction": status["nextAction"],
-            "document": _redact_document(revision.document),
+            # The shared bounded projection preserves the selected immutable
+            # revision identity and every supported managed family while
+            # excluding deployment startup authority (database locator and API
+            # principal identity); permitted deployment status stays in the
+            # separate top-level status fields above.
+            "document": _redact_document(
+                portable_managed_configuration_document(revision.document)
+            ),
             "diff": self._diff(active_document, revision.document),
             "audit": [
                 _audit_document(item)
@@ -339,6 +348,20 @@ class ManagedConfigurationService:
             return document
         return self._loader(copy.deepcopy(document))
 
+    def _bind_deployment_authority(self, document: dict[str, object]) -> dict[str, object]:
+        """Fill omitted deployment startup authority from this deployment.
+
+        Only fields the caller's document omits are supplied; explicitly
+        supplied authority still flows to validation unchanged so the existing
+        fail-closed locator/identity checks keep rejecting it.
+        """
+
+        return bind_deployment_authority(
+            document,
+            database_path=self._bootstrap_database_path,
+            bootstrap_document=self._bootstrap_document,
+        )
+
     def import_draft(
         self,
         document: object,
@@ -347,6 +370,11 @@ class ManagedConfigurationService:
         source: str = "manual",
     ) -> ManagedConfigurationRevision:
         normalized = _canonical_document(document)
+        # Portable exports and displayed JSON omit deployment startup
+        # authority; bind whatever was omitted back to this deployment before
+        # the Draft is persisted so an imported/recovered document can never
+        # carry (or lose) another deployment's database/principal identity.
+        normalized = _canonical_document(self._bind_deployment_authority(normalized))
         _reject_literal_secrets(normalized)
         _reject_unsafe_webhook_urls(normalized, current=None)
         now = self._clock()
@@ -722,6 +750,11 @@ class ManagedConfigurationService:
                 current_digest=revision.digest,
             )
         normalized = _canonical_document(document)
+        # The advanced whole-document editor round-trips the bounded portable
+        # projection (deployment authority excluded); rebind whatever authority
+        # the submitted document omits so validation and runtime loading keep
+        # consuming this deployment's own locator and principal identity.
+        normalized = _canonical_document(self._bind_deployment_authority(normalized))
         _reject_literal_secrets(normalized)
         _reject_unsafe_webhook_urls(normalized, current=revision.document)
         now = self._clock()

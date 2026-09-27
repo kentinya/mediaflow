@@ -234,13 +234,21 @@ class PackageExchangeApiTests(unittest.TestCase):
         self.assertNotIn("top-secret-token", encoded)
         entries = package["redaction"]["entries"]
         self.assertTrue(entries)
-        self.assertIn(
-            "MEDIAFLOW_API_TOKEN",
-            json.dumps([entry for entry in entries if entry["kind"] == "environment_reference"]),
-        )
+        # Deployment principal/token startup authority is excluded from the
+        # portable payload entirely (not merely redacted), so the exporting
+        # deployment's API identity never leaves with the package.
+        payload_document = package["payload"]["document"]
+        self.assertNotIn("persistence", payload_document)
+        self.assertNotIn("principals", payload_document.get("api", {}))
+        self.assertNotIn("MEDIAFLOW_API_TOKEN", encoded)
+        # Managed families keep their permitted environment references.
         self.assertIn(
             "MEDIAFLOW_WEBHOOK_SECRET",
-            json.dumps(package["payload"]["document"]),
+            json.dumps(payload_document),
+        )
+        self.assertIn(
+            "notifications.webhooks[0].secretEnv",
+            json.dumps([entry for entry in entries if entry["kind"] == "environment_reference"]),
         )
         self.assertLess(len(encoded.encode("utf-8")), 1_500_000)
 
