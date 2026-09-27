@@ -349,11 +349,12 @@ class ManagedConfigurationService:
         return self._loader(copy.deepcopy(document))
 
     def _bind_deployment_authority(self, document: dict[str, object]) -> dict[str, object]:
-        """Fill omitted deployment startup authority from this deployment.
+        """One fail-closed deployment-authority boundary for a submitted document.
 
-        Only fields the caller's document omits are supplied; explicitly
-        supplied authority still flows to validation unchanged so the existing
-        fail-closed locator/identity checks keep rejecting it.
+        Genuinely omitted authority is supplied from this deployment; supplied
+        authority is validated against this deployment's own identity and a
+        conflicting or malformed declaration is rejected rather than persisted
+        for the next runtime startup.
         """
 
         return bind_deployment_authority(

@@ -10,6 +10,8 @@ from enum import StrEnum
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
+from mediaflow.domain.security import ApiRole
+
 
 class ConfigurationObjectKind(StrEnum):
     STORAGE = "storage"
@@ -45,6 +47,52 @@ CONFIGURATION_STRATEGY_RESULT_LIMIT = 32 * 1024
 DEPLOYMENT_AUTHORITY_SECTIONS: frozenset[str] = frozenset({"persistence"})
 DEPLOYMENT_AUTHORITY_API_FIELDS: frozenset[str] = frozenset({"principals", "tokenEnv"})
 
+_DEPLOYMENT_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_DEPLOYMENT_PRINCIPAL_LIMIT = 64
+_DEPLOYMENT_FORBIDDEN_PRINCIPAL_FIELDS = frozenset({"token", "secret", "password", "authorization"})
+_DEPLOYMENT_AUTHORITY_CONFLICT = (
+    "managed configuration cannot change deployment API principal/role/token authority; "
+    "the configured API principals and tokenEnv belong to the deployment bootstrap and "
+    "environment, so edit managed settings instead of the deployment identity"
+)
+_DEPLOYMENT_AUTHORITY_UNREADABLE = (
+    "deployment bootstrap API identity is invalid, so a managed document cannot be checked "
+    "against this deployment's own principal/role/token authority"
+)
+
+
+def _deployment_principal(value: object, *, index: int) -> tuple[str, str, tuple[str, ...], bool]:
+    """Validate one supplied API principal into a comparison identity."""
+
+    if not isinstance(value, dict):
+        raise ValueError(f"API principal {index} must be an object")
+    principal_id = value.get("id")
+    if not isinstance(principal_id, str) or not principal_id.strip():
+        raise ValueError(f"API principal {index} id must be a non-empty string")
+    token_env = value.get("tokenEnv")
+    if not isinstance(token_env, str) or _DEPLOYMENT_ENV_NAME.fullmatch(token_env) is None:
+        raise ValueError(
+            f"API principal {index} tokenEnv must be a valid environment variable name"
+        )
+    forbidden = _DEPLOYMENT_FORBIDDEN_PRINCIPAL_FIELDS.intersection(value)
+    if forbidden:
+        raise ValueError(f"API principal field {sorted(forbidden)[0]!r} is forbidden")
+    roles = value.get("roles")
+    if not isinstance(roles, list) or not roles:
+        raise ValueError(f"API principal {index} roles must be a non-empty array")
+    normalized_roles = []
+    for item in roles:
+        try:
+            normalized_roles.append(ApiRole(item).value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"API principal {index} contains an unknown role") from error
+    if len(set(normalized_roles)) != len(normalized_roles):
+        raise ValueError(f"API principal {index} roles must be unique")
+    enabled = value.get("enabled", True)
+    if not isinstance(enabled, bool):
+        raise ValueError(f"API principal {index} enabled must be boolean")
+    return (principal_id, token_env, tuple(sorted(normalized_roles)), enabled)
+
 
 def portable_managed_configuration_document(document: object) -> dict[str, object]:
     """One shared bounded projection of a managed configuration document.
@@ -77,21 +125,108 @@ def portable_managed_configuration_document(document: object) -> dict[str, objec
     return projected
 
 
+def _deployment_authority_identity(
+    api: object,
+    *,
+    label: str = "configuration",
+) -> tuple[object, ...] | None:
+    """Validate and normalize the deployment API identity of one document.
+
+    Returns ``None`` only when the document genuinely omits deployment API
+    identity, so a caller can distinguish "omitted" from "malformed".  A
+    malformed identity raises instead of being normalized into a different,
+    apparently valid authority.
+    """
+
+    if not isinstance(api, dict):
+        raise ValueError(f"{label} 'api' must be an object")
+    token_env = api.get("tokenEnv")
+    has_token_env = token_env is not None
+    has_principals = "principals" in api
+    if not has_token_env and not has_principals:
+        return None
+    if has_token_env and (
+        not isinstance(token_env, str) or _DEPLOYMENT_ENV_NAME.fullmatch(token_env) is None
+    ):
+        raise ValueError("API tokenEnv must be a valid environment variable name")
+    if has_principals and not isinstance(api["principals"], list):
+        raise ValueError("API principals must be an array of objects")
+    principals = tuple(
+        sorted(
+            _deployment_principal(item, index=index)
+            for index, item in enumerate(api["principals"] if has_principals else [])
+        )
+    )
+    if len(principals) > _DEPLOYMENT_PRINCIPAL_LIMIT:
+        raise ValueError(f"API supports at most {_DEPLOYMENT_PRINCIPAL_LIMIT} principals")
+    if len({item[0] for item in principals}) != len(principals):
+        raise ValueError("API principal IDs must be unique")
+    if len({item[1] for item in principals}) != len(principals):
+        raise ValueError("API principal tokenEnv names must be unique")
+    if has_token_env and principals:
+        raise ValueError("API tokenEnv cannot be combined with principals")
+    if has_token_env:
+        return ("tokenEnv", token_env)
+    return ("principals", principals)
+
+
+def _deployment_authority_matches(supplied: tuple, receiving: tuple) -> bool:
+    """Whether a supplied identity is exactly this deployment's own authority.
+
+    The two supported spellings must not be confused for a rewrite: a legacy
+    single ``tokenEnv`` bootstrap resolves at runtime to one enabled admin
+    principal for that environment reference, so it matches a declared
+    principal array carrying exactly that permission identity.  Otherwise the
+    supplied principal IDs, roles, environment references and enabled state
+    must match the receiving authority exactly; changing any of them is an
+    authority rewrite.
+    """
+
+    if supplied == receiving:
+        return True
+    legacy, declared = (supplied, receiving) if supplied[0] == "tokenEnv" else (receiving, supplied)
+    if legacy[0] != "tokenEnv" or declared[0] != "principals":
+        return False
+    principals = declared[1]
+    # A principal tuple is (id, tokenEnv, roles, enabled): the legacy
+    # single-token bootstrap is `legacy-admin` with the admin role, so the
+    # declared spelling matches when its environment reference, admin role and
+    # enabled state agree.
+    return len(principals) == 1 and principals[0][1:] == (legacy[1], ("admin",), True)
+
+
 def bind_deployment_authority(
     document: object,
     *,
     database_path: str | None = None,
     bootstrap_document: object = None,
 ) -> dict[str, object]:
-    """Rebind omitted deployment startup authority to the receiving deployment.
+    """One fail-closed deployment-authority boundary for a submitted document.
 
-    Portable exports and displayed JSON omit the database locator and API
-    principal identity, so a managed edit or import of such a document must
-    bind those fields back to this deployment's own authority before the
-    document is persisted.  Only *omitted* authority is filled: an authority
-    value that a caller explicitly supplied is left untouched so existing
-    fail-closed validation (for example the immutable database locator check)
-    still rejects it rather than silently accepting it.
+    Portable exports and the displayed JSON omit the database locator and the
+    API principal/role/token identity, so a managed edit or import of such a
+    document must bind those fields back to *this* deployment's own authority
+    before the document is persisted.
+
+    Three outcomes are deliberate:
+
+    * **Genuinely omitted** authority is filled from the receiving bootstrap
+      (locator and API identity), which is what makes a supported projected
+      JSON round trip work.
+    * **Supplied authority that matches** the receiving bootstrap identity is
+      accepted unchanged, so a whole-document round trip that still carries
+      this deployment's own identity keeps working.
+    * **Malformed or conflicting** supplied authority raises ``ValueError``.
+      A non-object ``api``, a malformed principal, a foreign identity, an
+      emptied principal list, or a different ``tokenEnv`` is rejected instead
+      of being normalized or persisted for the next runtime startup: the
+      database locator and API principal/role/token identity are deployment
+      startup authority, not managed configuration.
+
+    A supplied ``persistence`` object is intentionally preserved rather than
+    compared here: the shared managed runtime loader already fails closed on a
+    locator that differs from the deployment, which keeps a wrong locator a
+    correctable Draft validation failure instead of an import error.
     """
 
     if not isinstance(document, dict):
@@ -105,22 +240,40 @@ def bind_deployment_authority(
                 source_path = persistence["databasePath"]
         if source_path:
             bound["persistence"] = {"databasePath": source_path}
-    api = bound.get("api")
-    has_identity = isinstance(api, dict) and any(
-        field in api for field in DEPLOYMENT_AUTHORITY_API_FIELDS
+
+    supplied = _deployment_authority_identity(bound.get("api", {}))
+    bootstrap_api = (
+        bootstrap_document.get("api", {}) if isinstance(bootstrap_document, dict) else {}
     )
-    if not has_identity and isinstance(bootstrap_document, dict):
-        source_api = bootstrap_document.get("api")
-        if isinstance(source_api, dict):
-            identity = {
-                field: copy.deepcopy(item)
-                for field, item in source_api.items()
-                if field in DEPLOYMENT_AUTHORITY_API_FIELDS
-            }
-            if identity:
-                merged = dict(api) if isinstance(api, dict) else {}
-                merged.update(identity)
-                bound["api"] = merged
+    receiving: tuple[object, ...] | None
+    try:
+        receiving = _deployment_authority_identity(bootstrap_api, label="deployment bootstrap")
+    except ValueError as error:
+        # A receiving authority that cannot be read cannot be compared against,
+        # so the boundary fails closed instead of binding or accepting anything.
+        raise ValueError(_DEPLOYMENT_AUTHORITY_UNREADABLE) from error
+    if receiving is None:
+        # This deployment declares no API identity authority of its own (for
+        # example a locator-only bootstrap), so there is no deployment identity
+        # for the document to rewrite.  The document's own declaration is left
+        # untouched for the normal validator to judge.
+        return bound
+    if supplied is not None:
+        # A supplied identity that cannot be reproduced by this deployment's
+        # own bootstrap is exactly the authority rewrite the boundary exists to
+        # stop; it is never silently replaced with the bootstrap identity.
+        if not _deployment_authority_matches(supplied, receiving):
+            raise ValueError(_DEPLOYMENT_AUTHORITY_CONFLICT)
+        return bound
+    identity = {
+        field: copy.deepcopy(item)
+        for field, item in bootstrap_api.items()
+        if field in DEPLOYMENT_AUTHORITY_API_FIELDS
+    }
+    if identity:
+        merged = dict(bound["api"]) if isinstance(bound.get("api"), dict) else {}
+        merged.update(identity)
+        bound["api"] = merged
     return bound
 
 
