@@ -5,7 +5,7 @@ the checkpointed [Slice 40 Contract](SLICE.md).
 
 ```text
 Task ID: 40.1
-Parent Slice: 40 — V2 Settings and Empty-Baseline Startup
+Parent Slice: 40
 Status: PLANNED
 Task Base: 8ac3292b4baed443de34f7a37989bf105cf0b42d
 Difficulty: High
