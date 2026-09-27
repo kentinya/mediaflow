@@ -788,6 +788,30 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                     actor="operator",
                 )
 
+    def test_library_slug_routing_requires_destination_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = self._document(root)
+            for policy in document["classificationPolicies"]:
+                for rule in policy["rules"]:
+                    result = rule["result"]
+                    result.pop("mediaLibraryId", None)
+                    result["library"] = "Movies" if policy["id"] == "A" else "TV"
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                managed = ManagedConfigurationService(repository)
+                objects = ConfigurationObjectService(managed)
+                revision = self._validated(managed, document)
+                self._save_existing_gates(repository, revision)
+                self.assertTrue(objects._destination_precheck_applicable(revision.document))
+                with self.assertRaisesRegex(
+                    ConfigurationActivationConflict, "current read-only destination precheck"
+                ):
+                    objects.activate_checked(
+                        revision.revision_id,
+                        expected_version=revision.version,
+                        actor="operator",
+                    )
+
     def test_activation_module_namespace_stays_free_of_construction_classes(self) -> None:
         namespace = vars(configuration_objects_module)
         self._assert_activation_module_namespace_is_hardened(namespace)

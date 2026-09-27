@@ -7639,11 +7639,23 @@ class ConfigurationObjectService:
                 rules = classification.get("rules", [])
                 if any(
                     isinstance(rule, Mapping)
-                    and str((rule.get("result") or rule).get("mediaLibraryId", "")) in library_ids
+                    and cls._classification_rule_library_id(rule) in library_ids
                     for rule in rules
                 ):
                     return True
         return False
+
+    @staticmethod
+    def _classification_rule_library_id(rule: Mapping[str, object]) -> str:
+        result = rule.get("result")
+        result = result if isinstance(result, Mapping) else rule
+        explicit = result.get("mediaLibraryId")
+        if isinstance(explicit, str) and explicit.strip():
+            return explicit
+        library = result.get("library")
+        if isinstance(library, str):
+            return library.strip().casefold().replace(" ", "-")
+        return ""
 
     def _strategy_test_document(
         self, revision: ManagedConfigurationRevision
