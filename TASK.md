@@ -148,7 +148,7 @@ Resident Worker/Scheduler/Notification 生命周期、部署/Compose 变化及�
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [correction commit SHA]
+Head SHA: d9be46e8126217590366a303052a65f87e54e839
 ```
 
 ## B Review Result
