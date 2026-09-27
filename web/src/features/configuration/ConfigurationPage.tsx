@@ -103,18 +103,28 @@ export function ConfigurationPage() {
                 ? "Active 已激活"
                 : "等待配置";
         const inspect = async (id: string) => {
-          setRevisionId(id);
-          const [detail, settingsDetail] = await Promise.all([
-            fetchRevision(token, id),
-            fetchSystemSettings(token, id),
-          ]);
-          setJson(JSON.stringify(detail.document ?? detail, null, 2));
-          setSelectedVersion(Number(detail.version ?? 0));
-          setSettings(settingsDetail);
-          const first = settingFields(settingsDetail)[0];
-          if (first) {
-            setSettingPath(first.path);
-            setSettingValue(text(first.value, ""));
+          try {
+            const [detail, settingsDetail] = await Promise.all([
+              fetchRevision(token, id),
+              fetchSystemSettings(token, id),
+            ]);
+            setRevisionId(id);
+            setJson(JSON.stringify(detail.document ?? detail, null, 2));
+            // draftVersion is the mutable optimistic-concurrency token. The
+            // immutable revisionVersion is only identity metadata.
+            setSelectedVersion(
+              Number(settingsDetail.draftVersion ?? detail.version ?? 0),
+            );
+            setSettings(settingsDetail);
+            const first = settingFields(settingsDetail)[0];
+            if (first) {
+              setSettingPath(first.path);
+              setSettingValue(text(first.value, ""));
+            }
+          } catch {
+            setMessage(
+              "Revision 或设置读取失败;原有选择和 Active 保持不变。请刷新后重试,并核对该 Draft 是否仍可用。",
+            );
           }
         };
         const fields = settingFields(settings);
@@ -147,7 +157,7 @@ export function ConfigurationPage() {
           const nextId = text(updated.revisionId, selected);
           setRevisionId(nextId);
           setSelectedVersion(
-            Number(updated.revisionVersion ?? updated.draftVersion ?? 0),
+            Number(updated.draftVersion ?? updated.revisionVersion ?? 0),
           );
           setSettings(updated);
           setJson("");
@@ -258,25 +268,40 @@ export function ConfigurationPage() {
                   </Button>
                   {selected !== text(active?.revisionId) && (
                     <>
-                      <Button
-                        variant="secondary"
-                        onClick={() =>
-                          mutation.mutate(() =>
-                            validateRevision(token, selected),
-                          )
-                        }
-                      >
-                        验证 Draft
-                      </Button>
-                      <Button
-                        onClick={() =>
-                          mutation.mutate(() =>
-                            activateRevision(token, selected, selectedVersion),
-                          )
-                        }
-                      >
-                        checked-activate
-                      </Button>
+                      {data.canManageConfiguration !== false && (
+                        <Button
+                          variant="secondary"
+                          onClick={() =>
+                            mutation.mutate(() =>
+                              validateRevision(token, selected),
+                            )
+                          }
+                        >
+                          验证 Draft
+                        </Button>
+                      )}
+                      {data.canActivateConfiguration !== false && (
+                        <Button
+                          onClick={() =>
+                            mutation.mutate(() =>
+                              activateRevision(
+                                token,
+                                selected,
+                                selectedVersion,
+                              ),
+                            )
+                          }
+                        >
+                          checked-activate
+                        </Button>
+                      )}
+                      {data.canManageConfiguration === false &&
+                        data.canActivateConfiguration === false && (
+                          <p>
+                            当前账号只能查看此
+                            Draft;请联系配置管理员继续验证和激活。
+                          </p>
+                        )}
                     </>
                   )}
                 </div>
