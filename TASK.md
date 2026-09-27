@@ -274,7 +274,7 @@ All required committed-candidate Docker gates passed. Existing `docs/pics` delet
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: <updated after correction commit>
+Head SHA: f458646d3dac280b118a511c60ec53a5d3075d67
 ```
 
 ## B Review Result
