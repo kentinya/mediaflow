@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import urllib.error
 import urllib.parse
@@ -153,7 +154,9 @@ def worker_readiness_error(*, environ: Mapping[str, str] | None = None) -> str |
         with open(configured, encoding="utf-8") as stream:
             document = json.load(stream)
         database_path = load_management_bootstrap(document).database_path
-        with SQLiteTaskRepository(database_path) as repository:
+        with SQLiteTaskRepository(database_path, read_only=True) as repository:
+            if repository.schema_version != SCHEMA_VERSION:
+                return "worker runtime schema is incompatible; run the explicit upgrade workflow"
             service = ProcessingWorkerService(repository, runtime_schema_version=SCHEMA_VERSION)
             commands = (
                 direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=False),
@@ -162,8 +165,10 @@ def worker_readiness_error(*, environ: Mapping[str, str] | None = None) -> str |
             readiness = service.evaluate_command_readiness(
                 commands, runtime_schema_version=SCHEMA_VERSION
             )
-    except (OSError, ValueError, RuntimeError):
-        return "worker registration database or runtime schema is unavailable"
+    except (OSError, ValueError, RuntimeError, sqlite3.Error):
+        return (
+            "worker is not transfer-ready: registration database or runtime schema is unavailable"
+        )
     if not readiness.get("ready"):
         condition = str(readiness.get("condition", "unavailable"))[:64]
         return f"resident worker is not transfer-ready ({condition})"
@@ -202,11 +207,16 @@ def resident_service_readiness_error(
         with open(configured, encoding="utf-8") as stream:
             document = json.load(stream)
         database_path = load_management_bootstrap(document).database_path
-        with SQLiteTaskRepository(database_path) as repository:
+        with SQLiteTaskRepository(database_path, read_only=True) as repository:
+            if repository.schema_version != SCHEMA_VERSION:
+                return "resident runtime schema is incompatible; run the explicit upgrade workflow"
             resident = ResidentServiceService(repository, runtime_schema_version=SCHEMA_VERSION)
             readiness = resident.evaluate_readiness(service)
-    except (OSError, ValueError, RuntimeError):
-        return f"resident {service} registration database or runtime schema is unavailable"
+    except (OSError, ValueError, RuntimeError, sqlite3.Error):
+        return (
+            f"resident {service} is not infrastructure-ready: "
+            "database or runtime schema is unavailable"
+        )
     if readiness.get("ready"):
         return None
     condition = str(readiness.get("condition", "unavailable"))[:64]

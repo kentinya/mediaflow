@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -342,6 +344,13 @@ class WebhookDefinition:
             "maxRetrySeconds": self.max_retry_seconds,
         }
 
+    @property
+    def target_digest(self) -> str:
+        """Stable recipient/signing authority, independent of retry tuning."""
+
+        identity = json.dumps([self.webhook_id, self.url, self.secret_env], separators=(",", ":"))
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()
+
 
 @dataclass(frozen=True)
 class NotificationEvent:
@@ -366,6 +375,7 @@ class NotificationDelivery:
     delivered_at: datetime | None = None
     failure_category: str | None = None
     response_status: int | None = None
+    target_digest: str | None = None
 
 
 class NotificationRepository(Protocol):
@@ -385,6 +395,7 @@ class NotificationRepository(Protocol):
         stale_before: datetime,
         *,
         webhook_ids: tuple[str, ...] | None = None,
+        target_digests: Mapping[str, str] | None = None,
     ) -> NotificationDelivery | None: ...
     def list_stale_deliveries(
         self, stale_before: datetime, *, limit: int | None = None

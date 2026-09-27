@@ -174,7 +174,7 @@ class ProcessingWorkerService:
         # Kept in step with ``mediaflow.infrastructure.sqlite_runtime.SCHEMA_VERSION``:
         # the application layer must not import the infrastructure module, and an
         # additive runtime schema bump is expected to update both defaults.
-        runtime_schema_version: int = 38,
+        runtime_schema_version: int = 39,
     ) -> None:
         self._repository = repository
         self._active_configuration_snapshot_id = active_configuration_snapshot_id
@@ -584,6 +584,7 @@ class AutomationWorker:
         runtime_schema_version: int = 34,
         manual_organize_worker=None,
         files_transfer_worker=None,
+        configuration_snapshot_resolver: Callable[[], tuple[str | None, str | None]] | None = None,
     ) -> None:
         self._repository = repository
         self._handler = handler
@@ -604,6 +605,7 @@ class AutomationWorker:
         self._supported_commands = validate_worker_commands(tuple(raw_commands))
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
+        self._configuration_snapshot_resolver = configuration_snapshot_resolver
         self._runtime_schema_version = runtime_schema_version
         # Optional admitted-manual-execution runner sharing this Worker's
         # resident loop.  It owns its own durable claim/lease boundary and is
@@ -673,6 +675,15 @@ class AutomationWorker:
         return self._repository.stop_worker(self._worker_id, current_now)
 
     def run_next(self) -> AutomationJob | None:
+        if self._configuration_snapshot_resolver is not None:
+            snapshot_id, digest = self._configuration_snapshot_resolver()
+            if (snapshot_id, digest) != (
+                self._configuration_snapshot_id,
+                self._configuration_snapshot_digest,
+            ):
+                self._configuration_snapshot_id = snapshot_id
+                self._configuration_snapshot_digest = digest
+                self._registered = False
         if (
             self._worker_registration_enabled
             and not self._registered

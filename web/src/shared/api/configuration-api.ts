@@ -246,3 +246,6 @@ export const exportConfigurationPackage = (
     {},
     fetchImpl,
   );
+
+export const fetchManagementReadiness = (token: string | null) =>
+  request<Record<string, unknown>>(token, "/api/v1/management/readiness", {});

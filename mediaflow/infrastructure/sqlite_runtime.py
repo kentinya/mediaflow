@@ -5,7 +5,7 @@ import json
 import secrets
 import sqlite3
 import threading
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -230,7 +230,9 @@ from mediaflow.infrastructure.file_index_schema import (
 # claim can never release the replacement Worker's lock for the same
 # Task/storage/path.  Existing rows receive a conservative legacy identity that
 # is still exactly releasable by its owning Task but never by a generation.
-SCHEMA_VERSION = 38
+# Schema 39 binds notification deliveries to their original target digest;
+# legacy deliveries retain unknown authority and cannot be claimed automatically.
+SCHEMA_VERSION = 39
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -362,13 +364,21 @@ def _validated_webhook_id_filter(
 class SQLiteTaskRepository:
     """Durable task/result/lock adapter sharing the configured runtime SQLite database."""
 
-    def __init__(self, database_path: str | Path) -> None:
+    def __init__(self, database_path: str | Path, *, read_only: bool = False) -> None:
         self._path = Path(database_path)
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(str(self._path), check_same_thread=False)
+        if read_only:
+            self._connection = sqlite3.connect(
+                self._path.resolve().as_uri() + "?mode=ro",
+                uri=True,
+                check_same_thread=False,
+            )
+        else:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            self._connection = sqlite3.connect(str(self._path), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
         self._lock = threading.RLock()
-        self._initialize()
+        if not read_only:
+            self._initialize()
 
     @property
     def schema_version(self) -> int:
@@ -376,6 +386,8 @@ class SQLiteTaskRepository:
             row = self._connection.execute(
                 "SELECT version FROM schema_version WHERE component = 'runtime'"
             ).fetchone()
+        if row is None:
+            raise ValueError("runtime database schema marker is unavailable")
         return int(row["version"])
 
     def close(self) -> None:
@@ -6414,7 +6426,7 @@ class SQLiteTaskRepository:
         with self._lock, self._connection:
             cursor = self._connection.execute(
                 "INSERT OR IGNORE INTO notification_deliveries VALUES "
-                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 self._delivery_values(delivery),
             )
         return cursor.rowcount == 1
@@ -6474,6 +6486,7 @@ class SQLiteTaskRepository:
         stale_before: datetime,
         *,
         webhook_ids: tuple[str, ...] | None = None,
+        target_digests: Mapping[str, str] | None = None,
     ) -> NotificationDelivery | None:
         """Claim the next due delivery, optionally restricted to real targets.
 
@@ -6502,6 +6515,24 @@ class SQLiteTaskRepository:
         ]
         if normalized_ids is not None:
             parameters.extend(normalized_ids)
+        target_parameters: list[object] = []
+        if target_digests is not None:
+            identities = _validated_webhook_id_filter(tuple(target_digests))
+            if any(
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(c not in "0123456789abcdef" for c in value)
+                for value in target_digests.values()
+            ):
+                raise ValueError("notification target digest must be SHA-256")
+            scope_sql += (
+                " AND ("
+                + (" OR ".join("(webhook_id=? AND target_digest=?)" for _ in identities) or "0")
+                + ")"
+            )
+            for identifier in identities:
+                target_parameters.extend((identifier, target_digests[identifier]))
+            parameters.extend(target_parameters)
         with self._lock, self._connection:
             row = self._connection.execute(
                 "SELECT delivery_id FROM notification_deliveries "
@@ -6521,13 +6552,10 @@ class SQLiteTaskRepository:
                 NotificationDeliveryStatus.DELIVERING.value,
                 stale_before.isoformat(),
             ]
-            guard_scope = (
-                ""
-                if normalized_ids is None
-                else (" AND webhook_id IN ({})".format(",".join("?" for _ in normalized_ids)))
-            )
+            guard_scope = scope_sql
             if normalized_ids is not None:
                 guard_parameters.extend(normalized_ids)
+            guard_parameters.extend(target_parameters)
             cursor = self._connection.execute(
                 "UPDATE notification_deliveries SET status=?, attempts=attempts+1, "
                 f"updated_at=? WHERE delivery_id=? AND {due_sql}{guard_scope}",
@@ -6566,7 +6594,8 @@ class SQLiteTaskRepository:
             cursor = self._connection.execute(
                 "UPDATE notification_deliveries SET webhook_id=?, event_id=?, event_type=?, "
                 "body=?, status=?, attempts=?, next_attempt_at=?, created_at=?, updated_at=?, "
-                "delivered_at=?, failure_category=?, response_status=? WHERE delivery_id=?",
+                "delivered_at=?, failure_category=?, response_status=?, target_digest=? "
+                "WHERE delivery_id=?",
                 (*self._delivery_values(delivery)[1:], delivery.delivery_id),
             )
             if cursor.rowcount != 1:
@@ -10549,7 +10578,7 @@ class SQLiteTaskRepository:
                     status TEXT NOT NULL, attempts INTEGER NOT NULL,
                     next_attempt_at TEXT NOT NULL, created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, delivered_at TEXT, failure_category TEXT,
-                    response_status INTEGER, UNIQUE(webhook_id, event_id)
+                    response_status INTEGER, target_digest TEXT, UNIQUE(webhook_id, event_id)
                 );
                 CREATE INDEX IF NOT EXISTS notification_due
                     ON notification_deliveries(status, next_attempt_at, created_at);
@@ -10632,6 +10661,18 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         f"ALTER TABLE manual_previews ADD COLUMN {column} TEXT"
                     )
+            delivery_columns = {
+                row["name"]
+                for row in self._connection.execute(
+                    "PRAGMA table_info(notification_deliveries)"
+                ).fetchall()
+            }
+            if "target_digest" not in delivery_columns:
+                # Legacy deliveries have no proven recipient authority. Preserve
+                # them without guessing a target from today's Active configuration.
+                self._connection.execute(
+                    "ALTER TABLE notification_deliveries ADD COLUMN target_digest TEXT"
+                )
             self._connection.execute(
                 "INSERT OR REPLACE INTO schema_version VALUES ('runtime', ?)",
                 (SCHEMA_VERSION,),
@@ -12420,6 +12461,7 @@ class SQLiteTaskRepository:
             value.delivered_at.isoformat() if value.delivered_at else None,
             value.failure_category,
             value.response_status,
+            value.target_digest,
         )
 
     @staticmethod
@@ -12438,4 +12480,5 @@ class SQLiteTaskRepository:
             datetime.fromisoformat(row["delivered_at"]) if row["delivered_at"] else None,
             row["failure_category"],
             row["response_status"],
+            row["target_digest"],
         )

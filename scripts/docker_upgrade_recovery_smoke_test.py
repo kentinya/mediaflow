@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Isolated Docker upgrade/backup/migration recovery acceptance for Task 29.5.
 
-The script builds two local image identities: a synthetic old-schema image whose
-runtime schema marker is pinned to 32 and the current candidate image (schema
-34).  It starts the old image on temporary ``/data`` and media mounts,
+The script builds two local image identities: the genuine Task 40.3 Base image
+(schema 38) and the current candidate image (schema 39). It starts the old image
+on temporary ``/data`` and media mounts,
 activates a managed runtime, seeds representative durable state, stops the
 stack, creates and verifies a local backup, runs candidate preflight and
 migration rehearsal against disposable copies, injects a migration failure,
@@ -47,8 +47,8 @@ from docker_smoke_test import (
 ROOT = Path(__file__).resolve().parents[1]
 UPGRADE_PROJECT_PREFIX = f"{PROJECT_PREFIX}-upgrade"
 IMAGE_TAG_PREFIX = "mediaflow:task29.5"
-OLD_SCHEMA = 32
-CURRENT_SCHEMA = 34
+OLD_SCHEMA = 38
+CURRENT_SCHEMA = 39
 DEFINITION_ID = "upgrade-definition"
 SCHEDULE_ID = "hourly-scan"
 TASK_ID = "upgrade-task"
@@ -107,31 +107,12 @@ def prepare_old_context() -> tuple[tempfile.TemporaryDirectory, Path]:
     directory = tempfile.TemporaryDirectory(prefix="mediaflow-old-schema-")
     context = Path(directory.name)
     archive = subprocess.run(
-        ["git", "archive", "HEAD"],
+        ["git", "archive", "360e59e0791c60635f050a0444b1a2d0b4458ea4"],
         cwd=ROOT,
         check=True,
         capture_output=True,
     )
-    subprocess.run(
-        ["tar", "-x", "-C", str(context)],
-        input=archive.stdout,
-        check=True,
-    )
-    runtime = context / "mediaflow" / "infrastructure" / "sqlite_runtime.py"
-    automation = context / "mediaflow" / "application" / "automation.py"
-    source = runtime.read_text(encoding="utf-8")
-    runtime.write_text(
-        source.replace(f"SCHEMA_VERSION = {CURRENT_SCHEMA}", f"SCHEMA_VERSION = {OLD_SCHEMA}"),
-        encoding="utf-8",
-    )
-    source = automation.read_text(encoding="utf-8")
-    automation.write_text(
-        source.replace(
-            f"runtime_schema_version: int = {CURRENT_SCHEMA},",
-            f"runtime_schema_version: int = {OLD_SCHEMA},",
-        ),
-        encoding="utf-8",
-    )
+    subprocess.run(["tar", "-x", "-C", str(context)], input=archive.stdout, check=True)
     return directory, context
 
 
@@ -705,7 +686,7 @@ def upgrade_recovery_smoke(project: str, keep: bool) -> None:
         try:
             print("Building candidate image...")
             build_image(new_image, ROOT, environment)
-            print("Building synthetic old-schema image...")
+            print("Building genuine Task Base schema-38 image...")
             old_context_handle, old_context = prepare_old_context()
             build_image(old_image, old_context, environment)
 

@@ -603,7 +603,15 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 environment=environment,
             )
             rendered = run(
-                ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "config"],
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(ROOT / "compose.yaml"),
+                    "-f",
+                    str(ROOT / "compose.media-mounts.yaml"),
+                    "config",
+                ],
                 environment=environment,
             )
             if token in rendered.stdout:
@@ -726,7 +734,7 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
             ]:
                 raise RuntimeError("Scheduler restart changed the linked Job identity")
 
-            print("Restarting the Notification Worker and proving at-least-once...")
+            print("Restarting Notification Worker and preserving targetless durable evidence...")
             run([*command, "start", "notification-worker"], environment=environment)
             wait_for_services_healthy(command, environment, expected=expected)
 
@@ -739,20 +747,32 @@ def restart_fault_smoke(project: str, image: str, keep: bool) -> None:
                 values = {item["deliveryId"]: item for item in notifications.get("items", [])}
                 if set(NOTIFICATION_IDS.values()) - set(values):
                     return False
-                pending = values.get(NOTIFICATION_IDS["pending"])
-                delivering = values.get(NOTIFICATION_IDS["delivering"])
-                return bool(
-                    pending
-                    and pending["status"] == "dead-letter"
-                    and delivering
-                    and delivering["status"] in {"delivering", "delivered", "dead-letter"}
+                # This fixture has no published target authority. The new
+                # boundary must preserve every state/attempt, not burn an
+                # attempt and dead-letter a delivery merely on restart.
+                expected = {
+                    "pending": ("pending", 0),
+                    "retry": ("retry", 1),
+                    "delivered": ("delivered", 1),
+                    "dead": ("dead-letter", 2),
+                    "delivering": ("delivering", 1),
+                }
+                return all(
+                    (
+                        values[NOTIFICATION_IDS[key]]["status"],
+                        values[NOTIFICATION_IDS[key]]["attempts"],
+                    )
+                    == state
+                    for key, state in expected.items()
                 )
+
+            time.sleep(12)
 
             try:
                 wait_until(
                     notification_evidence_settled,
                     timeout=45.0,
-                    description="Notification Worker durable at-least-once evidence",
+                    description="Notification Worker targetless state and attempt preservation",
                 )
             except RuntimeError as error:
                 _, notification_state = json_request(

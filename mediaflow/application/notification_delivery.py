@@ -36,10 +36,12 @@ class NotificationDeliveryService:
         *,
         audit_repository: object | None = None,
         clock: Callable[[], datetime] | None = None,
+        target_resolver: Callable[[], dict] | None = None,
     ) -> None:
         self._repository = repository
         self._audit_repository = audit_repository
         self._clock = clock or (lambda: datetime.now(UTC))
+        self._target_resolver = target_resolver
 
     # ------------------------------------------------------------------
     # Read projection
@@ -226,6 +228,33 @@ class NotificationDeliveryService:
         lease_seconds: float,
     ) -> dict[str, object]:
         status = delivery.status
+        if self._target_resolver is not None and status in {
+            NotificationDeliveryStatus.PENDING,
+            NotificationDeliveryStatus.RETRY,
+        }:
+            try:
+                target = self._target_resolver().get(delivery.webhook_id)
+            except Exception:
+                target = None
+            if target is None or delivery.target_digest != target.target_digest:
+                return self._plain_plan(
+                    delivery,
+                    known_effects=(
+                        "No new request is permitted; previous attempts and their "
+                        "recorded outcomes are preserved."
+                    ),
+                    retry_safe=False,
+                    next_action=(
+                        "Restore the original published recipient and signing reference, "
+                        "enable its Webhook and restore the deployment secret. Delivery will "
+                        "then resume safely under its existing retry/lease rules."
+                        if delivery.target_digest
+                        else "This legacy delivery has no proven target identity. It is preserved "
+                        "and cannot be sent automatically; verify the event with its original "
+                        "recipient before arranging a separate notification."
+                    ),
+                    reason="The durable target is missing, changed, disabled or unavailable.",
+                )
         if status is NotificationDeliveryStatus.PENDING:
             return self._plain_plan(
                 delivery,

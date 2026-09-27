@@ -527,6 +527,20 @@ pinned context; those are distinct signals, not hidden failures.
   Active snapshot; MediaFlow never starts a Worker on the API's behalf and does
   not automatically replay uncertain work.
 
+Runtime schema 39 records the recipient/signing-reference digest on each new notification.
+Pending/retry deliveries retain that identity across publication and restart. A changed or missing
+target stays unclaimed; restore its original URL and signing reference, enable it and repair the
+deployment secret to resume. Legacy deliveries without a proven target remain preserved and blocked;
+verify their events with the original recipient rather than silently assigning today's target.
+Delivery detail explains this state without exposing endpoints or secret values.
+
+Container probes open the existing SQLite database read-only. An absent or incompatible schema is
+not ready; probes never create a database or install tables. Use the backup, upgrade check/rehearsal
+and recovery workflow above for schema transitions. Temporary database contention makes readiness
+unavailable while resident processes keep polling safely; it does not requeue uncertain media work.
+The V2 Operations service-status section separates infrastructure health from configuration waiting
+and links to Settings for configuration recovery.
+
 ## Secret and output hygiene
 
 Never commit `.env.mediaflow`, `config/mediaflow.json`, host media paths,

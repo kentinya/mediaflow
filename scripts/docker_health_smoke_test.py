@@ -43,6 +43,8 @@ def compose(project: str) -> list[str]:
         "compose",
         "-f",
         str(ROOT / "compose.yaml"),
+        "-f",
+        str(ROOT / "compose.media-mounts.yaml"),
         "--project-name",
         project,
     ]
@@ -201,7 +203,15 @@ def health_smoke(project: str, image: str, keep: bool) -> None:
                 environment=environment,
             )
             rendered = run(
-                ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "config"],
+                [
+                    "docker",
+                    "compose",
+                    "-f",
+                    str(ROOT / "compose.yaml"),
+                    "-f",
+                    str(ROOT / "compose.media-mounts.yaml"),
+                    "config",
+                ],
                 environment=environment,
             )
             if token in rendered.stdout:

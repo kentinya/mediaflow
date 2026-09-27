@@ -140,7 +140,12 @@ def prepare_files(root: Path, token: str) -> tuple[Path, Path, Path, Path]:
     source.chmod(0o755)
     target.chmod(0o777)
 
-    generator = [sys.executable, str(ROOT / "scripts" / "make_deployment_config.py")]
+    generator = [
+        sys.executable,
+        str(ROOT / "scripts" / "make_deployment_config.py"),
+        "--mode",
+        "media",
+    ]
     config_file = root / "mediaflow.json"
     generated = subprocess.check_output(generator, cwd=ROOT, text=True)
     config_file.write_text(generated, encoding="utf-8")
@@ -160,7 +165,17 @@ def assert_compose_configuration(
     token: str,
 ) -> None:
     result = run(
-        ["docker", "compose", "-f", str(ROOT / "compose.yaml"), "config", "--format", "json"],
+        [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
+            "-f",
+            str(ROOT / "compose.media-mounts.yaml"),
+            "config",
+            "--format",
+            "json",
+        ],
         environment=environment,
     )
     document = json.loads(result.stdout)
@@ -210,7 +225,14 @@ def smoke(project: str, image: str, keep: bool) -> None:
             api_port=api_port,
         )
         project_flag = ["--project-name", project]
-        compose = ["docker", "compose", "-f", str(ROOT / "compose.yaml")]
+        compose = [
+            "docker",
+            "compose",
+            "-f",
+            str(ROOT / "compose.yaml"),
+            "-f",
+            str(ROOT / "compose.media-mounts.yaml"),
+        ]
         try:
             print("Building MediaFlow image...")
             run(
@@ -321,6 +343,8 @@ def missing_mount_failure(project: str, image: str) -> None:
             "compose",
             "-f",
             str(ROOT / "compose.yaml"),
+            "-f",
+            str(ROOT / "compose.media-mounts.yaml"),
             "--project-name",
             project,
         ]
