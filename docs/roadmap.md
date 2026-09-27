@@ -24,7 +24,7 @@ only in [the development workflow](development-workflow.md).
 | 33 — Operations Workspace | Migrate Dashboard, Tasks, Jobs, schedules and notifications into a coherent V2 workspace, including a complete Web-native interactive organize journey that may redesign operator-facing authorization and whose routine execution avoids CLI token issuance/copy-paste while preserving backend authority, audit, limits and mutation invariants | PASS / CLOSED | 30, 31 |
 | 37 — Files Workspace, Common File Management and V2 Shell | Replace the former V2 shell with the shared light shell and exact Files composition in `docs/pics/文件页.png`; complete ResourceLibrary activation, Create Folder/Text File, Rename/Copy/Move/Delete/text Edit, organize continuation and post-mutation reconciliation without introducing a second authority; remove the direct browser Upload/Download vertical; correct formal classification `library/path` destination parity with CLI; repair stale ResourceLibrary directory-tree state after Files refresh; make the manual Organize editor derive downstream policies from RecognitionType | PASS / CLOSED | 33 and existing Files foundation |
 | 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library create/edit/remove and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving and extending the Files journey with checked ResourceLibrary/MediaLibrary editing | PASS / CLOSED | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
-| 39 — Storage Management Workspace | Deliver the V2 Storage management journey from the supplied reference: bounded provider inventory and references, typed Local/SMB/OpenList/S3/R2 configuration, page-local checked Active Add/Edit/copy/enable/disable/remove, and zero-mutation Connection/Read diagnostics; complete the existing admitted-transfer Worker handoff across first activation/configuration changes, with truthful health and waiting-state recovery | ACTIVE | 38 and existing managed-configuration/Storage foundations |
+| 39 — Storage Management Workspace | Deliver the V2 Storage management journey from the supplied reference: bounded provider inventory and references, typed Local/SMB/OpenList/S3/R2 configuration, page-local checked Active Add/Edit/copy/enable/disable/remove, and zero-mutation Connection/Read diagnostics; complete the existing admitted-transfer Worker handoff across first activation/configuration changes, with truthful health and waiting-state recovery | PASS / CLOSED | 38 and existing managed-configuration/Storage foundations |
 
 ## Current boundary
 
@@ -51,12 +51,11 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 ## V2 program boundary
 
-V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33, 37
-and 38 are closed historical capabilities. Slice 39 is ACTIVE for the V2 Storage management
-workspace, reusing the existing managed-configuration and Storage foundations. On 2026-09-26 the
-user explicitly authorized A to include resident transfer continuity and health/waiting recovery
-in Slice 39. Its earlier return to A remains historical; Slice 39 is ACTIVE again for that coherent
-expansion. Slice 38 remains closed; no new Slice or separate Worker project is created. The previously
+V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33, 37,
+38 and 39 are closed historical capabilities. Slice 39 delivered the V2 Storage management
+workspace, reusing the existing managed-configuration and Storage foundations, together with
+resident transfer continuity and health/waiting recovery authorized on 2026-09-26. Slice 38 remains
+closed; no separate Worker project was created. The previously
 planned Slice 34, Slice 35 and Slice 36 boundaries
 were retired from the current Roadmap on 2026-09-14; their historical references remain in Git and
 are not current work commitments. Slice 37's post-reactivation closure, finalized by A on 2026-09-23,
@@ -94,8 +93,8 @@ daily-operations journey across actionable Dashboard state, Tasks/Jobs, bounded 
 Web-native exact manual Organize, scheduled Automation and Notification delivery. The accepted Head
 includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
 projection and separate destructive confirmations; the second restores Worker reconstruction of the
-exact pinned source authority and fail-closed pre-mutation revalidation. Slice 38 is the most
-recently closed large Slice, and Slice 39 is the current ACTIVE Slice. This Roadmap does not retain
+exact pinned source authority and fail-closed pre-mutation revalidation. Slice 39 is the most
+recently closed large Slice. The next legal action is A selects the next large Slice. This Roadmap does not retain
 the retired Slice 34–36 program rows.
 
 ## Roadmap rules
@@ -106,8 +105,8 @@ the retired Slice 34–36 program rows.
   bounded file-management commands. Its authorized post-closure correction also delivered
   formal `library/path` destination parity with the local CLI. Its historical non-Files boundary
   remains part of that closure. Closed Slice 38 delivered the MediaLibrary journey and required
-  route/navigation integration. Active Slice 39 owns Storage management and its necessary shared
-  shell integration; existing Files, MediaLibrary and other product journeys are protected.
+  route/navigation integration. Closed Slice 39 delivered Storage management and its necessary
+  shared shell integration; existing Files, MediaLibrary and other product journeys remain protected.
 - Task PASS, fixes, test counts, probes, rejected SHAs and review narratives never enter this file.
 - Safety, product and architecture requirements remain authoritative even when omitted from this
   compact prioritization view.

@@ -8,11 +8,10 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`. Slice 39 — **Storage Management Workspace** — is ACTIVE under
-[`SLICE.md`](../SLICE.md). A recorded the user's 2026-09-26 explicit scope expansion for resident
-transfer continuity, truthful Worker health and Web/API waiting recovery after Tasks 39.1–39.4.
-The prior Slice 39 return to A is not a closure; B plans the next coherent Task after A's checkpoint.
-Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
+V2 remains active on `main`; Slice 39 — **Storage Management Workspace** — is PASS / CLOSED under
+[`SLICE.md`](../SLICE.md) at Base `d02539e49d5c99c3e3c0c70de5e994e42824a18e` and
+Implementation Head `f458646d3dac280b118a511c60ec53a5d3075d67` after A's 2026-09-27 final review.
+The next legal action is A selects the next large Slice. Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
 and Implementation Head `7d4503e45dc3aa79628ed0d98e887167e1e7c529`; Slice 37's closure is also
 unchanged. This is only the current-development pointer; the closure ledger below is not rewritten.
 
@@ -57,6 +56,24 @@ symmetric exact-Active page-local library editing with checked atomic activation
 remains card statistics/capacity/placeholders, thumbnails, MediaLibrary Scan/Preview/Organize,
 browser Upload/Download, cross-kind direct transfers, transfer Replace mode, ID migration, broad
 configuration redesign, V1 cutover, universal rollback and automatic uncertain replay.
+
+### Slice 39 — Storage Management Workspace
+
+```text
+Status: PASS / CLOSED
+Base: d02539e49d5c99c3e3c0c70de5e994e42824a18e
+Implementation Head: f458646d3dac280b118a511c60ec53a5d3075d67
+A Final Review: PASS / CLOSED — 2026-09-27
+```
+
+Delivered the V2 Storage management workspace with bounded provider inventory/references, typed
+checked Add/Edit/copy/enable/disable/remove, zero-mutation diagnostics, provider-root/setup
+recovery and shared API/Web authority. The resident Worker now preserves ResourceLibrary and
+MediaLibrary transfer continuity across first activation, Active switches, restart and bounded
+outages, with truthful command/readiness and durable waiting/recovery projections. Deferred scope
+remains mutation-based Storage probes, general Configuration/native V2 setup migration, new
+providers/Secret Store integration, new file commands, scheduler redesign, automatic uncertain
+replay and new identity/session systems.
 
 ### Slice 37 — Files Workspace, Common File Management and V2 Shell
 
@@ -291,6 +308,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 39 — Storage Management Workspace | PASS / CLOSED | `d02539e49d5c99c3e3c0c70de5e994e42824a18e` | `f458646d3dac280b118a511c60ec53a5d3075d67` | A Final Review PASS / CLOSED — 2026-09-27 | V2 Storage management workspace, typed checked lifecycle, zero-mutation diagnostics, provider-root/setup recovery, resident ResourceLibrary/MediaLibrary transfer continuity and truthful Worker readiness/waiting recovery | Mutation-based Storage probes, general Configuration/native V2 setup migration, new providers/Secret Store integration, new file commands, scheduler redesign, automatic uncertain replay and new identity/session systems |
 | 38 — MediaLibrary Files Workspace and Route Separation | PASS / CLOSED | `9e801ae4485bc95d714a8902bf45bf37896fbc2a` | `7d4503e45dc3aa79628ed0d98e887167e1e7c529` | A Final Review PASS / CLOSED — 2026-09-25 | Separate MediaLibrary and ResourceLibrary Files routes, live MediaLibrary browsing, bounded common maintenance and transfer recovery, reference-aligned presentation, and symmetric exact-Active page-local library editing with checked atomic activation | Card statistics/capacity/placeholders, thumbnails, MediaLibrary Scan/Preview/Organize, browser Upload/Download, cross-kind direct transfers, transfer Replace mode, ID migration, broad configuration redesign, V1 cutover, universal rollback and automatic uncertain replay |
 | 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `aa54854c442d117c7eb23ae9800045c423db1368` | A Final Review PASS / CLOSED — 2026-09-23 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, truthful refresh/presentation, exact Storage path identity, multi-item Organize continuation and RecognitionType-driven Web policy binding | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
 | 33 — Operations Workspace | PASS / CLOSED | `827c36b410687e41b1da53ba6475d8c03a47dbfd` | `e4a5f7696d1742f7b6ef2a784c3b5d234b707d08` | A Final Review PASS / CLOSED — 2026-09-13 | Actionable Dashboard, durable Tasks/Jobs and controls, bounded Scan/Preview, Web-native exact manual Organize, Automation operation and Webhook delivery operation, typed Preview safety projection, and resident Worker pinned-source revalidation | Slices 34–36 Review/Recovery, Configuration, parity/accessibility/cutover and other Contract deferrals |

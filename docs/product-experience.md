@@ -148,9 +148,10 @@ activation.
 
 ### TARGET — Discoverable V2 setup and return journey
 
-This is a required V2 experience, not a claim that the current V2 workspace already delivers it.
-The existing first-setup implementation is in V1 `/ui` Configuration; the current V2 Storage
-no-Active state offers Refresh but no direct setup action.
+This remains the target for a native V2 system-level wizard, not a claim that the full wizard is
+delivered. Slice 39 now provides the minimal current Storage handoff: a setup-required state offers
+`去完成设置` into the existing V1 `/ui` Configuration journey and returns to refreshed Storage
+truth after completion. The existing first-setup implementation remains in V1 `/ui` Configuration.
 
 - **Goal:** reach a usable initial configuration without knowing the internal revision lifecycle.
 - **Entry:** after authentication, offer `开始设置` when setup is required or `继续设置` when an

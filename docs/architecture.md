@@ -71,6 +71,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 33 — Operations Workspace
     → Slice 37 — Files Workspace, Common File Management and V2 Shell
     → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
+    → Slice 39 — Storage Management Workspace (PASS / CLOSED)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
