@@ -30,6 +30,7 @@ import posixpath
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from typing import NoReturn
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
@@ -39,7 +40,11 @@ from mediaflow.application.storage_browser import (
     _join_resource_library_path,
     _normalize_storage_relative_path,
 )
-from mediaflow.application.task_runtime import TaskClaimLost, TaskPauseRequested
+from mediaflow.application.task_runtime import (
+    PersistentTaskCoordinator,
+    TaskClaimLost,
+    TaskPauseRequested,
+)
 from mediaflow.domain.direct_files import (
     MAX_TRANSFER_DEPTH,
     MAX_TRANSFER_ENTRIES,
@@ -75,7 +80,11 @@ from mediaflow.domain.task_persistence import (
     direct_command_task_command,
 )
 
-__all__ = ["DirectFileTransferService", "DirectFileTransferError"]
+__all__ = [
+    "DirectFileTransferService",
+    "DirectFileTransferError",
+    "durable_transfer_read_service",
+]
 
 
 @dataclass(frozen=True)
@@ -402,6 +411,78 @@ class DirectFileTransferError(DirectFileError):
         return document
 
 
+class _DurableTransferObserver:
+    """The zero-authority read side of one transfer kind's durable Task state.
+
+    A process that has no Active runtime — the ordinary API/container restart
+    while a current Active is unavailable — still owns the Task repository, so
+    an admitted transfer's projection can be rebuilt from persisted Task,
+    transfer, item and Result rows alone.  This object carries exactly that:
+    the read repository plus the library kind the read is pinned to.  It
+    resolves no library, opens no Storage and holds no configuration revision,
+    so a read through it can never touch media or present a superseded
+    snapshot as current Active; every endpoint that would require real runtime
+    authority fails closed here instead of borrowing someone else's.
+    """
+
+    #: Identifies a boundary that may only ever serve the durable projection.
+    durable_read_only = True
+
+    def __init__(self, repository, *, library_kind: LibraryKind) -> None:
+        self._repository = repository
+        self._kind = library_kind
+        self.tasks = PersistentTaskCoordinator(repository, repository)
+
+    @property
+    def library_kind(self) -> LibraryKind:
+        return self._kind
+
+    @property
+    def revision(self) -> NoReturn:
+        _refuse_durable_read("name a configuration revision")
+
+    def close(self) -> None:
+        """A durable read owns no runtime resource to release."""
+
+    def library(self, library_id: str) -> NoReturn:
+        _refuse_durable_read("resolve a library")
+
+    def open_storage(self, library) -> NoReturn:
+        _refuse_durable_read("open Storage")
+
+
+def _refuse_durable_read(action: str) -> NoReturn:
+    """Refuse one use of a projection-only read that needs runtime authority."""
+
+    raise DirectFileTransferError(
+        "files_transfer_durable_read_only",
+        "service_unavailable",
+        f"a durable transfer read cannot {action}; a valid Active runtime binding "
+        "is required for that operation",
+        status=503,
+        durable_state="admitted_task_unchanged",
+        next_action="restore a valid Active runtime, then retry the operation",
+    )
+
+
+def durable_transfer_read_service(repository, *, media_library: bool) -> DirectFileTransferService:
+    """The kind-pinned durable observation boundary for one Task repository.
+
+    A process with no Active runtime binding can still tell an operator the
+    truthful durable state of already-admitted transfer work through this
+    reader: it reads only persisted Task/transfer/item/Result rows, performs no
+    Storage access at all, and remains as cross-kind isolated as a fully bound
+    service because the kind selects the durable Task command the read accepts.
+    """
+
+    return DirectFileTransferService(
+        direct_files=_DurableTransferObserver(
+            repository,
+            library_kind=(LibraryKind.MEDIA if media_library else LibraryKind.RESOURCE),
+        )
+    )
+
+
 class DirectFileTransferService:
     """Files-owned admission and execution boundary for Copy/Move transfers.
 
@@ -466,6 +547,31 @@ class DirectFileTransferService:
     @property
     def _task_command(self) -> str:
         return self.task_command
+
+    @property
+    def durable_read_only(self) -> bool:
+        """Whether this boundary may only serve the durable projection.
+
+        A read-only boundary carries no configuration revision and no Storage
+        authority, so admission, impact and execution are refused; only the
+        already-admitted Task's durable state may be observed through it.
+        """
+
+        return bool(getattr(self._direct, "durable_read_only", False))
+
+    def _require_execution_authority(self, action: str) -> None:
+        if self.durable_read_only:
+            raise DirectFileTransferError(
+                "files_transfer_durable_read_only",
+                "service_unavailable",
+                f"this Files transfer {action} requires a valid Active runtime binding",
+                status=503,
+                durable_state="admitted_task_unchanged",
+                next_action=(
+                    "restore a valid Active runtime and retry; already-admitted work is "
+                    "unchanged and does not need to be resubmitted"
+                ),
+            )
 
     def _identity(self, library: ResourceLibrary) -> dict[str, str]:
         """The one error-document identity field for this service's kind."""
@@ -536,6 +642,7 @@ class DirectFileTransferService:
         opaque digest.  No Task is created and no Storage mutation occurs.
         """
 
+        self._require_execution_authority("impact summary")
         manifest = self._build_manifest(
             resource_library_id=resource_library_id,
             paths=paths,
@@ -583,6 +690,7 @@ class DirectFileTransferService:
         request never runs a Storage mutation on its own stack.
         """
 
+        self._require_execution_authority("admission")
         if not isinstance(manifest_digest, str) or not manifest_digest:
             raise DirectFileTransferError(
                 "files_transfer_invalid_manifest",
@@ -674,6 +782,7 @@ class DirectFileTransferService:
         """
 
         repository = self._direct.tasks.repository
+        self._require_execution_authority("execution")
         task_id = transfer.task_id
         claimed_at = datetime.now(UTC)
         if not repository.begin_files_transfer(transfer.transfer_id, claim_token, claimed_at):
