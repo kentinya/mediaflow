@@ -909,8 +909,7 @@ class ConfigurationObjectService:
                     if isinstance(raw_recognition_type, str) and raw_recognition_type.strip():
                         recognition_type = raw_recognition_type
 
-            media_libraries = self._canonical_objects(validated.document, "mediaLibraries")
-            if media_libraries:
+            if self._destination_precheck_applicable(validated.document):
                 if recognition_type is None:
                     recognition_types = self._canonical_objects(
                         validated.document, "recognitionTypes"
@@ -7548,13 +7547,7 @@ class ConfigurationObjectService:
             )
 
     def require_current_destination_precheck(self, revision: ManagedConfigurationRevision) -> None:
-        media_libraries = (
-            self._canonical_objects(revision.document, "mediaLibraries")
-            if "mediaLibraries" in revision.document
-            else []
-        )
-        applicable = bool(media_libraries)
-        if not applicable:
+        if not self._destination_precheck_applicable(revision.document):
             return
         evidence = self._repository.get_destination_precheck(revision.revision_id)
         if evidence is None:
@@ -7597,6 +7590,60 @@ class ConfigurationObjectService:
                     "then rerun the precheck"
                 ),
             )
+
+    @classmethod
+    def _destination_precheck_applicable(cls, document: Mapping[str, object]) -> bool:
+        """Return whether a destination has a usable media-processing chain."""
+
+        def objects(section: str) -> list[dict[str, object]]:
+            if section not in document:
+                return []
+            return cls._canonical_objects(document, section)
+
+        libraries = [
+            item for item in objects("mediaLibraries") if item.get("enabled", True) is True
+        ]
+        if not libraries:
+            return False
+        library_ids = {str(item.get("id")) for item in libraries}
+        naming_ids = {
+            str(item.get("id"))
+            for item in objects("namingPolicies")
+            if item.get("enabled", True) is True
+        }
+        organize_ids = {
+            str(item.get("id"))
+            for item in objects("organizePolicies")
+            if item.get("enabled", True) is True
+        }
+        type_ids = {
+            str(item.get("id"))
+            for item in objects("recognitionTypes")
+            if item.get("enabled", True) is True
+        }
+        for policy in objects("recognitionTypePolicies"):
+            if policy.get("enabled", True) is False:
+                continue
+            if str(policy.get("recognitionType")) not in type_ids:
+                continue
+            if str(policy.get("namingPolicy")) not in naming_ids:
+                continue
+            if str(policy.get("organizePolicy")) not in organize_ids:
+                continue
+            classification_id = str(policy.get("classificationPolicy"))
+            for classification in objects("classificationPolicies"):
+                if str(classification.get("id")) != classification_id:
+                    continue
+                if classification.get("enabled", True) is False:
+                    continue
+                rules = classification.get("rules", [])
+                if any(
+                    isinstance(rule, Mapping)
+                    and str((rule.get("result") or rule).get("mediaLibraryId", "")) in library_ids
+                    for rule in rules
+                ):
+                    return True
+        return False
 
     def _strategy_test_document(
         self, revision: ManagedConfigurationRevision
