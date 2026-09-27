@@ -57,6 +57,10 @@ def _business_capability_status(document: object) -> dict[str, object]:
     configured = False
     for capability, section in _BUSINESS_CAPABILITY_SECTIONS.items():
         values = document.get(section, [])
+        if capability == "notification" and "webhooks" not in document:
+            notifications = document.get("notifications")
+            if isinstance(notifications, dict):
+                values = notifications.get("webhooks", [])
         count = len(values) if isinstance(values, list) else 0
         configured = configured or count > 0
         items[capability] = {
