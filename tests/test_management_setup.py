@@ -404,6 +404,311 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(active_detail["status"], "active")
         self.assertEqual(active_detail["revisionId"], activated["revisionId"])
 
+    def test_supplied_deployment_authority_is_validated_and_conflicts_rejected(self) -> None:
+        """The shared boundary validates supplied authority instead of normalizing it.
+
+        Deployment bootstrap authority is immutable: a managed edit/import may
+        omit it (and then receives this deployment's own identity) or repeat it
+        verbatim, but it must never be able to replace the principal/role/token
+        identity that the next runtime startup reads, and malformed ``api``
+        types must stay correctable errors rather than becoming a different,
+        apparently valid document.
+        """
+
+        status, created = request(
+            self.api, "/api/v1/configuration/drafts/first", method="POST", body=None
+        )
+        self.assertEqual(status, 201)
+        revision_id = created["revisionId"]
+        status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
+        self.assertEqual(status, 200)
+        projected = detail["document"]
+
+        # Omitted authority (the supported projected round trip) is bound to
+        # this deployment and stays validatable.
+        status, saved = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}",
+            method="PUT",
+            body={"document": projected, "expectedVersion": detail["version"]},
+        )
+        self.assertEqual(status, 200)
+        stored = self.service.require(revision_id).document
+        self.assertEqual(
+            [item["tokenEnv"] for item in stored["api"]["principals"]],
+            ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
+        )
+
+        # Authority that repeats this deployment's own identity verbatim is
+        # accepted, so a whole-document round trip keeps working.
+        version = saved["version"]
+        status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
+        self.assertEqual(status, 200)
+        matching = json.loads(json.dumps(detail["document"]))
+        matching["api"]["principals"] = json.loads(json.dumps(self.bootstrap["api"]["principals"]))
+        status, saved = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}",
+            method="PUT",
+            body={"document": matching, "expectedVersion": detail["version"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["version"], detail["version"] + 1)
+        self.assertEqual(version + 1, saved["version"])
+
+        # Conflicting principal/role/token authority is rejected: a Viewer
+        # token environment must not be able to claim the admin role.
+        for label, conflicting in (
+            (
+                "escalated-role",
+                {
+                    "api": {
+                        "principals": [
+                            {"id": "viewer", "tokenEnv": "MF_VIEWER_TOKEN", "roles": ["admin"]}
+                        ]
+                    }
+                },
+            ),
+            (
+                "emptied-principals",
+                {"api": {"principals": []}},
+            ),
+            (
+                "foreign-token-env",
+                {
+                    "api": {
+                        "principals": [
+                            {"id": "admin", "tokenEnv": "OTHER_ADMIN_TOKEN", "roles": ["admin"]}
+                        ]
+                    }
+                },
+            ),
+            (
+                "legacy-token-env",
+                {"api": {"tokenEnv": "MF_ADMIN_TOKEN"}},
+            ),
+            (
+                "malformed-api-list",
+                {"api": []},
+            ),
+            (
+                "malformed-api-string",
+                {"api": "MF_ADMIN_TOKEN"},
+            ),
+            (
+                "malformed-principals-object",
+                {"api": {"principals": {"id": "admin"}}},
+            ),
+            (
+                "malformed-roles",
+                {
+                    "api": {
+                        "principals": [{"id": "admin", "tokenEnv": "MF_ADMIN_TOKEN", "roles": []}]
+                    }
+                },
+            ),
+            (
+                "literal-secret",
+                {
+                    "api": {
+                        "principals": [
+                            {
+                                "id": "admin",
+                                "tokenEnv": "MF_ADMIN_TOKEN",
+                                "roles": ["admin"],
+                                "token": "must-not-persist",
+                            }
+                        ]
+                    }
+                },
+            ),
+        ):
+            with self.subTest(case=label):
+                before = self.service.require(revision_id)
+                status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
+                self.assertEqual(status, 200)
+                self.assertEqual(detail["version"], before.version)
+                attempt = json.loads(json.dumps(detail["document"]))
+                attempt.update(json.loads(json.dumps(conflicting)))
+                status, rejected = request(
+                    self.api,
+                    f"/api/v1/configuration/revisions/{revision_id}",
+                    method="PUT",
+                    body={"document": attempt, "expectedVersion": detail["version"]},
+                )
+                self.assertEqual(status, 400, rejected)
+                self.assertEqual(rejected["error"]["code"], "invalid_request")
+                # The Draft is preserved unchanged and still correctable.
+                current = self.service.require(revision_id)
+                self.assertEqual(current.version, before.version)
+                self.assertEqual(current.digest, before.digest)
+                self.assertEqual(current.document, before.document)
+
+        # The escalation attempt never reached persisted authority, so the
+        # stored document still carries the bootstrap identity.
+        stored = self.service.require(revision_id).document
+        self.assertEqual(
+            [(item["id"], item["tokenEnv"], item["roles"]) for item in stored["api"]["principals"]],
+            [
+                ("admin", "MF_ADMIN_TOKEN", ["admin"]),
+                ("viewer", "MF_VIEWER_TOKEN", ["viewer"]),
+            ],
+        )
+
+    def test_managed_edits_cannot_change_startup_bootstrap_permissions(self) -> None:
+        """A real API restart proves managed edits cannot repoint authority.
+
+        The reviewed blocker activated a document whose ``api.principals`` had
+        been replaced with a Viewer token holding the admin role; after a real
+        ``api serve`` restart with the unchanged bootstrap that Viewer token
+        held administrative configuration permissions.  The boundary must now
+        reject the edit, and the restarted deployment must keep the bootstrap
+        permission projection.
+        """
+
+        status, created = request(
+            self.api, "/api/v1/configuration/drafts/first", method="POST", body=None
+        )
+        self.assertEqual(status, 201)
+        revision_id = created["revisionId"]
+
+        # While it is still a correctable Draft, the escalation edit is
+        # rejected before it can ever be persisted.
+        status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
+        self.assertEqual(status, 200)
+        escalated = json.loads(json.dumps(detail["document"]))
+        escalated["api"]["principals"] = [
+            {"id": "viewer", "tokenEnv": "MF_VIEWER_TOKEN", "roles": ["admin"]}
+        ]
+        status, rejected = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}",
+            method="PUT",
+            body={"document": escalated, "expectedVersion": detail["version"]},
+        )
+        self.assertEqual(status, 400, rejected)
+        self.assertEqual(rejected["error"]["code"], "invalid_request")
+        # A whole-document import of the same escalation fails closed too.
+        status, rejected_import = request(
+            self.api,
+            "/api/v1/configuration/drafts",
+            method="POST",
+            body={"document": escalated},
+        )
+        self.assertEqual(status, 400, rejected_import)
+        self.assertEqual(rejected_import["error"]["code"], "invalid_request")
+        self.assertEqual(len(self.configuration_repository.list_revisions()), 1)
+
+        status, validated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/validate",
+            method="POST",
+            body={},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(validated["validationErrors"], [])
+        status, _activated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/activate",
+            method="POST",
+            body={"expectedVersion": validated["version"], "checked": True},
+        )
+        self.assertEqual(status, 200)
+
+        class Server:
+            app = None
+            viewer_status = None
+            admin_status = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return None
+
+            def serve_forever(self):
+                self.viewer_status = request(
+                    self.app, "/api/v1/configuration/status", token="viewer-token"
+                )
+                self.admin_status = request(
+                    self.app, "/api/v1/configuration/status", token="admin-token"
+                )
+
+        with tempfile.TemporaryDirectory() as directory:
+            # A separate deployment whose bootstrap file is the unchanged
+            # authority, started through the real CLI entry point.
+            runtime = str(Path(directory, "runtime.sqlite3"))
+            bootstrap = json.loads(json.dumps(self.bootstrap))
+            bootstrap["persistence"]["databasePath"] = runtime
+            config = Path(directory, "bootstrap.json")
+            config.write_text(json.dumps(bootstrap), encoding="utf-8")
+
+            repository = SQLiteConfigurationRepository(runtime)
+            service = ManagedConfigurationService(
+                repository,
+                bootstrap_database_path=runtime,
+                bootstrap_document=bootstrap,
+                management_only=True,
+            )
+            draft = service.create_first_draft(actor="operator")
+            with self.assertRaises(ValueError):
+                service.edit_draft(
+                    draft.revision_id,
+                    {
+                        **service.require(draft.revision_id).document,
+                        "api": {
+                            "principals": [
+                                {
+                                    "id": "viewer",
+                                    "tokenEnv": "MF_VIEWER_TOKEN",
+                                    "roles": ["admin"],
+                                }
+                            ]
+                        },
+                    },
+                    expected_version=service.require(draft.revision_id).version,
+                    actor="attacker",
+                )
+            validated = service.validate(draft.revision_id, actor="operator")
+            service.activate(
+                validated.revision_id,
+                expected_version=validated.version,
+                actor="operator",
+            )
+            repository.close()
+
+            server = Server()
+
+            def make_server(_host, _port, app):
+                server.app = app
+                return server
+
+            with (
+                patch.dict(
+                    os.environ,
+                    {"MF_ADMIN_TOKEN": "admin-token", "MF_VIEWER_TOKEN": "viewer-token"},
+                    clear=True,
+                ),
+                patch("wsgiref.simple_server.make_server", side_effect=make_server),
+                patch(
+                    "mediaflow.infrastructure.runtime_configuration.RuntimeConfiguration.create_storages",
+                    side_effect=AssertionError("management API must not construct Storage"),
+                ),
+            ):
+                status = final_main(
+                    ["--config", str(config), "api", "serve"],
+                    stdout=io.StringIO(),
+                    stderr=io.StringIO(),
+                )
+            self.assertEqual(status, 0)
+            self.assertIsNotNone(server.app)
+            self.assertEqual(server.viewer_status[0], 200, server.viewer_status[1])
+            self.assertFalse(server.viewer_status[1]["canManageConfiguration"])
+            self.assertFalse(server.viewer_status[1]["canActivateConfiguration"])
+            self.assertEqual(server.admin_status[0], 200, server.admin_status[1])
+            self.assertTrue(server.admin_status[1]["canManageConfiguration"])
+            self.assertTrue(server.admin_status[1]["canActivateConfiguration"])
+
     def test_portable_export_excludes_authority_and_rebinds_on_import(self) -> None:
         """Export excludes deployment authority; import binds it back.
 
