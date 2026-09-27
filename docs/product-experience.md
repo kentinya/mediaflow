@@ -87,6 +87,32 @@ whole flow succeeds. The operator does not perform separate Validate or Activate
 drawer. Any validation, dependency, Storage check, activation or runtime-load error rejects the
 save and preserves the previous Active runtime.
 
+## CURRENT — Storage management workspace
+
+Slice 39 delivers the authenticated V2 Storage management journey at `/ui-v2/storage`.
+
+- **Goal:** understand and safely maintain configured Storage locations without confusing
+  configuration state with the runtime Active snapshot or changing media contents.
+- **Entry:** choose `存储管理` in the shared V2 shell or continue through a supported authenticated
+  Storage deep link.
+- **Visible state:** bounded provider summaries and search, stable Storage identity/type/root,
+  enabled/read-only state, provider-safe check/readiness state, exact Active authority and bounded
+  ResourceLibrary/MediaLibrary references. Credentials, secret values and arbitrary host paths are
+  not shown.
+- **Action:** inspect detail/references, add/edit/copy/enable/disable/remove through typed forms,
+  or explicitly run a zero-mutation Connection/Read check. Setup-required state offers the existing
+  V1 Configuration handoff; transfer progress exposes Worker waiting/readiness and durable recovery.
+- **Success:** a complete checked successor becomes the immutable Active runtime, read evidence is
+  recorded without media work, or an admitted ResourceLibrary/MediaLibrary Copy/Move proceeds under
+  its own pinned revision and library kind.
+- **Failure:** invalid or unavailable provider/root, stale Active, blocked reference, missing setup,
+  unsupported command, schema mismatch or unavailable pinned context identifies durable state and
+  the next action without exposing secrets or requiring internal tokens.
+- **Recovery:** correct the named configuration/deployment blocker, refresh current authority, use
+  the existing setup journey, restore a compatible Worker or inspect the durable transfer projection.
+  Failed saves preserve the prior Active; admitted work is not resubmitted and uncertain effects are
+  never automatically replayed.
+
 ### Journey
 
 - **Goal:** safely change the runtime behavior.
