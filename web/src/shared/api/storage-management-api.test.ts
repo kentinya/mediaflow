@@ -75,7 +75,7 @@ const inventoryPayload = {
     managedActivation: true,
     recoveryRequired: false,
     health: "HEALTHY",
-    setupPath: "/ui",
+    setupPath: "/ui-v2/configuration",
   },
 };
 
@@ -270,7 +270,7 @@ describe("Storage management API", () => {
             managedActivation: false,
             recoveryRequired: false,
             health: "SETUP_REQUIRED",
-            setupPath: "/ui",
+            setupPath: "/ui-v2/configuration",
           },
           actions: {},
         }),
@@ -282,7 +282,7 @@ describe("Storage management API", () => {
     // The permission is backend-authoritative: the page may not invent the
     // ability to start setup for a principal that cannot.
     expect(model.canStartSetup).toBe(true);
-    expect(model.setup.setupPath).toBe("/ui");
+    expect(model.setup.setupPath).toBe("/ui-v2/configuration");
   });
 
   it("still reports an unrelated malformed response as malformed", async () => {

@@ -9,9 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { filesReturnSearch } from "../../shared/navigation/files-return";
@@ -2631,6 +2632,19 @@ export function StorageFilesPage() {
               <FilesState title="没有 Active 配置">
                 请先在配置中激活托管配置；激活后选择已启用的
                 Storage，再添加资源库。
+                <div className="mf-actions">
+                  <Link
+                    className="mf-button mf-button-primary"
+                    to="/configuration"
+                    search={settingsReturnSearch({
+                      target: "resource-files",
+                      libraryId: activeLibraryId || undefined,
+                      path: effectivePath,
+                    })}
+                  >
+                    前往系统设置
+                  </Link>
+                </div>
               </FilesState>
             );
           }

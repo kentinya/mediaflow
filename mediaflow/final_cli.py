@@ -12,7 +12,7 @@ import signal
 import threading
 import time
 from collections.abc import Callable
-from contextlib import ExitStack, contextmanager, nullcontext
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -3875,11 +3875,11 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
     from mediaflow.interfaces.service_api import MediaFlowApi
 
     management_only = isinstance(configuration, ManagementBootstrapConfiguration)
-    file_index_context = (
-        nullcontext(None)
-        if management_only
-        else SQLiteFileIndexRepository(configuration.database_path)
-    )
+    # FileIndex is durable infrastructure, not a configured business object.
+    # Open it even before the first Active so the same API process can build
+    # Scan/Preview services when a later publication enables them. Opening the
+    # repository neither scans Storage nor creates media work.
+    file_index_context = SQLiteFileIndexRepository(configuration.database_path)
     # The API registers its own durable presence for the same reason the other
     # three services do: "the process is running" must be an observed fact, not
     # an inference from a static configuration file.  This changes nothing
@@ -3918,8 +3918,14 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
         file_catalog = (
             FileCatalogService(
                 file_index,
-                tuple(item.library_id for item in configuration.resource_libraries if item.enabled),
-                tuple(item.storage_id for item in configuration.storage_definitions),
+                tuple(
+                    item.library_id
+                    for item in getattr(configuration, "resource_libraries", ())
+                    if item.enabled
+                ),
+                tuple(
+                    item.storage_id for item in getattr(configuration, "storage_definitions", ())
+                ),
                 task_repository=repository,
             )
             if file_index is not None

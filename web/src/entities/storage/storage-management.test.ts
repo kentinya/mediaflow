@@ -16,7 +16,7 @@ const settledSetup = {
   managedActivation: true,
   recoveryRequired: false,
   health: "HEALTHY",
-  setupPath: "/ui",
+  setupPath: "/ui-v2/configuration",
 };
 
 /** Wire shape matching the Python operations/storage-management projections. */
@@ -183,7 +183,7 @@ describe("normalizeStorageInventory", () => {
         managedActivation: false,
         recoveryRequired: false,
         health: "SETUP_REQUIRED",
-        setupPath: "/ui",
+        setupPath: "/ui-v2/configuration",
       },
     });
     expect(model.available).toBe(false);
@@ -192,7 +192,7 @@ describe("normalizeStorageInventory", () => {
     expect(model.active).toBeNull();
     expect(model.setup.setupRequired).toBe(true);
     expect(model.setup.setupDraftExists).toBe(false);
-    expect(model.setup.setupPath).toBe("/ui");
+    expect(model.setup.setupPath).toBe("/ui-v2/configuration");
   });
 
   it("models an over-limit page with honest truncation and a cursor", () => {
@@ -432,12 +432,12 @@ describe("Storage setup authority", () => {
         managedActivation: false,
         recoveryRequired: false,
         health: "SETUP_REQUIRED",
-        setupPath: "/ui",
+        setupPath: "/ui-v2/configuration",
       },
     });
     expect(model.setup.setupRequired).toBe(true);
     expect(model.setup.setupDraftExists).toBe(true);
-    expect(model.setup.setupPath).toBe("/ui");
+    expect(model.setup.setupPath).toBe("/ui-v2/configuration");
   });
 
   it("rejects a return target that is not an allowlisted application route", () => {

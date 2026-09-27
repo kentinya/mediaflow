@@ -10,6 +10,7 @@ export interface ConfigurationStatus {
   readonly nextAction?: string | null;
   readonly canManageConfiguration?: boolean;
   readonly canActivateConfiguration?: boolean;
+  readonly commandReadiness?: Record<string, unknown>;
 }
 
 /**

@@ -365,7 +365,7 @@ function normalizeActiveIdentity(raw: unknown): StorageActiveIdentity | null {
  * string, so an absolute URL, a protocol-relative URL or a protocol/scheme can
  * never travel into an href from this projection.
  */
-const SETUP_ROUTE = /^\/ui\/?$/;
+const SETUP_ROUTE = /^\/ui-v2\/configuration\/?$/;
 
 function normalizeSetupAuthority(raw: unknown): StorageSetupAuthority {
   const source = readRecord(raw, "inventory.setup");

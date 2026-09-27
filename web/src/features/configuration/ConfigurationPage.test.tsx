@@ -17,6 +17,47 @@ afterEach(() => {
 });
 
 describe("V2 configuration route", () => {
+  it("returns to an allowlisted originating page after activation", async () => {
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      if (input.endsWith("/activate") && init?.method === "POST") {
+        return response({ revisionId: "draft-1", version: 2 });
+      }
+      if (input.includes("/revisions/draft-1")) {
+        return response({ revisionId: "draft-1", version: 2, document: {} });
+      }
+      if (input.includes("/system/settings")) {
+        return response({
+          revisionId: "draft-1",
+          revisionVersion: 2,
+          draftVersion: 3,
+          sections: {},
+        });
+      }
+      if (input.includes("storage-management/inventory")) {
+        return response({ error: { code: "configuration_unavailable" } }, 503);
+      }
+      return response({
+        authority: "MANAGEMENT_BOOTSTRAP",
+        setupRequired: true,
+        setupDraft: { revisionId: "draft-1", version: 2 },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration?returnTo=storage");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "恢复 Draft" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "checked-activate" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "存储管理不可用" }),
+    ).toBeVisible();
+  });
+
   it("reads setup state without mutation and explicitly creates the first Draft", async () => {
     const fetchMock = vi.fn(async (_input: string, init?: RequestInit) =>
       init?.method === "POST"
