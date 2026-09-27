@@ -380,7 +380,11 @@ class NotificationRepository(Protocol):
         before: tuple[datetime, str] | None = None,
     ) -> tuple[NotificationDelivery, ...]: ...
     def claim_next_delivery(
-        self, now: datetime, stale_before: datetime
+        self,
+        now: datetime,
+        stale_before: datetime,
+        *,
+        webhook_ids: tuple[str, ...] | None = None,
     ) -> NotificationDelivery | None: ...
     def list_stale_deliveries(
         self, stale_before: datetime, *, limit: int | None = None

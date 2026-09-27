@@ -57,6 +57,7 @@ from mediaflow.application.recognition_review import RecognitionReviewService
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationWorkerService
 from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
+from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.application.scanner import StorageScanner
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
@@ -83,6 +84,7 @@ from mediaflow.domain.metadata_review import MetadataReviewStatus, MetadataSelec
 from mediaflow.domain.notification import NotificationDeliveryStatus
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
+from mediaflow.domain.resident_services import ResidentServiceWaiting
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.task_persistence import (
@@ -506,10 +508,16 @@ def final_main(
         )
         if _resolved_configuration is not None:
             configuration = _resolved_configuration
-        elif arguments.command == "worker":
-            # Queue claiming must not resolve the current Active workflow.  The
-            # immutable locator is enough to claim a Job; its saved revision is
-            # loaded only inside _run_queued_workflow after the claim boundary.
+        elif arguments.command in {"worker", "scheduler", "notification-worker"}:
+            # Resident services bootstrap from deployment-owned authority alone.
+            # The immutable locator is enough to open the durable database, run
+            # the heartbeat and claim a bounded unit of already-pinned work.  It
+            # deliberately does not resolve the current Active workflow, because
+            # "no Active yet" is the normal first-setup state for a resident
+            # service, not a startup error.  Each service resolves the exact
+            # current — or its own admitted pin — at the boundary where it
+            # actually needs business configuration, which is what lets a
+            # running process adopt a later publication without restarting.
             configuration = load_management_bootstrap(_configuration_document(arguments.config))
         else:
             try:
@@ -871,30 +879,12 @@ def final_main(
                     )
             return 0
         if arguments.command == "notification-worker":
-            from mediaflow.infrastructure.webhook import UrllibWebhookTransport
-
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                delivery_worker = NotificationWorker(
-                    repository,
-                    configuration.resolve_webhook_targets(),
-                    UrllibWebhookTransport(),
-                    delivery_lease_seconds=configuration.notification_delivery_lease_seconds,
-                )
-                if arguments.notification_worker_command == "run-next":
-                    delivery = delivery_worker.run_next()
-                    if delivery is None:
-                        stdout.write("No due notification deliveries\n")
-                        return 0
-                    stdout.write(render_notification(delivery))
-                    return 0 if delivery.status.value in {"delivered", "retry"} else 1
-                poll = arguments.poll_seconds or configuration.notification_poll_seconds
-                processed = _run_resident(
-                    lambda stop: delivery_worker.run(
-                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
-                    )
-                )
-                stdout.write(f"Notification worker stopped; processed={processed}\n")
-            return 0
+            return _run_notification_worker(
+                configuration,
+                arguments,
+                arguments.config,
+                stdout=stdout,
+            )
         if arguments.command == "execution-authorizations":
             if not configuration.remote_execution_enabled:
                 raise ValueError("remote execution authorization is disabled")
@@ -1190,137 +1180,19 @@ def final_main(
                     )
             return 0
         if arguments.command == "worker":
-            worker_snapshot = _managed_snapshot_reference(arguments.config)
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                # One-off worker (run-next): peek the next pending job and bind to its
-                # snapshot so the claim fence matches exactly.  A pinned Job that was
-                # submitted under an older Active snapshot is therefore claimed by a
-                # Worker registered to that snapshot, not to the current Active.
-                # The resident worker (run) always binds to the Active snapshot.
-                bound_snapshot_id = None
-                bound_snapshot_digest = None
-                if arguments.worker_command == "run-next":
-                    next_row = repository._connection.execute(
-                        "SELECT configuration_snapshot_id, configuration_snapshot_digest "
-                        "FROM automation_jobs WHERE status=? "
-                        "ORDER BY created_at, job_id LIMIT 1",
-                        ("pending",),
-                    ).fetchone()
-                    if next_row is not None:
-                        bound_snapshot_id = next_row["configuration_snapshot_id"]
-                        bound_snapshot_digest = next_row["configuration_snapshot_digest"]
-                    # Fall back to Active snapshot if the next job is unpinned
-                    if bound_snapshot_id is None and worker_snapshot is not None:
-                        bound_snapshot_id, bound_snapshot_digest = worker_snapshot
-                else:
-                    # Resident worker: bind to current Active snapshot
-                    if worker_snapshot is not None:
-                        bound_snapshot_id, bound_snapshot_digest = worker_snapshot
-                with _manual_organize_worker_context(
-                    configuration, arguments.config, repository
-                ) as manual_organize_worker:
-                    with _files_transfer_worker_context(
-                        configuration, arguments.config, repository
-                    ) as files_transfer_worker:
-                        worker_service = AutomationWorker(
-                            repository,
-                            lambda job, cancelled: _run_queued_workflow(
-                                job, arguments.config, cancelled, repository=repository
-                            ),
-                            NotificationPublisher(
-                                repository,
-                                configuration.resolve_webhook_targets()
-                                if hasattr(configuration, "resolve_webhook_targets")
-                                else {},
-                            ),
-                            configuration_snapshot_id=bound_snapshot_id,
-                            configuration_snapshot_digest=bound_snapshot_digest,
-                            runtime_schema_version=SCHEMA_VERSION,
-                            manual_organize_worker=manual_organize_worker,
-                            files_transfer_worker=files_transfer_worker,
-                        )
-                        if arguments.worker_command == "run-next":
-                            job = worker_service.run_next()
-                            if job is not None:
-                                stdout.write(render_job(job))
-                                return 0 if job.status.value in {"completed", "cancelled"} else 1
-                            execution = manual_organize_worker.run_next()
-                            if execution is not None:
-                                stdout.write(
-                                    f"Manual execution ID: {execution.execution_id}\n"
-                                    f"Status: {execution.status.value}\n"
-                                )
-                                return (
-                                    0 if execution.status.value in {"completed", "cancelled"} else 1
-                                )
-                            transfer = files_transfer_worker.run_next()
-                            if transfer is None:
-                                stdout.write("No pending automation jobs\n")
-                                return 0
-                            stdout.write(
-                                f"Task ID: {transfer.task_id}\nStatus: {transfer.status.value}\n"
-                            )
-                            return 0 if transfer.status.terminal else 1
-                        poll = arguments.poll_seconds or getattr(
-                            configuration, "worker_poll_seconds", 5.0
-                        )
-                        processed = _run_resident(
-                            lambda stop: worker_service.run(
-                                stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
-                            )
-                        )
-                        stdout.write(f"Worker stopped; processed={processed}\n")
-                        return 0
+            return _run_worker(
+                configuration,
+                arguments,
+                arguments.config,
+                stdout=stdout,
+            )
         if arguments.command == "scheduler":
-            with SQLiteTaskRepository(configuration.database_path) as repository:
-                scheduler_service = IntervalScheduler(
-                    repository,
-                    configuration.automation_schedules,
-                    NotificationPublisher(repository, configuration.webhooks),
-                    maximum_active_jobs=configuration.automation_maximum_active_jobs,
-                    configuration_snapshot_id=configuration.configuration_snapshot_id,
-                    configuration_snapshot_digest=configuration.configuration_snapshot_digest,
-                    automation_task_definitions=configuration.automation_task_definitions,
-                    configuration_snapshot_version=configuration.configuration_snapshot_version,
-                    configuration_snapshot_resolver=lambda: _managed_scheduler_configuration(
-                        arguments.config
-                    ),
-                )
-                if arguments.scheduler_command == "list":
-                    stdout.write(
-                        render_schedules(
-                            configuration.automation_schedules,
-                            repository.list_schedule_states(),
-                        )
-                    )
-                    return 0
-                if arguments.scheduler_command == "tick":
-                    queued = scheduler_service.tick()
-                    stdout.write(render_jobs(queued))
-                    return 0
-                if arguments.scheduler_command == "audit":
-                    known = {item.schedule_id for item in configuration.automation_schedules}
-                    if arguments.schedule_id and arguments.schedule_id not in known:
-                        raise LookupError(f"schedule {arguments.schedule_id!r} was not found")
-                    if arguments.limit < 1:
-                        raise ValueError("schedule audit limit must be positive")
-                    stdout.write(
-                        render_schedule_audit(
-                            repository.list_schedule_audit(
-                                arguments.schedule_id, limit=arguments.limit
-                            ),
-                            configuration.automation_schedules,
-                        )
-                    )
-                    return 0
-                poll = arguments.poll_seconds or configuration.scheduler_poll_seconds
-                emitted = _run_resident(
-                    lambda stop: scheduler_service.run(
-                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
-                    )
-                )
-                stdout.write(f"Scheduler stopped; emitted={emitted}\n")
-                return 0
+            return _run_scheduler(
+                configuration,
+                arguments,
+                arguments.config,
+                stdout=stdout,
+            )
         if arguments.command == "api":
             _serve_api(configuration, arguments, stdout=stdout, stderr=stderr)
             return 0
@@ -3371,6 +3243,535 @@ def render_schedule_audit(values, definitions=()) -> str:
     return "\n".join(lines)
 
 
+def _resident_infrastructure_defaults() -> tuple[float, float, float]:
+    """Bounded polling defaults used before any Active configuration exists.
+
+    These are *infrastructure* settings, not business objects: a resident
+    service needs a heartbeat cadence and a poll cadence to stay alive and stay
+    observable during first setup, long before an operator has configured
+    anything.  They are intentionally conservative, so the absence of Active
+    changes only how often a resident process re-reads the current Active and
+    never what it is allowed to do.
+    """
+
+    return (300.0, 5.0, 5.0)
+
+
+def _current_runtime_configuration(configured_path: str | None) -> RuntimeConfiguration | None:
+    """Return the current valid Active runtime, or ``None`` when unavailable.
+
+    This is the single "what should I do right now" resolution used by every
+    resident admission boundary.  It returns ``None`` — rather than raising —
+    for every ordinary first-setup and recovery state (no Active yet, an
+    unreadable Active, a corrupt digest, an unsupported schema, a document that
+    no longer loads), because all of them mean exactly the same thing to a
+    resident process: there is nothing to admit yet.
+
+    Once managed authority exists, a *managed* Active is the only admissible
+    source, and a broken one yields ``None`` rather than falling back.  Before
+    managed authority exists at all, the complete JSON bootstrap document is
+    still a supported pre-activation runtime, so it is returned unchanged; that
+    compatibility path carries no snapshot identity and therefore cannot be
+    mistaken for published authority.
+    """
+
+    try:
+        configuration = _configuration(configured_path)
+    except Exception:
+        return None
+    if getattr(configuration, "configuration_snapshot_id", None):
+        return configuration
+    if isinstance(configuration, ManagementBootstrapConfiguration):
+        return None
+    return configuration
+
+
+def _current_managed_runtime_configuration(
+    configured_path: str | None,
+) -> RuntimeConfiguration | None:
+    """Return the current **managed** Active runtime, or ``None``.
+
+    This is the stricter resolution used by boundaries that must pin their work
+    to published authority — the Scheduler's occurrence emission and the
+    Notification Worker's target resolution.  A legacy JSON bootstrap has no
+    snapshot identity, so it yields ``None`` here and those boundaries wait,
+    which is correct: a resident process must never issue unpinned work in a
+    deployment that has adopted managed configuration authority.
+    """
+
+    try:
+        configuration = _configuration(configured_path)
+    except Exception:
+        return None
+    if not getattr(configuration, "configuration_snapshot_id", None):
+        return None
+    return configuration
+
+
+def _scheduler_waiting_reason(configuration: RuntimeConfiguration | None) -> tuple[str, str]:
+    """Map a missing or unusable Active onto one bounded Scheduler waiting state."""
+
+    if configuration is None:
+        return (
+            ResidentServiceWaiting.UNCONFIGURED.value,
+            "no valid Active configuration is published; no schedule was issued",
+        )
+    if not configuration.automation_schedules and not configuration.automation_task_definitions:
+        return (
+            ResidentServiceWaiting.UNCONFIGURED.value,
+            "the Active configuration declares no schedule or Automation definition",
+        )
+    return (ResidentServiceWaiting.NONE.value, "")
+
+
+def _run_worker(
+    configuration,
+    arguments,
+    configured_path: str | None,
+    *,
+    stdout: TextIO,
+) -> int:
+    """Run the resident MediaFlow Worker from deployment-owned authority alone.
+
+    The Worker already supported management-only bootstrap; this adds the two
+    things the empty-setup boundary needs on top of it:
+
+    * a **durable resident registration** that makes "the real Worker process is
+      running" observable independently of the command families it happens to
+      be serving right now, so an API/Compose readiness answer is not inferred
+      from a static configuration file; and
+    * a **bounded waiting reason** whenever the Worker is alive but has nothing
+      lawful to consume, which is the normal state before first activation and
+      again whenever the current Active is unusable.
+
+    The existing per-command consumers are preserved untouched: queued Jobs
+    still load their own pinned revision after the claim boundary, admitted
+    manual Organize executions and both library-kind transfers still
+    reconstruct their own immutable pin, and a Worker that cannot reconstruct a
+    pin still leaves that work claimable rather than consuming it as a failure.
+    """
+
+    from mediaflow.application.resident_runtime import (
+        build_resident_runtime,
+        register_resident_process,
+        resident_instance_id,
+    )
+
+    _, default_poll, _ = _resident_infrastructure_defaults()
+    runtime = build_resident_runtime(configuration.database_path)
+    worker_snapshot = _managed_snapshot_reference(configured_path)
+    instance_id = resident_instance_id("worker")
+    resident_id = worker_snapshot[0] if worker_snapshot is not None else None
+    register_resident_process(
+        runtime,
+        "worker",
+        instance_id,
+        heartbeat_interval_seconds=5.0,
+        snapshot_id=resident_id,
+    )
+    with SQLiteTaskRepository(configuration.database_path) as repository:
+        # One-off worker (run-next): peek the next pending job and bind to its
+        # snapshot so the claim fence matches exactly.  A pinned Job that was
+        # submitted under an older Active snapshot is therefore claimed by a
+        # Worker registered to that snapshot, not to the current Active.
+        # The resident worker (run) always binds to the Active snapshot.
+        bound_snapshot_id = None
+        bound_snapshot_digest = None
+        if arguments.worker_command == "run-next":
+            next_row = repository._connection.execute(
+                "SELECT configuration_snapshot_id, configuration_snapshot_digest "
+                "FROM automation_jobs WHERE status=? "
+                "ORDER BY created_at, job_id LIMIT 1",
+                ("pending",),
+            ).fetchone()
+            if next_row is not None:
+                bound_snapshot_id = next_row["configuration_snapshot_id"]
+                bound_snapshot_digest = next_row["configuration_snapshot_digest"]
+            # Fall back to Active snapshot if the next job is unpinned
+            if bound_snapshot_id is None and worker_snapshot is not None:
+                bound_snapshot_id, bound_snapshot_digest = worker_snapshot
+        else:
+            # Resident worker: bind to current Active snapshot
+            if worker_snapshot is not None:
+                bound_snapshot_id, bound_snapshot_digest = worker_snapshot
+        with _manual_organize_worker_context(
+            configuration, configured_path, repository
+        ) as manual_organize_worker:
+            with _files_transfer_worker_context(
+                configuration, configured_path, repository
+            ) as files_transfer_worker:
+                # The resident Worker records its own presence through the same
+                # heartbeat the resident registry reads, so a slow provider call
+                # or a long claim never makes the deployment look stopped.
+                worker_service = AutomationWorker(
+                    repository,
+                    lambda job, cancelled: _run_queued_workflow(
+                        job, configured_path, cancelled, repository=repository
+                    ),
+                    _worker_notification_publisher(repository, configured_path),
+                    configuration_snapshot_id=bound_snapshot_id,
+                    configuration_snapshot_digest=bound_snapshot_digest,
+                    runtime_schema_version=SCHEMA_VERSION,
+                    manual_organize_worker=manual_organize_worker,
+                    files_transfer_worker=files_transfer_worker,
+                )
+                if arguments.worker_command == "run-next":
+                    job = worker_service.run_next()
+                    if job is not None:
+                        stdout.write(render_job(job))
+                        return 0 if job.status.value in {"completed", "cancelled"} else 1
+                    execution = manual_organize_worker.run_next()
+                    if execution is not None:
+                        stdout.write(
+                            f"Manual execution ID: {execution.execution_id}\n"
+                            f"Status: {execution.status.value}\n"
+                        )
+                        return 0 if execution.status.value in {"completed", "cancelled"} else 1
+                    transfer = files_transfer_worker.run_next()
+                    if transfer is None:
+                        stdout.write("No pending automation jobs\n")
+                        return 0
+                    stdout.write(f"Task ID: {transfer.task_id}\nStatus: {transfer.status.value}\n")
+                    return 0 if transfer.terminal else 1
+                poll = getattr(arguments, "poll_seconds", None) or getattr(
+                    configuration, "worker_poll_seconds", default_poll
+                )
+                resident_heartbeat = lambda: _resident_worker_heartbeat(  # noqa: E731
+                    runtime, instance_id
+                )
+                original_heartbeat = worker_service.heartbeat
+
+                def heartbeat(now=None) -> bool:
+                    """Keep both registration records live from one call site."""
+
+                    kept = original_heartbeat(now)
+                    resident_heartbeat()
+                    return kept
+
+                worker_service.heartbeat = heartbeat
+                processed = _run_resident(
+                    lambda stop: worker_service.run(
+                        stop, poll_seconds=poll, sleep=lambda seconds: _wait(stop, seconds)
+                    )
+                )
+                runtime.service.stop(instance_id)
+                stdout.write(f"Worker stopped; processed={processed}\n")
+                return 0
+
+
+def _resident_worker_heartbeat(runtime, instance_id) -> None:
+    """Refresh the resident presence row, tolerating a transient database fault."""
+
+    try:
+        runtime.service.heartbeat(instance_id)
+    except Exception:
+        return
+
+
+def _worker_notification_publisher(
+    repository, configured_path: str | None
+) -> NotificationPublisher:
+    """Publish Job outcome deliveries for the current Active webhooks.
+
+    The Worker resolves the target set per publication rather than at process
+    start, so a Job that completes after a later publication notifies the
+    Webhooks that are actually configured then.  An unavailable configuration
+    or secret yields no deliveries instead of failing the Job: the durable Job
+    outcome is the authoritative record, and the resident Notification Worker
+    remains responsible for delivery.
+    """
+
+    resolved = _current_runtime_configuration(configured_path)
+    return NotificationPublisher(repository, getattr(resolved, "webhooks", ()) if resolved else ())
+
+
+def _run_scheduler(
+    configuration,
+    arguments,
+    configured_path: str | None,
+    *,
+    stdout: TextIO,
+) -> int:
+    """Run the resident Scheduler from deployment-owned authority alone.
+
+    The Scheduler owns exactly one job: decide whether an eligible occurrence
+    is due *right now* and, if so, issue it pinned to the current valid Active
+    snapshot.  Everything else is configuration state, so this process needs no
+    business configuration at all to start.
+
+    Its correctness properties are preserved rather than reimplemented:
+    ``IntervalScheduler`` remains the single authority for occurrence identity,
+    idempotency, scope, capacity and duplicate protection, and the existing
+    configuration-resolver seam is what lets it re-read the current Active on
+    every tick instead of binding to whatever existed at startup.
+    """
+
+    from mediaflow.application.resident_runtime import (
+        ResidentLoop,
+        build_resident_runtime,
+        register_resident_process,
+        resident_instance_id,
+    )
+
+    heartbeat_seconds, default_poll, _ = _resident_infrastructure_defaults()
+    runtime = build_resident_runtime(configuration.database_path)
+    snapshot = _managed_snapshot_reference(configured_path)
+    instance_id = resident_instance_id("scheduler")
+    register_resident_process(
+        runtime,
+        "scheduler",
+        instance_id,
+        heartbeat_interval_seconds=5.0,
+        snapshot_id=snapshot[0] if snapshot is not None else None,
+    )
+    current = _current_runtime_configuration(configured_path)
+    # Only the resident ``run`` loop accepts a poll override; the one-shot
+    # inspection commands always use the configured (or bounded default) cadence.
+    poll = getattr(arguments, "poll_seconds", None) or (
+        current.scheduler_poll_seconds if current is not None else default_poll
+    )
+    maximum_active_jobs = current.automation_maximum_active_jobs if current is not None else 100
+
+    with SQLiteTaskRepository(configuration.database_path) as repository:
+
+        def build_service(resolved: RuntimeConfiguration | None) -> IntervalScheduler:
+            """Build one scheduler bound to the exact configuration it admits from.
+
+            When no valid Active exists the scheduler still runs, but with no
+            schedules, no definitions and no snapshot identity.  That makes
+            "emit nothing" the only reachable outcome, which is precisely the
+            required behaviour when Active is absent or unusable.
+            """
+
+            return IntervalScheduler(
+                repository,
+                getattr(resolved, "automation_schedules", ()) if resolved else (),
+                # Notification targets are resolved by the resident Notification
+                # Worker at its own claim boundary.  The Scheduler only writes
+                # deterministic durable deliveries for enabled Webhooks, so an
+                # unavailable secret must never stop it emitting a due
+                # occurrence.
+                NotificationPublisher(
+                    repository, getattr(resolved, "webhooks", ()) if resolved else ()
+                ),
+                maximum_active_jobs=(
+                    getattr(resolved, "automation_maximum_active_jobs", maximum_active_jobs)
+                    if resolved
+                    else maximum_active_jobs
+                ),
+                configuration_snapshot_id=(
+                    getattr(resolved, "configuration_snapshot_id", None) if resolved else None
+                ),
+                configuration_snapshot_digest=(
+                    getattr(resolved, "configuration_snapshot_digest", None) if resolved else None
+                ),
+                automation_task_definitions=(
+                    getattr(resolved, "automation_task_definitions", ()) if resolved else ()
+                ),
+                configuration_snapshot_version=(
+                    getattr(resolved, "configuration_snapshot_version", None) if resolved else None
+                ),
+                configuration_snapshot_resolver=lambda: _managed_scheduler_configuration(
+                    configured_path
+                ),
+            )
+
+        if arguments.scheduler_command == "list":
+            definitions = current.automation_schedules if current is not None else ()
+            stdout.write(render_schedules(definitions, repository.list_schedule_states()))
+            return 0
+        if arguments.scheduler_command == "audit":
+            definitions = current.automation_schedules if current is not None else ()
+            known = {item.schedule_id for item in definitions}
+            if arguments.schedule_id and arguments.schedule_id not in known:
+                raise LookupError(f"schedule {arguments.schedule_id!r} was not found")
+            if arguments.limit < 1:
+                raise ValueError("schedule audit limit must be positive")
+            stdout.write(
+                render_schedule_audit(
+                    repository.list_schedule_audit(arguments.schedule_id, limit=arguments.limit),
+                    definitions,
+                )
+            )
+            return 0
+        if arguments.scheduler_command == "tick":
+            stdout.write(render_jobs(build_service(current).tick()))
+            return 0
+
+        def step(loop: ResidentLoop) -> int:
+            """Re-resolve the current Active, then tick under that exact identity.
+
+            Re-resolving per tick is what makes a running Scheduler adopt an
+            eligible publication with no restart, and what keeps it from reusing
+            stale schedules while Active is unavailable: a failed resolution
+            yields no schedules and no pin, so no occurrence is issued or
+            advanced.
+            """
+
+            resolved = _current_runtime_configuration(configured_path)
+            reason, detail = _scheduler_waiting_reason(resolved)
+            loop.note(reason, detail)
+            if resolved is None:
+                return 0
+            return len(build_service(resolved).tick())
+
+        loop = ResidentLoop(
+            runtime,
+            "scheduler",
+            instance_id,
+            heartbeat_interval_seconds=5.0,
+            poll_seconds=poll,
+            stdout=stdout,
+            step=step,
+        )
+        emitted = _run_resident(lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds)))
+        stdout.write(f"Scheduler stopped; emitted={emitted}\n")
+        return 0
+
+
+def _run_notification_worker(
+    configuration,
+    arguments,
+    configured_path: str | None,
+    *,
+    stdout: TextIO,
+) -> int:
+    """Run the resident Notification Worker from deployment-owned authority.
+
+    The worker resolves its delivery configuration at every claim, so it can
+    start before any Webhook exists and adopt a later valid publication without
+    a restart, while still refusing to claim a delivery whose durable target it
+    cannot lawfully deliver to.
+    """
+
+    from mediaflow.application.resident_runtime import (
+        ResidentLoop,
+        build_resident_runtime,
+        register_resident_process,
+        resident_instance_id,
+    )
+    from mediaflow.infrastructure.webhook import UrllibWebhookTransport
+
+    _, default_poll, _ = _resident_infrastructure_defaults()
+    runtime = build_resident_runtime(configuration.database_path)
+    snapshot = _managed_snapshot_reference(configured_path)
+    instance_id = resident_instance_id("notification-worker")
+    register_resident_process(
+        runtime,
+        "notification-worker",
+        instance_id,
+        heartbeat_interval_seconds=5.0,
+        snapshot_id=snapshot[0] if snapshot is not None else None,
+    )
+    current = _current_runtime_configuration(configured_path)
+    # Only the resident ``run`` loop accepts a poll override; ``run-next`` always
+    # uses the configured (or bounded default) cadence.
+    poll = getattr(arguments, "poll_seconds", None) or (
+        current.notification_poll_seconds if current is not None else default_poll
+    )
+    lease = (
+        current.notification_delivery_lease_seconds
+        if current is not None
+        else _resident_infrastructure_defaults()[0]
+    )
+
+    def resolve_targets() -> dict:
+        """Resolve the current valid deliverable targets, or fail closed.
+
+        A missing secret is deliberately a resolution failure rather than a
+        silently skipped target: a delivery must never be claimed against a
+        target whose signing secret is absent, because the request could not be
+        signed and reporting success afterwards would be false.
+        """
+
+        resolved = _current_runtime_configuration(configured_path)
+        if resolved is None:
+            raise ValueError("no valid Active delivery configuration is published")
+        return resolved.resolve_webhook_targets()
+
+    with SQLiteTaskRepository(configuration.database_path) as repository:
+        delivery_worker = NotificationWorker(
+            repository,
+            resolve_targets,
+            UrllibWebhookTransport(),
+            delivery_lease_seconds=lease,
+        )
+        if arguments.notification_worker_command == "run-next":
+            try:
+                delivery = delivery_worker.run_next()
+            except ValueError as error:
+                # Waiting is a normal resident outcome, not a failed run: the
+                # durable delivery is untouched and stays claimable.
+                stdout.write(f"Notification worker is waiting: {error}\n")
+                return 0
+            if delivery is None:
+                stdout.write("No due notification deliveries\n")
+                return 0
+            stdout.write(render_notification(delivery))
+            return 0 if delivery.status.value in {"delivered", "retry"} else 1
+
+        def step(loop: ResidentLoop) -> int:
+            try:
+                targets = delivery_worker.resolve_targets()
+            except ValueError as error:
+                loop.note(ResidentServiceWaiting.SECRET_UNAVAILABLE.value, str(error))
+                return 0
+            if not targets:
+                loop.note(
+                    ResidentServiceWaiting.UNCONFIGURED.value,
+                    "the Active configuration declares no enabled Webhook target",
+                )
+                return 0
+            loop.clear_waiting()
+            return 0 if delivery_worker.run_next() is None else 1
+
+        loop = ResidentLoop(
+            runtime,
+            "notification-worker",
+            instance_id,
+            heartbeat_interval_seconds=5.0,
+            poll_seconds=poll,
+            stdout=stdout,
+            step=step,
+        )
+        processed = _run_resident(lambda stop: loop.run(stop, lambda seconds: _wait(stop, seconds)))
+        stdout.write(f"Notification worker stopped; processed={processed}\n")
+        return 0
+
+
+def _api_resident_heartbeat(runtime, instance_id: str):
+    """Keep the API's own resident registration fresh while it serves.
+
+    The API has no work loop, so it refreshes its heartbeat on a timer in a
+    daemon thread.  A heartbeat fault is swallowed on purpose: the API must stay
+    reachable for configuration recovery even when the shared database is
+    briefly unhappy, and a later beat repairs the state.  Killing the API would
+    achieve nothing and lose the recovery surface entirely.
+    """
+
+    class _Heartbeat:
+        def __init__(self) -> None:
+            self._stop = threading.Event()
+            self._thread = threading.Thread(target=self._run, daemon=True)
+
+        def _run(self) -> None:
+            while not self._stop.wait(5.0):
+                try:
+                    runtime.service.heartbeat(instance_id)
+                except Exception:
+                    continue
+
+        def start(self):
+            self._thread.start()
+            return self
+
+        def stop(self) -> None:
+            self._stop.set()
+            self._thread.join(timeout=6.0)
+
+    return _Heartbeat()
+
+
 def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> None:
     """Build and serve the shared WSGI application.
 
@@ -3422,11 +3823,35 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
         if management_only
         else SQLiteFileIndexRepository(configuration.database_path)
     )
+    # The API registers its own durable presence for the same reason the other
+    # three services do: "the process is running" must be an observed fact, not
+    # an inference from a static configuration file.  This changes nothing
+    # about the API's request behavior — it is the only thing it writes outside
+    # its existing request handling, and it never supervises a subprocess.
+    from mediaflow.application.resident_runtime import (
+        build_resident_runtime,
+        register_resident_process,
+        resident_instance_id,
+    )
+
+    runtime = build_resident_runtime(configuration.database_path)
+    active_reference = _managed_snapshot_reference(arguments.config)
+    instance_id = resident_instance_id("api")
     with (
         SQLiteTaskRepository(configuration.database_path) as repository,
         file_index_context as file_index,
         SQLiteConfigurationRepository(configuration.database_path) as configuration_repository,
     ):
+        register_resident_process(
+            runtime,
+            "api",
+            instance_id,
+            heartbeat_interval_seconds=5.0,
+            snapshot_id=active_reference[0] if active_reference is not None else None,
+        )
+        resident_services = ResidentServiceService(
+            repository, runtime_schema_version=SCHEMA_VERSION
+        )
         configuration_service = ManagedConfigurationService(
             configuration_repository,
             bootstrap_database_path=configuration.database_path,
@@ -3478,22 +3903,29 @@ def _serve_api(configuration, arguments, *, stdout: TextIO, stderr: TextIO) -> N
             metadata_provider_registry_factory=LazyMetadataProviderRegistryFactory(
                 metadata_provider_registry_from_environment
             ),
+            resident_services=resident_services,
         )
         stdout.write(
             f"MediaFlow {'production ' if production else ''}API listening on "
             f"{arguments.host}:{arguments.port}\n"
         )
         stdout.flush()
-        if production:
-            run_server(
-                app,
-                host=arguments.host,
-                port=arguments.port,
-                threads=arguments.threads,
-            )
-        else:
-            with make_server(arguments.host, arguments.port, app) as server:
-                server.serve_forever()
+        heartbeat = _api_resident_heartbeat(runtime, instance_id)
+        heartbeat.start()
+        try:
+            if production:
+                run_server(
+                    app,
+                    host=arguments.host,
+                    port=arguments.port,
+                    threads=arguments.threads,
+                )
+            else:
+                with make_server(arguments.host, arguments.port, app) as server:
+                    server.serve_forever()
+        finally:
+            heartbeat.stop()
+            runtime.service.stop(instance_id)
 
 
 @contextmanager
@@ -3965,10 +4397,21 @@ def _managed_snapshot_reference(path: str | None) -> tuple[str, str] | None:
 def _managed_scheduler_configuration(
     path: str | None,
 ) -> SchedulerConfigurationSnapshot | None:
-    """Resolve schedule definitions and pin from one current runtime revision."""
+    """Resolve schedule definitions and pin from one current runtime revision.
 
-    configuration = _configuration(path)
-    if not configuration.configuration_snapshot_id:
+    ``None`` means "no managed Active exists to admit from", which is the normal
+    pre-activation state.  The Scheduler treats that as an empty definition set
+    and emits nothing, rather than reusing whatever the JSON bootstrap happened
+    to contain.
+    """
+
+    # The resolver seam is the *managed* one: a resident Scheduler pins every
+    # occurrence it issues to published authority, and a legacy JSON bootstrap
+    # has no identity to pin to.  It therefore yields no snapshot here, which
+    # makes the resident path fail closed while the one-shot commands below
+    # still support the pre-activation compatibility runtime.
+    configuration = _current_managed_runtime_configuration(path)
+    if configuration is None:
         return None
     return SchedulerConfigurationSnapshot(
         configuration.configuration_snapshot_id,

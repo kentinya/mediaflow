@@ -172,6 +172,13 @@ from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationReason,
     RecoveryContinuationStatus,
 )
+from mediaflow.domain.resident_services import (
+    ResidentServiceRegistration,
+    ResidentServiceStatus,
+    ResidentServiceWaitState,
+    validate_resident_service_name,
+    validate_resident_waiting_reason,
+)
 from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
@@ -319,6 +326,37 @@ def _command_family_pattern(command: str) -> str:
 
     escaped = command.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"{escaped}:%"
+
+
+def _validated_webhook_id_filter(
+    webhook_ids: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Validate an optional durable-target filter for a delivery claim.
+
+    ``None`` means "no filter" and keeps the historical claim behaviour.  An
+    empty tuple is rejected rather than silently treated as "match nothing",
+    because a caller that resolved zero targets must not be able to look like
+    it successfully claimed work.  Values are deduplicated while preserving
+    order so the generated SQL parameters stay bounded and deterministic.
+    """
+
+    if webhook_ids is None:
+        return None
+    if not isinstance(webhook_ids, tuple):
+        raise ValueError("webhook claim filter must be a tuple of Webhook IDs")
+    if not webhook_ids:
+        raise ValueError("webhook claim filter requires at least one Webhook ID")
+    if len(webhook_ids) > 64:
+        raise ValueError("webhook claim filter supports at most 64 Webhook IDs")
+    values: list[str] = []
+    for value in webhook_ids:
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("webhook claim filter IDs must be non-empty strings")
+        if len(value) > 64 or any(character in value for character in "/\\\x00"):
+            raise ValueError("webhook claim filter IDs must be bounded without slashes or NUL")
+        if value not in values:
+            values.append(value)
+    return tuple(values)
 
 
 class SQLiteTaskRepository:
@@ -5287,6 +5325,179 @@ class SQLiteTaskRepository:
             status=WorkerStatus(row["status"]),
         )
 
+    # -- Resident service presence -----------------------------------------
+    #
+    # A resident service row records that a real process registered itself and
+    # is still heartbeating.  It is deliberately separate from
+    # ``processing_workers``: the Worker row describes which *commands* one
+    # processing Worker can serve, while these rows answer the coarser
+    # deployment question "is this process alive at all?".  Keeping them apart
+    # means the API can report Scheduler/Notification liveness truthfully even
+    # when they have no business work to do.
+    #
+    # Every bounded field is validated before a transaction opens, exactly like
+    # ``register_worker``: an unvalidated value must never reach the database
+    # even for one write.
+
+    def register_resident_service(
+        self,
+        service: str,
+        instance_id: str,
+        heartbeat_interval_seconds: float,
+        runtime_schema_version: int,
+        configuration_snapshot_id: str | None,
+        now: datetime,
+    ) -> ResidentServiceRegistration:
+        normalized_service = validate_resident_service_name(service)
+        normalized_instance_id = validate_worker_id(instance_id)
+        normalized_interval = float(heartbeat_interval_seconds)
+        if normalized_interval <= 0:
+            raise ValueError("resident service heartbeat interval must be positive")
+        normalized_schema_version = int(runtime_schema_version)
+        if normalized_schema_version < 0:
+            raise ValueError("runtime schema version must be non-negative")
+        if configuration_snapshot_id is not None:
+            validate_worker_id(configuration_snapshot_id)
+        with self._lock, self._connection:
+            existing = self._connection.execute(
+                "SELECT registered_at FROM resident_services WHERE instance_id=?",
+                (normalized_instance_id,),
+            ).fetchone()
+            if existing is None:
+                self._connection.execute(
+                    "INSERT INTO resident_services ("
+                    "instance_id, service, registered_at, last_heartbeat_at, "
+                    "heartbeat_interval_seconds, runtime_schema_version, "
+                    "configuration_snapshot_id, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        normalized_instance_id,
+                        normalized_service,
+                        now.isoformat(),
+                        now.isoformat(),
+                        normalized_interval,
+                        normalized_schema_version,
+                        configuration_snapshot_id,
+                        ResidentServiceStatus.LIVE.value,
+                    ),
+                )
+            else:
+                # A restart under the same instance id keeps the original
+                # registration time: only the liveness fields move.
+                self._connection.execute(
+                    "UPDATE resident_services SET service=?, last_heartbeat_at=?, "
+                    "heartbeat_interval_seconds=?, runtime_schema_version=?, "
+                    "configuration_snapshot_id=?, status=? WHERE instance_id=?",
+                    (
+                        normalized_service,
+                        now.isoformat(),
+                        normalized_interval,
+                        normalized_schema_version,
+                        configuration_snapshot_id,
+                        ResidentServiceStatus.LIVE.value,
+                        normalized_instance_id,
+                    ),
+                )
+            row = self._connection.execute(
+                "SELECT * FROM resident_services WHERE instance_id=?",
+                (normalized_instance_id,),
+            ).fetchone()
+        return self._resident_service(row)
+
+    def heartbeat_resident_service(self, instance_id: str, now: datetime) -> bool:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE resident_services SET last_heartbeat_at=?, "
+                "status=CASE WHEN status=? THEN ? ELSE status END "
+                "WHERE instance_id=? AND status!=?",
+                (
+                    now.isoformat(),
+                    ResidentServiceStatus.STALE.value,
+                    ResidentServiceStatus.LIVE.value,
+                    instance_id,
+                    ResidentServiceStatus.STOPPED.value,
+                ),
+            )
+            return cursor.rowcount == 1
+
+    def stop_resident_service(self, instance_id: str, now: datetime) -> None:
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE resident_services SET status=?, last_heartbeat_at=? WHERE instance_id=?",
+                (ResidentServiceStatus.STOPPED.value, now.isoformat(), instance_id),
+            )
+            if cursor.rowcount != 1:
+                raise LookupError(f"resident service {instance_id!r} was not found")
+
+    def get_resident_service(
+        self, service: str, instance_id: str
+    ) -> ResidentServiceRegistration | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM resident_services WHERE service=? AND instance_id=?",
+                (service, instance_id),
+            ).fetchone()
+        return self._resident_service(row) if row else None
+
+    def list_resident_services(self) -> tuple[ResidentServiceRegistration, ...]:
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM resident_services "
+                "ORDER BY service ASC, registered_at DESC, instance_id ASC"
+            ).fetchall()
+        return tuple(self._resident_service(row) for row in rows)
+
+    def set_resident_service_wait_state(
+        self,
+        service: str,
+        instance_id: str,
+        waiting_reason: str | None,
+        waiting_detail: str,
+        now: datetime,
+    ) -> None:
+        normalized_service = validate_resident_service_name(service)
+        validate_resident_waiting_reason(waiting_reason)
+        detail = waiting_detail if isinstance(waiting_detail, str) else ""
+        with self._lock, self._connection:
+            self._connection.execute(
+                "INSERT INTO resident_service_wait_state ("
+                "instance_id, service, waiting_reason, waiting_detail, updated_at) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(instance_id) DO UPDATE SET "
+                "service=excluded.service, waiting_reason=excluded.waiting_reason, "
+                "waiting_detail=excluded.waiting_detail, updated_at=excluded.updated_at",
+                (instance_id, normalized_service, waiting_reason, detail, now.isoformat()),
+            )
+
+    def get_resident_service_wait_state(
+        self, service: str, instance_id: str
+    ) -> ResidentServiceWaitState | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM resident_service_wait_state WHERE service=? AND instance_id=?",
+                (service, instance_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ResidentServiceWaitState(
+            service=row["service"],
+            waiting_reason=row["waiting_reason"],
+            waiting_detail=row["waiting_detail"],
+            updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+    @staticmethod
+    def _resident_service(row: sqlite3.Row) -> ResidentServiceRegistration:
+        return ResidentServiceRegistration(
+            service=row["service"],
+            instance_id=row["instance_id"],
+            registered_at=datetime.fromisoformat(row["registered_at"]),
+            last_heartbeat_at=datetime.fromisoformat(row["last_heartbeat_at"]),
+            heartbeat_interval_seconds=float(row["heartbeat_interval_seconds"]),
+            runtime_schema_version=int(row["runtime_schema_version"]),
+            configuration_snapshot_id=row["configuration_snapshot_id"],
+            status=ResidentServiceStatus(row["status"]),
+        )
+
     def get_schedule_state(self, schedule_id: str) -> ScheduleState | None:
         with self._lock:
             row = self._connection.execute(
@@ -6258,38 +6469,69 @@ class SQLiteTaskRepository:
         return tuple(reversed(values)) if reverse else values
 
     def claim_next_delivery(
-        self, now: datetime, stale_before: datetime
+        self,
+        now: datetime,
+        stale_before: datetime,
+        *,
+        webhook_ids: tuple[str, ...] | None = None,
     ) -> NotificationDelivery | None:
+        """Claim the next due delivery, optionally restricted to real targets.
+
+        A resident Notification Worker resolves its current deliverable
+        targets before claiming, so it must be able to restrict the claim to
+        those targets.  Without the filter, one delivery naming a removed or
+        disabled webhook would be claimed, burn an attempt and block the queue
+        behind a target that can never succeed.  The filter is applied to both
+        the selection and the guarded update so the CAS still guards exactly
+        the row that was selected.
+        """
+
+        normalized_ids = _validated_webhook_id_filter(webhook_ids)
+        due_sql = "((status IN (?, ?) AND next_attempt_at<=?) OR (status=? AND updated_at<=?))"
+        scope_sql = (
+            ""
+            if normalized_ids is None
+            else " AND webhook_id IN ({})".format(",".join("?" for _ in normalized_ids))
+        )
+        parameters: list[object] = [
+            NotificationDeliveryStatus.PENDING.value,
+            NotificationDeliveryStatus.RETRY.value,
+            now.isoformat(),
+            NotificationDeliveryStatus.DELIVERING.value,
+            stale_before.isoformat(),
+        ]
+        if normalized_ids is not None:
+            parameters.extend(normalized_ids)
         with self._lock, self._connection:
             row = self._connection.execute(
                 "SELECT delivery_id FROM notification_deliveries "
-                "WHERE (status IN (?, ?) AND next_attempt_at<=?) "
-                "OR (status=? AND updated_at<=?) "
+                f"WHERE {due_sql}{scope_sql} "
                 "ORDER BY next_attempt_at, created_at, delivery_id LIMIT 1",
-                (
-                    NotificationDeliveryStatus.PENDING.value,
-                    NotificationDeliveryStatus.RETRY.value,
-                    now.isoformat(),
-                    NotificationDeliveryStatus.DELIVERING.value,
-                    stale_before.isoformat(),
-                ),
+                tuple(parameters),
             ).fetchone()
             if row is None:
                 return None
+            guard_parameters: list[object] = [
+                NotificationDeliveryStatus.DELIVERING.value,
+                now.isoformat(),
+                row["delivery_id"],
+                NotificationDeliveryStatus.PENDING.value,
+                NotificationDeliveryStatus.RETRY.value,
+                now.isoformat(),
+                NotificationDeliveryStatus.DELIVERING.value,
+                stale_before.isoformat(),
+            ]
+            guard_scope = (
+                ""
+                if normalized_ids is None
+                else (" AND webhook_id IN ({})".format(",".join("?" for _ in normalized_ids)))
+            )
+            if normalized_ids is not None:
+                guard_parameters.extend(normalized_ids)
             cursor = self._connection.execute(
-                "UPDATE notification_deliveries SET status=?, attempts=attempts+1, updated_at=? "
-                "WHERE delivery_id=? AND ((status IN (?, ?) AND next_attempt_at<=?) "
-                "OR (status=? AND updated_at<=?))",
-                (
-                    NotificationDeliveryStatus.DELIVERING.value,
-                    now.isoformat(),
-                    row["delivery_id"],
-                    NotificationDeliveryStatus.PENDING.value,
-                    NotificationDeliveryStatus.RETRY.value,
-                    now.isoformat(),
-                    NotificationDeliveryStatus.DELIVERING.value,
-                    stale_before.isoformat(),
-                ),
+                "UPDATE notification_deliveries SET status=?, attempts=attempts+1, "
+                f"updated_at=? WHERE delivery_id=? AND {due_sql}{guard_scope}",
+                tuple(guard_parameters),
             )
             if cursor.rowcount != 1:
                 return None
@@ -10245,6 +10487,25 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS processing_workers_status_heartbeat
                     ON processing_workers(status, last_heartbeat_at);
+                CREATE TABLE IF NOT EXISTS resident_services (
+                    instance_id TEXT PRIMARY KEY,
+                    service TEXT NOT NULL,
+                    registered_at TEXT NOT NULL,
+                    last_heartbeat_at TEXT NOT NULL,
+                    heartbeat_interval_seconds REAL NOT NULL,
+                    runtime_schema_version INTEGER NOT NULL,
+                    configuration_snapshot_id TEXT,
+                    status TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS resident_services_service_heartbeat
+                    ON resident_services(service, status, last_heartbeat_at);
+                CREATE TABLE IF NOT EXISTS resident_service_wait_state (
+                    instance_id TEXT PRIMARY KEY,
+                    service TEXT NOT NULL,
+                    waiting_reason TEXT,
+                    waiting_detail TEXT NOT NULL DEFAULT '',
+                    updated_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS automation_definition_due_state (
                     definition_id TEXT PRIMARY KEY, next_run_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL, last_occurrence_at TEXT,

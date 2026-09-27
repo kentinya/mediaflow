@@ -78,6 +78,7 @@ from mediaflow.application.processing_checkpoint import ProcessingCheckpointServ
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
+from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.application.storage_browser import (
     RuntimeFilesBrowserService,
     StorageBrowserError,
@@ -331,6 +332,7 @@ class MediaFlowApi:
         management_only: bool = False,
         worker_service: ProcessingWorkerService | None = None,
         webhook_transport: object | None = None,
+        resident_services: ResidentServiceService | None = None,
     ) -> None:
         if bearer_token and principals:
             raise ValueError("legacy bearer token cannot be combined with API principals")
@@ -434,6 +436,10 @@ class MediaFlowApi:
         )
         self._configuration_snapshot_id = configuration_snapshot_id
         self._configuration_snapshot_digest = configuration_snapshot_digest
+        # Resident-service presence is optional so an embedded/WSGI deployment
+        # that constructs the API without a durable database still answers the
+        # configuration surfaces it always supported.
+        self._resident_services = resident_services
         snapshot_validator = (
             configuration_service.validate_runtime_snapshot
             if configuration_service is not None
@@ -7894,6 +7900,55 @@ class MediaFlowApi:
             "nextAction": status.get("nextAction"),
             "canManageConfiguration": status.get("canManageConfiguration", False),
             "canActivateConfiguration": status.get("canActivateConfiguration", False),
+            # Infrastructure and work readiness are deliberately separate.  A
+            # correctly-waiting resident service is infrastructure-ready but has
+            # no work, and a fully configured deployment whose Scheduler is
+            # down is not infrastructure-ready even though its configuration is
+            # valid.  Conflating the two is what made the previous surfaces lie.
+            "infrastructure": self._infrastructure_readiness_document(),
+        }
+
+    def _infrastructure_readiness_document(self) -> dict[str, object]:
+        """Bounded, read-only resident-service presence for this deployment.
+
+        This is deliberately side-effect free: it reads the shared runtime
+        database only.  It never loads an Active configuration, opens a Storage
+        or Provider, sends a Webhook, admits work or migrates schema, so it is
+        safe to call during a configuration outage — which is exactly when an
+        operator most needs to know whether the rest of the deployment is
+        healthy.
+        """
+
+        service = self._resident_services
+        if service is None:
+            return {
+                "available": False,
+                "durableState": "resident service presence is unavailable in this deployment",
+                "nextAction": "start the API with the configured durable database",
+                "infrastructureReady": False,
+                "sideEffects": "none",
+            }
+        try:
+            projection = service.deployment_readiness()
+        except Exception as error:
+            # A shared-database fault during a read must stay a bounded reason,
+            # not an exception, because this document is itself the recovery
+            # surface.
+            return {
+                "available": False,
+                "durableState": (
+                    f"resident service presence could not be read ({type(error).__name__})"
+                ),
+                "nextAction": "restore database access, then refresh this status",
+                "infrastructureReady": False,
+                "sideEffects": "none",
+            }
+        return {
+            "available": True,
+            "infrastructureReady": bool(projection.get("infrastructureReady")),
+            "asOf": projection.get("asOf"),
+            "sideEffects": "none",
+            "services": projection.get("services", {}),
         }
 
     def _worker_readiness_document(

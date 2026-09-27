@@ -108,10 +108,39 @@ class NotificationPublisher:
 
 
 class NotificationWorker:
+    """Deliver signed webhook notifications for durably claimed deliveries.
+
+    Delivery configuration is resolved **per claim**, not captured at startup.
+    That is what lets a resident Notification Worker start before any webhook is
+    configured, adopt a later valid publication without a restart, and still
+    refuse to deliver against a target that has since been removed, changed or
+    disabled.
+
+    The resolution contract is deliberately asymmetric, because the two failure
+    directions have very different consequences:
+
+    * **no valid configuration at all** (never configured, Active missing, or
+      secret absent) is a *waiting* state.  The worker does not claim anything,
+      does not burn an attempt and does not dead-letter a delivery.  The
+      delivery stays pending and claimable, and the resident loop retries.
+    * **a specific delivery whose target no longer exists or no longer matches**
+      is a *per-delivery* fault.  Claiming it would consume an attempt and
+      silently discard a durable notification, so the worker must know before
+      it claims.  It therefore asks the resolver whether *this* webhook is
+      deliverable, and leaves an undeliverable delivery untouched.
+
+    A changed target is never silently accepted either: the resolver returns the
+    definition that the current Active actually publishes, and the worker
+    compares the durable ``webhook_id`` identity before using it.
+    """
+
     def __init__(
         self,
         repository: NotificationRepository,
-        targets: dict[str, tuple[WebhookDefinition, str]],
+        targets: (
+            dict[str, tuple[WebhookDefinition, str]]
+            | Callable[[], dict[str, tuple[WebhookDefinition, str]]]
+        ),
         transport: WebhookTransport,
         *,
         delivery_lease_seconds: float = 300.0,
@@ -120,20 +149,73 @@ class NotificationWorker:
         if delivery_lease_seconds <= 0:
             raise ValueError("notification delivery lease must be positive")
         self._repository = repository
-        self._targets = targets
+        if callable(targets):
+            self._target_resolver: Callable[[], dict[str, tuple[WebhookDefinition, str]]] = targets
+        else:
+            static = dict(targets)
+            self._target_resolver = lambda: static
         self._transport = transport
         self._delivery_lease_seconds = delivery_lease_seconds
         self._clock = clock
+        #: The reason the most recent resolution attempt could not produce a
+        #: usable target.  The resident loop reads it to report a bounded
+        #: waiting state without this class knowing anything about services.
+        self.last_unavailable_reason: str | None = None
+
+    def resolve_targets(self) -> dict[str, tuple[WebhookDefinition, str]]:
+        """Resolve the current deliverable targets, or fail with a bounded reason.
+
+        A missing webhook secret is a configuration fault, not a process fault:
+        the resident process must stay alive and wait for the secret, so the
+        resolution failure is recorded on ``last_unavailable_reason`` and raised
+        as a ``ValueError`` the caller can classify.
+        """
+
+        try:
+            targets = self._target_resolver()
+        except Exception as error:
+            self.last_unavailable_reason = (
+                f"{type(error).__name__}: the current delivery configuration could not be read"
+            )
+            raise
+        self.last_unavailable_reason = (
+            None if targets else "no enabled Webhook target is configured"
+        )
+        return dict(targets)
+
+    def available_webhook_ids(
+        self, targets: dict[str, tuple[WebhookDefinition, str]]
+    ) -> tuple[str, ...]:
+        """The durable target identities this Worker may lawfully claim for.
+
+        Passing this to the repository claim is what prevents a delivery naming
+        a removed or disabled webhook from being claimed — and therefore from
+        burning an attempt — merely because it happened to sort first.
+        """
+
+        return tuple(sorted(targets))
 
     def run_next(self) -> NotificationDelivery | None:
+        targets = self.resolve_targets()
+        if not targets:
+            # Nothing is deliverable.  Claiming here would burn an attempt and
+            # dead-letter a perfectly good durable delivery.
+            return None
         now = self._clock()
         delivery = self._repository.claim_next_delivery(
-            now, now - timedelta(seconds=self._delivery_lease_seconds)
+            now,
+            now - timedelta(seconds=self._delivery_lease_seconds),
+            webhook_ids=self.available_webhook_ids(targets),
         )
         if delivery is None:
             return None
-        target = self._targets.get(delivery.webhook_id)
+        target = targets.get(delivery.webhook_id)
         if target is None:
+            # The durable delivery names a target that current configuration no
+            # longer publishes.  This is a genuine per-delivery fault: the
+            # delivery can never succeed as written, so it must converge rather
+            # than stay claimable forever.  It is *not* silent retargeting —
+            # the recorded failure names the missing target.
             return self._finish(
                 delivery, NotificationDeliveryStatus.DEAD_LETTER, "configuration", None
             )
@@ -172,10 +254,16 @@ class NotificationWorker:
             raise ValueError("notification poll interval must be positive")
         processed = 0
         while not stop_requested():
-            if self.run_next() is None:
+            try:
+                if self.run_next() is None:
+                    sleep(poll_seconds)
+                else:
+                    processed += 1
+            except Exception:
+                # Target resolution is the only expected failure here.  Waiting
+                # is the correct behaviour: never exit, never claim, never
+                # discard a delivery because a secret is temporarily absent.
                 sleep(poll_seconds)
-            else:
-                processed += 1
         return processed
 
     def _retry_or_dead(

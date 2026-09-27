@@ -15,7 +15,15 @@ from mediaflow.container_entrypoint import (
     load_environment_file,
 )
 from mediaflow.final_cli import final_main
-from scripts.make_deployment_config import make_deployment_configuration
+from mediaflow.infrastructure.runtime_configuration import (
+    is_minimal_management_bootstrap,
+    load_minimal_management_bootstrap,
+)
+from scripts.make_deployment_config import (
+    DEFAULT_ADMIN_TOKEN_ENV,
+    make_deployment_configuration,
+    make_management_bootstrap,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -355,8 +363,43 @@ class ContainerArtifactTests(unittest.TestCase):
         for schedule in document["automation"]["schedules"]:
             self.assertFalse(schedule["enabled"])
 
+    def test_management_bootstrap_helper_needs_no_media_mount_and_no_secret(self) -> None:
+        """The default deployment bootstrap is usable with durable data alone.
+
+        A fresh installation has no media directory.  The rendered bootstrap
+        must therefore carry only the database locator and an environment
+        reference for the credential, and must be accepted by the strict
+        first-setup loader — otherwise the four Compose services cannot start
+        before the operator has configured anything.
+        """
+
+        document = make_management_bootstrap()
+        rendered = json.dumps(document, ensure_ascii=False)
+        self.assertTrue(is_minimal_management_bootstrap(document))
+        self.assertEqual(document["persistence"]["databasePath"], "/data/mediaflow.sqlite3")
+        self.assertEqual(document["api"]["principals"][0]["tokenEnv"], DEFAULT_ADMIN_TOKEN_ENV)
+        # No business object and no media path may be invented here.
+        for section in (
+            "storages",
+            "resourceLibraries",
+            "mediaLibraries",
+            "webhooks",
+            "automationTaskDefinitions",
+        ):
+            self.assertNotIn(section, document)
+        self.assertNotIn("/media/", rendered)
+        # A credential value must never be written into the document.
+        self.assertNotIn("MEDIAFLOW_API_TOKEN=", rendered)
+        self.assertNotIn("Bearer", rendered)
+        loaded = load_minimal_management_bootstrap(document)
+        self.assertEqual(loaded.database_path, "/data/mediaflow.sqlite3")
+
     @unittest.skipUnless(shutil.which("docker"), "Docker engine is not available")
     def test_compose_config_exactly_four_services_with_production_boundaries(self) -> None:
+        # A default deployment declares no media mount at all: installing
+        # MediaFlow and activating an empty baseline must not require a host
+        # media directory that a fresh installation does not have.  Adding one
+        # is an explicit overlay, verified separately below.
         self.assertEqual(
             compose_source_bind_mounts(),
             {
@@ -372,20 +415,6 @@ class ContainerArtifactTests(unittest.TestCase):
                     "source": "${MEDIAFLOW_ENV_FILE:-./.env.mediaflow}",
                     "target": "/run/mediaflow/deployment.env",
                     "read_only": "true",
-                    "bind": {"create_host_path": "false"},
-                },
-                "/media/incoming": {
-                    "type": "bind",
-                    "source": "${MEDIAFLOW_SOURCE_MEDIA_ROOT:-./media/incoming}",
-                    "target": "/media/incoming",
-                    "read_only": "true",
-                    "bind": {"create_host_path": "false"},
-                },
-                "/media/organized": {
-                    "type": "bind",
-                    "source": "${MEDIAFLOW_TARGET_MEDIA_ROOT:-./media/organized}",
-                    "target": "/media/organized",
-                    "read_only": "false",
                     "bind": {"create_host_path": "false"},
                 },
             },
@@ -469,14 +498,107 @@ class ContainerArtifactTests(unittest.TestCase):
                         "/data",
                         "/config/mediaflow.json",
                         "/run/mediaflow/deployment.env",
-                        "/media/incoming",
-                        "/media/organized",
                     },
                 )
                 if name == "api":
                     self.assertIn("ports", definition)
                 else:
                     self.assertNotIn("ports", definition)
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker engine is not available")
+    def test_optional_media_mount_overlay_is_explicit_confined_and_required(self) -> None:
+        """Local Storage gets a real, explicitly opted-in, confined mount.
+
+        The default topology must stay media-free, but an installation that
+        does want Local Storage needs both halves proven: the overlay adds
+        exactly the two confined mounts when the variables are set, and refuses
+        to render at all — with an actionable message rather than a silently
+        created empty directory — when they are not.
+        """
+
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "MEDIAFLOW_SOURCE_MEDIA_ROOT": "/host/media/incoming",
+                "MEDIAFLOW_TARGET_MEDIA_ROOT": "/host/media/organized",
+            }
+        )
+        result = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(ROOT / "compose.yaml"),
+                "-f",
+                str(ROOT / "compose.media-mounts.yaml"),
+                "config",
+                "--format",
+                "json",
+            ],
+            cwd=ROOT,
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        document = json.loads(result.stdout)
+        by_target = {
+            volume["target"]: volume for volume in document["services"]["worker"]["volumes"]
+        }
+        self.assertEqual(by_target["/media/incoming"]["source"], "/host/media/incoming")
+        self.assertIs(by_target["/media/incoming"]["read_only"], True)
+        self.assertEqual(by_target["/media/organized"]["source"], "/host/media/organized")
+        # Compose omits `read_only` when it is the read-write default, so the
+        # writable assertion must accept the key being absent.
+        self.assertIs(by_target["/media/organized"].get("read_only", False), False)
+        # Both must be non-creating, so a typo can never manufacture a media
+        # directory on the host.
+        for target in ("/media/incoming", "/media/organized"):
+            self.assertIs(by_target[target]["bind"]["create_host_path"], False)
+        # Every service must receive the same media topology.
+        for name, definition in document["services"].items():
+            with self.subTest(service=name):
+                targets = {item["target"] for item in definition["volumes"]}
+                self.assertEqual(
+                    targets,
+                    {
+                        "/data",
+                        "/config/mediaflow.json",
+                        "/run/mediaflow/deployment.env",
+                        "/media/incoming",
+                        "/media/organized",
+                    },
+                )
+
+        missing = os.environ.copy()
+        for name in ("MEDIAFLOW_SOURCE_MEDIA_ROOT", "MEDIAFLOW_TARGET_MEDIA_ROOT"):
+            missing.pop(name, None)
+        refused = subprocess.run(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(ROOT / "compose.yaml"),
+                "-f",
+                str(ROOT / "compose.media-mounts.yaml"),
+                "config",
+            ],
+            cwd=ROOT,
+            env=missing,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        # Compose reports the first unresolved variable; the message must name
+        # the exact environment variable the operator has to set.
+        self.assertIn("MEDIAFLOW_SOURCE_MEDIA_ROOT", refused.stderr)
+        # Both variables are genuinely required, not just the first one.
+        self.assertIn(
+            "MEDIAFLOW_TARGET_MEDIA_ROOT",
+            (ROOT / "compose.media-mounts.yaml").read_text(encoding="utf-8"),
+        )
 
 
 if __name__ == "__main__":

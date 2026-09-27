@@ -1,0 +1,55 @@
+# Optional Local Storage media mounts for MediaFlow Compose.
+#
+# The default `compose.yaml` starts the API and all three resident services with
+# the application bootstrap file, the durable data volume and the deployment
+# environment file only.  That is enough to install MediaFlow, open V2 Settings,
+# create the first Draft and activate a valid empty baseline — none of which
+# touches media.
+#
+# Actual Local Storage needs a real host directory.  Which one is a deployment
+# decision, so it is never guessed by a default value.  Apply this overlay when
+# you want MediaFlow to read source media and write organized media:
+#
+#   docker compose -f compose.yaml -f compose.media-mounts.yaml up -d
+#
+# Both directories are declared explicitly and confined: the source is mounted
+# read-only, the destination read-write, and neither may be auto-created.  A
+# missing host directory is therefore a startup error naming the exact variable
+# to set, instead of a silently created empty directory.
+#
+# Adding or changing a mount is a deployment change and may recreate
+# containers.  Publishing configuration is not: an eligible configuration
+# publication is adopted by the already-running resident services without a
+# restart.
+#
+# Required environment:
+#   MEDIAFLOW_SOURCE_MEDIA_ROOT  host directory exposed read-only at /media/incoming
+#   MEDIAFLOW_TARGET_MEDIA_ROOT  host directory exposed read-write at /media/organized
+#
+# Compose merges a service `volumes` list by container target, so declaring only
+# the two media mounts here adds them without restating the three deployment
+# mounts every service already has.
+
+x-mediaflow-media-volumes: &mediaflow-media-volumes
+  - type: bind
+    source: ${MEDIAFLOW_SOURCE_MEDIA_ROOT:?set MEDIAFLOW_SOURCE_MEDIA_ROOT to a host source media directory}
+    target: /media/incoming
+    read_only: true
+    bind:
+      create_host_path: false
+  - type: bind
+    source: ${MEDIAFLOW_TARGET_MEDIA_ROOT:?set MEDIAFLOW_TARGET_MEDIA_ROOT to a host organized media directory}
+    target: /media/organized
+    read_only: false
+    bind:
+      create_host_path: false
+
+services:
+  api:
+    volumes: *mediaflow-media-volumes
+  worker:
+    volumes: *mediaflow-media-volumes
+  scheduler:
+    volumes: *mediaflow-media-volumes
+  notification-worker:
+    volumes: *mediaflow-media-volumes
