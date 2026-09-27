@@ -11,10 +11,10 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 38 — MediaLibrary Files Workspace and Route Separation — PASS / CLOSED
-Slice 38 Base: 9e801ae4485bc95d714a8902bf45bf37896fbc2a
-Slice 38 Implementation Head: 7d4503e45dc3aa79628ed0d98e887167e1e7c529
-Slice 38 A Final Review: PASS / CLOSED — 2026-09-25
+Most recently closed large Slice: Slice 39 — Storage Management Workspace — PASS / CLOSED
+Slice 39 Base: d02539e49d5c99c3e3c0c70de5e994e42824a18e
+Slice 39 Implementation Head: f458646d3dac280b118a511c60ec53a5d3075d67
+Slice 39 A Final Review: PASS / CLOSED — 2026-09-27
 Next large Slice: A selects the next large Slice
 ```
 
@@ -26,7 +26,9 @@ the stable requirements layer. The stable common-file-management target retains 
 capability set; the current Slice 37 delivery boundary explicitly excludes direct browser
 Upload/Download and does not claim those surfaces as delivered.
 Slice 38 has implemented the MediaLibrary workspace, route-separation baseline and focused
-page-local editing requirements through its reviewed implementation head. The stable requirements
+page-local editing requirements through its reviewed implementation head. Slice 39 has implemented
+the Storage management workspace, provider-root/setup recovery and admitted-transfer Worker
+continuity/readiness through its reviewed implementation head. The stable requirements
 below describe the delivered authority and journey boundaries; future Slice contracts still own
 any further refinement.
 
