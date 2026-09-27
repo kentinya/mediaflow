@@ -28,9 +28,19 @@ image, Compose topology, runtime output and authenticated projections.
 - A local named volume is mounted at `/data`. SQLite, history, managed
   configuration evidence, Task/Job/Result state, notifications, audit and logs
   must be configured under `/data`.
-- Media Storage roots are separate bind mounts at `/media/incoming`
-  (read-only) and `/media/organized` (read-write). Host `/`, the Docker socket,
-  `/data`, and arbitrary unmapped paths are unsupported.
+- **No media mount is required to install or start MediaFlow.** The default
+  `compose.yaml` declares only the application configuration file, the
+  deployment environment file and `/data`. A fresh installation can therefore
+  start all four services, open V2 Settings, create the first Draft and activate
+  a valid empty baseline without any host media directory.
+- Local Storage is the one capability that needs real media. Adding it is an
+  explicit deployment step: apply the committed `compose.media-mounts.yaml`
+  overlay, which adds the two confined mounts at `/media/incoming` (read-only)
+  and `/media/organized` (read-write) and requires
+  `MEDIAFLOW_SOURCE_MEDIA_ROOT` and `MEDIAFLOW_TARGET_MEDIA_ROOT` to be set. Host
+  `/`, the Docker socket, `/data`, and arbitrary unmapped paths are
+  unsupported. Adding or changing a mount is a deployment change that may
+  recreate containers; publishing configuration is not.
 - Deployment secrets are values in a host-owned environment file mounted at
   `/run/mediaflow/deployment.env`. Compose source and rendered Compose output
   contain only the file path and variable references, never secret values.
@@ -54,9 +64,25 @@ image, Compose topology, runtime output and authenticated projections.
 python3 scripts/make_deployment_config.py --output config/mediaflow.json
 ```
 
-Edit `config/mediaflow.json` if your library layout differs. The generated file
-uses `/data/mediaflow.sqlite3`, `/data/history.jsonl`, `/media/incoming`, and
-`/media/organized`. `config/mediaflow.json` is Git-ignored.
+This renders the **management-only** bootstrap: the durable database locator and
+one environment reference for the API credential, with no Storage, library,
+policy, schedule or Webhook. It is deliberately the default, because it is the
+shape a fresh installation needs and it starts every service without any media
+mount. Open `/ui-v2/configuration`, create the first Draft, and activate a valid
+empty baseline; Storage and libraries are configured afterwards through the
+business pages.
+
+If you already have a Local Storage layout, render the complete example instead:
+
+```bash
+python3 scripts/make_deployment_config.py --mode media --output config/mediaflow.json
+```
+
+`--mode media` rewrites the example's Local Storage roots to `/media/incoming`
+and `/media/organized`, so it is only usable together with the optional media
+mount overlay below. Either way the generated file uses
+`/data/mediaflow.sqlite3` and, for `--mode media`, `/data/history.jsonl`.
+`config/mediaflow.json` is Git-ignored.
 
 - A deployment-owned environment file. Copy
   [deploy/mediaflow.env.example](deploy/mediaflow.env.example) to
@@ -75,19 +101,29 @@ cryptographic random source. Optional `TMDB_ACCESS_TOKEN` and
 `MEDIAFLOW_WEBHOOK_SECRET` references are only needed when the corresponding
 capability is enabled in configuration.
 
-- Explicit media directories:
+- Media directories are **only needed when Local Storage is actually used**.
+  Create them and apply the optional overlay:
 
 ```bash
 mkdir -p media/incoming media/organized
 chown 10001:10001 media/incoming media/organized
 chmod 0750 media/incoming media/organized
+
+export MEDIAFLOW_SOURCE_MEDIA_ROOT="$PWD/media/incoming"
+export MEDIAFLOW_TARGET_MEDIA_ROOT="$PWD/media/organized"
+
+docker compose -f compose.yaml -f compose.media-mounts.yaml up -d
 ```
 
-Media roots must exist before `docker compose up`; the Compose bind mount uses
-`create_host_path: false`, so a missing mount is a bounded error instead of a
-silently created empty directory.
+Media roots must exist before `up`; both the overlay and the container preflight
+use `create_host_path: false`, so a missing mount is a bounded, actionable error
+instead of a silently created empty directory. The overlay refuses to render at
+all when either variable is unset, naming the exact variable to set — which is
+what makes adding media an explicit choice rather than a default.
 
 ## Build and start
+
+Install and start with the default topology, no media required:
 
 ```bash
 docker compose build
@@ -98,7 +134,9 @@ docker compose ps
 `MEDIAFLOW_IMAGE`, `MEDIAFLOW_CONFIG_FILE`, `MEDIAFLOW_ENV_FILE`,
 `MEDIAFLOW_SOURCE_MEDIA_ROOT`, `MEDIAFLOW_TARGET_MEDIA_ROOT`,
 `MEDIAFLOW_API_BIND`, `MEDIAFLOW_API_PORT`, `MEDIAFLOW_UID`, and
-`MEDIAFLOW_GID` are optional overrides. Defaults are shown in `compose.yaml`.
+`MEDIAFLOW_GID` are optional overrides. The media variables are read only by the
+optional `compose.media-mounts.yaml` overlay. Defaults are shown in
+`compose.yaml` and `compose.media-mounts.yaml`.
 The default host API bind is `127.0.0.1`; set `MEDIAFLOW_API_BIND=0.0.0.0` only
 when the host network is a trusted LAN or the port is behind an HTTPS reverse
 proxy. MediaFlow does not provide TLS.
@@ -116,11 +154,29 @@ Each Compose service also declares a bounded healthcheck. The healthcheck runs
 container and repeats the read-only preflight. The API additionally requests
 the loopback `/health` endpoint. The Worker additionally reads the shared runtime
 database and requires a live, schema-compatible registration advertising both
-ResourceLibrary and MediaLibrary transfer commands. This check does not require
-an Active configuration and performs no Storage or Provider call. Healthchecks have a 3-second command
-timeout, run every 10 seconds after a 15-second start period, and mark a
-service unhealthy after five consecutive failures. They never scan Storage,
-call Providers, create work, send notifications or mutate media.
+ResourceLibrary and MediaLibrary transfer commands.
+
+Every resident service additionally publishes a **durable registration and
+heartbeat** in the shared runtime database, and the healthcheck requires one.
+This is what makes the answer "the real process of this container is running"
+rather than "a configuration file exists on disk" — a Scheduler that crashed on
+startup cannot report itself healthy.
+
+**Infrastructure readiness and work readiness are different things.** The
+healthcheck reports infrastructure readiness only: a live, schema-compatible
+resident process. A Scheduler or Notification Worker that is waiting for its
+first business configuration is *healthy*; it is running, registered and
+reporting. Treating "waiting for configuration" as a container failure would
+restart a healthy process forever. Whether a service can actually do work yet —
+and the bounded reason it cannot — is reported by the authenticated status
+surface (`GET /api/v1/management/readiness`), where an operator is present to act
+on it.
+
+None of these checks requires an Active configuration, and they perform no
+Storage or Provider call, admit no work and mutate nothing. Healthchecks have a
+3-second command timeout, run every 10 seconds after a 15-second start period,
+and mark a service unhealthy after five consecutive failures. They never scan
+Storage, call Providers, create work, send notifications or mutate media.
 
 ## V2 frontend artifact and serving
 
@@ -154,6 +210,50 @@ The production artifact flow is one image, two stages, one Python runtime:
   layout needs no override and no host mount of `web/dist`. If the configured
   directory has no built artifact, `/ui-v2/*` fails closed with 404 while the
   API and V1 `/ui` keep serving.
+
+## CURRENT — Resident services across empty setup and publication (Slice 40)
+
+All three resident services — Worker, Scheduler and Notification Worker — start
+from deployment-owned database/principal authority alone, before any Active
+configuration exists, and without a media mount. They register a durable
+heartbeat in the shared runtime database, which is what makes their presence an
+observed fact.
+
+A resident process stays alive across the whole lifecycle:
+
+- **No Active yet.** The Scheduler and Notification Worker report a bounded
+  waiting reason (normally `unconfigured`) and do nothing. Reading configuration
+  or activating an empty baseline creates no Job, Task, delivery or Storage
+  mutation.
+- **Empty Active.** The same: services are healthy, the work is unconfigured, and
+  the operator is told exactly what to configure next.
+- **Eligible publication.** The Scheduler resolves the *current* Active at each
+  admission rather than binding to whatever existed at startup, so a new
+  schedule or Automation definition is adopted with no restart. The Notification
+  Worker resolves its delivery configuration at every claim for the same reason.
+- **Recoverable faults.** A briefly unreadable Active or database is a waiting
+  state, not a crash: the process keeps running, records a bounded reason and
+  retries. Killing a resident service never repairs a configuration and always
+  loses in-flight progress.
+
+Two boundaries are deliberately strict, because violating them would silently
+issue or deliver work nobody authorised:
+
+- The Scheduler emits an occurrence only against one current valid Active
+  snapshot, so a missing or corrupt Active schedules nothing and never advances
+  an occurrence that was not issued. Occurrence identity, idempotency, scope,
+  grants and capacity protections are unchanged.
+- The Notification Worker never claims a delivery whose durable target it cannot
+  deliver to. With no usable target it waits without claiming, so no attempt is
+  burned and no delivery is dead-lettered; a target that current configuration no
+  longer publishes converges with a truthful `configuration` failure rather than
+  being silently retargeted. Bounded retry/dead-letter, leases and at-least-once
+  semantics are unchanged.
+
+Admitted work keeps its own immutable pin: new work is admitted against current
+Active, while already-admitted or in-flight work keeps the revision it was
+admitted under. A missing current Active does not invalidate an intact admitted
+pin, and a broken pin blocks that work before any new mutation.
 
 ## CURRENT — Worker startup and transfer readiness (Slice 39)
 
@@ -407,8 +507,11 @@ pinned context; those are distinct signals, not hidden failures.
 
 - **Missing config or environment file:** Compose reports the bind source path
   before starting the container. Create the file and retry.
-- **Missing media root:** Compose/container preflight reports the missing mount
-  path. Mount the intended directory or correct the variable, then retry.
+- **Missing media root:** only possible when the optional media overlay is
+  applied. The overlay refuses to render and names `MEDIAFLOW_SOURCE_MEDIA_ROOT`
+  or `MEDIAFLOW_TARGET_MEDIA_ROOT`; container preflight reports a configured
+  Local Storage root that is not a mounted directory. Create the directory, or
+  drop the overlay for a configuration-only deployment, then retry.
 - **Inaccessible `/data` or media path:** preflight reports the exact directory
   and whether it must be readable or writable. Fix UID/GID ownership or mount
   authority and retry; MediaFlow never falls back to root, another path, or the
@@ -443,6 +546,27 @@ python3 scripts/docker_smoke_test.py
 It verifies four services, authenticated API/Web reachability, a durable job
 after an API restart, non-root execution, secret-free output, and a missing
 media-mount failure. If no Docker engine is present it prints `SKIP`.
+
+The Slice 40 empty-baseline harness proves the resident-service journey with no
+media mount at all:
+
+```bash
+python3 scripts/docker_empty_baseline_smoke_test.py
+```
+
+It runs two isolated stacks. The first uses the **default** topology: all four
+services start with only the bootstrap file, the environment file and `/data`;
+the resident services register and heartbeat; Scheduler and Notification Worker
+report themselves waiting with a bounded reason; an empty baseline is activated
+through the authenticated API and creates no Job, Task, delivery or mutation; an
+eligible schedule and Webhook are then published and the **same** container
+identities produce an eligible occurrence and a signed delivery to a controlled
+local HTTPS receiver. The second stack is a separate project with the optional
+media overlay applied *before* startup, so a permitted mount change is never
+confused with configuration adoption.
+
+If a Docker daemon cannot bind-mount the platform temporary directory, point the
+harness at a directory the daemon can see with `MEDIAFLOW_SMOKE_TEMP_DIR`.
 
 The Task 29.3 health harness adds the full signal journey:
 

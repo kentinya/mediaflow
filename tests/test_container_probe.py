@@ -13,6 +13,7 @@ from unittest.mock import patch
 from mediaflow.container_probe import (
     liveness_error,
     probe_preflight_errors,
+    resident_service_readiness_error,
     worker_readiness_error,
 )
 from mediaflow.container_probe import main as probe_main
@@ -143,6 +144,70 @@ class ContainerProbeTests(unittest.TestCase):
                     now=datetime.now(UTC),
                 )
             self.assertIsNone(worker_readiness_error(environ=environment))
+
+    def test_resident_probe_requires_a_real_registered_heartbeat(self) -> None:
+        """Compose must check the process, not the presence of a config file.
+
+        A preflight that only validated files would report a container healthy
+        even when the Scheduler had crashed on startup, which is exactly the
+        failure this boundary exists to make observable.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _configuration(root)
+            environment = _environment(config, root / "data")
+            runtime = root / "data" / "mediaflow.sqlite3"
+            for service in ("scheduler", "notification-worker"):
+                with self.subTest(service=service, state="absent"):
+                    error = resident_service_readiness_error(service, environ=environment)
+                    self.assertIsNotNone(error)
+                    self.assertIn("infrastructure-ready", error)
+            with SQLiteTaskRepository(runtime) as repository:
+                repository.register_resident_service(
+                    "scheduler", "sched-1", 5.0, SCHEMA_VERSION, None, datetime.now(UTC)
+                )
+            self.assertIsNone(resident_service_readiness_error("scheduler", environ=environment))
+            # A stopped registration must fail closed again.
+            with SQLiteTaskRepository(runtime) as repository:
+                repository.stop_resident_service("sched-1", datetime.now(UTC))
+            self.assertIsNotNone(resident_service_readiness_error("scheduler", environ=environment))
+
+    def test_resident_probe_reports_a_waiting_service_as_healthy(self) -> None:
+        """Waiting for first configuration is normal and must not restart anything."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = _configuration(root)
+            environment = _environment(config, root / "data")
+            runtime = root / "data" / "mediaflow.sqlite3"
+            with SQLiteTaskRepository(runtime) as repository:
+                repository.register_resident_service(
+                    "scheduler", "sched-1", 5.0, SCHEMA_VERSION, None, datetime.now(UTC)
+                )
+                repository.set_resident_service_wait_state(
+                    "scheduler",
+                    "sched-1",
+                    "unconfigured",
+                    "no valid Active configuration is published",
+                    datetime.now(UTC),
+                )
+            self.assertIsNone(resident_service_readiness_error("scheduler", environ=environment))
+
+    def test_resident_probe_fails_closed_on_an_unreadable_database(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            environment = {
+                "MEDIAFLOW_CONFIG": str(root / "missing.json"),
+                "MEDIAFLOW_DATA_DIR": str(root),
+            }
+            error = resident_service_readiness_error("scheduler", environ=environment)
+            self.assertIsNotNone(error)
+            self.assertIn("unavailable", error)
+
+    def test_resident_probe_rejects_an_unknown_service(self) -> None:
+        with self.assertRaisesRegex(ValueError, "unknown probe service"):
+            resident_service_readiness_error("not-a-service", environ={})
 
     def test_liveness_requires_loopback_plain_http_and_accepts_ok_payload(self) -> None:
         with self.assertRaisesRegex(ValueError, "loopback"):

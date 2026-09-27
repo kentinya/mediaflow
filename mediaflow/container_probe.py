@@ -2,11 +2,20 @@
 
 Compose healthchecks run this probe inside each service container.  It repeats
 the read-only startup preflight (configuration file, persistent volume and
-media mount paths, permission checks and API secret-reference presence) and,
-for the API service, also performs a bounded loopback request to the public
-``/health`` liveness endpoint.  It never scans Storage contents, calls a
-Metadata Provider, creates Jobs or Tasks, sends notifications or mutates
-Storage.
+media mount paths, permission checks and API secret-reference presence), proves
+that the real resident process of this container is registered and heartbeating,
+and — for the API service — also performs a bounded loopback request to the
+public ``/health`` liveness endpoint.
+
+Infrastructure readiness is deliberately separate from work readiness.  A
+Scheduler or Notification Worker that is waiting for its first business
+configuration is healthy: it is running, it is registered and it is reporting.
+Work readiness depends on configuration and is reported by the authenticated
+status surface, where an operator can act on it.  Conflating the two would make
+Compose restart a perfectly healthy process forever.
+
+The probe never scans Storage contents, calls a Metadata Provider, creates Jobs
+or Tasks, sends notifications, admits work or mutates Storage.
 """
 
 from __future__ import annotations
@@ -21,6 +30,7 @@ import urllib.request
 from collections.abc import Mapping
 
 from mediaflow.application.automation import ProcessingWorkerService
+from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.container_entrypoint import (
     container_preflight_errors,
     load_environment_file,
@@ -160,6 +170,49 @@ def worker_readiness_error(*, environ: Mapping[str, str] | None = None) -> str |
     return None
 
 
+def resident_service_readiness_error(
+    service: str,
+    *,
+    environ: Mapping[str, str] | None = None,
+) -> str | None:
+    """Return bounded infrastructure readiness from real registered heartbeats.
+
+    Compose must check that the process it started is actually running, not
+    that a configuration file exists on disk.  A resident service publishes its
+    own heartbeat, so this answers the real question: did a live, schema
+    compatible process of this service recently register and keep reporting?
+
+    A *waiting* service is infrastructure-ready.  Waiting for initial business
+    configuration is the documented normal state, so treating it as a container
+    failure would restart a healthy process forever.  Work readiness — whether
+    this service can actually do anything yet — is reported by the authenticated
+    status surface instead, where an operator is present to act on it.
+    """
+
+    if service not in PROBE_SERVICE_COMMANDS:
+        raise ValueError(f"unknown probe service {service!r}")
+    if service == "api":
+        # The API container proves liveness through its own loopback request,
+        # which the caller performs separately.  Re-deriving it here would open
+        # a second, redundant path to the same answer.
+        return None
+    environment = probe_environment(environ)
+    configured = environment.get("MEDIAFLOW_CONFIG", "/config/mediaflow.json")
+    try:
+        with open(configured, encoding="utf-8") as stream:
+            document = json.load(stream)
+        database_path = load_management_bootstrap(document).database_path
+        with SQLiteTaskRepository(database_path) as repository:
+            resident = ResidentServiceService(repository, runtime_schema_version=SCHEMA_VERSION)
+            readiness = resident.evaluate_readiness(service)
+    except (OSError, ValueError, RuntimeError):
+        return f"resident {service} registration database or runtime schema is unavailable"
+    if readiness.get("ready"):
+        return None
+    condition = str(readiness.get("condition", "unavailable"))[:64]
+    return f"resident {service} is not infrastructure-ready ({condition})"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m mediaflow.container_probe",
@@ -195,6 +248,10 @@ def main(argv: list[str] | None = None) -> int:
         if error is not None:
             sys.stderr.write(f"MediaFlow healthcheck failed: {error}\n")
             return 1
+    resident_error = resident_service_readiness_error(arguments.service)
+    if resident_error is not None:
+        sys.stderr.write(f"MediaFlow healthcheck failed: {resident_error}\n")
+        return 1
     if arguments.url is not None:
         try:
             error = liveness_error(arguments.url, timeout=arguments.timeout)
