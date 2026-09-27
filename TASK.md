@@ -108,6 +108,7 @@ revision, package-export and System Settings API contracts → focused Python/AP
 `web/src/features/configuration/ConfigurationPage.tsx`, `web/src/features/configuration/ConfigurationPage.test.tsx`, `web/src/shared/api/configuration-api.ts`, `web/src/routes/router.tsx`
 `web/src/features/configuration/ConfigurationPage.tsx`, `web/src/features/configuration/ConfigurationPage.test.tsx`, `web/src/shared/api/configuration-api.ts`, `web/src/routes/router.tsx`
 Correction pass updates these same Settings files for B's three blockers.
+Second correction pass also updates `web/src/shared/api/configuration-api.ts` for bounded 409 conflict details.
 
 ### Implemented
 将 `/ui-v2/configuration` 替换为认证的 React Settings 页面：读取后端权威状态，区分 setup-required、Draft、empty/populated Active 与不可用 authority；提供显式首 Draft/恢复、Revision JSON 检查、脱敏包导出、Draft 验证与 checked-activate。System Settings 编辑仅从后端 `sections` allowlist 生成字段选择器并携带精确版本/Active fencing，所有写操作都由显式按钮触发；复用统一授权边界保留 401/403 行为，失败提示保持有界且不暴露原始异常或秘密。
@@ -131,6 +132,7 @@ Correction pass updates these same Settings files for B's three blockers.
  - `python3 scripts/check_governance.py` — PASS
  - `git diff --check` — PASS
 - Correction focused test: `cd web && npm test -- --run src/features/configuration/ConfigurationPage.test.tsx` — PASS (5 tests)
+- Second correction focused test: `cd web && npm test -- --run src/features/configuration/ConfigurationPage.test.tsx` — PASS (7 tests)
 
 ### Decisions
 前端只消费既有 configuration/status、revision、system settings、validate/activate 与 package export 契约，不新增配置消费者或绕过后端权限。Revision JSON 使用后端 detail 的已脱敏 `document`；Active 与 Draft 用独立标签呈现。页面刷新只重新读取状态，不自动创建、验证或激活。
@@ -143,18 +145,19 @@ Resident Worker/Scheduler/Notification 生命周期、部署/Compose 变化及�
 ### Risks / Deviations
 本次只完成 Web Settings 垂直面；工作树中原有的文档图片未纳入提交。
 本次只完成 Web Settings 垂直面；Correction pass reran the full Python/Web T4 gates. Only pre-existing ResourceWarning output remains, with no test failures. 工作树中原有的文档图片未纳入提交。
+Second correction fixes Active `revisionVersion` fencing and preserves bounded first-Draft 409 recovery identity; no new external dependency or authority is introduced.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d9be46e8126217590366a303052a65f87e54e839
+Head SHA: [correction commit SHA]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 95667df757b3682b01dad024cc586d726e8cd89b..d6dc184042ff11abe03b13a3d7b9f142b73d26f2
+Reviewed: 95667df757b3682b01dad024cc586d726e8cd89b..d2849c9006bdd365f1d1b05cab21ec2cb4c86dde
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
@@ -163,25 +166,24 @@ Next: SAME TASK FIX LOOP
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
 
-- Draft System Settings edits lose the mutable optimistic version needed by the next action. The
-  backend projection exposes `draftVersion` as the current edit token and `revisionVersion` as the
-  immutable revision sequence (`mediaflow/domain/system_settings.py:393-430`), but
-  `ConfigurationPage.tsx:146-151` prefers `updated.revisionVersion`. In the legal first-Draft and
-  successor-Draft flows, the first edit increments the Draft version while the revision sequence
-  remains fixed; the subsequent checked-activate therefore sends a stale `expectedVersion` and is
-  rejected. Preserve/use `draftVersion` for Draft saves and activation, and add a focused regression
-  covering edit → validate → checked-activate (plus a second edit) through the real API contract.
-- Viewer/read-only state exposes mutation controls for every selected Draft. The validate and
-  checked-activate buttons at `ConfigurationPage.tsx:259-281` are rendered without checking
-  `canManageConfiguration` or `canActivateConfiguration`, so a Viewer is shown actions that the
-  backend will reject with 403 and receives only the generic mutation failure banner. This violates
-  RO-1's permitted read-only state/admin guidance and the Task's Viewer/recovery acceptance. Gate
-  each action by the corresponding backend permission and render bounded administrator guidance;
-  retain backend enforcement and cover Viewer with an existing Draft in Web tests.
-- Revision/settings inspection has no bounded failure path. `inspect` at
-  `ConfigurationPage.tsx:105-118` awaits `Promise.all` without handling a 404/503/malformed
-  response, and callers intentionally discard the promise (`void inspect(...)`). A legal stale or
-  unavailable authority can therefore leave the page with an unhandled rejection and no visible
-  durable-state explanation or recovery action, contrary to RO-1/RO-3 unavailable and recovery
-  behavior. Catch the read failure, preserve the prior selection, and show the bounded API error
-  plus refresh/retry guidance; add a focused test for revision/settings read failure.
+- Active-to-successor System Settings edits send the wrong optimistic identity. The page constructs
+  `expectedActiveVersion: active.version` at `ConfigurationPage.tsx:143-150`, while the production
+  successor path compares against `active.revision_sequence` (`mediaflow/application/configuration_snapshot.py:513-536`).
+  The repository contract explicitly keeps the immutable `revisionVersion` distinct from the
+  mutable Draft edit token (`mediaflow/domain/system_settings.py:396-403`), and the existing API
+  test requires Active edits to send `expectedActiveVersion: active_view["revisionVersion"]`
+  (`tests/test_system_settings_management.py:631-642`). In a legal published configuration whose
+  mutable `version` differs from its revision sequence, an administrator cannot create a successor
+  Draft from the Settings page and the required Active → edit journey is broken. Use the exact
+  Active revision identity (`revisionVersion`/revision sequence) and add a focused Web/API regression
+  that first advances the Active edit/version independently, then saves Settings from Active.
+- Repeated first-Draft creation does not expose the durable conflict/recovery state. The backend
+  returns a bounded 409 with `durableState: setup_draft_preserved`, the existing Draft identity and
+  a resume action (`tests/test_management_setup.py:327-336`), but `createFirstDraft`/`request` maps
+  every non-2xx response to the generic `ConfigurationApiError` and the mutation handler only shows
+  `操作未完成...` (`web/src/shared/api/configuration-api.ts:35-43`,
+  `web/src/features/configuration/ConfigurationPage.tsx:75-84`). In the current legal production
+  journey, a concurrent/repeated click therefore hides the exact durable Draft and tells the admin
+  only to refresh, violating RO-1's explicit repeated-creation recovery and the Task's conflict
+  acceptance. Preserve a bounded conflict category/details (without raw exceptions/secrets), render
+  the existing Draft/resume action, and add a focused Web regression for a 409 first-Draft response.

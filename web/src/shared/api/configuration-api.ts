@@ -13,7 +13,13 @@ export interface ConfigurationStatus {
 }
 
 export class ConfigurationApiError extends ApiReadError {
-  constructor(category: ApiReadErrorCategory) {
+  readonly status: number | null;
+  readonly details: Record<string, unknown> | null;
+  constructor(
+    category: ApiReadErrorCategory,
+    status: number | null = null,
+    details: Record<string, unknown> | null = null,
+  ) {
     super(
       category,
       category === "forbidden"
@@ -23,6 +29,15 @@ export class ConfigurationApiError extends ApiReadError {
           : "配置状态暂时不可用,请刷新后重试。",
     );
     this.name = "ConfigurationApiError";
+    this.status = status;
+    this.details = details;
+  }
+}
+
+export class ConfigurationConflictError extends ConfigurationApiError {
+  constructor(details: Record<string, unknown>) {
+    super("rejected", 409, details);
+    this.name = "ConfigurationConflictError";
   }
 }
 
@@ -46,6 +61,24 @@ async function request<T>(
   }
   if (response.status === 401) throw new ConfigurationApiError("unauthorized");
   if (response.status === 403) throw new ConfigurationApiError("forbidden");
+  if (response.status === 409) {
+    let details: Record<string, unknown> = {};
+    try {
+      const body = (await response.clone().json()) as {
+        error?: { details?: unknown };
+      };
+      if (
+        body.error?.details &&
+        typeof body.error.details === "object" &&
+        !Array.isArray(body.error.details)
+      ) {
+        details = body.error.details as Record<string, unknown>;
+      }
+    } catch {
+      /* bounded conflict fallback below */
+    }
+    throw new ConfigurationConflictError(details);
+  }
   if (!response.ok)
     throw new ConfigurationApiError(
       response.status >= 500 ? "unavailable" : "rejected",
