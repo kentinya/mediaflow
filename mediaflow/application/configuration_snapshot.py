@@ -33,6 +33,42 @@ from mediaflow.infrastructure.runtime_configuration import (
 )
 
 MANAGED_CONFIGURATION_DOCUMENT_SCHEMA_VERSION = 1
+
+_BUSINESS_CAPABILITY_SECTIONS = {
+    "storage": "storages",
+    "resourceLibrary": "resourceLibraries",
+    "mediaLibrary": "mediaLibraries",
+    "recognition": "recognitionTypes",
+    "metadata": "metadataPolicies",
+    "naming": "namingPolicies",
+    "classification": "classificationPolicies",
+    "organize": "organizePolicies",
+    "automation": "automationTaskDefinitions",
+    "notification": "webhooks",
+}
+
+
+def _business_capability_status(document: object) -> dict[str, object]:
+    """Project bounded capability state without exposing configuration values."""
+
+    if not isinstance(document, dict):
+        return {"businessState": "UNAVAILABLE", "items": {}}
+    items: dict[str, dict[str, object]] = {}
+    configured = False
+    for capability, section in _BUSINESS_CAPABILITY_SECTIONS.items():
+        values = document.get(section, [])
+        count = len(values) if isinstance(values, list) else 0
+        configured = configured or count > 0
+        items[capability] = {
+            "state": "CONFIGURED" if count else "UNCONFIGURED",
+            "nextAction": None if count else f"configure {capability}",
+        }
+    return {
+        "businessState": "PARTIALLY_CONFIGURED" if configured else "EMPTY_ACTIVE",
+        "items": items,
+    }
+
+
 FIRST_SETUP_STARTER_DOCUMENT_VERSION = 1
 FIRST_SETUP_KIND = "first_runtime_setup"
 MAX_VALIDATION_ERRORS = 16
@@ -207,7 +243,15 @@ class ManagedConfigurationService:
             # setup, which explicitly has no business runtime.
             runtime_configured = True
         runtime_ready = managed_activation and runtime_configured
-        if setup_draft is not None:
+        capabilities = _business_capability_status(active.document if active is not None else None)
+        empty_active = (
+            managed_activation
+            and runtime_configured
+            and capabilities.get("businessState") == "EMPTY_ACTIVE"
+        )
+        if empty_active:
+            next_action = "配置已激活，媒体业务尚未配置；前往 Storage 或资源库配置"
+        elif setup_draft is not None:
             next_action = (
                 "open and resume the existing setup Draft, complete guided setup, "
                 "validate it, and activate it"
@@ -228,6 +272,9 @@ class ManagedConfigurationService:
             "runtimeConfigured": runtime_configured,
             "runtimeReady": runtime_ready,
             "workflowAvailable": runtime_configured,
+            "businessState": capabilities["businessState"],
+            "capabilities": capabilities["items"],
+            "emptyActive": empty_active,
             "recoveryRequired": managed_activation and not runtime_configured,
             "unavailableReason": unavailable_reason,
             "revisions": [self._revision_summary(item) for item in revisions],
@@ -258,6 +305,9 @@ class ManagedConfigurationService:
             "runtimeConfigured": status["runtimeConfigured"],
             "runtimeReady": status["runtimeReady"],
             "workflowAvailable": status["workflowAvailable"],
+            "businessState": status["businessState"],
+            "capabilities": status["capabilities"],
+            "emptyActive": status["emptyActive"],
             "recoveryRequired": status["recoveryRequired"],
             "unavailableReason": status["unavailableReason"],
             "lastKnownActive": status["lastKnownActive"],
