@@ -6,6 +6,9 @@ import json
 import re
 from datetime import datetime
 
+from mediaflow.domain.configuration_management import (
+    portable_managed_configuration_document,
+)
 from mediaflow.domain.manual_safety import (
     contains_manual_secret,
     redact_evidence_text,
@@ -284,9 +287,18 @@ def build_configuration_package(
     *,
     generated_at: datetime,
 ) -> dict[str, object]:
-    """Build one bounded, secret-free configuration package for a revision."""
+    """Build one bounded, secret-free configuration package for a revision.
 
-    safe_document, redaction_evidence = redact_configuration_document(revision.document)
+    The payload document uses the shared managed-configuration projection, so
+    a portable package never carries deployment startup authority (database
+    locator or API principal identity); every supported managed family and
+    permitted environment reference stays intact and the receiving deployment
+    rebinds its own authority on import.
+    """
+
+    safe_document, redaction_evidence = redact_configuration_document(
+        portable_managed_configuration_document(revision.document)
+    )
     document_digest = canonical_digest(safe_document)
     payload = {
         "schemaVersion": revision.schema_version,

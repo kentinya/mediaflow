@@ -28,6 +28,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationObjectReferenced,
     ConfigurationSetupCheckStatus,
     ConfigurationVersionConflict,
+    portable_managed_configuration_document,
 )
 from mediaflow.domain.metadata import (
     MediaCandidate,
@@ -4591,7 +4592,19 @@ class ConfigurationObjectJourneyTests(unittest.TestCase):
                 )
                 status, raw = request(api, f"/api/v1/configuration/revisions/{draft.revision_id}")
                 self.assertEqual(status, 200)
-                self.assertEqual(raw["document"], document)
+                # The revision JSON response carries the shared bounded managed
+                # projection: every managed family is preserved while the
+                # deployment-owned database locator and API principal identity
+                # are excluded from the response document.
+                self.assertEqual(raw["document"], portable_managed_configuration_document(document))
+                self.assertNotIn("persistence", raw["document"])
+                self.assertNotIn("principals", raw["document"].get("api", {}))
+                # Managed System Settings inside ``api`` are not deployment
+                # identity and stay visible.
+                self.assertIn("remoteExecution", raw["document"]["api"])
+                # The persisted Draft keeps its complete authority; only the
+                # response projection strips it.
+                self.assertEqual(service.require(draft.revision_id).document, document)
                 corrected = copy.deepcopy(document)
                 corrected["classificationPolicies"] = [
                     {

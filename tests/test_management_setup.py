@@ -29,11 +29,14 @@ from mediaflow.interfaces.service_api import MediaFlowApi
 
 def request(api, path, *, method="GET", token="admin-token", body=None):
     raw = b"" if body is None else json.dumps(body).encode("utf-8")
+    query = ""
+    if "?" in path:
+        path, query = path.split("?", 1)
     statuses = []
     environ = {
         "REQUEST_METHOD": method,
         "PATH_INFO": path,
-        "QUERY_STRING": "",
+        "QUERY_STRING": query,
         "CONTENT_LENGTH": str(len(raw)),
         "REMOTE_ADDR": "127.0.0.1",
         "wsgi.input": io.BytesIO(raw),
@@ -335,6 +338,188 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(conflict["error"]["details"]["durableState"], "setup_draft_preserved")
         self.assertEqual(conflict["error"]["details"]["resumeAction"]["method"], "GET")
         self.assertEqual(len(self.configuration_repository.list_revisions()), 1)
+
+    def test_settings_json_excludes_deployment_authority_for_draft_and_active(self) -> None:
+        """The Draft/Active JSON shown in Settings carries no deployment authority.
+
+        Reproduction of the reviewed blocker: on the fresh management-only
+        instance, create the first Draft and read the revision JSON; then
+        activate the empty baseline and read the Active JSON.  Both must
+        preserve the immutable revision identity and every managed family while
+        excluding ``persistence.databasePath`` and ``api.principals``.
+        """
+
+        status, created = request(
+            self.api, "/api/v1/configuration/drafts/first", method="POST", body=None
+        )
+        self.assertEqual(status, 201)
+        revision_id = created["revisionId"]
+
+        status, draft_detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
+        self.assertEqual(status, 200)
+        draft_document = draft_detail["document"]
+        self.assertNotIn("persistence", draft_document)
+        self.assertNotIn("principals", draft_document.get("api", {}))
+        encoded = json.dumps(draft_detail, ensure_ascii=False)
+        self.assertNotIn(self.database, encoded)
+        self.assertNotIn("MF_ADMIN_TOKEN", encoded)
+        self.assertNotIn("MF_VIEWER_TOKEN", encoded)
+        # The immutable revision identity is preserved separately.
+        self.assertEqual(draft_detail["revisionId"], revision_id)
+        self.assertEqual(draft_detail["version"], created["version"])
+        self.assertEqual(draft_detail["digest"], created["digest"])
+        # Every managed family is preserved, including managed System Settings
+        # that live inside ``api``.
+        self.assertEqual(draft_document["setup"]["kind"], "first_runtime_setup")
+        self.assertEqual(draft_document["storages"], [])
+        self.assertEqual(draft_document["resourceLibraries"], [])
+        self.assertEqual(draft_document["mediaLibraries"], [])
+        self.assertEqual(draft_document["recognitionTypes"], [])
+        self.assertEqual(draft_document["automationTaskDefinitions"], [])
+        self.assertFalse(draft_document["api"]["remoteExecution"]["enabled"])
+
+        status, validated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/validate",
+            method="POST",
+            body={},
+        )
+        self.assertEqual(status, 200)
+        status, activated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/activate",
+            method="POST",
+            body={"expectedVersion": validated["version"], "checked": True},
+        )
+        self.assertEqual(status, 200)
+
+        status, active_detail = request(
+            self.api, f"/api/v1/configuration/revisions/{activated['revisionId']}"
+        )
+        self.assertEqual(status, 200)
+        active_document = active_detail["document"]
+        self.assertNotIn("persistence", active_document)
+        self.assertNotIn("principals", active_document.get("api", {}))
+        self.assertNotIn(self.database, json.dumps(active_detail, ensure_ascii=False))
+        self.assertEqual(active_detail["status"], "active")
+        self.assertEqual(active_detail["revisionId"], activated["revisionId"])
+
+    def test_portable_export_excludes_authority_and_rebinds_on_import(self) -> None:
+        """Export excludes deployment authority; import binds it back.
+
+        A portable package must not carry this deployment's database locator or
+        API principal identity, and importing it must bind the receiving
+        deployment's own authority instead of failing validation or adopting
+        foreign identity.
+        """
+
+        status, created = request(
+            self.api, "/api/v1/configuration/drafts/first", method="POST", body=None
+        )
+        self.assertEqual(status, 201)
+        revision_id = created["revisionId"]
+        status, validated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/validate",
+            method="POST",
+            body={},
+        )
+        self.assertEqual(status, 200)
+        status, _active = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/activate",
+            method="POST",
+            body={"expectedVersion": validated["version"], "checked": True},
+        )
+        self.assertEqual(status, 200)
+
+        status, package = request(
+            self.api,
+            f"/api/v1/configuration/packages/export/configuration?revisionId={revision_id}",
+        )
+        self.assertEqual(status, 200)
+        exported = package["payload"]["document"]
+        self.assertNotIn("persistence", exported)
+        self.assertNotIn("principals", exported.get("api", {}))
+        encoded = json.dumps(package, ensure_ascii=False)
+        self.assertNotIn(self.database, encoded)
+        self.assertNotIn("MF_ADMIN_TOKEN", encoded)
+
+        status, imported = request(
+            self.api,
+            "/api/v1/configuration/packages",
+            method="POST",
+            body={"package": package},
+        )
+        self.assertEqual(status, 201)
+        imported_id = imported["revision"]["revisionId"]
+        bound = self.service.require(imported_id).document
+        self.assertEqual(bound["persistence"]["databasePath"], self.database)
+        self.assertEqual(
+            [item["tokenEnv"] for item in bound["api"]["principals"]],
+            ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
+        )
+
+        # The round trip stays validatable and activatable on this deployment.
+        status, revalidated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{imported_id}/validate",
+            method="POST",
+            body={},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(revalidated["validationErrors"], [])
+        status, reactivated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{imported_id}/activate",
+            method="POST",
+            body={"expectedVersion": revalidated["version"], "checked": True},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(reactivated["status"], "active")
+
+    def test_advanced_document_round_trip_rebinds_deployment_authority(self) -> None:
+        """The advanced whole-document editor round-trips the projected JSON.
+
+        The displayed document omits deployment authority, so saving it back
+        must bind this deployment's locator and principal identity again rather
+        than persisting a document that can no longer validate or authenticate.
+        """
+
+        status, created = request(
+            self.api, "/api/v1/configuration/drafts/first", method="POST", body=None
+        )
+        self.assertEqual(status, 201)
+        revision_id = created["revisionId"]
+        status, detail = request(self.api, f"/api/v1/configuration/revisions/{revision_id}")
+        self.assertEqual(status, 200)
+        edited = json.loads(json.dumps(detail["document"]))
+        self.assertNotIn("persistence", edited)
+        edited["historyPath"] = ".mediaflow/history.jsonl"
+
+        status, saved = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}",
+            method="PUT",
+            body={"document": edited, "expectedVersion": detail["version"]},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(saved["version"], detail["version"] + 1)
+        stored = self.service.require(revision_id).document
+        self.assertEqual(stored["persistence"]["databasePath"], self.database)
+        self.assertEqual(
+            [item["tokenEnv"] for item in stored["api"]["principals"]],
+            ["MF_ADMIN_TOKEN", "MF_VIEWER_TOKEN"],
+        )
+        # Bound authority keeps the edited Draft validatable and activatable.
+        status, validated = request(
+            self.api,
+            f"/api/v1/configuration/revisions/{revision_id}/validate",
+            method="POST",
+            body={},
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(validated["validationErrors"], [])
 
     def test_read_only_and_workflow_admission_are_safe(self) -> None:
         status, denied = request(
