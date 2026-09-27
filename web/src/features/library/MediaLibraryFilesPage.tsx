@@ -9,9 +9,10 @@ import {
   type ReactNode,
 } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import type {
@@ -2729,9 +2730,22 @@ export function MediaLibraryFilesPage() {
                       + 添加媒体库
                     </button>
                   ) : (
-                    <p className="mf-library-empty-prerequisite">
-                      {addDisabledReason ?? ""}
-                    </p>
+                    <>
+                      <p className="mf-library-empty-prerequisite">
+                        {addDisabledReason ?? ""}
+                      </p>
+                      <Link
+                        className="mf-button mf-button-secondary"
+                        to="/configuration"
+                        search={settingsReturnSearch({
+                          target: "media-files",
+                          libraryId: activeLibraryId || undefined,
+                          path: effectivePath,
+                        })}
+                      >
+                        前往系统设置
+                      </Link>
+                    </>
                   )}
                 </section>
               </div>

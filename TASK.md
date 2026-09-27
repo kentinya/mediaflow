@@ -1,13 +1,13 @@
-# Task 40.3 — Resident services across empty setup and configuration publication
+# Task 40.4 — Incremental business setup and command readiness without restart
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 [Slice 40](SLICE.md).
 
 ```text
-Task ID: 40.3
+Task ID: 40.4
 Parent Slice: 40
-Status: READY FOR B REVIEW
-Task Base: 360e59e0791c60635f050a0444b1a2d0b4458ea4
+Status: PLANNED
+Task Base: 09d429b75bc87847b716b6e0d2f082fa9f1c1800
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,404 +15,267 @@ Planner / Reviewer: B
 
 ## Goal
 
-Complete the resident-service and deployment boundary of RO-5, RO-6 and RO-7: start API, Worker,
-Scheduler and Notification Worker from management-only bootstrap without mandatory media mounts;
-keep resident processes alive across empty setup, eligible configuration publication and recoverable
-faults; consume exact current or admitted pinned authority at the appropriate boundary without
-restarting services. Expose truthful infrastructure and work-waiting state through existing health,
-API and operator status surfaces.
+Complete the operator journey from a setup-required business page through native V2 Settings and
+empty activation, back to incremental Storage/library configuration and usable command-specific
+capabilities without process restart. Complete the remaining RO-1/RO-4 integration and the matching
+readiness portion of RO-7 while preserving RO-2/3/5/6.
 
 ## Why This Task Exists
 
-Task 40.2 PASS covers `95667df757b3682b01dad024cc586d726e8cd89b..3b739d293e872df2b968aa8c712ad982ffea5f24`;
-current HEAD `360e59e0791c60635f050a0444b1a2d0b4458ea4` adds only its completion report. Its fourth
-correction resolves the shared deployment-authority input defect without a new policy framework or
-Contract change. The original Task Base remains unchanged in that review.
+Task 40.3 PASS covers `360e59e0791c60635f050a0444b1a2d0b4458ea4..2f2538567fb1c53272033335c4873a7384b01114`.
+The current committed HEAD adds only its Developer report and is this Task's real starting Base.
+The original Task 40.3 Base remains unchanged. Its first correction resolves the five production
+blockers within the existing resident/claim model; there is no need for a larger service framework.
 
-B reevaluated every Slice Required Outcome after that PASS:
+B reevaluated all Slice Required Outcomes after that review:
 
-- RO-1: native Settings create/resume/inspect/export/empty activation is delivered; shared business
-  setup handoffs and safe-return integration still need completion/acceptance.
-- RO-2: Task 40.1's legal empty runtime and common conditional validation remain covered by regression;
-  incremental end-to-end business journeys still need Slice-level acceptance.
-- RO-3: Settings projection/export, deployment identity protection and bounded editing are delivered;
-  preserve truthful consumption/restart labels when resident consumers change in this Task.
-- RO-4: successor foundations exist, but complete incremental business-page and command/scope readiness
-  acceptance remains open. Configuration-family counts alone do not prove command readiness.
-- RO-5: Worker already has management bootstrap and both transfer consumers; startup snapshot binding,
-  configuration changes, recoverable faults and all supported admitted work need resident proof.
-- RO-6: incomplete. Real `final_main` with a valid minimal bootstrap currently raises AttributeError
-  for Scheduler's `automation_schedules` and Notification Worker's `resolve_webhook_targets`.
-  `NotificationWorker` captures targets at startup and claims before checking target availability;
-  Scheduler's resident loop can propagate configuration-resolution failure.
-- RO-7: incomplete. Default `compose.yaml` requires incoming/organized media mounts, and Scheduler/
-  Notification health currently checks deployment preflight without proving resident heartbeats.
+- RO-1: native Settings lifecycle is delivered; business setup handoffs and allowlisted safe return
+  with refreshed authority remain incomplete. Storage's `StorageSetupHandoff` still follows the
+  backend `_V1_SETUP_PATH`; Settings has no originating-business-page return handling.
+- RO-2: legal empty envelopes and common applicability are delivered; exercise their full incremental
+  business-page path and preserve malformed/reference/evidence rejection in this Task.
+- RO-3: labelled Active/Draft JSON, portable export and bounded settings editing are delivered;
+  preserve exact runtime-consumption and restart labels as API composition changes.
+- RO-4: incomplete. Current capability-family presence and Worker consumer registration do not prove
+  command/scope readiness. Page-local saves, failures and ordinary commands need an accepted journey
+  from empty Active with unrelated families still empty.
+- RO-5: Task 40.3 establishes resident consumption of later work and original pins, including actual
+  Scan/Preview/Organize and both transfer kinds. Preserve it; do not reopen it for optional proof.
+- RO-6: Task 40.3 establishes current-snapshot scheduling, target-bound notification delivery and
+  fault recovery. Preserve existing admission, grant and delivery recovery behavior.
+- RO-7: media-free Compose, compatible heartbeat health and operator service status are delivered;
+  command-specific availability must still match the business journey. `_serve_api` sets
+  `file_index_context = nullcontext(None)` when started management-only; later runtime binding can
+  build manual Scan only if `self._file_index` exists. A valid later Active therefore cannot install
+  every ordinary API operation in that same process. Complete the affected runtime composition,
+  rather than asking operators to restart or use an alternate CLI/Job entry.
 
-The next coherent architecture unit is service startup, snapshot consumption, fault recovery and
-observable deployment health together. A cosmetic health flag or a separate Task per daemon would
-not prove this boundary. Business-page configuration/readiness completion remains separate in-Slice
-work; this Task does not claim the Slice is ready for final review.
+These gaps form one coherent user journey across application authority, API runtime composition and
+business-page state. They are the remaining in-Slice feature work, not one Task per field/test/page.
+A performs final CURRENT/TARGET documentation reconciliation after Slice review.
+
+### Previous Task review evidence
+
+```text
+Reviewed: 360e59e0791c60635f050a0444b1a2d0b4458ea4..2f2538567fb1c53272033335c4873a7384b01114
+Decision: PASS
+Slice Required Outcomes all satisfied: NO
+Next: NEXT TASK
+```
+
+B independently ran 69 resident/correction/fencing/notification/probe/upgrade tests, a separate
+23-second real SQLite write-contention probe, the Docker empty-baseline two-stack acceptance
+(including actual Python-served browser, media completions, signed delivery and changed-target
+recovery), full Web (49 files / 744 tests), Web typecheck/lint/format/build, Ruff format/check
+(323 files), compileall, governance and diff checks: PASS. B inspected the actual Developer logs
+for full Python (1,901 tests, 7 existing external/endurance skips), required focused tests (360),
+health, restart/fault, transfer lifecycle, release security and genuine schema 38-to-39 upgrade;
+those are reviewed Developer evidence, not repeated B executions. Source/manifest inspection
+confirmed no removed safety fences, real credentials, private config, dependencies or frozen
+Contract changes. No real external Provider/Storage compatibility is claimed.
+
+Non-blocking observations to retain for Slice closure: pre-existing deployment Markdown target
+and root-level parser issue; ResourceWarnings, jsdom diagnostics and bundle advisory. In B's optional
+media-mount stack the Notification Worker had one restart before the initial healthy baseline,
+then unchanged process identity throughout activation/work; cause is unconfirmed and the harness
+cannot prove zero startup retries. Developer's separate final run recorded zero restarts. No current
+user journey failure or safety effect was demonstrated for that observation, so it is not a P0/P1
+blocker and does not authorize a separate correction Task.
 
 ## Implementation Scope
 
-Existing domain authority/lease models → required persistence support → resident application loops
-and CLI composition → container entrypoint/Compose/probes → matching status API/Web → integration
-and real-process acceptance. Reuse existing abstractions; do not build a new service/queue platform.
+Existing configuration/domain authority → persistence and application binding → authenticated
+configuration/readiness/command APIs → V2 Settings and existing business pages → real-process tests.
+Reuse existing successor publication, request binding, permissions and command services.
 
-- Bootstrap all resident services from deployment-owned database/principal authority independently
-  of media configuration. Use bounded infrastructure polling defaults where no runtime exists;
-  absence of Active must not create synthetic business objects or load example workflow defaults.
-- Preserve Worker registration/heartbeat and installed ResourceLibrary/MediaLibrary transfer and
-  manual/automation consumers. Resolve new admission from current Active; reconstruct admitted work
-  from its exact published pin. Remove startup-only assumptions that prevent supported later work.
-- Resolve Scheduler configuration for each admission from one current valid snapshot. Preserve
-  occurrence identity, idempotency, scope, grants and capacity. Waiting/configuration failure must
-  neither use stale schedules nor consume an occurrence that was not issued.
-- Resolve eligible Notification delivery configuration without restart, including the publishers
-  used by resident work. Bind durable target identity and validate it before claim/send so missing,
-  changed or disabled targets/secrets cannot silently retarget or consume a targetless delivery.
-  Preserve existing explicit recovery, retry/dead-letter, lease and at-least-once semantics.
-- Handle recoverable configuration/database failures in resident loops with bounded reasons and safe
-  polling/reconnection. Preserve per-item checkpoints and fences through slow calls, configuration
-  switches and restart. Unsupported schema remains not-ready and requires explicit upgrade; invalid
-  deployment inputs remain startup errors. Never replay uncertain media effects automatically.
-- Make default Compose and its supported bootstrap/example-generation path usable with durable data
-  and deployment credentials only. Supply an explicit optional media-mount path for actual Local
-  Storage. Retain confinement, non-root identity and read-only/read-write boundaries. Mount changes
-  may recreate containers; configuration-only publication must not require recreation/restart.
-- Separate process liveness, DB/schema and actual service registration/heartbeat readiness, and
-  work readiness/waiting reasons. Extend existing authenticated status and operator projections only
-  as needed to show this boundary and actionable recovery; no broad workspace redesign. Health reads
-  must be bounded and side-effect-free. Keep existing settings consumption labels truthful.
-- Update directly affected deployment instructions and, only for a necessary architecture change,
-  document the implemented boundary. Preserve V1 compatibility and leave A's global CURRENT/TARGET
-  reconciliation and all Slice Contract/Roadmap changes to A.
+- Entry/return: Storage, ResourceLibrary Files and MediaLibrary pages direct setup-required users to
+  native V2 Settings with a bounded allowlisted return destination and useful supported context.
+  Keep bearer authority in memory; reject external/unsafe return targets and never put credentials
+  in URLs or browser persistence. Refresh actual authority on return/reconnect; preserve honest
+  supported handoffs for not-yet-migrated policy/Automation/Notification pages.
+- Visible state/action: distinguish no Draft, resumable Draft, empty/partial Active, broken Active,
+  applicable command availability and permission denial. Settings owns explicit first-Draft and
+  activation; business pages own their existing focused Save-and-activate-successor operation.
+- Incremental publication: Storage-only, source and destination libraries must publish in dependency
+  order without unrelated policy objects. Preserve exact Active base, field-preserving merges,
+  shared applicable checks, concurrency/evidence checks, immutable publication and audit. Existing
+  policy/Automation/Webhook entry points keep their actual applicable validation and authority.
+- Runtime composition: an API started before Active must expose all supported later-enabled ordinary
+  browse/Scan/Preview/Organize/transfer services from the exact current binding without restart.
+  Initialize durable infrastructure at the appropriate startup/publication boundary; reads must not
+  migrate schema or start work. Requests capture one snapshot; admitted/in-flight work retains its
+  original pin and current revocable permission checks. Preserve bounded resource lifetimes and the
+  existing single Python authority; do not add a parallel runtime or API process supervisor.
+- Command/scope readiness: use bounded backend facts for management, Storage configuration/access,
+  browse/direct transfer, Scan, Recognition/Preview/Organize, scheduling and delivery. Distinguish
+  missing, disabled, unavailable and unauthorized prerequisites with a useful recovery destination.
+  Reuse existing diagnostics/evidence; status reads never traverse Storage or call a Provider/Webhook.
+  Do not claim live connectivity solely from configuration presence, nor confuse an installed Worker
+  consumer with an executable source/destination. Admission/execution remain authoritative.
+- Failure/recovery: retain correctable form input and previous Active on known failure; verify exact
+  durable state after unknown outcomes before another explicit action. Preserve read-only Viewer
+  behavior, stale-route recovery, per-item results, lease/fence ownership and explicit uncertainty.
+  No mandatory wizard, generated business objects or raw token/revision handling for ordinary users.
 
 ## Acceptance Criteria
 
-- [ ] With valid management bootstrap, fake deployment credentials and fresh durable data, API and
-      all three resident services start and stay alive without Active or media mounts. Worker
-      registers/heartbeats with its supported consumers installed; Scheduler/Notification explicitly
-      wait unconfigured. Reads and empty activation create no media work, deliveries or mutations.
-- [ ] Empty then eligible populated activation requires no process restart. Existing supported
-      Scan/Preview/Organize and both library-kind transfers can be admitted and consumed; Scheduler
-      emits an eligible idempotent occurrence and a subscribed event reaches a controlled Webhook.
-      Record actual process identities before/after; mocked reload callbacks alone are insufficient.
-- [ ] New work after A→B publication uses B while admitted/in-flight A work retains A. Missing current
-      Active does not invalidate an intact older admitted pin. Missing/corrupt/unpublished/mismatched
-      pins, incompatible schema, revoked authority and unavailable required secrets block affected
-      work before new mutation, with durable per-item state and an actionable next step.
-- [ ] Scheduler survives absent/unavailable Active and read failures, schedules no stale definition,
-      does not advance an unissued occurrence and resumes safely after repair. Existing scope,
-      permission/grant, concurrency and duplicate-occurrence protections remain authoritative.
-- [ ] Notification Worker waits without claiming when no valid target/configuration is available;
-      later valid publication is adopted without restart. Pending/retry delivery identity survives
-      target removal/change, secret absence, concurrent workers and restart without silent retargeting
-      or false success. Retain bounded retry/dead-letter and explicit uncertain-delivery recovery;
-      configuration activation itself publishes no event and sends nothing.
-- [ ] Fault tests distinguish initial setup, unavailable/corrupt Active, invalid pin, DB outage,
-      schema incompatibility and missing secrets. Recoverable running-service faults preserve process
-      liveness and durable work; recovery performs no automatic uncertain mutation replay. Health
-      never calls Storage/Providers/Webhooks, admits work, writes configuration or migrates schema.
-- [ ] Compose infrastructure readiness reflects actual compatible DB/service heartbeats rather than
-      media completeness or static file presence. API/Web distinguish infrastructure-ready from
-      unconfigured/blocked work and show a bounded recovery action. No API subprocess supervision,
-      secret/raw-error exposure or UI permission grant is introduced.
-- [ ] The optional Local mount deployment remains explicit/confined and the default has no mandatory
-      source/target media directory. Existing deployments and upgrade paths stay compatible; any
-      persistence change has explicit migration/recovery evidence. Required T4 gates pass honestly.
+- [ ] From each required business entry with no Active, Admin can navigate to native Settings,
+      explicitly create/resume and activate an empty Draft, then return to the allowlisted originating
+      page with refreshed authority. Navigation/refresh/reconnect alone causes no Draft, check,
+      activation, Job, delivery or media mutation. Viewer sees permitted read-only state/guidance;
+      broken prior Active remains recovery, never fresh setup or cached success.
+- [ ] Starting from empty Active, normal Storage and both library forms Save-and-activate valid
+      successors in dependency order, keeping unrelated families empty and all unedited supported
+      fields intact. Exact applicable evidence is required; malformed/dangling/disabled dependency
+      failures, stale concurrent saves and failed publication preserve prior Active and input.
+      Unknown outcomes are reconciled rather than automatically replayed.
+- [ ] API and required Web surfaces expose command/scope-specific readiness and recovery. A browseable
+      library/direct transfer needs no invented Metadata or recognition chain; Scan is independently
+      available when its prerequisites are met; Storage alone does not claim Preview/Organize ready.
+      Scheduling and notification readiness respect their actual definitions/targets/authority.
+      Missing, disabled, unavailable and unauthorized are distinguishable without leaking secrets.
+- [ ] In a real management-only-started API and resident Worker, later page publication enables the
+      ordinary Web/API browse and manual Scan/Preview/Organize journey and both library transfers
+      without restart. Prove durable completion and media outcomes using explicit intent and confined
+      temporary data; alternate CLI jobs alone do not prove ordinary Web/API integration. Configuration
+      switches keep each request/admitted unit on one exact snapshot, without stale startup services.
+- [ ] Readiness/Settings/business reads remain bounded and side-effect-free, and readiness never
+      grants permission. Denied direct API requests, stale pins, revoked execution authority and
+      missing required prerequisites fail before new mutation. Existing uncertain work is preserved
+      for explicit recovery; Worker/Scheduler/Notification and transfer fencing regressions pass.
+- [ ] V2 desktop and narrow layouts provide visible state, actions, success, failure and recovery with
+      keyboard-accessible navigation. No mandatory V1/CLI fallback for Settings or already-native
+      business operations; existing unmigrated workspace handoffs remain truthful. Bearers remain
+      memory-only. Assigned T4 checks and real Python-served browser acceptance pass honestly.
 
 ## Required Tests
 
-- Add focused tests for the full no-Active→empty→populated resident boundary, current-versus-pinned
-  authority, faults/repair, target identity and read-only health; report their exact commands.
-- `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_snapshot tests.test_runtime_strategy_configuration tests.test_processing_worker_readiness tests.test_automation_admission tests.test_automation_definition_occurrence tests.test_automation_job_fencing tests.test_automation_authorized_execution_matrix tests.test_direct_file_transfers tests.test_runtime_lease`.
-- `.venv/bin/python -m unittest tests.test_notifications tests.test_notification_delivery_management tests.test_webhook_management tests.test_v2_notification_operations tests.test_container_deployment tests.test_container_probe tests.test_release_security`.
+Run each gate once for the final candidate; a full discovery run may provide the required focused
+module execution evidence as well when the recorded run identifies those modules/cases. Reuse
+unchanged-candidate evidence with an explicit SHA and actual log; do not substitute an older build,
+remove assertions or suppress failures/skips. Report exact commands, totals and unavailable gates.
+
+- Add focused integration cases for the entry/return, incremental successor, command-readiness and
+  management-only API adoption criteria above, including concurrency/unknown-result/denial recovery.
+- Related Python modules (run directly for focused feedback or identify them in full discovery):
+  `tests.test_management_setup`, `tests.test_configuration_status`,
+  `tests.test_configuration_successor_draft`, `tests.test_storage_configuration_management`,
+  `tests.test_resource_library_activation`, `tests.test_media_library_activation`,
+  `tests.test_manual_scan`, `tests.test_v2_manual_organize`,
+  `tests.test_direct_file_transfers`, `tests.test_media_library_transfers`,
+  `tests.test_processing_worker_readiness`, `tests.test_resident_correction`,
+  `tests.test_resident_services`, `tests.test_automation_admission`,
+  `tests.test_automation_authorized_execution_matrix`, `tests.test_notification_delivery_management`.
 - `.venv/bin/python -m unittest discover -s tests`.
 - `cd web && npm test -- --run && npm run typecheck && npm run lint && npm run format:check && npm run build`.
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts`.
-- Add/run `.venv/bin/python scripts/docker_empty_baseline_smoke_test.py` against the exact committed
-  candidate: prove default no-media-mount startup, actual service heartbeat/waiting states and
-  unchanged process identities through empty and eligible populated publication. Use a separate
-  isolated stack with optional confined test-media mounts present before startup for media-work
-  proof; do not confuse a permitted mount-change recreation with configuration adoption. Exercise
-  scheduled work and signed delivery to a local controlled Webhook. Real Python-served Web/status
-  checks must verify the matching operator state; HTTP mocks alone are insufficient.
-- `.venv/bin/python scripts/docker_health_smoke_test.py`.
-- `.venv/bin/python scripts/docker_restart_fault_smoke_test.py`.
-- `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py`.
-- `.venv/bin/python scripts/docker_release_security_smoke_test.py`.
+- Real Python-served browser acceptance (desktop and narrow): start before Active, use business-page
+  Settings handoff and safe return, create/activate empty, add Storage and both libraries through
+  actual forms, browse/transfer before processing policies, then configure the supported processing
+  prerequisites and complete normal Scan/Preview/Organize. Include denied/stale/unknown-publication
+  recovery and verify process identities. Reuse/extend the existing harness; record the exact command.
+- `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py`.
+  Extend its real management-only-started API coverage as needed; preserve separate no-media and
+  optional-mount stacks, actual process identities, scheduled work and controlled signed delivery.
+- `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py`.
+- `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py`.
+- `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py` and
+  `TMPDIR=/root .venv/bin/python scripts/docker_restart_fault_smoke_test.py` for the runtime-binding,
+  health and durable-work boundary. Temp roots may use an equivalent daemon-visible isolated path.
 - If persistence/schema changes: `.venv/bin/python -m unittest tests.test_upgrade_preflight` and
-  `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py`, plus changed migration tests.
-- `python3 scripts/check_governance.py`, `git diff --check`, local Markdown-link checks and exact
-  Base..Head manifest/private-file/credential/dependency audit. Preserve untracked images and ignored
-  `config/alist.json`. Use only temporary data, fake credentials and controlled local services;
-  report totals, warnings, skips and unavailable gates without claiming production-provider proof.
+  `TMPDIR=/root .venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py`, plus migration tests.
+- `python3 scripts/check_governance.py`, `git diff --check`, changed Markdown local-link checks and
+  exact Base..Head scope/private-file/credential/dependency audit. Preserve untracked images and
+  ignored `config/alist.json`; all media, credentials and remote receivers must be isolated fixtures.
 
 ## Non-goals
 
-- Changes to Slice Base, User Goal, Required Outcomes/Surfaces, Safety Invariants, deferrals or Roadmap;
-  declaring Slice PASS/CLOSED or performing A's final documentation reconciliation.
-- Completing every business-page setup handoff, configuration form or command-readiness journey in
-  this Task; those remain in-Slice work, with existing behavior protected by regression.
-- New commands, Providers/Storage adapters, schedule types, channels, distributed workers, queue
-  platform redesign, identity/session systems, live deployment-secret rotation or Secret Store.
-- Automatic host mount provisioning, generated media defaults, mandatory onboarding, unrestricted
-  JSON editing, silent fallback/overwrite/delete or automatic uncertain-mutation replay.
-- Unrelated Settings redesign, full policy-workspace migration, V1 retirement or P2/P3 cleanup.
+- Changing Slice Base, User Goal, Required Outcomes/Surfaces, Safety Invariants, Explicitly Deferred
+  items or Roadmap; declaring Slice PASS/CLOSED or doing A's documentation reconciliation.
+- Whole policy/Recognition/Review/Recovery workspace migration, V1 removal, a new onboarding wizard,
+  unrestricted JSON authoring, new configuration families/providers/commands or a generic capability
+  framework beyond the current supported command journeys.
+- Reworking the accepted resident architecture, distributed scheduling, API-supervised subprocesses,
+  secret-store/live secret rotation, host mount provisioning or deployment authority mutation.
+- Silent fallback/overwrite/delete, automatic uncertain-work replay, or unrelated root-path parser,
+  legacy Markdown-link, bundle-size or ResourceWarning cleanup.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-Correction of the five blockers in B's original review; Task Base/Goal/Scope are unchanged.
-The original implementation remains in `648de820741a320ea57f982b9a912fa3bcf7ff0b`.
-
-- `mediaflow/final_cli.py`, `mediaflow/application/automation.py` — resolve pending Job pins at
-  each claim boundary; retain manual/transfer consumers and exact repository fences; pin Scheduler
-  admission and notification publication to one resolved runtime.
-- `mediaflow/application/resident_runtime.py`, `mediaflow/application/resident_services.py`,
-  `mediaflow/container_probe.py` — tolerate database failures in work/report/heartbeat/shutdown;
-  distinguish actual schema compatibility and use non-initializing read-only probes.
-- `mediaflow/domain/notification.py`, `mediaflow/application/notification.py`,
-  `mediaflow/application/notification_delivery.py`, `mediaflow/infrastructure/sqlite_runtime.py`,
-  `mediaflow/interfaces/service_api.py` — schema 39 target identity, pre-claim filtering, dynamic
-  publication and bounded target-recovery projection.
-- `web/src/features/operations/{OperationsLanding,ResidentServiceStatus}.tsx`,
-  `web/src/features/operations/ResidentServiceStatus.test.tsx`,
-  `web/src/shared/api/configuration-api.ts` — existing Operations entry renders backend service
-  health/waiting reasons, refresh and Settings recovery without raw exception details.
-- `tests/test_resident_correction.py`, `tests/test_resident_services.py`,
-  `tests/test_restart_fault_boundary.py`, and the five affected `test_configuration_*` schema
-  assertions — real-process correction evidence and explicit schema/target fixtures.
-- `scripts/docker_empty_baseline_smoke_test.py` and the six affected Docker deployment/health/
-  restart/transfer/release/upgrade scripts — explicit media generator/overlay, completed media work,
-  actual process identity, controlled HTTPS delivery and genuine Task Base upgrade fixtures.
-- `docs/deployment.md`, `TASK.md` — deployment recovery guidance and correction evidence; B Review
-  Result is preserved verbatim. No Slice/Roadmap boundary or dependency change.
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/final_cli.py`
+- `mediaflow/interfaces/service_api.py`
+- `web/src/features/configuration/ConfigurationPage.tsx`
+- `web/src/features/storage/StorageManagementPage.tsx`
+- `web/src/features/library/StorageFilesPage.tsx`
+- `web/src/features/library/MediaLibraryFilesPage.tsx`
+- `web/src/shared/navigation/settings-return.ts`
+- Related API/entity/test fixtures under `web/src/**` and `tests/**`.
 
 ### Implemented
 
-- A resident Worker consumes newly published and older intact admitted pins without restart.
-  The deterministic real-process test pauses the same Worker, queues A then B across publication,
-  verifies both are pending, resumes it and verifies both complete with distinct original pins.
-- Durable notifications bind recipient URL and signing-reference identity. A changed/missing target
-  is excluded before claim; retry state, attempts and leases remain independent. Legacy deliveries
-  with unknown target identity are preserved and blocked, never assigned today's recipient.
-- All three resident processes survive real SQLite write contention and resume heartbeats/waiting
-  state after release. Reporting and shutdown cannot terminate them through the same unavailable DB.
-- Health probes neither create a database nor install tables. A genuine Base-created schema-38
-  database remains byte-identical after probing and is upgraded only at the initialization boundary.
-- Operators enter Operations, see separate infrastructure health and bounded work-waiting reasons,
-  refresh failed reads or follow Settings recovery. Initial no-Active is unconfigured, not a missing
-  secret. Database/schema/Active/secret failures remain distinct and secret-free.
+- Moved setup handoffs to native V2 Settings with bounded, allowlisted return context; router
+  navigation preserves memory-only bearer authority and rejects unsafe/external return state.
+- Added bounded command/scope readiness facts to authenticated configuration and management
+  projections, distinguishing missing, disabled, unavailable and unauthorized prerequisites with
+  recovery destinations; reads have no Storage/Provider/Webhook side effects.
+- Opened durable FileIndex during management-only API startup and guarded bootstrap-only fields so
+  later empty/partial Active publication installs Scan and ordinary runtime services in the same
+  API process without restart.
+- Added focused Settings return, command-readiness and management-only adoption regression tests;
+  updated route fixtures to the native V2 Settings path.
 
 ### Tests and Results
 
-- PASS — `.venv/bin/python -m unittest discover -s tests`: 1,901 tests, 7 existing skips,
-  final run 380.210 seconds (`/tmp/mediaflow-task403-full-final.log`).
-- PASS — the following command covers both required focused groups plus correction/migration
-  cases: 360 tests (`/tmp/mediaflow-task403-required.log`).
-
-  ```sh
-  .venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_snapshot tests.test_runtime_strategy_configuration tests.test_processing_worker_readiness tests.test_automation_admission tests.test_automation_definition_occurrence tests.test_automation_job_fencing tests.test_automation_authorized_execution_matrix tests.test_direct_file_transfers tests.test_runtime_lease tests.test_notifications tests.test_notification_delivery_management tests.test_webhook_management tests.test_v2_notification_operations tests.test_container_deployment tests.test_container_probe tests.test_release_security tests.test_resident_services tests.test_resident_correction tests.test_upgrade_preflight
-  ```
-
-- PASS — `.venv/bin/python -m unittest tests.test_resident_correction`: 4 tests, rerun after
-  making old-pin accumulation deterministic (`/tmp/mediaflow-task403-correction-final.log`).
-- PASS — `.venv/bin/python -m unittest tests.test_upgrade_preflight`: 4 tests.
-- PASS — `cd web && npm test -- --run && npm run typecheck && npm run lint && npm run format:check
-  && npm run build`: 49 files / 744 tests, all subsequent checks completed.
-- PASS — `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m
-  compileall -q mediaflow tests scripts`: 323 Python files formatted; static/compile checks passed.
-- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_restart_fault_smoke_test.py` and
-  `TMPDIR=/root .venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py`: isolated real
-  containers, preserved uncertainty/fences, genuine Base schema 38 → 39 backup/rehearsal/failure/
-  restore and durable identity checks (`/tmp/mediaflow-task403-restart2.log`,
-  `/tmp/mediaflow-task403-upgrade.log`).
-- PASS — `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python
-  scripts/docker_empty_baseline_smoke_test.py` against committed candidate
-  `2f2538567fb1c53272033335c4873a7384b01114`: no-media startup, zero-work empty activation,
-  Scan/Preview/Organize and both library Copy completions, real Python-served Web, signed HTTPS
-  delivery, changed-target retry blocking/restoration. Logs record equal before/after container IDs,
-  OS PIDs/start times/restart counts and resident instance IDs for both stacks
-  (`/tmp/mediaflow-task403-empty_baseline-final.log`). Metadata uses a local terminating TLS proxy
-  with fixed responses; it never forwards to real TMDB.
-- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py`:
-  candidate built from `git archive HEAD`; final run after the correction commit
-  (`/tmp/mediaflow-task403-lifecycle-final.log`). The earlier pre-checkpoint archive run is not used
-  as candidate evidence.
-- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py`: exact
-  committed candidate, clean archive, image/private-file/credential canaries, non-root/confined
-  mounts, V1/V2 assets, auth/RBAC/zero-side-effect denial, real Organize and durable evidence
-  (`/tmp/mediaflow-task403-release_security-final.log`). B's generator KeyError is fixed.
-- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py`: final candidate
-  Worker/secret/mount degradation and recovery, no health-created work or leaked token
-  (`/tmp/mediaflow-task403-health-final.log`).
-- PASS — `python3 scripts/check_governance.py`, `git diff --check`,
-  `git diff 360e59e0791c60635f050a0444b1a2d0b4458ea4..2f2538567fb1c53272033335c4873a7384b01114 --check`,
-  exact Base..checkpoint manifest/private-file/credential-signature/binary/dependency/frozen-boundary
-  audit (`/tmp/mediaflow-task403-manifest-audit.log`). Manual diff review found no real credentials,
-  private configuration or FFmpeg/FFprobe addition. The final follow-up changes only this report.
-- FAIL / PRE-EXISTING / UNRELATED — local Markdown target audit: `docs/deployment.md` links to
-  `deploy/mediaflow.env.example` relative to `docs/`; that target does not exist. The same link is
-  present at Task Base line 62. No new local link failure was introduced. B decides its effect.
+- `python3 scripts/check_governance.py` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1901 tests, 7 pre-existing skips).
+- Focused Task modules — PASS (340 tests).
+- `cd web && npm test -- --run` — PASS (50 files, 751 tests).
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py` — PASS (media-free and optional-mount stacks, no resident restart across publication).
+- `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_restart_fault_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` — PASS.
+- Real external SMB/OpenList/S3/TMDB services were not used; no production credentials were required.
 
 ### Decisions
 
-- Keep the exact pin/fence claim model; rebind registration for the selected pending pin instead of
-  removing claim guards or forcing all admitted work onto the latest Active.
-- Use a recipient/signing-reference digest independent of retry tuning. Never infer legacy recipient
-  authority during migration. Restore the original target/reference/secret to resume known deliveries;
-  reconcile legacy events separately with their original recipient.
-- Keep readonly probe construction explicit. Runtime initialization owns schema installation;
-  service and Worker readiness compare the real persisted schema.
-- Use the existing Operations surface and authenticated API, with backend-authoritative permissions
-  and fixed bounded recovery text. No new control plane or business-page redesign.
-- Docker test roots use `TMPDIR=/root` (empty harness also uses `MEDIAFLOW_SMOKE_TEMP_DIR=/root`),
-  which is daemon-visible on this host. The previous report's blanket UNAVAILABLE classification is
-  withdrawn: the media generator/overlay integration needed repair and these gates can run here.
+- FileIndex is treated as durable infrastructure and opened before business Active; this does not
+  create business objects, scan Storage or grant workflow authority.
+- Readiness reports configuration/admission facts only; live capability and authorization remain
+  enforced by the existing command admission/execution boundaries.
+- Settings return targets are a closed route enum with bounded library/path context; malformed,
+  traversal and off-origin values are ignored rather than navigated.
 
 ### Remaining In-Slice Work
 
-- Existing API startup-bound manual Scan/browse service composition and remaining business-page
-  setup/command-readiness handoffs remain outside these five blockers. No next Task is defined.
-- Slice-wide outcome acceptance and CURRENT/TARGET reconciliation remain A/B responsibilities.
+- None known outside this Task; B must reevaluate the Slice Required Outcomes after review.
 
 ### Risks / Deviations
 
-- SKIP — 7 existing real SMB/S3/OpenList and Local/remote endurance tests lack explicitly configured
-  isolated environments. No production Provider/Storage/Webhook compatibility is claimed.
-- ResourceWarnings, jsdom scrollTo diagnostics and the >500 kB frontend bundle advisory remain visible.
-- FAIL / PRE-EXISTING / UNRELATED — initial expanded media fixture used a root-level filename;
-  `file_context_from_path("source-storage:Acceptance.Movie.2025.mkv")` produces title
-  `source-storage:Acceptance Movie` in both an isolated full Task Base archive and current source.
-  The initial Organize check produced no file and was not counted as success. The completed fixture
-  uses a normal nested `movies/` path. This parser issue is unchanged and not claimed fixed
-  (`/tmp/mediaflow-task403-parser-base.log`); B determines its review impact.
-- Initial correction runs exposed schema-default/fixture mismatches, a fixture startup race and an
-  incorrect transfer API terminal-status check; these were fixed and rerun, without weakening
-  production fences or treating failed media work as success.
-- Pre-existing untracked `docs/pics/*.png` and ignored/untracked/unstaged `config/alist.json` are
-  preserved. Only disposable isolated data and fake credentials were used.
+- The first attempt to run five Docker smoke suites concurrently caused environment-level Compose
+  health timeouts; each suite was rerun serially in isolation and passed. This was test-environment
+  contention, not a reproduced product failure.
+- Existing Python ResourceWarning/jsdom scroll diagnostics and the known bundle-size advisory remain
+  non-blocking and pre-existing.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 2f2538567fb1c53272033335c4873a7384b01114
+Head SHA: [pending commit]
 ```
 
 ## B Review Result
 
-B reviewed the actual original Base..checkpoint diff, including production composition, repository
-claims, resident loops, probes and acceptance harnesses. HEAD
-`1d272722d64c3b3e076e85b4bbe8da7b024d3c97` adds only the completion report to
-`648de820741a320ea57f982b9a912fa3bcf7ff0b`. The explicit READY FOR B REVIEW checkpoint is the
-review request despite the stale IN PROGRESS header. This is Task 40.3's first B review.
-
-Independent verification: required focused groups PASS (324 tests); additional resident/notification/
-Worker/container/upgrade group PASS (100 tests); full Python PASS (1,897 tests, 7 existing isolated
-external/endurance skips); Web PASS (48 files / 738 tests); Web typecheck/lint/format/build, Ruff
-check/format (322 files), compileall and Base..Head diff check PASS. ResourceWarnings, jsdom scrollTo
-diagnostics and the bundle-size advisory remain visible. The exact manifest contains no private
-configuration, real credential or FFmpeg/FFprobe addition; original untracked images are preserved.
-
-The required release-security command was actually run and FAILED with exit 1, before Docker
-startup: `prepare_deployment_files` raises `KeyError: 'storages'` at
-`scripts/docker_release_security_smoke_test.py:299`. `prepare_files` still invokes the generator's
-old default, while this checkpoint changed that default to management-only. This is a current
-Base..Head integration regression, not evidence of a Docker mount-namespace limitation. B did not
-claim the remaining Docker gates or the new empty-baseline harness as independently passed.
-The new harness's media phase checks transfer readiness, not completed media work, and its first
-phase checks Job emission, not Worker consumption; container ID equality alone also does not prove
-unchanged process identity. Required T4 acceptance is not complete.
-
-All production probes below used temporary databases/media, fake deployment credentials and real
-installed CLI processes. The notification probe used an actual local HTTPS receiver and production
-UrllibWebhookTransport. No future adapter, weakened production capability, production data or
-manual Job/pin edits were used. The database-lock test held and rolled back a real SQLite write
-transaction; the upgrade probe used a database genuinely created by an isolated Task Base checkout.
-
 ```text
-Reviewed: 360e59e0791c60635f050a0444b1a2d0b4458ea4..648de820741a320ea57f982b9a912fa3bcf7ff0b
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- **P1 — Resident Worker still cannot consume later published Automation work.**
-  Current production path: `_run_worker` reads `worker_snapshot` once and constructs
-  `AutomationWorker` once (`mediaflow/final_cli.py:3362`, `:3406`); the repository still selects
-  Jobs against that registration's snapshot (`mediaflow/infrastructure/sqlite_runtime.py:4683`).
-  Reproduction: start real `worker run --poll-seconds 0.1` without Active, explicitly publish empty
-  then validated Local Storage/ResourceLibrary configuration, and run supported `jobs submit scan`.
-  The live Worker remains registered with a null pin and the valid pinned Job remains `pending`
-  across repeated polls. Stop it and run `worker run-next` against the unchanged deployment: the
-  same Job completes. Operators therefore cannot consume eligible newly admitted/scheduled work
-  without restart. This violates RO-5 and Task acceptance for no-restart consumption and exact
-  current/admitted authority. Correct resident claim/registration composition so each eligible Job
-  retains and validates its own published pin without a global snapshot/fence bypass, including
-  A-to-B activation and intact old pins. Prove actual Scan/Preview/Organize and both transfer-kind
-  completion, not just emission/readiness. Repair the affected deployment acceptance fixtures for
-  the new explicit media generator/overlay, then rerun the Task's required Docker gates and record
-  real process identities/results; the release-security failure above cannot be called UNAVAILABLE.
-
-- **P1 — Changing a Webhook URL silently retargets an already durable delivery.**
-  Current production path: `NotificationWorker.run_next` filters and resolves only `webhook_id`
-  (`mediaflow/application/notification.py:198-224`); the durable delivery has no corresponding
-  published target identity. Reproduction: publish enabled `primary` at a controlled HTTPS
-  `/original` URL, invoke real `scheduler tick` to create its pending `schedule.emitted` delivery,
-  publish a validated successor changing the same ID's URL to `/replacement`, then invoke real
-  `notification-worker run-next`. The production transport POSTs the old delivery to `/replacement`
-  and persists `delivered`. The old event can reach an unintended recipient while the operator
-  sees success. This violates RO-6, Safety Invariant 6 and the Task's durable-target acceptance.
-  Persist/validate sufficient target authority for each delivery and reject or explicitly recover
-  changed/missing targets before claim/send; matching an ID alone is insufficient. Preserve the
-  existing independent retry/dead-letter/lease semantics and cover pending/retry across publication
-  and restart with real managed configurations.
-
-- **P1 — Recoverable database contention terminates all three resident processes.**
-  Current production path: `ResidentLoop.run` catches a step error but immediately writes the
-  waiting reason through the same unavailable database, and its heartbeat-error and final-stop
-  paths can also raise (`mediaflow/application/resident_runtime.py:220-266`). Worker still uses
-  `AutomationWorker.run` with an unguarded registration heartbeat/claim loop. Reproduction: start
-  real Worker, Scheduler and Notification Worker with valid minimal bootstrap; after registration,
-  hold a separate SQLite `BEGIN IMMEDIATE` transaction for the recovery window, then roll it back.
-  All three processes exit 1 with `sqlite3.OperationalError: database is locked`; releasing the lock
-  does not restore them. A temporary database fault thus breaks ongoing consumption and requires
-  restart, contrary to RO-7 and Task fault/recovery acceptance. Make fault reporting, heartbeat,
-  shutdown and retry/reconnection tolerate the same database outage they report, while preserving
-  durable claims, leases and uncertainty rather than replaying effects. Verify survival and actual
-  safe recovery using real database faults, not only a step fake with a still-working repository.
-
-- **P1 — A production health read performs schema installation.**
-  Current production path: `resident_service_readiness_error` opens the initializing
-  `SQLiteTaskRepository` (`mediaflow/container_probe.py:205`), whose constructor runs `_initialize`.
-  Reproduction: create the runtime database using the genuine complete Task Base checkout, stop
-  that process, and invoke only the current Scheduler readiness probe against that persisted
-  database. It creates `resident_services` and `resident_service_wait_state` while the version
-  remains 38, before any current resident startup or explicit upgrade. This is a normal persisted
-  deployment transition, not mixed runtime modules or a hand-damaged database. The health command
-  changes durable schema instead of only reporting compatibility, bypassing the explicit upgrade/
-  recovery boundary. This violates RO-7 and the Task criterion that health never migrates schema.
-  Use a non-initializing read-only probe path; report absent/incompatible schema without creating
-  files/tables or advancing markers, and provide the required explicit migration/recovery proof.
-
-- **P1 — Required operator service health/recovery surface is missing and waiting reasons are false.**
-  Current production path: the new service projection is exposed only by
-  `GET /api/v1/management/readiness` (`mediaflow/interfaces/service_api.py:7903`); no Web consumer
-  renders it. In a real four-process minimal deployment, that endpoint reports infrastructure-ready
-  but marks Notification Worker `secret_unavailable` when there is simply no Active configuration.
-  `_current_runtime_configuration` collapses distinct configuration failures to None and the
-  notification loop classifies its resulting ValueError as a missing secret
-  (`mediaflow/final_cli.py:3260`, `:3717`). Browser verification against the real Python-served
-  build: Settings shows only first-Draft state, Dashboard says empty, and Operations displays only
-  the existing processing-Worker readiness. Their recorded requests never fetch the new service
-  projection; Scheduler/Notification waiting, failure and recovery are absent. Administrators
-  cannot distinguish the required service states or select the correct recovery through Web.
-  This violates RO-7's distinct fault reasons, Required Surfaces and Task acceptance for matching
-  API/Web infrastructure versus work readiness. Preserve bounded typed resolution reasons, separate
-  initial setup/Active faults/schema/database/secret failures, and connect the existing operator
-  status surface to those backend facts with meaningful next actions. This is the planned service
-  status integration, not a request to complete every business command-readiness page.

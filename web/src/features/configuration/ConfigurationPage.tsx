@@ -1,10 +1,15 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import {
+  readSettingsReturnContext,
+  settingsReturnDestination,
+} from "../../shared/navigation/settings-return";
 import {
   activateRevision,
   createFirstDraft,
@@ -67,6 +72,30 @@ const CONSUMPTION_REASONS: Readonly<Record<string, string>> = {
   runtime_snapshot_mismatch: "运行时快照与 Active 不一致,请重新加载 Active",
   runtime_settings_mismatch:
     "运行时设置与 Active 不一致,请重新加载 Active 快照",
+};
+
+const COMMAND_LABELS: Readonly<Record<string, string>> = {
+  storageConfiguration: "存储配置",
+  libraryConfiguration: "资源库配置",
+  storageAccess: "存储访问",
+  libraryBrowse: "文件浏览",
+  directTransfer: "直接传输",
+  scan: "扫描",
+  preview: "预览",
+  organize: "整理",
+  scheduling: "自动化调度",
+  notification: "通知投递",
+};
+
+const READINESS_LABELS: Readonly<Record<string, string>> = {
+  ready: "可用",
+  missing: "未配置",
+  disabled: "已停用",
+  unavailable: "暂不可用",
+  unauthorized: "无权限",
+  admission_ready: "可提交，连接将在命令执行时验证",
+  no_active_configuration: "未配置",
+  active_unavailable: "暂不可用",
 };
 
 type MutationAction =
@@ -219,6 +248,9 @@ function settingFields(
 
 export function ConfigurationPage() {
   const token = useAuthToken();
+  const navigate = useNavigate();
+  const search = useSearch({ strict: false }) as Record<string, unknown>;
+  const returnContext = readSettingsReturnContext(search);
   const client = useQueryClient();
   const query = useQuery({
     queryKey: QUERY_KEY,
@@ -314,6 +346,9 @@ export function ConfigurationPage() {
         // Refresh the exact revision so the page shows the published Active
         // snapshot and its runtime consumption state, not the stale Draft view.
         await inspect(revisionId);
+        if (returnContext !== null) {
+          navigate(settingsReturnDestination(returnContext));
+        }
       }
     },
     onError: (error, request) => {
@@ -357,6 +392,7 @@ export function ConfigurationPage() {
                 ? "Active 已激活"
                 : "等待配置";
         const fields = settingFields(settings);
+        const commandReadiness = asRecord(data.commandReadiness);
         const consumption = asRecord(settings?.consumption);
         const restartRequiredFields = stringList(
           consumption?.restartRequiredFields,
@@ -504,6 +540,23 @@ export function ConfigurationPage() {
                 </Button>
               )}
             </section>
+            {commandReadiness && (
+              <section className="mf-panel" aria-label="命令就绪状态">
+                <h2>命令就绪状态</h2>
+                <dl className="mf-detail-grid">
+                  {Object.entries(COMMAND_LABELS).map(([key, label]) => {
+                    const item = asRecord(commandReadiness[key]);
+                    const condition = text(item?.condition, "unavailable");
+                    return (
+                      <div key={key}>
+                        <dt>{label}</dt>
+                        <dd>{READINESS_LABELS[condition] ?? "暂不可用"}</dd>
+                      </div>
+                    );
+                  })}
+                </dl>
+              </section>
+            )}
             {selected && (
               <section className="mf-panel">
                 <h2>

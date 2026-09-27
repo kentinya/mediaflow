@@ -7889,7 +7889,317 @@ class MediaFlowApi:
         status["canActivateConfiguration"] = (
             ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
         )
+        status["commandReadiness"] = self._command_readiness_document(principal, status)
         return status
+
+    @staticmethod
+    def _readiness_entry(
+        *,
+        ready: bool,
+        condition: str,
+        durable_state: str,
+        next_action: str,
+        recovery_destination: str,
+        authorized: bool = True,
+    ) -> dict[str, object]:
+        return {
+            "ready": ready,
+            "condition": condition,
+            "durableState": durable_state,
+            "nextAction": next_action,
+            "recoveryDestination": recovery_destination,
+            "authorized": authorized,
+            "sideEffects": "none",
+        }
+
+    def _command_readiness_document(
+        self,
+        principal: ResolvedApiPrincipal,
+        status: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        """Bounded command facts for Settings and business-page recovery.
+
+        This projection only reads the managed Active document and in-memory
+        service availability. It never constructs a Storage/Provider, checks a
+        Webhook, grants authority or starts work.
+        """
+
+        status = status or self._configuration_service.status_document()
+        active = status.get("active")
+        if not isinstance(active, dict):
+            reason = (
+                "no_active_configuration" if status.get("setupRequired") else "active_unavailable"
+            )
+            next_action = (
+                "create and activate the empty baseline in Settings"
+                if reason == "no_active_configuration"
+                else "repair the Active configuration, then refresh"
+            )
+
+            def unavailable(destination):
+                return self._readiness_entry(
+                    ready=False,
+                    condition=reason,
+                    durable_state=reason,
+                    next_action=next_action,
+                    recovery_destination=destination,
+                )
+
+            return {
+                key: unavailable("/ui-v2/configuration")
+                for key in (
+                    "storageConfiguration",
+                    "libraryConfiguration",
+                    "storageAccess",
+                    "libraryBrowse",
+                    "directTransfer",
+                    "scan",
+                    "preview",
+                    "organize",
+                    "scheduling",
+                    "notification",
+                )
+            }
+        try:
+            revision = self._configuration_service.active()
+            document = revision.document if revision is not None else None
+        except Exception:
+            document = None
+        if not isinstance(document, dict):
+            return {
+                key: self._readiness_entry(
+                    ready=False,
+                    condition="active_unavailable",
+                    durable_state="active_unavailable",
+                    next_action="repair the Active configuration, then refresh",
+                    recovery_destination="/ui-v2/configuration",
+                )
+                for key in (
+                    "storageConfiguration",
+                    "libraryConfiguration",
+                    "storageAccess",
+                    "libraryBrowse",
+                    "directTransfer",
+                    "scan",
+                    "preview",
+                    "organize",
+                    "scheduling",
+                    "notification",
+                )
+            }
+
+        storages = [item for item in document.get("storages", []) if isinstance(item, dict)]
+        storage_present = bool(storages)
+        enabled_storages = {
+            item.get("id") for item in storages if item.get("enabled", True) is not False
+        }
+        resources = [
+            item for item in document.get("resourceLibraries", []) if isinstance(item, dict)
+        ]
+        media = [item for item in document.get("mediaLibraries", []) if isinstance(item, dict)]
+        resource_present = bool(resources)
+        media_present = bool(media)
+        enabled_resources = [
+            item
+            for item in resources
+            if item.get("enabled", True) is not False and item.get("storageId") in enabled_storages
+        ]
+        enabled_media = [
+            item
+            for item in media
+            if item.get("enabled", True) is not False and item.get("storageId") in enabled_storages
+        ]
+        processing = all(
+            document.get(key)
+            for key in (
+                "recognitionTypes",
+                "recognitionRules",
+                "recognitionTypePolicies",
+                "metadataPolicies",
+                "namingPolicies",
+                "classificationPolicies",
+                "organizePolicies",
+            )
+        )
+        manage = ApiPermission.MANAGE_CONFIGURATION in principal.permissions
+        activate = ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
+        dry_run = ApiPermission.SUBMIT_DRY_RUN in principal.permissions
+        preview = ApiPermission.MANAGE_MANUAL_ORGANIZE in principal.permissions
+        execute = ApiPermission.EXECUTE_MANUAL_ORGANIZE in principal.permissions
+
+        def permission(allowed: bool, destination: str, label: str):
+            if not allowed:
+                return self._readiness_entry(
+                    ready=False,
+                    condition="unauthorized",
+                    durable_state=f"{label} permission denied",
+                    next_action="contact an administrator for the required permission",
+                    recovery_destination=destination,
+                    authorized=False,
+                )
+            return None
+
+        storage_permission = permission(
+            manage and activate, "/ui-v2/storage", "storage configuration"
+        )
+        library_permission = permission(
+            manage and activate, "/ui-v2/resourcelib/files", "library configuration"
+        )
+        storage_config = storage_permission or self._readiness_entry(
+            ready=True,
+            condition="ready",
+            durable_state="storage configuration is available",
+            next_action="add or edit a Storage",
+            recovery_destination="/ui-v2/storage",
+        )
+        library_config = library_permission or self._readiness_entry(
+            ready=bool(enabled_storages),
+            condition=(
+                "ready" if enabled_storages else "disabled" if storage_present else "missing"
+            ),
+            durable_state="enabled Storage is available"
+            if enabled_storages
+            else "no enabled Storage",
+            next_action="enable a Storage" if storage_present else "add a Storage",
+            recovery_destination="/ui-v2/storage",
+        )
+        storage_access = self._readiness_entry(
+            ready=bool(enabled_storages),
+            condition=(
+                "admission_ready"
+                if enabled_storages
+                else "disabled"
+                if storage_present
+                else "missing"
+            ),
+            durable_state=(
+                "enabled Storage is configured; live access is verified by the command"
+                if enabled_storages
+                else "Storage definitions are disabled"
+                if storage_present
+                else "no Storage definitions"
+            ),
+            next_action="enable a Storage" if storage_present else "add a Storage",
+            recovery_destination="/ui-v2/storage",
+        )
+        browse = self._readiness_entry(
+            ready=bool(enabled_resources or enabled_media),
+            condition=(
+                "admission_ready"
+                if (enabled_resources or enabled_media)
+                else "disabled"
+                if (resource_present or media_present)
+                else "missing"
+            ),
+            durable_state="browseable library configured"
+            if (enabled_resources or enabled_media)
+            else "no enabled library",
+            next_action="add a ResourceLibrary or MediaLibrary",
+            recovery_destination="/ui-v2/resourcelib/files",
+        )
+        transfer = self._readiness_entry(
+            ready=bool(enabled_resources or enabled_media),
+            condition=(
+                "admission_ready"
+                if (enabled_resources or enabled_media)
+                else "disabled"
+                if (resource_present or media_present)
+                else "missing"
+            ),
+            durable_state="direct transfer scope available"
+            if (enabled_resources or enabled_media)
+            else "no transfer scope",
+            next_action="add an enabled library",
+            recovery_destination="/ui-v2/resourcelib/files",
+        )
+        scan_permission = permission(dry_run, "/ui-v2/operations/scans/new", "Scan")
+        scan = scan_permission or self._readiness_entry(
+            ready=bool(enabled_resources),
+            condition="ready" if enabled_resources else "missing",
+            durable_state="ResourceLibrary scan scope available"
+            if enabled_resources
+            else "no enabled ResourceLibrary",
+            next_action="add an enabled ResourceLibrary",
+            recovery_destination="/ui-v2/resourcelib/files",
+        )
+        preview_permission = permission(preview, "/ui-v2/operations/preview/new", "Preview")
+        preview_entry = preview_permission or self._readiness_entry(
+            ready=bool(enabled_resources and processing),
+            condition="ready" if enabled_resources and processing else "missing",
+            durable_state="processing chain available"
+            if enabled_resources and processing
+            else "Recognition and policy chain is not configured",
+            next_action=(
+                "configure Recognition, Metadata, Naming, Classification and Organize policies"
+            ),
+            recovery_destination="/ui-v2/configuration",
+        )
+        organize_permission = permission(
+            preview and execute, "/ui-v2/operations/organize/new", "Organize"
+        )
+        organize = organize_permission or self._readiness_entry(
+            ready=bool(enabled_resources and enabled_media and processing),
+            condition="ready" if enabled_resources and enabled_media and processing else "missing",
+            durable_state="organize chain and source/destination are available"
+            if enabled_resources and enabled_media and processing
+            else "source, destination or processing chain is not configured",
+            next_action="configure the missing source, destination and processing policies",
+            recovery_destination="/ui-v2/configuration",
+        )
+        schedules = (
+            document.get("automation", {}).get("schedules", [])
+            if isinstance(document.get("automation"), dict)
+            else []
+        )
+        notifications = (
+            document.get("notifications", {}).get("webhooks", [])
+            if isinstance(document.get("notifications"), dict)
+            else []
+        )
+        schedule_present = bool(schedules)
+        schedules = [
+            item for item in schedules if isinstance(item, dict) and item.get("enabled", True)
+        ]
+        notification_present = bool(notifications)
+        notifications = [
+            item for item in notifications if isinstance(item, dict) and item.get("enabled", True)
+        ]
+        scheduling = self._readiness_entry(
+            ready=bool(schedules),
+            condition="ready" if schedules else "disabled" if schedule_present else "missing",
+            durable_state="enabled schedule definitions are available"
+            if schedules
+            else "no schedule definitions",
+            next_action="enable a schedule" if schedule_present else "add an enabled schedule",
+            recovery_destination="/ui-v2/operations/automation",
+        )
+        notification = self._readiness_entry(
+            ready=bool(notifications),
+            condition=(
+                "ready" if notifications else "disabled" if notification_present else "missing"
+            ),
+            durable_state="webhook targets are configured"
+            if notifications
+            else "no webhook targets",
+            next_action=(
+                "enable a Webhook target"
+                if notification_present
+                else "add an enabled Webhook target"
+            ),
+            recovery_destination="/ui-v2/operations/notifications",
+        )
+        return {
+            "storageConfiguration": storage_config,
+            "libraryConfiguration": library_config,
+            "storageAccess": storage_access,
+            "libraryBrowse": browse,
+            "directTransfer": transfer,
+            "scan": scan,
+            "preview": preview_entry,
+            "organize": organize,
+            "scheduling": scheduling,
+            "notification": notification,
+        }
 
     def _management_readiness_document(
         self,
@@ -7917,6 +8227,7 @@ class MediaFlowApi:
             "nextAction": status.get("nextAction"),
             "canManageConfiguration": status.get("canManageConfiguration", False),
             "canActivateConfiguration": status.get("canActivateConfiguration", False),
+            "commandReadiness": status.get("commandReadiness", {}),
             # Infrastructure and work readiness are deliberately separate.  A
             # correctly-waiting resident service is infrastructure-ready but has
             # no work, and a fully configured deployment whose Scheduler is

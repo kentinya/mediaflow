@@ -682,7 +682,7 @@ class StorageOperationsJourney(unittest.TestCase):
                 self.assertFalse(setup["setupDraftExists"])
                 self.assertFalse(setup["managedActivation"])
                 self.assertFalse(setup["recoveryRequired"])
-                self.assertEqual(setup["setupPath"], "/ui")
+                self.assertEqual(setup["setupPath"], "/ui-v2/configuration")
                 # The permission to start the first Draft is backend
                 # authoritative, not a client judgement.
                 self.assertTrue(inventory["canStartSetup"])
@@ -816,7 +816,7 @@ class StorageOperationsJourney(unittest.TestCase):
             self.assertTrue(inventory["setup"]["managedActivation"])
             self.assertFalse(inventory["setup"]["setupRequired"])
             self.assertTrue(inventory["setup"]["recoveryRequired"])
-            self.assertEqual(inventory["setup"]["setupPath"], "/ui")
+            self.assertEqual(inventory["setup"]["setupPath"], "/ui-v2/configuration")
         finally:
             repository.close()
             task_repository.close()

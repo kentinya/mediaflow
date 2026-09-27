@@ -163,10 +163,10 @@ def __getattr__(name: str) -> object:
 
 # The existing V1 operator console owns first-Draft creation/resume, the guided
 # setup flow, checked validation and checked activation.  The V2 Storage
-# workspace only continues that journey, so it links to this one fixed
+# workspace only continues that journey, so it links to this one fixed native V2
 # same-origin route.  It is a constant, never an operator-supplied redirect
 # target, and it carries no token, claim or revision identifier.
-_V1_SETUP_PATH = "/ui"
+_V2_SETTINGS_PATH = "/ui-v2/configuration"
 
 
 class _DestinationPreviewFailure(ValueError):
@@ -6925,7 +6925,7 @@ class ConfigurationObjectService:
                 "managedActivation": False,
                 "recoveryRequired": False,
                 "health": None,
-                "setupPath": _V1_SETUP_PATH,
+                "setupPath": _V2_SETTINGS_PATH,
             }
         return {
             "setupRequired": status.get("setupRequired") is True,
@@ -6938,7 +6938,7 @@ class ConfigurationObjectService:
             "health": status.get("health"),
             # A fixed same-origin application route, never an operator-supplied
             # redirect target, and it carries no token or internal identifier.
-            "setupPath": _V1_SETUP_PATH,
+            "setupPath": _V2_SETTINGS_PATH,
         }
 
     @classmethod

@@ -116,6 +116,14 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertFalse(readiness["runtimeConfigured"])
         self.assertFalse(readiness["workflowAvailable"])
         self.assertIsNone(readiness["active"])
+        self.assertEqual(
+            readiness["commandReadiness"]["scan"]["condition"],
+            "no_active_configuration",
+        )
+        self.assertEqual(
+            readiness["commandReadiness"]["directTransfer"]["recoveryDestination"],
+            "/ui-v2/configuration",
+        )
 
         status, configuration = request(self.api, "/api/v1/configuration")
         self.assertEqual(status, 200)
@@ -138,6 +146,8 @@ class ManagementSetupTests(unittest.TestCase):
             health = None
             readiness = None
             configuration = None
+            activated = None
+            scan_service_ready = False
 
             def __enter__(self):
                 return self
@@ -149,6 +159,26 @@ class ManagementSetupTests(unittest.TestCase):
                 self.health = request(self.app, "/health", token=None)
                 self.readiness = request(self.app, "/api/v1/management/readiness")
                 self.configuration = request(self.app, "/api/v1/configuration")
+                _, created = request(
+                    self.app,
+                    "/api/v1/configuration/drafts/first",
+                    method="POST",
+                    body={},
+                )
+                revision_id = created["revisionId"]
+                _, validated = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/validate",
+                    method="POST",
+                    body={},
+                )
+                self.activated = request(
+                    self.app,
+                    f"/api/v1/configuration/revisions/{revision_id}/activate",
+                    method="POST",
+                    body={"expectedVersion": validated["version"], "checked": True},
+                )
+                self.scan_service_ready = self.app._runtime_binding.manual_scans is not None
 
         with tempfile.TemporaryDirectory() as directory:
             bootstrap = json.loads(json.dumps(self.bootstrap))
@@ -185,6 +215,12 @@ class ManagementSetupTests(unittest.TestCase):
 
         self.assertEqual(status, 0)
         self.assertIsNotNone(server.app)
+        # FileIndex is durable infrastructure and is opened before business
+        # Active exists, so later publication can install Scan without an API
+        # restart. No Storage or Provider is constructed by this assertion.
+        self.assertIsNotNone(server.app._file_index)
+        self.assertEqual(server.activated[0], 200)
+        self.assertTrue(server.scan_service_ready)
         self.assertEqual(server.health, (200, {"processAlive": True, "status": "ok"}))
         self.assertEqual(server.readiness[0], 200)
         self.assertTrue(server.readiness[1]["managementReady"])
@@ -203,9 +239,9 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertIn("setupRequired", script)
 
     def test_operator_web_offers_a_return_to_the_storage_workspace(self) -> None:
-        """The V1 setup journey can hand the operator back to Storage.
+        """The setup journey can hand the operator back to Storage.
 
-        Completing setup inside the V1 console must not strand the operator
+        Completing setup inside Settings must not strand the operator
         there: once a managed Active exists, the Configuration view offers a
         return to the V2 Storage workspace that reads that exact Active. The
         link is a fixed same-origin application route, so it cannot become an
@@ -289,7 +325,7 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertFalse(viewer["canStartSetup"])
         self.assertFalse(viewer["canManage"])
         # The viewer still gets the recovery route so the guidance is actionable.
-        self.assertEqual(viewer["setup"]["setupPath"], "/ui")
+        self.assertEqual(viewer["setup"]["setupPath"], "/ui-v2/configuration")
 
     def test_first_draft_preserves_only_bootstrap_refs_and_is_resumable(self) -> None:
         status, created = request(

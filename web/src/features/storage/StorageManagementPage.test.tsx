@@ -177,7 +177,7 @@ const SETTLED_SETUP = {
   managedActivation: true,
   recoveryRequired: false,
   health: "HEALTHY",
-  setupPath: "/ui",
+  setupPath: "/ui-v2/configuration",
 };
 
 function inventoryPayload(items: unknown[]): unknown {
@@ -240,7 +240,7 @@ function setupRequiredInventory(
       managedActivation: false,
       recoveryRequired: false,
       health: "SETUP_REQUIRED",
-      setupPath: "/ui",
+      setupPath: "/ui-v2/configuration",
     },
     actions: {
       check: {
@@ -794,7 +794,7 @@ describe("Storage management journey", () => {
               managedActivation: false,
               recoveryRequired: false,
               health: "SETUP_REQUIRED",
-              setupPath: "/ui",
+              setupPath: "/ui-v2/configuration",
             },
           }),
         ),
@@ -805,7 +805,7 @@ describe("Storage management journey", () => {
     expect(await screen.findByText(/继续已有的设置草稿/)).toBeVisible();
     expect(screen.getByRole("link", { name: "去完成设置" })).toHaveAttribute(
       "href",
-      "/ui",
+      "/ui-v2/configuration?returnTo=storage",
     );
   });
 
@@ -829,7 +829,7 @@ describe("Storage management journey", () => {
     expect(screen.queryByRole("link", { name: "去完成设置" })).toBeNull();
     expect(screen.getByRole("link", { name: "查看设置页面" })).toHaveAttribute(
       "href",
-      "/ui",
+      "/ui-v2/configuration?returnTo=storage",
     );
     // No mutation surface is offered to a viewer.
     expect(screen.getByRole("button", { name: "+ 添加存储" })).toBeDisabled();
@@ -850,7 +850,7 @@ describe("Storage management journey", () => {
               managedActivation: true,
               recoveryRequired: true,
               health: "UNAVAILABLE",
-              setupPath: "/ui",
+              setupPath: "/ui-v2/configuration",
             },
           }),
         ),
@@ -877,7 +877,7 @@ describe("Storage management journey", () => {
               managedActivation: true,
               recoveryRequired: false,
               health: "UNAVAILABLE",
-              setupPath: "/ui",
+              setupPath: "/ui-v2/configuration",
             },
           }),
         ),
@@ -901,7 +901,10 @@ describe("Storage management journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/storage");
     const setupLink = await screen.findByRole("link", { name: "去完成设置" });
-    expect(setupLink).toHaveAttribute("href", "/ui");
+    expect(setupLink).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=storage",
+    );
     // Re-rendering the recovery state only re-reads the inventory; it never
     // issues a Draft, validation, activation or Storage command.
     await userEvent.click(screen.getByRole("button", { name: "刷新" }));
@@ -984,7 +987,10 @@ describe("Storage management journey", () => {
     // The recovery handoff the empty state previously lacked: one explicit
     // action that continues the existing V1 setup workflow.
     const setupLink = screen.getByRole("link", { name: "去完成设置" });
-    expect(setupLink).toHaveAttribute("href", "/ui");
+    expect(setupLink).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=storage",
+    );
   });
 
   it("distinguishes a healthy empty inventory from the setup state", async () => {

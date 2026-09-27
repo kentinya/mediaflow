@@ -14,6 +14,7 @@
  */
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
@@ -1075,19 +1076,17 @@ function toDetailViewModel(
  * Three durable states must stay distinguishable, because repeating setup is
  * the wrong answer for two of them:
  *
- * - first setup is genuinely outstanding — an administrator continues the
- *   existing V1 configuration workflow, and returns here afterwards;
+ * - first setup is genuinely outstanding — an administrator continues native
+ *   V2 Settings, and returns here afterwards;
  * - a managed Active exists but is temporarily unavailable — the operator waits
  *   and refreshes; initialization is not the problem;
  * - the Active snapshot is unreadable — recovery is a configuration decision,
  *   not a first run.
  *
- * The link below is a plain anchor, not a router link, because the destination
- * is a different document outside the `/ui-v2` basepath. It carries no token:
- * both consoles keep the API token in memory only, so the existing V1
- * authentication prompt remains the continuation step. Nothing here creates a
- * Draft, runs a check, activates configuration or starts media work — the
- * action only navigates.
+ * The router link stays inside the V2 application so memory-only bearer
+ * authority survives the continuation. The only URL state is the fixed return
+ * target; nothing here creates a Draft, runs a check, activates configuration
+ * or starts media work.
  */
 function StorageSetupHandoff({
   setup,
@@ -1126,18 +1125,26 @@ function StorageSetupHandoff({
         </p>
         {canStartSetup ? (
           <div className="mf-actions">
-            <a className="mf-button mf-button-primary" href={setup.setupPath}>
+            <Link
+              className="mf-button mf-button-primary"
+              to="/configuration"
+              search={{ returnTo: "storage" }}
+            >
               去完成设置
-            </a>
+            </Link>
             {refreshButton}
           </div>
         ) : (
           <>
             <p>当前账号没有管理配置的权限,无法创建或激活设置草稿。</p>
             <div className="mf-actions">
-              <a className="mf-button mf-button-primary" href={setup.setupPath}>
+              <Link
+                className="mf-button mf-button-primary"
+                to="/configuration"
+                search={{ returnTo: "storage" }}
+              >
                 查看设置页面
-              </a>
+              </Link>
               {refreshButton}
             </div>
           </>
@@ -1156,9 +1163,13 @@ function StorageSetupHandoff({
         </p>
         <div className="mf-actions">
           {refreshButton}
-          <a className="mf-button mf-button-secondary" href={setup.setupPath}>
+          <Link
+            className="mf-button mf-button-secondary"
+            to="/configuration"
+            search={{ returnTo: "storage" }}
+          >
             打开配置页面排查
-          </a>
+          </Link>
         </div>
       </StatusBanner>
     );
@@ -1175,9 +1186,13 @@ function StorageSetupHandoff({
       </p>
       <div className="mf-actions">
         {refreshButton}
-        <a className="mf-button mf-button-secondary" href={setup.setupPath}>
+        <Link
+          className="mf-button mf-button-secondary"
+          to="/configuration"
+          search={{ returnTo: "storage" }}
+        >
           打开配置页面排查
-        </a>
+        </Link>
       </div>
     </StatusBanner>
   );
