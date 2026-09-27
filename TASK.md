@@ -6,7 +6,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and i
 ```text
 Task ID: 40.3
 Parent Slice: 40
-Status: FIX REQUIRED
+Status: READY FOR B REVIEW
 Task Base: 360e59e0791c60635f050a0444b1a2d0b4458ea4
 Difficulty: High
 Test Level: T4
@@ -189,7 +189,7 @@ The original implementation remains in `648de820741a320ea57f982b9a912fa3bcf7ff0b
   restart/transfer/release/upgrade scripts — explicit media generator/overlay, completed media work,
   actual process identity, controlled HTTPS delivery and genuine Task Base upgrade fixtures.
 - `docs/deployment.md`, `TASK.md` — deployment recovery guidance and correction evidence; B Review
-  Result is preserved verbatim. No Slice/ Roadmap boundary or dependency change.
+  Result is preserved verbatim. No Slice/Roadmap boundary or dependency change.
 
 ### Implemented
 
@@ -211,9 +211,13 @@ The original implementation remains in `648de820741a320ea57f982b9a912fa3bcf7ff0b
 
 - PASS — `.venv/bin/python -m unittest discover -s tests`: 1,901 tests, 7 existing skips,
   final run 380.210 seconds (`/tmp/mediaflow-task403-full-final.log`).
-- PASS — both required focused unittest module groups plus `tests.test_resident_services`,
-  `tests.test_resident_correction`, `tests.test_upgrade_preflight`: combined 360 tests
-  (`/tmp/mediaflow-task403-required.log`).
+- PASS — the following command covers both required focused groups plus correction/migration
+  cases: 360 tests (`/tmp/mediaflow-task403-required.log`).
+
+  ```sh
+  .venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_snapshot tests.test_runtime_strategy_configuration tests.test_processing_worker_readiness tests.test_automation_admission tests.test_automation_definition_occurrence tests.test_automation_job_fencing tests.test_automation_authorized_execution_matrix tests.test_direct_file_transfers tests.test_runtime_lease tests.test_notifications tests.test_notification_delivery_management tests.test_webhook_management tests.test_v2_notification_operations tests.test_container_deployment tests.test_container_probe tests.test_release_security tests.test_resident_services tests.test_resident_correction tests.test_upgrade_preflight
+  ```
+
 - PASS — `.venv/bin/python -m unittest tests.test_resident_correction`: 4 tests, rerun after
   making old-pin accumulation deterministic (`/tmp/mediaflow-task403-correction-final.log`).
 - PASS — `.venv/bin/python -m unittest tests.test_upgrade_preflight`: 4 tests.
@@ -226,12 +230,30 @@ The original implementation remains in `648de820741a320ea57f982b9a912fa3bcf7ff0b
   containers, preserved uncertainty/fences, genuine Base schema 38 → 39 backup/rehearsal/failure/
   restore and durable identity checks (`/tmp/mediaflow-task403-restart2.log`,
   `/tmp/mediaflow-task403-upgrade.log`).
-- PASS (pre-checkpoint evidence) — health and expanded empty-baseline Docker runs. The latter
-  completed Scan/Preview/Organize and both library Copy journeys, real Python-served Web status,
-  signed delivery, changed-target retry blocking/restoration and unchanged process identities.
-- PENDING — exact committed-candidate empty-baseline, transfer lifecycle and release-security
-  Docker checks; final report will record actual results before READY FOR B REVIEW.
-- PASS — governance and diff whitespace checks. Exact final manifest audit is pending the checkpoint.
+- PASS — `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python
+  scripts/docker_empty_baseline_smoke_test.py` against committed candidate
+  `2f2538567fb1c53272033335c4873a7384b01114`: no-media startup, zero-work empty activation,
+  Scan/Preview/Organize and both library Copy completions, real Python-served Web, signed HTTPS
+  delivery, changed-target retry blocking/restoration. Logs record equal before/after container IDs,
+  OS PIDs/start times/restart counts and resident instance IDs for both stacks
+  (`/tmp/mediaflow-task403-empty_baseline-final.log`). Metadata uses a local terminating TLS proxy
+  with fixed responses; it never forwards to real TMDB.
+- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py`:
+  candidate built from `git archive HEAD`; final run after the correction commit
+  (`/tmp/mediaflow-task403-lifecycle-final.log`). The earlier pre-checkpoint archive run is not used
+  as candidate evidence.
+- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py`: exact
+  committed candidate, clean archive, image/private-file/credential canaries, non-root/confined
+  mounts, V1/V2 assets, auth/RBAC/zero-side-effect denial, real Organize and durable evidence
+  (`/tmp/mediaflow-task403-release_security-final.log`). B's generator KeyError is fixed.
+- PASS — `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py`: final candidate
+  Worker/secret/mount degradation and recovery, no health-created work or leaked token
+  (`/tmp/mediaflow-task403-health-final.log`).
+- PASS — `python3 scripts/check_governance.py`, `git diff --check`,
+  `git diff 360e59e0791c60635f050a0444b1a2d0b4458ea4..2f2538567fb1c53272033335c4873a7384b01114 --check`,
+  exact Base..checkpoint manifest/private-file/credential-signature/binary/dependency/frozen-boundary
+  audit (`/tmp/mediaflow-task403-manifest-audit.log`). Manual diff review found no real credentials,
+  private configuration or FFmpeg/FFprobe addition. The final follow-up changes only this report.
 - FAIL / PRE-EXISTING / UNRELATED — local Markdown target audit: `docs/deployment.md` links to
   `deploy/mediaflow.env.example` relative to `docs/`; that target does not exist. The same link is
   present at Task Base line 62. No new local link failure was introduced. B decides its effect.
@@ -277,8 +299,8 @@ The original implementation remains in `648de820741a320ea57f982b9a912fa3bcf7ff0b
 ### Checkpoint
 
 ```text
-Status: IN PROGRESS
-Head SHA: pending local correction checkpoint and committed-candidate gates
+Status: READY FOR B REVIEW
+Head SHA: 2f2538567fb1c53272033335c4873a7384b01114
 ```
 
 ## B Review Result
