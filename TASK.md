@@ -136,7 +136,7 @@ Full Python discovery reports the existing governance test failure while `TASK.m
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [to be filled after commit]
+Head SHA: 6e3ce501239aebdf8a03f20ef7db2ffdf691a40a
 ```
 
 ## B Review Result
