@@ -6,7 +6,7 @@ the checkpointed [Slice 40 Contract](SLICE.md).
 ```text
 Task ID: 40.1
 Parent Slice: 40
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 8ac3292b4baed443de34f7a37989bf105cf0b42d
 Difficulty: High
 Test Level: T4
@@ -116,7 +116,9 @@ existing authenticated configuration/readiness API and Settings projection → f
 
 ### Tests and Results
  - `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_objects tests.test_configuration_snapshot tests.test_runtime_strategy_configuration tests.test_configuration_status` — PASS (143)
- - `.venv/bin/python -m unittest discover -s tests` — FAIL (1854 tests; 2 failures are pre-existing governance/release-document expectations caused by the working-tree Task before this checkpoint; 7 skips)
+ - B blocker reproduction command from `config/strategy.example.json` — PASS (`notification` is `CONFIGURED`)
+ - Correction-focused configuration suite — PASS (144)
+ - `.venv/bin/python -m unittest discover -s tests` — PASS (1855 tests; 7 skips)
  - `cd web && npm test -- --run` — PASS (727 tests, 47 files)
  - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS
  - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS
@@ -130,23 +132,35 @@ existing authenticated configuration/readiness API and Settings projection → f
 Resident Worker/Scheduler/Notification lifecycle and deployment/Compose changes remain outside this Task.
 
 ### Risks / Deviations
-Full Python discovery reports the existing governance test failure while `TASK.md` is intentionally a new working-tree Task (committing this checkpoint resolves the ancestry/state condition); release-security documentation test was satisfied by documenting its required gate. Web test runner emitted existing jsdom `scrollTo` notices only.
+Original checkpoint full discovery had two failures: the governance test rejected the then-working-tree Task metadata, and release-security documentation required its gate command; the latter was documented, Task metadata was normalized, and current full discovery passes. Web test runner emitted existing jsdom `scrollTo` notices only.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 6e3ce501239aebdf8a03f20ef7db2ffdf691a40a
+Head SHA: [pending correction checkpoint]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 6e3ce501239aebdf8a03f7a37989bf105cf0b42d
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- `notification` capability readiness is incorrectly reported as `UNCONFIGURED` for valid
+  configurations using the supported `notifications.webhooks` shape. Evidence: the committed
+  production fixture `config/strategy.example.json` contains a Webhook under
+  `notifications.webhooks`, and `load_runtime_configuration` explicitly supports that legacy
+  location, but `_business_capability_status` only counts the top-level `webhooks` key at
+  `mediaflow/application/configuration_snapshot.py:47-60`. Reproduce with
+  `.venv/bin/python -c 'import json; from mediaflow.application.configuration_snapshot import
+  _business_capability_status; d=json.load(open("config/strategy.example.json"));
+  print(_business_capability_status(d)["items"]["notification"])'`: it reports
+  `UNCONFIGURED`. Project notification state using the same supported source as runtime loading
+  (including `notifications.webhooks`) and add a regression assertion for that shape.
 
 If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
 finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.

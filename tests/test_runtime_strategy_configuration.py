@@ -9,7 +9,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.classification import ClassificationEngine
-from mediaflow.application.configuration_snapshot import build_first_setup_starter_document
+from mediaflow.application.configuration_snapshot import (
+    _business_capability_status,
+    build_first_setup_starter_document,
+)
 from mediaflow.application.naming import NamingEngine
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.domain.classification import ClassificationContext
@@ -54,6 +57,10 @@ class RuntimeStrategyConfigurationTests(unittest.TestCase):
         invalid["recognitionTypes"] = {}
         with self.assertRaises(ValueError):
             load_runtime_configuration(invalid)
+
+    def test_notification_capability_reads_legacy_nested_webhooks(self) -> None:
+        status = _business_capability_status(self.document)
+        self.assertEqual(status["items"]["notification"]["state"], "CONFIGURED")
 
     def test_configuration_alone_controls_naming_classification_and_operation(self) -> None:
         naming = next(item for item in self.document["namingPolicies"] if item["id"] == "A")
