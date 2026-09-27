@@ -121,7 +121,7 @@ def _naming_policies(document, base, required):
     values = _objects(document, "namingPolicies", required=False)
     if not values:
         if required:
-            raise ValueError("runtime configuration 'namingPolicies' must not be empty")
+            return ()
         assert base is not None
         return base.naming_policies
     policies = tuple(
@@ -161,7 +161,7 @@ def _classification_policies(document, base, required):
     values = _objects(document, "classificationPolicies", required=False)
     if not values:
         if required:
-            raise ValueError("runtime configuration 'classificationPolicies' must not be empty")
+            return ()
         assert base is not None
         return base.classification_policies
     policies = tuple(
@@ -258,7 +258,7 @@ def _metadata_policies(document, base, required):
     overrides = _objects(document, "metadataPolicies", required=False)
     if not overrides:
         if required:
-            raise ValueError("runtime configuration 'metadataPolicies' must not be empty")
+            return ()
         assert base is not None
         return base.metadata_policies
     policies = {} if required else {policy.policy_id: policy for policy in base.metadata_policies}  # type: ignore[union-attr]
@@ -329,7 +329,7 @@ def _organize_policies(document, base, required):
     values = _objects(document, "organizePolicies", required=False)
     if not values:
         if required:
-            raise ValueError("runtime configuration 'organizePolicies' must not be empty")
+            return ()
         assert base is not None
         inherited = getattr(base, "organize_policies", ())
         if inherited:
@@ -523,10 +523,10 @@ def _type_policy(value, types, organize_policies, require_complete) -> Recogniti
 
 
 def _list(document: Mapping[str, Any], key: str) -> list[Mapping[str, Any]]:
-    values = _objects(document, key)
-    if not values:
-        raise ValueError(f"strategy configuration {key!r} must not be empty")
-    return values
+    # Empty business collections are a valid managed runtime envelope.  Keep
+    # the strict array/object validation in _objects so malformed populated
+    # configuration is still rejected by the same parser.
+    return _objects(document, key)
 
 
 def _objects(

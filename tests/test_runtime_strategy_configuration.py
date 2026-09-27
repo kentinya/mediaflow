@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from mediaflow.application.classification import ClassificationEngine
+from mediaflow.application.configuration_snapshot import build_first_setup_starter_document
 from mediaflow.application.naming import NamingEngine
 from mediaflow.application.policies import RecognitionTypePolicyResolver
 from mediaflow.domain.classification import ClassificationContext
@@ -19,12 +20,40 @@ from mediaflow.domain.organizer import OrganizeOperationType
 from mediaflow.domain.parser import ParseResult
 from mediaflow.final_cli import final_main
 from mediaflow.infrastructure.openlist_storage import OpenListStorage
-from mediaflow.infrastructure.runtime_configuration import load_runtime_configuration
+from mediaflow.infrastructure.runtime_configuration import (
+    load_managed_runtime_configuration,
+    load_management_bootstrap,
+    load_runtime_configuration,
+)
 
 
 class RuntimeStrategyConfigurationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.document = json.loads(Path("config/strategy.example.json").read_text(encoding="utf-8"))
+
+    def test_first_setup_starter_is_an_explicit_empty_runtime(self) -> None:
+        bootstrap = load_management_bootstrap(
+            {
+                "persistence": {"databasePath": "/tmp/mediaflow.sqlite3"},
+                "api": {"tokenEnv": "MF_TOKEN"},
+            }
+        )
+        starter = build_first_setup_starter_document(bootstrap)
+        runtime = load_managed_runtime_configuration(
+            starter, bootstrap_database_path="/tmp/mediaflow.sqlite3"
+        )
+        self.assertEqual(runtime.strategy.recognition_types, ())
+        self.assertEqual(runtime.strategy.recognition_type_policies, ())
+        self.assertEqual(runtime.strategy.metadata_policies, ())
+        self.assertEqual(runtime.storage_definitions, ())
+        self.assertEqual(runtime.resource_libraries, ())
+        self.assertEqual(runtime.media_libraries, ())
+
+    def test_empty_collections_still_require_array_shape(self) -> None:
+        invalid = copy.deepcopy(self.document)
+        invalid["recognitionTypes"] = {}
+        with self.assertRaises(ValueError):
+            load_runtime_configuration(invalid)
 
     def test_configuration_alone_controls_naming_classification_and_operation(self) -> None:
         naming = next(item for item in self.document["namingPolicies"] if item["id"] == "A")
