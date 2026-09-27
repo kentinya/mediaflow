@@ -141,7 +141,7 @@ Correction 初次全量回归发现省略 `mediaLibraries` section 时的新 hel
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending correction checkpoint]
+Head SHA: 31755398507a6cfe0c375180c1b956898e335eb4
 ```
 
 ## B Review Result
