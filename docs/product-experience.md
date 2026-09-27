@@ -172,39 +172,55 @@ read-only destination precheck for the MediaLibrary destination on any supported
 older Local-only setup check stays available as a Local diagnostic and is not required for
 activation.
 
-### TARGET — Discoverable V2 setup and return journey
+### TARGET — V2 Settings and empty-business activation
 
-This remains the target for a native V2 system-level wizard, not a claim that the full wizard is
-delivered. Slice 39 now provides the minimal current Storage handoff: a setup-required state offers
-`去完成设置` into the existing V1 `/ui` Configuration journey and returns to refreshed Storage
-truth after completion. The existing first-setup implementation remains in V1 `/ui` Configuration.
+Slice 40 selects this journey. It replaces the earlier mandatory Storage/library/policy wizard and
+business-page first-Draft proposal; it is not CURRENT behavior. Slice 39's delivered Storage→V1
+setup→Storage recovery remains available until the native V2 path is implemented.
 
-- **Goal:** reach a usable initial configuration without knowing the internal revision lifecycle.
-- **Entry:** after authentication, offer `开始设置` when setup is required or `继续设置` when an
-  unfinished configuration exists. System Settings retains `初始化与配置`; a Storage setup-required
-  empty state offers `去完成设置` as its primary action. All entries lead to the same setup journey.
-- **Visible state:** which setup steps are complete, the configured Storage and libraries, named
-  blockers and whether the configuration is in use. Keep missing initialization distinct from a
-  temporarily unavailable Active or a malformed list response. A viewer sees an administrator
-  handoff, not a usable configuration command.
-- **Action:** connect Storage, configure source/destination libraries and required policies, inspect
-  checks and explicitly choose `完成设置`. Compose the complete graph validation, exact-revision
-  Storage/strategy/destination checks and atomic activation behind these user-facing steps; no
-  token/digest/revision copying or arbitrary workflow defaults. Opening the journey does not create
-  another Draft or start checks. No media scan, organization or write is started by setup completion.
-- **Success:** only a fully checked snapshot bound to runtime is reported as ready. Return to the
-  originating supported application page, such as Storage, and refetch its Active state. Return
-  navigation carries no credentials and cannot redirect to an arbitrary external location.
-- **Failure:** denied authority, missing fields/secrets/mounts, provider errors, invalid dependencies,
-  stale evidence or activation/runtime failure identifies the actual blocker and durable state.
-- **Recovery:** retain and resume the existing setup configuration across reload/reconnect; correct
-  the named blocker and explicitly continue. Verify unknown activation outcomes before a new
-  attempt. Never recreate initial configuration merely because a list failed to render.
+- **Goal:** make a fresh installation manageable and incrementally configure its capabilities without
+  having to define media business objects during deployment or first activation.
+- **Entry:** authenticate, open `系统设置` at `/ui-v2/configuration`, or follow a setup-required
+  business-page link. Viewers receive permitted read-only state and administrator guidance.
+- **Visible state:** no first Draft, resumable Draft, actual Active, and per-command capability
+  readiness. Distinguish an intentionally empty Active from unavailable/corrupt Active and invalid
+  responses. Empty activation says `配置已激活，媒体业务尚未配置`.
+- **Action:** explicitly create the first Draft, view/export labelled JSON, edit backend-supported
+  settings absent from other management pages, and explicitly activate. No mandatory Storage,
+  libraries, RecognitionType, rules or policy forms; no synthetic defaults. Then configure each
+  business capability through its supported page with existing exact-successor publication.
+- **Success:** the empty or populated candidate is the immutable runtime-consumed Active. Populated
+  objects pass structural and declared-reference validation; applicable enabled library/Storage,
+  recognition and destination checks remain mandatory. Unrelated empty families do not block saving.
+  A valid library may support browsing/transfer before media recognition/organizing is configured.
+- **Failure:** invalid populated objects/dependencies, stale authority/evidence, permission, secret,
+  mount, database/schema or publication failure identifies durable state and a meaningful next action.
+  Active existence alone never claims all media work is ready.
+- **Recovery:** retain the first Draft and failed-edit input; reload/reconnect resumes saved state
+  without duplicate creation. Correct named blockers and verify unknown publication outcomes before
+  another explicit attempt. Broken prior Active uses recovery, not automatic first initialization.
+  Return to the originating allowlisted application page and refetch actual authority.
 
-During migration, the immediate handoff may explicitly open the existing V1 Configuration setup
-surface with a visible way back to Storage; authentication continues under the existing memory-only
-token model. The complete native V2 wizard is a separate product target for A to scope, not an
-implicit addition to Slice 39's deferred general Configuration migration.
+JSON defaults to the actual Active; before first activation show Draft/no-Draft explicitly, and let
+users deliberately inspect a labelled Draft. A corrupt Active cannot silently fall back to Draft or
+cache. View/export includes all supported managed configuration without secret values or unsafe URL
+credentials. Portable exports retain permitted environment references but exclude deployment-owned
+database and API-principal/token authority; validated import binds to the receiving deployment.
+Advanced edits are schema/field-allowlisted, use the same permissions, audit, validation and activation
+as other surfaces, and never provide unrestricted JSON writes. Deployment/restart-only values must
+not be presented as already consumed by a running process.
+
+Entry, refresh, creation and activation do not start media work. Worker, Scheduler and Notification
+Worker start and wait without Active, then adopt eligible configuration without restart. Worker
+retains supported commands, published pins, leases/fences and explicit uncertain-effect recovery;
+Scheduler never schedules from stale Active cache; Notification Worker neither claims targetless
+deliveries nor silently retargets an existing delivery. Configuration faults expose waiting reasons.
+Process liveness, DB/schema/registration/heartbeat and work readiness are separate. Fresh Compose
+needs no media mounts; Local Storage mounts remain explicit deployment prerequisites when used.
+Adding a mount may require container recreation; publishing configuration alone does not.
+
+This journey does not migrate every policy workspace or retire V1. Existing API/Web share one
+backend authority and preserve memory-only authentication, RBAC, exact snapshots and mutation rules.
 
 ## Storage root display and save recovery
 
@@ -690,9 +706,9 @@ specified separately as TARGET below.
   `/api/v1/*` authority into actionable Dashboard, Task/Job, bounded Scan/Preview, Web-native exact
   manual Organize, Automation and Notification journeys while preserving backend RBAC, immutable
   binding, fencing, explicit destructive intent and OrganizerExecutor-only mutation.
-- **DEFERRED:** no `/ui` cutover or V1 UI retirement is part of the current Files-page Slice.
-  Review/Recovery, general Configuration and other non-Files migrations are outside the current
-  Roadmap boundary; their existing routes and handoffs remain unchanged.
+- **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Review/Recovery
+  and wholesale policy-workspace migration remain outside Slice 40. Its selected Settings/empty-
+  baseline TARGET above does not claim that the existing Configuration landing has already migrated.
 
 ## Files Journey Update — 2026-09-14
 

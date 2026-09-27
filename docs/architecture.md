@@ -72,6 +72,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 37 — Files Workspace, Common File Management and V2 Shell
     → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
     → Slice 39 — Storage Management Workspace (PASS / CLOSED)
+    → Slice 40 — V2 Settings and Empty-Baseline Startup (ACTIVE; TARGET below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -283,6 +284,59 @@ rebinding inside the backend. The operator does not manage the intermediate Draf
 in this page-local flow. A validation, dependency, Storage-check, activation or runtime-load
 failure rejects the command and leaves the previous Active pointer and runtime authority intact.
 The general Configuration surface continues to expose the explicit Draft/Validate/Activate journey.
+
+## TARGET — Empty business runtime and resident configuration lifecycle
+
+Slice 40 selects this boundary; it is not implemented CURRENT behavior. At its Base the starter
+Draft already contains empty business collections, but strict strategy/runtime loading rejects
+them. V2 Settings remains a migration landing, Scheduler/Notification startup loads workflow
+configuration, Notification targets are constructed at startup, and Compose requires media mounts.
+The existing transfer-specific resident reconstruction above is delivered and must be preserved.
+
+The target separates three facts: a structurally valid configuration graph, the exact published
+immutable Active snapshot, and capability readiness for a command/scope. An empty graph satisfies
+the first two after explicit activation, with no fabricated Recognition or policy objects. Every
+populated object and declared reference still validates. Runtime construction must represent absent
+capabilities without exceptions or development defaults. Command admission returns bounded
+unconfigured/unready reasons; a browse/transfer path does not acquire media-pipeline dependencies.
+
+The shared application authority computes applicability for both Settings activation and business
+page successors: validate all populated objects; require exact Storage evidence for applicable
+enabled library bindings, Recognition tests for applicable declared recognition chains, destination
+prechecks for applicable configured targets/chains, and existing Automation/Webhook checks when
+relevant. Missing capability is distinct from a broken declared dependency. Inapplicable checks
+cannot be fabricated as passed; applicable stale/failed evidence still blocks atomic publication.
+
+Native `/ui-v2/configuration` owns explicit first-Draft create/resume/activate, labelled Active/Draft
+JSON, portable secret-free export and schema/field-allowlisted editing for supported fields absent
+elsewhere. Read/navigation creates no Draft or work. JSON defaults to runtime-consumed Active, never
+cache or a replacement Draft. Database locator and principal/role/token authority stay deployment
+owned and cannot be changed by managed edits or imported portable configuration. Export excludes
+that authority while retaining all portable supported settings and safe secret references. Existing
+published snapshot identities remain verifiable; this is no permission to rewrite historical pins.
+
+All three resident services initialize their process/infrastructure boundary independently of media
+configuration. Worker retains advertised commands and resolves each admitted immutable work context;
+Scheduler obtains current valid snapshot and schedule/admission data together before emission;
+Notification Worker obtains current eligible delivery configuration without replacing durable target
+identity or weakening leases/recovery. Configuration failure pauses affected work with bounded
+reasons and no stale-cache fallback. Current Active governs new admission; intact older admitted
+pins remain valid independently of current Active. Activation alone starts no media work or delivery.
+
+Process liveness, DB/schema/registration/heartbeat readiness and command/pin work readiness remain
+separate. Supported fresh Compose needs bootstrap/admin credentials and durable data but no media
+mounts. Explicit Local Storage mounts/permissions become prerequisites only when Local is used;
+mount changes remain deployment operations. Infrastructure health must allow normal unconfigured
+waiting without presenting Scheduler/notification work as ready. Recoverable configuration/DB faults
+retain resident processes and durable work; schema incompatibility remains fail-closed under the
+explicit upgrade/recovery boundary. No API process supervision or new scheduler/queue is introduced.
+
+Backend RBAC, exact successor/concurrency/evidence, audit/redaction, published pins, revocable
+authority, lease/fence ownership, OrganizerExecutor-only mutation and uncertain-effect recovery stay
+mandatory. Deployment/restart-only settings cannot be shown as hot-consumed. Final acceptance must
+prove actual no-Active→empty Active→configured operation without resident process restart, including
+controlled scheduling/delivery and transfer regression. This target does not remove V1 or migrate
+every policy/Review/Recovery workspace.
 
 ## Persistence
 

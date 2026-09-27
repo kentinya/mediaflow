@@ -1,1051 +1,287 @@
-# Slice 39 — Storage Management Workspace
+# Slice 40 — V2 Settings and Empty-Baseline Startup
 
-This is the A-owned Contract for the V2 Storage management journey. It turns the existing
-managed Storage object and adapter capabilities into the operator-facing workspace represented by
-[储存管理.png](docs/pics/储存管理.png). The image is a visual and business-flow reference only; its names, counts,
-paths and example records are synthetic fixture data and are not product truth.
+This A-owned Contract delivers one installation journey: start management services without media
+business configuration, explicitly activate a valid empty baseline in V2 Settings, then configure
+individual capabilities and use them without restarting resident services.
 
 ```text
-Slice ID: 39
-Name: Storage Management Workspace
+Slice ID: 40
+Name: V2 Settings and Empty-Baseline Startup
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Implementation Head: f458646d3dac280b118a511c60ec53a5d3075d67
-Contract Revision: 2026-09-26 A-authorized expansion — resident transfer execution and truthful readiness
+Status: ACTIVE
+Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
+Implementation Head: NOT SET
+Contract Revision: 2026-09-27 — A selection after Slice 39 closure
+Risk: High
+Final Test Level: T4
+Next Action: B PLANS THE FIRST IMPLEMENTATION TASK
 ```
 
-> A activated the user's explicitly requested Worker/readiness scope expansion. Tasks 39.1–39.4
-> remain passed; their reviews and the prior return to A remain historical. RO-8/RO-9 are implemented
-> and accepted at the reviewed Implementation Head below. Slice Base and the prior Implementation
-> Head remain unchanged; this is not a Slice 38 reactivation.
+## Authority and sequencing
 
-Slice 38 is `PASS / CLOSED`. Its Base, Implementation Head, Closure Packet and A Final Review are
-historical facts and remain unchanged. This Slice starts from the repository HEAD immediately after
-that closure. It does not reopen Slice 38, replace the Storage adapters or redesign general Configuration.
-The explicit 2026-09-26 expansion below includes the existing ResourceLibrary/MediaLibrary
-transfer execution and waiting-state integration; unrelated Files features remain outside scope.
+The user's direction replaces the earlier proposal where business pages saved Drafts before Active
+existed. Settings owns explicit first-Draft creation and empty-baseline activation; business pages
+retain their Active-successor publication behavior.
+
+The request's statement that Slice 39 awaited A review is superseded by committed repository facts:
+Slice 39 is PASS / CLOSED after A's 2026-09-27 review of
+`d02539e49d5c99c3e3c0c70de5e994e42824a18e..f458646d3dac280b118a511c60ec53a5d3075d67`.
+Its Contract, Closure Packet and A Final Review remain reachable at this Slice's Base. That
+acceptance is not reopened or rewritten.
+
+A checkpoints this Contract and Roadmap before B plans. No implementation Task is created here;
+`TASK.md` remains a no-active-Task notice. B owns coherent Task sizing and Test Levels; changes to
+Active authority, permissions or service lifecycle require T4. B/Developer may update Implementation
+Head and factual progress/Closure Packet fields, but not Base, outcomes, acceptance or deferrals.
+Follow `docs/development-workflow.md`.
 
 ## User Goal
 
-An authenticated, authorized operator can understand which Storage locations MediaFlow is configured
-to use, add or maintain one safely, see which libraries depend on it, run a bounded read-only check,
-and recover from invalid or unavailable configuration without confusing a Draft with the runtime
-Active configuration or changing media contents.
+An administrator deploys only the application bootstrap file, durable data location and
+environment-owned API credentials. In V2 Settings they explicitly create, inspect, export and
+activate the first Draft with no media business objects. They then configure Storage, libraries,
+policies, Automation and Notifications through appropriate supported surfaces. The application
+explains which capabilities are available and which still need configuration. Worker, Scheduler
+and Notification Worker remain running and adopt eligible configuration without restart.
 
-After explicit setup/activation, the same resident Worker can execute separately admitted Files
-Copy/Move without a restart. Operators can distinguish a living process from a Worker able to run
-their transfer and can recover queued work without silently repeating media changes.
+## Baseline and applicable requirements
 
-## A Scope Activation — 2026-09-26 Worker continuity
+At Base, management-only bootstrap, first-Draft persistence, immutable revisions, checked activation,
+System Settings and redacted package exchange exist. `/ui-v2/configuration` is a migration landing.
+Slice 39 already provides resident ResourceLibrary/MediaLibrary transfer consumption and Worker
+command readiness. Remaining gaps verified by A:
 
-The user authorized this agent to act as A and then B ("给你A的权限处理对应文件并代替B规划Task")
-and explicitly selected this Slice ("直接合入39吧"). This discloses the role-separation exception:
-the same agent owns this Contract decision and the subsequent Task planning; this is not an
-independent final review or acceptance of completed implementation. The earlier proposal to reactivate Slice 38
-was not executed. Slice 38 and its closure ledger stay unchanged.
+- `build_first_setup_starter_document` in `mediaflow/application/configuration_snapshot.py` creates
+  empty business collections, but runtime loading rejects them. A read-only probe of the actual
+  starter fails with `strategy configuration 'recognitionTypes' must not be empty`.
+- `mediaflow/infrastructure/strategy_user_configuration.py` requires nonempty core lists, and
+  `runtime_configuration.py` constructs the complete strategy. Absence must become explicit
+  capability state without loading development/example defaults.
+- `ConfigurationObjectService.activate_checked` and successor evidence generation in
+  `configuration_objects.py` assume the existing complete workflow; checks need shared applicability.
+- `mediaflow/final_cli.py` bootstraps Worker from management authority, but Scheduler/Notification
+  Worker enter through workflow configuration; Notification targets are constructed at startup.
+- `compose.yaml` requires source and target media bind mounts even for a fresh installation.
 
-A materially expands Slice 39 from Storage configuration to the existing admitted-transfer runtime
-handoff after configuration publication. Retain RO-1–RO-7, their accepted Tasks and all existing
-safety invariants. Add RO-8/RO-9 and only the necessary transfer/health surfaces and tests. The
-original Base stays `d02539e49d5c99c3e3c0c70de5e994e42824a18e`; no new Slice or new processing engine.
+Applicable requirements: `V2-SETUP-001/002`, `V2-CONFIG-001` through `V2-CONFIG-004`,
+`V2-RUNTIME-001/002`, `V2-DEPLOY-002`, `V2-UX-*`, `V2-AUTH-*`, `V2-MIG-*`, existing `UX-*`,
+`REQ-CONFIG-*`, `REQ-TASK-009/010`, `REQ-SCHED-*`, `REQ-NOTIFY-*`, `REQ-DEPLOY-*` and `REQ-SAFE-*`.
+Accompanying V2 TARGET updates describe intended work, not delivered CURRENT behavior. Frozen V1
+requirements and historical acceptances remain unchanged.
 
-Current P1 evidence at `f3799c181b0ddbd7f2769ec47b63b2fa5ed6cb7c`:
-
-- The production `_files_transfer_worker_context` yields `_NullFilesTransferWorker` for the entire
-  resident lifetime when no Active exists at entry, or initial runtime construction fails.
-- `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-a39-worker-startup-probe.py` uses actual minimal
-  bootstrap, SQLite, Local Storage, checked activation and real ResourceLibrary Move admission.
-  Start before Active → checked activation → admission → three polls: runner remains
-  `_NullFilesTransferWorker`, transfer remains `admitted`, source remains and destination is absent.
-  Constructing a new context after activation yields `FilesTransferWorker`. No production media,
-  credential, disabled capability or altered production implementation is used. This reproduces
-  the startup-order defect with Local; OpenList is required regression/acceptance, not claimed as
-  separately reproduced by this probe.
-- `AutomationWorker` enables registration only when an explicit worker ID or snapshot identity is
-  supplied; the resident CLI supplies no explicit ID in the bootstrap case. Its current default
-  commands describe Automation jobs, not sufficient proof of transfer consumption. The worker
-  container probe repeats deployment preflight without inspecting its registration/DB/schema.
-  These production paths require coherent readiness correction, not a cosmetic healthy label.
-
-Boundary decisions:
-
-- Keep the transfer consumer present before first activation and during current-Active outages.
-  Resolve each admitted task's command/library kind plus immutable revision ID and digest into
-  its execution context; validate persisted admission, snapshot integrity and current execution
-  prerequisites before OrganizerExecutor. Reuse existing claims, checkpoint/recovery and adapters.
-- Current Active governs new admission. A switch A→B gives newly admitted work B; admitted A work
-  and in-flight A work keep A. Missing/broken *current* Active blocks new admission but is not alone
-  grounds to reject a valid pinned A transfer. Missing/corrupt/digest-mismatched/unpublished task
-  snapshots or unavailable required credentials fail before any new Storage mutation, with a
-  bounded durable blocked/failure state and recovery. Never substitute current Active, JSON or Draft.
-- Worker readiness is per service/command: (1) liveness, (2) registration/heartbeat, database and
-  schema readiness, (3) work readiness including current Active availability, supported command
-  families, pinned-snapshot reconstruction and bounded mismatch reasons. A live incompatible
-  Worker cannot make a pending transfer appear executable. No Active alone need not mark a healthy
-  queue consumer dead. Declare which signal Compose evaluates; it must verify actual Worker
-  readiness, not only valid mounts/config files. Do not conflate other services' healthy flags.
-- Show `等待可用 Worker` or an equally clear state with reason, durable admission state and next
-  action before or immediately after submission, in transfer progress and on durable revisit.
-  Distinguish no/stale Worker, unsupported command, schema mismatch and unavailable pinned context.
-  Refresh reports new evidence; it never resubmits. Backend remains the single permission/authority
-  source. Existing compatible admitted work resumes automatically only before uncertain mutation.
-- Preserve lease renewal and mutation fences during blocked OpenList requests and reconstruction;
-  no newer owner or Active switch may retarget in-flight work. Restart preserves completed effects
-  and resolves uncertain ones without replay. Do not attempt impossible blanket rollback of already
-  completed effects if a credential disappears mid-transfer; report actual partial/uncertain state.
-- Scope includes ResourceLibrary and MediaLibrary transfer consumers, bounded registration/readiness
-  persistence if needed, CLI/container health, existing API/Web transfer/Operations projections,
-  and actual Docker startup-order coverage. Automation/manual Organize and other worker roles must
-  remain compatible; a wholesale runtime scheduler, auth redesign or transfer redesign is excluded.
-
-After this Contract checkpoint B plans one coherent High/T4 Task. After that Task passes, B evaluates
-all current RO-1–RO-9 and runs the expanded Slice-final expectations before a new Closure Packet.
-The prior A-correction return shortcut for Task 39.4 does not cover these new outcomes.
-
-## A Scope Decisions
-
-- Add a supported V2 route at `/ui-v2/storage`; the full route is owned by the Storage management
-  navigation item and is distinct from `/ui-v2/configuration`, which remains the general
-  Configuration/System Settings migration handoff.
-- Make `docs/pics/储存管理.png` the visual reference for hierarchy and interaction: shared light
-  shell, page title/subtitle, provider summary cards, Storage table, and right-side four-step
-  Add/Edit drawer. The screenshot's values are synthetic and must never be hardcoded as runtime
-  data or used as acceptance counts. The supplied image is checkpointed unchanged with this Contract
-  revision so another checkout has the same reference; textual user corrections override it.
-- The user's correction overrides the image: Storage has no notes field. Do not add notes input,
-  display, persistence or search. The top search placeholder is `搜索存储、路径...`; the image's
-  reference to `备注` is incorrect and is not an implementation requirement.
-- Compose the page from the existing Managed Configuration and `ConfigurationObjectService`
-  authority. The page must not create a second Storage repository, adapter registry, or Active
-  source of truth.
-- Support the existing V1 Storage kinds through one provider-neutral page: Local, SMB, OpenList,
-  AWS S3, Cloudflare R2 and generic S3-compatible. `S3 / R2` may be one visual family, but the
-  persisted type and provider-specific validation remain distinct.
-- Use page-local Save for Add/Edit/copy/enable/disable and an explicit configuration removal action:
-  each operation uses the same checked publication boundary. The server composes a
-  successor from the exact current Active snapshot, performs complete validation and applicable
-  checked read-only evidence, prepares runtime binding, and publishes the successor atomically only
-  on full success. Removal is not complete after a Draft edit alone. The operator does not copy
-  revision, digest, token, claim or fence identifiers.
-- Keep the general Draft/Validate/Activate lifecycle, import/export, audit and support paths
-  available through the existing Configuration authority. This Slice does not redesign that page.
-- If the instance is in management-only bootstrap, has only `JSON_BOOTSTRAP` authority, or has no
-  valid Active workflow snapshot, show a truthful setup/handoff state. Do not present a partial
-  Storage object as Active and do not silently activate an incomplete document. Existing first-time
-  setup and compatibility Web journeys remain the recovery path until a complete managed runtime
-  exists.
-- Treat `Connection` and `Read` checks as bounded, zero-mutation diagnostics bound to the exact
-  candidate revision. Mutation-based write probes, probe cleanup and capability-discovery writes
-  are explicitly outside this Slice; a UI/API must not imply that a read-only check proves write
-  access.
-
-## Baseline and Applicable Requirements
-
-At Base, the Python domain, adapters, managed configuration persistence, generic object CRUD API,
-reference protection, Storage check evidence, Storage Browser and checked activation already exist.
-The V2 Storage navigation item still points at a generic migration placeholder, and there is no
-Storage page, typed Storage projection, provider form, page-local Storage Save flow or Storage
-management browser proof.
-
-Applicable stable requirements include `REQ-STO-001` through `REQ-STO-007`, `REQ-CONFIG-001` through
-`REQ-CONFIG-010` and `REQ-CONFIG-012`, `REQ-WEB-001`, `REQ-WEB-004`, `REQ-WEB-005`, `REQ-WEB-006`,
-`REQ-WEB-007`, `REQ-API-001` through `REQ-API-003`, and `REQ-SAFE-004` through `REQ-SAFE-007`.
-The Worker expansion additionally implements `REQ-TASK-010` and `REQ-DEPLOY-008`, refining existing
-`REQ-TASK-009` and `REQ-DEPLOY-005`. The canonical Storage definition, adapter capability model, path semantics, credential redaction,
-reference blocking and immutable Active rules remain authoritative.
-
-The Storage page itself manages configuration. It must not use FileIndex, scan a ResourceLibrary, make live
-Metadata Provider requests, create media-processing Jobs/Tasks, execute an Organizer task or mutate
-Storage. Checked activation must retain its applicable exact-successor gates: read-only Storage
-checks, the offline Recognition Strategy Test and destination precheck. The offline test and
-destination precheck may reuse Parser, Recognition, Naming, Classification and Planner with bounded
-synthetic samples and guarded Storage reads. These internal calculations and persisted validation
-evidence are permitted; they create no executable media work and grant no execution authority.
-The absence of a page-level Organize/Preview action never authorizes skipping these activation gates.
-
-## Operator Journey and UX Constraints
+## Operator journey and Required Surfaces
 
 | Stage | Required experience |
 |---|---|
-| Goal | Understand and safely maintain the Storage locations used by libraries and runtime. |
-| Entry | Choose `存储管理` in the shared V2 shell or open the supported Storage deep link after authentication continuation. |
-| Visible state | Page title/subtitle, bounded provider summary counts, search/filter state, Storage identity/type/location, enabled/read-only state, bounded connection/readiness state, references, current configuration authority and actionable setup/error state. Secrets and unsupported raw paths are never shown. |
-| Action | Search/filter, inspect details/references, add, edit, copy, enable, disable, delete after reference check, and explicitly run an advertised zero-mutation Connection/Read check. |
-| Success | The intended successor becomes the actual immutable Active runtime configuration; the list refreshes from the same authority, reference facts are current, and no media content changes. A read check records bounded evidence without activating or creating work. |
-| Failure | Invalid ID/name/provider fields, duplicate identity, missing secret reference, invalid root/endpoint, unavailable/denied/timeout provider, stale Active, failed evidence, blocked reference, activation conflict or runtime-load failure identifies the affected object and durable state without exposing secrets. |
-| Recovery | Correct the named field, secret reference, deployment mount or provider availability; refresh stale authority; rerun the bounded read check; repoint dependents before removal; or follow the existing setup/Configuration handoff. Failed saves retain correctable input and preserve the previous Active runtime. |
+| Entry | Authenticate through existing memory-only API-principal authority; open `系统设置` at `/ui-v2/configuration`. No-Active business states offer Settings and a safe return. |
+| Visible state | Distinguish never initialized, existing first Draft, valid empty Active, partially configured Active, command-ready capabilities and unavailable/corrupt authority. Show Active and Draft separately with bounded reasons and next actions. |
+| Action | Explicitly create/resume the first Draft, view/export JSON, edit supported uncovered settings and explicitly activate; then continue to business configuration pages. |
+| Success | Exact immutable configuration is published and loaded. Empty activation says `配置已激活，媒体业务尚未配置` and creates no media work. Later page saves publish exact successors and refresh capability state. |
+| Failure | Invalid object/reference, denied authority, stale revision, failed applicable check, missing secret/mount, persistence/schema fault or unknown outcome identifies durable state without secrets/raw exceptions. |
+| Recovery | Preserve Draft/correctable input and previous Active on known publication failure. Correct named blockers, refresh, resume saved state or verify unknown results before another explicit attempt. Previously activated but broken Active is recovery, not first setup. |
 
-The page follows the existing light V2 shell and project design system: a fixed left navigation rail,
-top search/account bar, restrained white/light-gray surfaces, blue primary actions, green enabled
-state, compact rounded controls and a dense table for repeated operations. It is a work surface, not
-a marketing page. Cards and drawer content must remain usable at narrow widths, preserve keyboard
-focus, and expose accessible names and deterministic empty/loading/error states.
-
-### Reference Composition and Interaction
-
-| Region | Required composition and behavior |
-|---|---|
-| Shared shell and search | Reuse the existing left rail and top bar with `存储管理` active. Use the shared top-bar search input with placeholder `搜索存储、路径...` for the Storage inventory; do not add a duplicate search box to the page body. Storage search state must not change the Files or MediaLibrary search context. |
-| Header | Show `存储管理` and `管理系统中的存储位置，用于访问本地文件或者各类云存储服务。` on the left, with `+ 添加存储` on the right above the cards. |
-| Provider cards | Place the provider summary/filter strip above the table, with type icons, names, configuration counts and a clear selected state. Use Local (`本地存储`), SMB, OpenList and `S3 / R2` families; the S3 family retains the actual S3/R2/S3-compatible subtype in the form and data. Sample duplicate cards and quantities are not literal requirements. Filtering offers a clear way to return to all types. |
-| Table | The six columns appear in this order: `名称 \| 类型 \| 根路径 / 位置 \| 状态 \| 引用情况 \| 操作`. The name cell shows a type icon and name with the stable ID on a secondary line. Root/location is configuration display, not a file-browsing command. |
-| State and references | Enabled/disabled and read-only intent remain distinct from the latest check result; `已启用` is not proof of a healthy connection. Show separate `资源库` and `媒体库` reference counts in the reference cell, including disabled dependents, with an inspectable bounded breakdown. |
-| Row actions | Keep `查看`, `编辑` and the accessible `更多` ellipsis menu in the rightmost operation cell, in that order where permitted. View opens the Storage detail/readiness surface; Edit opens the prefilled drawer. More contains applicable copy, enable/disable, read-check and configuration removal actions, with backend-authoritative permission and reference restrictions. |
-| Drawer | Use a right-aligned white panel with a title and close control, a left step rail and a right form area. Steps are `基本信息 → 连接配置 → 高级设置 → 确认`. The inventory remains visible as context at the reference desktop width. Normal entry, reload and reconnect leave the drawer closed; explicit Add/Edit opens step 1. |
-| Drawer footer | Keep Cancel, Back when applicable, and Next or final Save reachable at the bottom while long forms scroll. Closing, Cancel and Escape restore focus where practical and never submit a configuration change. A known failed Save retains correctable input; an unknown outcome offers state verification without automatic resubmission. |
-
-Step 1 contains required `名称`, `存储 ID` and `存储类型`, in that order, with the provider choices
-represented by their icon, label and short description. ID follows the backend lowercase
-letter/digit/hyphen/underscore rule and is read-only on Edit. Step 2 contains the selected provider's
-connection and root fields; step 3 contains enabled/read-only and supported advanced settings; step 4
-shows the secret-free summary and final Save action. Back/Next preserve input, expose field errors
-at the relevant step and do not activate configuration. Storage has no notes input or notes search.
-
-At `1536 x 1024`, retain the picture's relative proportions: roughly a `208 px` shared left rail,
-`58 px` top bar and a `430 px` right drawer. These are composition guides, not pixel thresholds.
-Narrow layouts may reflow the step rail and table while retaining readable fields, reachable actions,
-keyboard operation and focus behavior. Exact icon artwork, typography rasterization and example
-data are not acceptance criteria; the hierarchy and interaction relationships above are.
-
-## Required Surfaces
-
-- `/ui-v2/storage` with the shared shell, active `存储管理` navigation item, Storage search in the
-  shared top bar and bounded provider summary cards.
-- The six-column Storage table and row actions defined in Reference Composition and Interaction,
-  with name above stable ID, separate configuration/check state and both library reference counts.
-- A Storage detail/readiness view or drawer that shows provider-safe fields, capability declarations,
-  secret-reference readiness, exact configuration authority and reference impact without secret
-  values or unbounded host access.
-- A four-step right-side Add/Edit drawer: `基本信息 → 连接配置 → 高级设置 → 确认`. Edit is
-  prefilled from one exact Active object; the ID is visible and read-only. Cancel, close and Escape
-  restore focus where practical; failed submission retains correctable values. The drawer is closed
-  on normal entry and opens only on explicit intent with the step rail, form and footer defined above.
-- Typed provider forms for Local, SMB, OpenList, S3, R2 and S3-compatible settings, plus common
-  enabled/read-only, root and supported timeout/retry/concurrency settings. Provider credentials
-  are entered as approved secret references, never as values returned by the API.
-- Bounded reference inspection for libraries that use a Storage. Table counts include enabled and
-  disabled dependents; details identify their kind, identity and enabled state sufficiently for a
-  safe repoint/remove decision. A truncated breakdown never implies there are no more blockers.
-- Read-only Connection/Read check status, evidence currentness and safe retry/recovery. A check never
-  scans recursively, starts a Task, calls a Metadata Provider, mutates Storage or grants execution
-  authority.
-- Matching typed API behavior for list/detail/reference, Add/Edit/copy/enable/disable/delete and
-  checks. Web is not allowed to bypass the existing API permission, validator, audit, evidence,
-  concurrency or activation rules.
-
-- Existing ResourceLibrary and MediaLibrary transfer submission/progress and durable Operations
-  revisit, with backend-authoritative waiting/readiness explanation and recovery.
-- Resident Worker registration/heartbeat, authenticated command-aware readiness API and bounded
-  Compose/container health signal; no separate dashboard or credential-entry surface is required.
+Required surfaces: native V2 Settings and shared navigation/auth/deep links; matching authenticated
+configuration/readiness APIs; existing business-page empty/readiness/save states; actual resident
+CLI/container processes and health projections. Reuse the light V2 shell with accessible desktop and
+narrow layouts; no new screenshot reference or unrelated page redesign. Settings must complete in
+V2 without mandatory V1/CLI JSON authoring. Other not-yet-migrated business pages retain honest
+supported handoffs; this does not require all policy workspaces to migrate.
 
 ## Required Outcomes
 
-### RO-1 — V2 Storage route and reference-aligned workspace
+### RO-1 — Explicit, resumable V2 Settings lifecycle
 
-The Storage navigation item resolves to `/ui-v2/storage` and is the only active shell item there;
-System Settings/general Configuration continues to have its own route and migration semantics.
-The page follows Reference Composition and Interaction: title/subtitle, `+ 添加存储`, provider
-summary/filter cards, shared top-bar search, six-column Storage table and right-side drawer with
-explicit opening and step-1 fields. Summary counts are derived from bounded configuration
-objects, never from a recursive Storage scan or fabricated capacity data. The fixture values in the
-reference image are not runtime literals.
+- Settings owns `创建首个 Draft`, resume, state, JSON view/export and explicit activation. Entry,
+  refresh, reconnect and return never create a Draft, run checks or activate.
+- Repeated/concurrent creation recovers the existing durable first Draft or an actionable conflict;
+  no duplicate setup roots. Reload resumes saved state; unsaved edits are not claimed durable.
+- Admin can directly activate an empty Draft through normal validation and atomic runtime binding.
+  No Storage/library/RecognitionType/policy forms or generated business defaults are mandatory.
+- After activation show exact Active and per-capability status. Safe return refetches authority;
+  Viewer receives permitted read-only state and administrator guidance. Backend enforces permissions.
 
-### RO-2 — Truthful bounded Storage inventory and explanation
+### RO-2 — Legal empty configuration and conditional validation
 
-An authenticated viewer can list enabled and, where permitted, disabled Storage objects in stable
-order, search by name/ID/type/location, filter by provider family, inspect exact bounded
-configuration status and see which ResourceLibraries and MediaLibraries reference each object.
-Local roots are execution-environment paths under backend confinement; remote roots are logical
-provider-relative paths. The projection redacts credentials, authorization headers, cookies,
-tokens, access keys and secret values. It distinguishes missing/unavailable data from success and
-does not require a Storage read merely to render the configuration list.
+Storage, ResourceLibrary, MediaLibrary, RecognitionType, rules/type bindings, Metadata/Naming/
+Classification/Organize policies, Automation definitions/schedules and Webhooks may all contain zero
+business objects in the supported schema. This is valid configuration, not an incomplete document.
+No development strategy, synthetic type/provider/destination or business default fills the gaps.
+Existing bounded operational/polling defaults remain infrastructure settings, not business objects.
 
-### RO-3 — Add/Edit with provider-specific validation and checked Active publication
+Every populated object still passes its schema, values, uniqueness, paths and declared-reference
+validation. Wrong collection types, malformed objects, dangling references and invalid enabled
+relations remain errors. Objects can be added in dependency order: an undeclared capability is
+unconfigured; a declared broken dependency is invalid. Storage and browseable libraries must not
+need invented media-processing policies.
 
-The Add/Edit drawer captures the complete supported Storage object without JSON-only editing:
-identity/name/type, Local or remote root, provider fields, approved secret references, enabled and
-read-only state and supported timeout/retry/concurrency settings. Storage has no notes field.
-IDs satisfy the backend identifier rule and are immutable after creation. Provider forms
-show only fields valid for the selected type while preserving unexposed existing options on edit.
+| Check | Applicability |
+|---|---|
+| Schema/object/reference validation | Always, including the supported empty envelope and every populated object. |
+| Runtime construction | Always before publication; absent capabilities load explicitly and dependent commands return bounded `未配置/未就绪` results. |
+| Read-only Storage evidence | Applicable enabled library/Storage bindings and explicit Storage diagnostics under existing page-save rules; no imaginary check for empty collections. |
+| Offline Recognition Strategy Test | An enabled applicable source and declared recognition processing configuration make the check applicable; absence reports unconfigured. Broken declared relations cannot be relabelled inapplicable. |
+| Destination precheck | An enabled applicable destination and declared naming/classification/organize chain; a browse-only MediaLibrary does not need invented Recognition or policy objects. |
+| Automation/Webhook validation and authority | Configured enabled operations and actual dependencies; empty families need no fabricated test/Preview/grant. Publication never grants execution by implication. |
 
-Save binds to the exact Active revision used to open the form, validates the complete dependency
-graph, runs the applicable read-only Storage checks, offline strategy test and destination precheck
-against that exact successor, prepares runtime binding, and atomically activates only a complete
-successor. It preserves the permitted internal zero-mutation calculations defined above.
-A successful change is immediately reflected by the same Active list and is usable by
-subsequent library/configuration work. A stale writer, duplicate ID, invalid root/endpoint,
-missing/unavailable secret reference, permission failure, evidence failure or runtime-load error
-leaves the previous Active and current Storage contents unchanged; entered values remain correctable.
+One backend applicability decision serves explicit activation and all successor paths. `Not
+applicable` is distinct from passed, missing, stale and failed. Required evidence remains bound to
+exact revision/version/digest and invalidates on edit. B documents and tests populated/empty
+combinations for the relevant Task; it may not restore an unconditional complete-media-graph gate.
 
-### RO-4 — Safe copy, enable/disable and removal semantics
+### RO-3 — Truthful JSON and bounded advanced editing
 
-Copy requires an explicit new ID/name and copies only the safe configuration/secret references, not
-secret values. Copy and enable/disable publish through the same checked successor lifecycle as
-Add/Edit. Disabling cannot leave an enabled library with a disabled Storage binding; full graph
-validation supplies the affected references and a repoint/re-enable recovery path.
+- JSON view defaults to actual runtime-consumed Active. With no prior Active, display the existing
+  Draft as Draft or no-Draft state. Broken Active is an explicit failure; do not silently substitute
+  Draft, bootstrap JSON or cached Active. Explicit Draft selection remains visibly labelled.
+- View/export covers all supported managed configuration, including families edited elsewhere.
+  Versioned portable export preserves permitted environment references, excludes secret values and
+  credentials embedded in unsafe URLs, and never resolves secrets into the document.
+- Database location, API principals/roles and actual API tokens remain deployment startup authority.
+  Managed editing/activation cannot repoint them. Portable JSON excludes deployment authority;
+  import/recovery binds to the receiving deployment and cannot import identity/database authority.
+  Optional read-only deployment status is separate and secret-free.
+- Advanced editing is schema/field-allowlisted and only covers backend-supported configuration not
+  covered by other management pages. No unrestricted JSON write bypass or duplicate mandatory media
+  forms. B inventories supported fields and actual runtime consumers, including applicable existing
+  locale/timezone, logging, retry and concurrency controls; unknown/unconsumed fields are not
+  advertised as effective. No new setting family/consumer is invented solely for this editor.
+- Edits use the same RBAC, validation, audit, optimistic concurrency and activation boundary. Draft
+  edits never change Active in place. Deployment/restart-only settings retain truthful labels and
+  cannot appear hot-applied when their consumer still uses an earlier value.
 
-Configuration removal has one explicit confirmation describing the selected Storage and the fact
-that physical files remain. The backend binds the request to the exact Active revision used for
-that decision, rechecks permissions and every current ResourceLibrary/MediaLibrary reference,
-including references from disabled libraries, and rejects stale authority or any remaining
-reference. It must not hide disabled dependents, cascade removal, or rewrite library references.
+### RO-4 — Incremental business configuration and command readiness
 
-For an unreferenced Storage, removal composes a complete successor containing the other objects,
-performs full graph validation and applicable checked evidence for the remaining configuration,
-prepares runtime binding and atomically activates that successor. Only then may Web/API report
-success and refresh the inventory/reference counts from the resulting Active configuration.
-Deleting an object in a Draft alone is not success. Permission, reference, stale/concurrent,
-validation, evidence, persistence or runtime-binding failure preserves the previous Active and
-keeps the still-configured Storage visible with an actionable recovery explanation. No check of
-the removed Storage's root is needed merely to remove its configuration. Removal never mutates
-its root contents or modifies historical snapshots used by already admitted work. Unknown outcomes
-are verified from current Active state and never automatically replayed.
+- Storage and both library pages publish valid objects from empty Active while unrelated families
+  remain empty. Preserve page-local `保存并激活 successor`, exact Active base, field-preserving merge,
+  applicable checks and atomic publication. Successful Save must not become Draft-only persistence.
+- Policy, Automation and Notification surfaces share the same authority/applicability; retain their
+  existing explicit test, activation and execution/grant decisions. Full native policy migration is
+  outside scope.
+- Backend readiness is specific to command/scope: management, Storage access, library browse/direct
+  transfer, scan, Recognition/Preview/Organize, scheduling and delivery have different dependencies.
+  Missing Metadata does not disable an otherwise permitted direct transfer; Storage alone does not
+  make Organize ready. API/Web name missing/disabled/unavailable/unauthorized prerequisites and the
+  recovery destination. Admission and execution revalidate; UI readiness is not a permission grant.
+- Stale/concurrent publication, validation/evidence and runtime/persistence failures preserve prior
+  Active and correctable input. Unknown outcomes require state verification, never automatic replay.
 
-### RO-5 — Bounded read diagnostics and operational state
+### RO-5 — Resident MediaFlow Worker across setup and activation
 
-The operator can explicitly run the advertised zero-mutation Connection/Read check for one Storage
-against the exact candidate/runtime revision. The result records provider-safe status, affected
-Storage identity, bounded operations/evidence, currentness, failure category and next action. It
-uses the least authority needed, respects configured read-only intent, capability declarations,
-timeouts/retry limits and path confinement, and never claims write support from a read check.
-The page exposes no mutation-based write probe in this Slice; that omission is visible as an honest
-unsupported/deferred capability rather than a false green status.
+Worker starts, registers and heartbeats without Active and with empty Active. FileTransfer consumers
+remain installed, preserving Slice 39 command/library-kind identity and pinned reconstruction.
+Without valid authorized published work context, no media processing or Storage mutation occurs.
+Later eligible admitted Scan/Preview/Organize and ResourceLibrary/MediaLibrary transfers are consumed
+without Worker restart for its supported command families.
 
-### RO-6 — Actionable failure, recovery and security boundaries
+Current Active governs new admission; admitted/in-flight work keeps its published revision/digest.
+Missing current Active alone does not invalidate an intact older admitted pin. Missing/corrupt/
+unpublished/mismatched pins, incompatible schema, revoked authority or unavailable required secrets
+block affected work before new mutation. No replacement with current Active, Draft, startup JSON or
+cache. Preserve leases, heartbeat, fences, independent item checkpoints and uncertainty recovery
+through configuration switches, slow calls and restart.
 
-Missing Active/management bootstrap, 401/403, malformed payload, provider timeout/authentication,
-missing local mount, root escape, stale revision/digest, activation conflict, referenced deletion,
-unsupported provider capability and failed check each render a stable, action-oriented state. The
-operator can tell what remains durable, what did not happen, whether a safe read check can be rerun,
-and which explicit action continues recovery. No raw exception, secret, host-wide filesystem
-listing, internal execution token or arbitrary revision protocol is required in the ordinary Web
-journey.
+### RO-6 — Resident Scheduler and Notification Worker
 
-### RO-7 — Shared authority, API parity and regression isolation
+| Service | No Active / empty business Active | Applicable configuration published |
+|---|---|---|
+| Scheduler | Starts and waits; without enabled eligible definitions emits no Job. Unavailable Active cannot reuse stale schedules or advance an unissued occurrence. | Resolves one current valid snapshot at each new admission without restart; emits idempotent pinned work through existing scope/permission rules. Configuration read failure keeps the process alive with a bounded waiting reason. |
+| Notification Worker | Starts and waits; without usable Webhooks sends nothing and does not claim deliveries lacking a valid target. | Reads current valid delivery configuration without restart while preserving durable target identity, leases, retry/dead-letter and uncertainty semantics. Missing/changed target, secret or configuration never silently retargets a delivery or reports success. |
 
-Web and API use the same application service, RBAC, validation, optimistic concurrency, exact Active
-binding, reference protection, redaction, audit and error categories. Existing V1 `/ui`, generic
-configuration/import/export, Storage Browser/path selection, Files/MediaLibrary routes, Operations,
-Storage adapters and OrganizerExecutor behavior remain compatible. Storage page reads never create
-Tasks, scan, call Providers or mutate Storage; only existing explicit organizer/file-command paths
-retain mutation authority.
+Safe polling/reconnection may resume when prerequisites return; it cannot replay uncertain media
+mutation or conceal uncertain delivery. Keep documented notification at-least-once semantics and
+independent recovery. Activation itself creates no delivery, sends no notification and grants no
+execution authority.
 
-### RO-8 — Resident transfer execution across configuration lifecycle
+### RO-7 — Deployment, health and recoverable faults
 
-A Worker started before first activation remains able to consume later admitted ResourceLibrary
-and MediaLibrary Copy/Move, including OpenList Move, without restart. Each admitted command executes
-under its own validated immutable snapshot and library kind; later Active switches never redirect
-older/in-flight work. Missing current Active prevents new admission while valid older pins remain
-executable. Invalid task snapshot/authority/schema or missing required credentials prevents new
-Storage mutations and exposes safe recovery. Completed/uncertain operations are never replayed;
-lease renewal and mutation fences remain effective through slow provider requests and restart.
+- Default supported Compose starts API and all three resident services with management bootstrap,
+  admin credentials and durable local data only. No media bind mount is mandatory. Actual Local
+  Storage still needs explicit confined mounts/permissions. Adding a mount is a deployment change
+  and may recreate containers; configuration-only activation must not require process restart.
+- Separate process liveness; DB/schema and actual service registration/heartbeat readiness; and
+  command/scope work readiness with current/pinned-context reasons. Compose checks documented
+  infrastructure readiness, not media completeness. Waiting for initial configuration is normal;
+  Scheduler/notification work must still be shown as unconfigured, not ready.
+- Active absence/corruption, pin mismatch, DB outage, incompatible schema and missing secrets have
+  distinct bounded reasons and recovery. Running services safely wait through recoverable faults;
+  no cache fallback or unauthorized work. Unsupported schema is not ready and cannot silently
+  migrate; retain explicit upgrade/recovery. Invalid deployment inputs remain real startup errors.
+- Status/health is read-only and bounded: no Storage traversal, Provider calls, Webhook sends,
+  configuration writes or work admission. API never supervises resident subprocesses.
 
-### RO-9 — Truthful health and actionable waiting for transfer execution
+## Safety Invariants
 
-Liveness, registration/DB/schema readiness and command-specific work readiness remain separate and
-bounded. Readiness identifies current Active availability, actual supported command families and
-snapshot mismatch/reconstruction blockers, including the valid ability to execute older admitted
-pins. Container health checks actual service readiness and documents which signal it represents;
-healthy never alone claims every transfer can run. Web/API visibly distinguish admission from
-execution and promptly show waiting reason, durable state and a meaningful next action. Repairing
-readiness lets eligible queued work proceed without resubmission; refresh/health reads neither
-probe Storage mutation nor create work.
+1. One Python authority; Active is the exact validated immutable runtime snapshot, not row existence,
+   Draft or stale cache. All entry points share validation, applicability, concurrency and audit.
+2. Bootstrap database/principal authority is immutable through managed edits/imports. Bearer remains
+   memory-only; no secrets in JSON, URLs, logs, errors, audit or export.
+3. Reads, first-Draft creation and activation start no scan, media Job/Task, live Metadata request,
+   notification or Storage mutation. Applicable explicit diagnostics preserve zero-mutation scope.
+4. OrganizerExecutor alone mutates Storage under explicit intent, confinement, capability and
+   destructive policy permission. No silent overwrite/delete/fallback or automatic uncertain replay.
+5. RecognitionType C remains C while reusing A's Naming/Classification. No synthetic business
+   defaults, FFmpeg/FFprobe or new processing engine.
+6. Published task pins, current revocable permissions, leases/fences and per-item durable recovery
+   remain authoritative. Completed effects are terminal; uncertainty is never rewritten as success.
 
-## Safety and Correctness Invariants
+## Explicitly Deferred
 
-1. Storage adapters remain behind the domain/application Storage ports. The page never calls a local
-   filesystem, SMB client, OpenList HTTP API or S3 SDK directly.
-2. Every location remains identified as `Storage ID + Storage-relative path` where applicable.
-   Local host/container absolute roots are accepted only through existing backend confinement;
-   host `/`, Docker socket, unmapped host paths and arbitrary browser paths are rejected.
-3. Storage list/detail, form open, validation, reference lookup and read checks perform zero Storage
-   mutation. Checked activation retains the required offline strategy and destination calculations,
-   including guarded Planner use and persisted evidence against the exact successor. No page render,
-   filter, search, configuration command or refresh starts scanning or media-processing Jobs/Tasks.
-4. Only the existing OrganizerExecutor boundary may perform Storage mutation. This Slice adds no
-   mutation-based capability probe, fallback operation or hidden write/delete cleanup.
-5. Storage capability declarations are advisory facts checked by the existing planner/executor
-   boundary; unsupported operations never silently fall back.
-6. `Active` means the exact immutable runtime snapshot consumed by runtime. A Draft, revision row,
-   saved JSON object or stale process copy is never shown as Active merely because it exists.
-7. Add/Edit/copy/enable/disable/remove publish only through complete validation, applicable checked
-   evidence, prepared runtime binding and atomic successor activation. A failed operation preserves
-   the former Active pointer and Storage contents. Removal is visible as success only after the
-   resulting Active snapshot no longer contains the selected Storage.
-8. Optimistic concurrency rejects stale writers. Existing admitted work remains pinned to its own
-   snapshot; a Storage edit never silently rebinds or rewrites in-flight work.
-9. References to ResourceLibraries and MediaLibraries are bounded, deterministic and secret-free.
-   Removal checks all existing references, including disabled libraries, without treating a bounded
-   display as the whole dependency graph. Disabling cannot bypass full graph validation. Neither
-   operation cascades to library or physical-file deletion.
-10. Credentials and secret references are never returned as secret values and never appear in
-    normal logs, audits, errors, exports, diffs, screenshots or test fixtures. Configuration copy
-    and detail retain only approved redacted/readiness projections.
-11. RBAC and API/Web parity are backend authoritative. Viewer/read-only principals cannot mutate
-    configuration; management actions record bounded actor/before/after/result audit evidence.
-12. Unknown results are not automatically retried. A read check may be explicitly rerun only after
-    its durable state and safe repeatability are clear; save/activation never silently replays.
-
-13. A transfer's command/library kind, revision ID/digest and admitted authority determine execution.
-    Current Active is never a fallback for an invalid pin, and no Active switch rebinds in-flight work.
-14. Slow or uncertain provider operations retain ownership/mutation fences. A replacement Worker
-    cannot replay an uncertain operation; known completed effects remain terminal after restart.
-15. Health/readiness evaluation is bounded and secret-free, with no provider scan/read/write probe,
-    Task admission, activation or implicit Worker subprocess start. Runtime compatibility must be
-    checked against the applicable command/task, not inferred from a healthy API or another worker.
-
-## Explicitly Deferred / Excluded
-
-- Storage notes input, display, persistence and search are excluded by the user's correction, not
-  deferred to a later Task or Slice.
-- Mutation-based Storage write/capability probes, probe cleanup, test-object retention and recovery
-  after an uncertain probe. This Slice deliberately delivers only zero-mutation Connection/Read
-  checks; a future capability-diagnostics Slice must design the explicit mutation authority first.
-- General Configuration page migration/redesign, full Draft/Validated/Active administration UI,
-  configuration import/export, backup/restore, System Settings and Webhook management.
-- New Storage providers (WebDAV, SFTP, FTP, OSS, COS or other adapters), provider switching and
-  complete Secret Store/Docker Secrets integration.
-- New Storage Files/FileIndex browsing and new ResourceLibrary/MediaLibrary file operations, media-processing
-  workflows and page-level Scan/Preview/Organize, thumbnails, capacity/full-library statistics and
-  media playback. The required offline activation checks and internal Parser/Recognition/Naming/
-  Classification/Planner calculations defined above remain in scope. The explicitly authorized
-  existing-transfer Worker/readiness correction under RO-8/RO-9 is also in scope; it adds no new
-  file command, scan or Organize capability.
-- Arbitrary host filesystem browsing, recursive root scans, content indexing, upload/download or
-  automatic root directory creation. Existing bounded Storage Browser/path selection remains a
-  separate setup/configuration capability.
-- Changing Storage IDs, migrating or copying physical root contents after configuration changes,
-  automatic reference rewrites, bulk multi-object editing, policy editing, V1 `/ui` retirement or
-  a new identity/session system.
-- Editing or regenerating the supplied `docs/pics/储存管理.png`, which A includes unchanged in this
-  Contract checkpoint. Unrelated existing image modifications, deletions and new files remain
-  outside the checkpoint. Implementation Tasks consume the committed reference with the no-notes
-  override; they do not alter it.
+- Full migration/redesign of policy, Recognition, Review/Recovery or other non-Settings workspaces;
+  new business objects/settings, Providers, Storage adapters or processing commands.
+- V1 UI deletion or `/ui` cutover before independent parity/accessibility/migration acceptance.
+- Mandatory media-business onboarding wizard, generated business defaults, or first-setup Draft
+  management on business pages before empty-baseline activation.
+- New identity/session/OIDC, full Secret Store, live deployment-secret rotation, database relocation
+  or automatic host mount provisioning.
+- Scheduler/queue platform redesign, distributed workers, new schedule types/notification channels,
+  mutation-based Storage probes, universal rollback and automatic uncertain-mutation replay.
 
 ## Slice Acceptance Criteria
 
-| ID | Acceptance |
+| ID | Observable acceptance |
 |---|---|
-| AC-1 | `/ui-v2/storage` uses the shared light shell and top-bar search, correct active navigation, provider filter cards and the specified six-column table with name above ID and `查看 / 编辑 / 更多` actions. The drawer defaults closed and explicit Add/Edit opens step 1 with name, ID and type, a left step rail, right form and reachable bottom actions. |
-| AC-2 | Storage inventory and detail projections are bounded, deterministic, reference-aware, provider-safe and secret-free; Local/remote path identity and authority are not confused. |
-| AC-3 | All six supported Storage configurations can be added and edited through typed provider forms; ID immutability, field preservation, validation and approved secret references are enforced by API and Web. Storage forms, API configuration and search omit notes, and the search placeholder is `搜索存储、路径...`. |
-| AC-4 | Successful Add/Edit/copy/enable/disable/remove publishes an actual checked Active successor with runtime binding; required offline strategy/destination calculations are retained. Stale/invalid/denied/evidence/persistence/runtime failures preserve prior Active, Storage contents and correctable input or removal context. |
-| AC-5 | Removal rejects every remaining ResourceLibrary/MediaLibrary reference, including disabled libraries; disabling retains graph validation. Unreferenced removal succeeds only after checked atomic activation and refreshes the Active list/counts. Removed-root content and historical snapshots remain untouched, failures retain the configured entry, and unknown results are not replayed. |
-| AC-6 | Explicit zero-mutation Connection/Read checks show current/bounded evidence, provider-safe errors and recovery; no read check claims write capability and no write probe appears in this Slice. |
-| AC-7 | API and Web share permissions, application behavior, redaction, audit, lifecycle and error/recovery semantics; existing V1/V2 journeys and adapters remain green. |
-| AC-8 | The supplied reference is committed unchanged and available in another checkout. Controlled screenshots at `1536 x 1024` with drawer step 1 open and closed, plus narrow-screen/keyboard/focus evidence, demonstrate the specified hierarchy, search slot, table/actions and drawer regions. The no-notes override applies; pixel equality and sample data are not acceptance criteria. |
-| AC-9 | Final Base..Head evidence covers focused and full regression, browser journeys, typecheck/lint/format/build, governance, secret/private-file audit, FFmpeg/FFprobe exclusion and any configuration/packaging gates material to changed persistence or API composition. |
-
-| AC-10 | Start Worker before any Active; checked-activate later; admit OpenList Move; the same process/container executes it. ResourceLibrary and MediaLibrary commands stay kind-scoped. |
-| AC-11 | New B work uses B; admitted/in-flight A work stays A through activation/restart. Invalid pinned context/secrets cannot cause a new Storage mutation; successful and uncertain effects are never replayed. |
-| AC-12 | Process health, registration/DB/schema readiness and command/pin work readiness differ truthfully. Transfer submission/progress/revisit exposes waiting reason and recovery, including unsupported commands and missing/stale Workers. |
-| AC-13 | Slow OpenList calls retain live leases and mutation fences; Docker proves start → first activation → admitted Move without restarting the Worker. Existing Storage, Files, Automation/manual Organize and security behavior remains green. |
+| AC-1 | Fresh Compose with no media mounts/business objects serves Settings and keeps all services running; infrastructure health and unavailable work readiness are distinct. |
+| AC-2 | Admin explicitly creates one first Draft, reloads/reconnects/resumes, views labelled Draft JSON and exports. Repeated/concurrent creation produces no duplicate; read/navigation has no write side effect. |
+| AC-3 | All-empty business Draft validates and activates without business forms/defaults; runtime reload/API agree on exact Active and show `配置已激活，媒体业务尚未配置`. No media work/notification starts. |
+| AC-4 | Valid Storage-only, source-library-only, destination-library-only and policy additions succeed in dependency order with unrelated empty families. Malformed objects/dangling references fail; applicable exact checks cannot be bypassed or replaced with stale evidence. |
+| AC-5 | Readiness distinguishes browse/transfer/scan from Recognition/Preview/Organize, scheduling and notifications. Missing capability gives bounded recovery, not exit, accidental work or defaults. |
+| AC-6 | Business-page Save publishes exact successor and preserves hidden/unrelated configuration. Stale/concurrent writers, evidence/validation/runtime failure never publish wrong Active; unknown outcomes are verified without replay. |
+| AC-7 | Active/Draft JSON identity is truthful; empty and populated exports preserve all portable supported fields and exclude deployment authority/secrets. Round-trip through supported validated import/recovery uses another deployment's own database/principal authority. |
+| AC-8 | Advanced edits cover inventoried supported fields absent elsewhere and use the common lifecycle; API rejects unknown/unconsumed fields, deployment database/principal/token changes and unsafe values. Effective settings match consumers. |
+| AC-9 | Start processes without Active, activate empty baseline, then usable capabilities without restart. Prove transfer and supported media work, eligible scheduled occurrence and controlled Webhook delivery with unchanged resident process identities. |
+| AC-10 | A→B activation pins new work to B and keeps admitted/in-flight A work on A. Missing/corrupt current Active blocks new admission/scheduling but not an intact admitted transfer pin. Bad pin/secret/permission prevents affected new mutation through slow calls and restart. |
+| AC-11 | Inject missing/corrupt/mismatched Active/pins, DB/schema failures and missing secrets; distinct reasons, durable state and safe repair recovery remain. No stale-cache fallback, targetless claim, silent retargeting or uncertain replay. |
+| AC-12 | Admin/Viewer, 401/403, deep links/reload/return, narrow-width keyboard flow, JSON/audit/error redaction, V1 coexistence and existing business regressions pass on real application surfaces. |
 
 ## Final Validation Expectations
 
-This Slice crosses Active configuration, RBAC, credentials/redaction, concurrency, API and Web, so
-Tasks touching those boundaries require the workflow's T4 validation level. B assigns each Task's
-level from actual risk; the Slice gate normally includes:
+Core runtime validity and configuration/service authority make this High / T4. This planning
+checkpoint only receives textual/governance checks; no implementation acceptance is claimed.
 
-- focused Python tests for provider validation, redaction, references, exact Active concurrency,
-  checked read evidence, error categories and zero Storage mutation; prove that activation retains
-  required offline strategy/destination calculations without creating media-processing work;
-- removal regressions for enabled and disabled dependents, stale confirmation, successful checked
-  publication and refreshed inventory, failed validation/evidence/persistence/runtime binding,
-  unchanged historical snapshots and physical contents, and unknown-outcome verification;
-- focused Web entity/API/component tests for typed projections, form transitions, filtering,
-  error/recovery, accessible menus/drawer focus and provider-specific fields;
-- Playwright journeys for authenticated success, Add/Edit/copy/enable/disable/remove, referenced
-  blocking including disabled dependents, stale/failed activation, read-check failure and
-  setup/unavailable handoff; cover shared top-bar search ownership, row action placement and drawer
-  closed-by-default, step-1 field order, step navigation and footer accessibility;
-- controlled fake/local Storage services and temporary test roots only; no production SMB/OpenList/
-  S3/TMDB service, credential or user media;
-- normal Python regression, Web tests, typecheck/lint/format/build, `git diff --check`, governance,
-  private/config audit and FFmpeg/FFprobe exclusion checks; packaging/migration/release smoke only
-  where the actual implementation changes those boundaries.
-
-Visual evidence uses the unchanged committed `docs/pics/储存管理.png` as structural/design-intent
-reference at `1536 x 1024`, subject to the explicit no-notes override and Reference Composition and
-Interaction above. Verify that the reference is present in the reviewed Git manifest.
-The check must include drawer-open and closed states, long provider forms, empty/loading/error
-states, narrow width and keyboard/focus behavior. Nonzero raster differences and the screenshot's
-synthetic records are not independent blockers; hierarchy, labels, state truthfulness and working
-controls are.
-
-The Worker expansion additionally requires the following regression matrix with actual production
-assembly, durable SQLite and controlled local/fake providers (no production credentials/media):
-
-1. Worker starts first, then first checked activation, then OpenList Move; same process executes.
-2. Active A→B: new admissions execute B.
-3. Work admitted under A before the switch still executes A.
-4. Switch during a Move never changes that running transfer's bound context.
-5. No current Active: new admission fails with zero mutation; an intact admitted pin may execute.
-   Missing/corrupt/digest-mismatched pinned revision or required secret fails closed before mutation.
-6. Restart does not repeat confirmed completion or uncertain operations; independent item evidence
-   and safe not-started continuation remain correct.
-7. OpenList requests held beyond a short test lease retain heartbeat, ownership and mutation fences;
-   competing/restarted Workers cannot overlap or publish stale completion.
-8. Docker uses the actual image/entrypoint/worker loop and controlled OpenList HTTP service: start
-   all containers with no Active → checked-activate → explicitly admit Move → verify outcome and
-   unchanged Worker container/process identity. Test delayed call/restart boundaries separately;
-   restarting Worker after activation does not satisfy this acceptance.
-
-Also test registration/database/schema/command mismatch and Web waiting/recovery for both library
-kinds. Run full Python/Web and affected browser regressions, health/transfer/release-security Docker
-gates, and migration/upgrade compatibility if durable registration fields change. Health probes
-must not call the OpenList service. Report all unavailable gates and skips honestly.
-
-## Delegated Factual Updates and Stop Rule
-
-B may replace the explicit no-active Task notice with one coherent Task after this Contract and its
-`ACTIVE` Roadmap row are checkpointed. B may update factual implementation-head, test and Task review
-evidence delegated by this Contract, but cannot expand provider scope, add write probes, weaken
-Active/reference/safety rules, change Base or declare the Slice closed.
-
-After every Task PASS, B must reevaluate RO-1 through RO-9. Once all Required Outcomes and acceptance
-criteria are satisfied, B stops planning, emits the Closure Packet with decision `SLICE READY FOR A
-REVIEW`, and leaves A to review Base..Head and reconcile CURRENT documents. P2 wording, optional
-visual polish or a future write-probe idea is not a reason to create another Task.
-
-## Implementation Task Handoff
-
-The earlier A readability/recovery correction is completed by Task 39.4. The current A Scope
-Activation requests one coherent admitted-transfer execution/readiness Task for RO-8/RO-9.
-Root `TASK.md` owns the actual implementation Task state. B uses this A scope activation's
-committed checkpoint as the new Task Base, preserves every passed Task's history, and returns the
-expanded Slice to A only after Task review and the current Slice-final expectations. No implementation is authorized by a draft document
-alone; the Contract and Task must pass governance before Developer execution.
-
-## B Post-handoff Findings
-
-Recorded after user deployment feedback at code/document checkpoint
-`f3873521aa1c03bff83fb8acb1afe20be24d59ee` (production code unchanged from the Implementation Head).
-This is B's factual correction to the handoff, not an A Final Review or a claim that a fix is
-implemented. The previous global completeness assertion is no longer valid; the historical test
-results and individual Task review records below remain as recorded. No active implementation Task
-is created while this Slice is awaiting A review.
-
-### P1 — Provider-valid empty OpenList root breaks the Storage workspace
-
-1. **Current production reachability:** the current typed form and backend accept an OpenList
-   Storage with `rootPath: ""`. The real checked-save/application/API path accepts an unreferenced
-   disabled OpenList object alongside a complete working Local runtime; listing disabled objects
-   is explicitly supported. No future adapter, mixed version or reduced-capability test double is
-   needed. Listing the configured object does not require connecting to OpenList.
-2. **Current user impact:** after adding that configuration, `/ui-v2/storage` cannot render its
-   inventory, including other valid Storage entries. It reports `存储管理不可用` and
-   `The Storage management response could not be understood as the expected read-only contract.`
-   The user may mistake a post-save read failure for a failed save or invalid token and retry Add.
-3. **Current Contract violation:** RO-2/AC-2 require a truthful usable inventory including disabled
-   objects; RO-3/AC-3 require supported provider input to survive the typed journey; RO-6 requires
-   truthful durable state and recovery. The fix implements existing provider semantics, not a new
-   provider or a change to Local confinement.
-4. **Reproducible evidence:** with a complete checked Active on temporary Local roots and SQLite,
-   POST `/api/v1/storages` using a fresh exact-Active fence and this candidate:
-
-   ```json
-   {"storageId":"openlist-root","name":"OpenList root","type":"openlist","rootPath":"","readOnly":true,"enabled":false,"options":{"baseUrl":"https://openlist.example","tokenEnv":"OPENLIST_TOKEN"}}
-   ```
-
-   Save returns 200. GET `/api/v1/operations/storage-management/inventory` returns 200 with
-   `location: {"kind":"remote","rootPath":""}` for the new object.
-   `ConfigurationObjectService._active_storage_document` preserves that legal empty string.
-   The actual `normalizeStorageInventory` rejects this response because `normalizeLocation` calls
-   the non-empty `normalizeBoundedText` for `""`; only null/undefined take its empty-root branch.
-   The production API client catches the normalization error and emits the quoted generic message.
-   Feeding the identical payload with this one OpenList root changed to `/` into the same parser
-   succeeds and returns all three entries. Local reproduction scripts:
-   `/tmp/mediaflow-openlist-empty-root-probe.py` and
-   `/tmp/mediaflow-openlist-normalize-probe.cjs`; no real OpenList credential or user media was used.
-5. **Severity and correction acceptance:** P1, a legal saved object makes the required workspace
-   unavailable. Accept the provider-valid empty root through list/detail normalization and display
-   it as `提供商根目录`, preserving the stored path and all existing validation boundaries. Do not
-   filter out the object, weaken unrelated shape validation or require delete/recreate. Prove
-   Add → successful Save → full list → detail → prefilled Edit → reload for empty and `/` roots,
-   including an already saved empty-root object, alongside Local and another valid remote entry.
-   Preserve malformed-payload rejection, Local confinement, permissions and zero Storage mutation.
-   List failure must not auto-resubmit Save or falsely claim that Active was rolled back.
-
-### Required setup entry and return experience — recorded target
-
-The user requested a system-level first-setup entry after seeing the no-Active message. The current
-`StorageManagementPage` no-Active branch shows an explanation and Refresh only. The existing V1
-`/ui` Configuration implements `Create first Draft` / `Resume setup Draft`; V2 general Configuration
-is a migration landing. That capability exists, but the Storage empty state has no direct setup
-handoff or return action.
-
-The requested experience is specified in the Chinese product specification,
-[Product Experience](docs/product-experience.md#target--discoverable-v2-setup-and-return-journey) and
-`V2-SETUP-001/002` in [V2 Requirements](docs/v2-requirements.md): authenticated Start/Continue,
-System Settings → Initialization and Configuration, and Storage → Complete setup all lead to one
-resumable journey; successful checked activation returns to the originating page. Permission denial,
-missing setup, unavailable Active and malformed reads must remain distinct. Page entry/return does
-not create a Draft, activate or start media work by itself.
-
-A should assess the minimal actionable handoff under existing RO-6 and the original setup/handoff
-scope, and scope the broader native V2 wizard separately if needed. This request does not authorize
-B to remove the general Configuration deferral, migrate the whole page, create a second authority
-or silently add all global setup surfaces to Slice 39. Acceptance must cover a fresh instance,
-existing incomplete setup, reconnect/resume, viewer permissions, explicit successful completion and
-return to the refreshed Storage workspace. The empty-root P1 is independently established above.
-
-**Disposition:** A has reviewed these findings under explicit user authorization; see the decision
-and bounded correction scope below. Do not close the Slice using the superseded completeness assertion.
+- Focused model/runtime, configuration/activation/applicability, settings/package, permission,
+  successor/admission and resident lifecycle tests: success, invalid input, conflicts, failures,
+  empty/populated/dependency edges and RecognitionType C regression.
+- Full Python regression and complete quality/safety gates; full Web unit/component suite,
+  typecheck/lint/format/build; real SQLite and confined Local integration. Use local controlled
+  Provider/Webhook services and fake credentials, never production media or secrets.
+- V2 browser first-Draft→empty Active→module-successor journey, JSON/export/advanced edits,
+  permissions, concurrency/unknown outcomes and recovery, including a real Python-served path.
+  Mocked HTTP alone cannot prove runtime binding or process adoption.
+- Actual Compose no-Active/no-media-mount startup and unchanged process identities through empty
+  and populated activation; subsequent scheduled work and controlled notification delivery;
+  existing transfer lifecycle/slow-call/fencing/non-replay regression.
+- Material Docker health, restart/fault and release-security gates; packaging/build and migration/
+  upgrade gates if persistence/schema changes. Record commands, totals, skips and unavailable gates;
+  fakes do not prove production-provider compatibility.
+- Manifest/private-file audit, governance, local Markdown links and `git diff --check`. Preserve
+  pre-existing untracked `docs/pics/*.png` and ignored private configuration.
 
 ## Closure Packet
 
-Historical B submission at the Head below. Its all-Outcomes-complete conclusion is superseded by
-the [post-handoff findings](#b-post-handoff-findings); the tests below are historical evidence, not
-proof that those newly reproduced cases pass. No correction had been implemented at that submission;
-Task 39.4 and the correction return below provide the subsequent evidence.
+Not submitted. Implementation has not started. After each Task PASS B reevaluates all Required
+Outcomes; once complete, B runs the Slice-final gate and returns one compact Closure Packet to A.
 
-Slice: 39 — Storage Management Workspace
-Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Head SHA: c84d545a6b3d122d405ba03a286910322a765266
+## A Final Review
 
-Required Outcomes:
-- RO-1 COMPLETE — Dedicated V2 route/shared search, provider cards, six-column table,
-  View/Edit/More actions and explicit four-step drawer; desktop/narrow keyboard evidence verified.
-- RO-2 COMPLETE — Exact Active, bounded searchable inventory and details, provider-safe paths,
-  enabled/disabled reference counts and honest continuation; no reads needed to list configuration.
-- RO-3 COMPLETE — Typed Local/SMB/OpenList/S3/R2/S3-compatible Add/Edit, immutable IDs,
-  preserved options/secret references, full successor validation/evidence and checked publication.
-- RO-4 COMPLETE — Explicit configuration copy, enable/disable and one-confirmation removal;
-  complete reference protection, exact decision fencing, remaining-configuration checks, preserved
-  physical contents/historical snapshots and explicit recovery without automatic replay.
-- RO-5 COMPLETE — Bounded zero-mutation Connection/Read checks from View and More, current evidence,
-  failure/recovery state and an explicit statement that write access was not tested.
-- RO-6 COMPLETE — Setup/auth/validation/provider/dependency/stale/unknown states provide durable
-  state and recovery; copy retains input and reviews the selected source by exact ID beyond page 1.
-- RO-7 COMPLETE — Shared application authority, RBAC, redaction, audit, concurrency and runtime
-  publication; existing configuration, V1/V2, Storage and Organizer regression remains green.
-
-Required Surfaces:
-- COMPLETE — `/ui-v2/storage`, shared shell/navigation/top-bar search and provider cards.
-- COMPLETE — Six-column table with name/ID, separate state, both reference counts and row actions.
-- COMPLETE — Secret-free Storage detail/readiness, capabilities, authority and reference impact.
-- COMPLETE — Explicitly opened four-step Add/Edit drawer with prefill, immutable ID and safe dismissal.
-- COMPLETE — All six typed provider forms, supported common options and approved secret references.
-- COMPLETE — Bounded enabled/disabled library-reference inspection with honest truncation.
-- COMPLETE — Read-only Connection/Read evidence, currentness and explicit safe recovery.
-- COMPLETE — Matching typed list/detail/reference/Add/Edit/copy/state/removal/check APIs.
-
-Implemented:
-- Provider-neutral V2 Storage management over the existing managed-configuration authority.
-- Checked page-local configuration publication and complete row-action/recovery journeys.
-- Exact Active concurrency and bounded reference/diagnostic projections without media mutation.
-
-Tasks completed:
-- 39.1 — Inventory, detail and read diagnostics; PASS at 50642cd19da9da35197e6e54dcc6fe277003a3f3.
-- 39.2 — Typed Add/Edit and checked Save; PASS at 764a56eb74e2eb311fd9e685699c8cad4e24f3af.
-- 39.3 — Checked copy, enable/disable and configuration removal; PASS at fc6a1fa143efc1a10ee84494fa5940312f53af83.
-
-Final Tests:
-- `.venv/bin/python -m unittest tests.test_configuration_objects tests.test_storage_configuration_management tests.test_storage_setup_check tests.test_v2_storage_operations tests.test_storage_page_local_save`:
-  PASS, 128 tests, 0 skips, 24.365 s. This supersedes the stale 126-test report count.
-- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,836 tests, 7 skips, 351.685 s.
-  Skips: isolated real OpenList/SMB/S3 acceptance (3) and Local/SMB/OpenList/S3 endurance (4).
-  These external profiles were unavailable; no production service/credential/media was used.
-- `cd web && npm test -- --run`: PASS on unchanged full rerun, 702 tests / 47 files, 0 skips, 235.59 s.
-  First run: 701 passed, 1 failed (Storage header's asynchronous heading lookup).
-  Unchanged focused rerun: `npm test -- --run src/features/storage/StorageManagementPage.test.tsx`,
-  PASS, 31 tests. No assertion, timeout, skip or implementation was changed for either rerun.
-- `cd web && npm run test:e2e -- --grep 'Storage management'`: PASS, 24 Chromium tests, 0 skips,
-  42.8 s, using the rebuilt candidate. Controlled 1536 x 1024 closed/step-1/long-form screenshots
-  are in `web/test-results/storage-{closed,drawer-step1,drawer-long-form}-1536x1024.png`.
-- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: PASS.
-- `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: PASS, 316 files formatted;
-  `.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
-- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b39-3-r6-review`:
-  PASS against the committed candidate; authenticated API/Web, RBAC denial, runtime activation,
-  Worker completion, exports/logs and release-security smoke passed. B reran this gate despite
-  Developer's explicit correction-round skip. No persistence schema migration was added.
-- `python3 scripts/check_governance.py`: PASS on the committed candidate before this B handoff;
-  `git diff --check` and Slice Base..Head whitespace audit: PASS.
-- Real application/API + SQLite + production Local adapters on temporary roots: PASS for copy,
-  disable/enable, referenced denial, stale removal (409), unavailable-root configuration removal,
-  unchanged contents/historical snapshot and subsequent read check (200). Real Chromium checks:
-  1536/390-width More and Copy Escape/focus/cancel, zero configuration commands on dismissal,
-  More read-check (200), 108-Storage exact-ID stale-copy review/retained input/final publication,
-  and Web disable/enable/one-confirmation removal with refreshed Active state all PASS.
-
-Safety Evidence:
-- Application/API diff retains complete successor validation, exact read-only and offline
-  strategy/destination evidence, prepared runtime binding and atomic activation. The same authority
-  fences every lifecycle command; stale displayed rows cannot be paired with newer Active state.
-- Removal uses the full reference graph, including disabled dependents; it checks only the remaining
-  configuration. Real Local proof preserves physical contents and historical revision documents.
-- No new Storage write path, media-job admission, capability fallback or FFmpeg/FFprobe dependency.
-  Tests/assertions were not removed or weakened and no skips were added in Task 39.3.
-- Private-file/manifest audit: `config/alist.json` is ignored and untracked, no real credentials
-  included; the three pre-existing unrelated image changes are preserved outside this work.
-- Reference `docs/pics/储存管理.png` remains unchanged, SHA-256
-  `5e3aa806a081aaa52afdb79e0442e751e793aedcb1e4dd4616049f15e3b3df44`.
-- Review round 6 reassessed the >3 correction rounds: the completed row actions reuse existing
-  checks, authority and UI behavior. No extra architecture, confirmation step or micro-Task is needed.
-
-Known Non-blocking Issues:
-- P2 — Some diagnostic capability/state labels and next-action text retain technical English;
-  the visible result, write-not-tested statement and recovery controls remain usable.
-- P3 — The first heavily concurrent validation run had one asynchronous heading-lookup failure;
-  focused and full unchanged reruns passed. Existing SQLite ResourceWarnings, jsdom scrollTo
-  notices and Vite bundle-size advisory remain non-fatal. No current P0/P1 blocker was found.
-
-Explicitly Deferred:
-- Storage notes input, display, persistence and search are excluded by the user's correction, not
-  deferred to a later Task or Slice.
-- Mutation-based Storage write/capability probes, probe cleanup, test-object retention and recovery
-  after an uncertain probe. This Slice deliberately delivers only zero-mutation Connection/Read
-  checks; a future capability-diagnostics Slice must design the explicit mutation authority first.
-- General Configuration page migration/redesign, full Draft/Validated/Active administration UI,
-  configuration import/export, backup/restore, System Settings and Webhook management.
-- New Storage providers (WebDAV, SFTP, FTP, OSS, COS or other adapters), provider switching and
-  complete Secret Store/Docker Secrets integration.
-- New Storage Files/FileIndex browsing and new ResourceLibrary/MediaLibrary file operations, media-processing
-  workflows and page-level Scan/Preview/Organize, thumbnails, capacity/full-library statistics and
-  media playback. The required offline activation checks and internal Parser/Recognition/Naming/
-  Classification/Planner calculations defined above remain in scope. The explicitly authorized
-  existing-transfer Worker/readiness correction under RO-8/RO-9 is also in scope; it adds no new
-  file command, scan or Organize capability.
-- Arbitrary host filesystem browsing, recursive root scans, content indexing, upload/download or
-  automatic root directory creation. Existing bounded Storage Browser/path selection remains a
-  separate setup/configuration capability.
-- Changing Storage IDs, migrating or copying physical root contents after configuration changes,
-  automatic reference rewrites, bulk multi-object editing, policy editing, V1 `/ui` retirement or
-  a new identity/session system.
-- Editing or regenerating the supplied `docs/pics/储存管理.png`, which A includes unchanged in this
-  Contract checkpoint. Unrelated existing image modifications, deletions and new files remain
-  outside the checkpoint. Implementation Tasks consume the committed reference with the no-notes
-  override; they do not alter it.
-
-Documentation Reconciliation Needed:
-- A should reconcile CURRENT architecture/product-experience/requirement facts with the dedicated
-  Storage route and typed checked lifecycle, retaining the read-only diagnostic/write-probe boundary.
-- A owns the final Base..Head review, any Roadmap/Progress status reconciliation and closure checkpoint.
-  This B packet and Task notice record readiness for A review; committing or publishing this
-  handoff does not declare the Slice PASS / CLOSED.
-
-Decision: SLICE READY FOR A REVIEW
-
-## A Final Review — 2026-09-27
-
-```text
-Reviewed Range: d02539e49d5c99c3e3c0c70de5e994e42824a18e..f458646d3dac280b118a511c60ec53a5d3075d67
-Decision: PASS / CLOSED
-P0-P1 Blockers:
-- None.
-```
-
-Closure Reconciliation:
-
-- RO-1 through RO-9 and every Required Surface are complete across the Storage workspace,
-  typed checked lifecycle, zero-mutation diagnostics, setup handoff, ResourceLibrary and
-  MediaLibrary transfer execution, Worker readiness and durable waiting/revisit state.
-- The complete Slice range was reviewed, including the provider-root/setup correction and the
-  resident Worker continuity corrections. Exact Active/pinned snapshot binding, library-kind
-  isolation, lease/fence ownership, OrganizerExecutor-only mutation, no silent overwrite/delete,
-  zero-mutation analysis/readiness and no automatic uncertain replay remain intact.
-- Final validation is credible: focused Python 334 tests passed; full Python regression 1,852
-  tests passed with 7 existing optional/external skips; Web full suite 727 tests passed; Storage
-  management browser selection 29/29 passed; Web typecheck, lint, format and build passed;
-  governance and diff checks passed; Docker transfer-lifecycle and release-security smoke gates
-  passed. No production service, credential or user media was used.
-- The committed Storage reference is present and unchanged within the reviewed implementation
-  range. `config/alist.json` is absent from the committed manifest. The unrelated untracked
-  `docs/pics/*.png` files remain outside this closure and were not staged or accepted.
-- Explicitly Deferred remains unchanged: mutation-based Storage probes, general Configuration
-  migration/native V2 setup wizard, new providers/Secret Store integration, new file commands,
-  scheduler redesign, automatic uncertain replay and new identity/session systems.
-- CURRENT architecture, deployment, Product Experience, requirements and canonical specification
-  facts have been reconciled with the delivered Storage route and resident transfer/readiness
-  behavior. This factual reconciliation does not expand scope or promote deferred work.
-
-Evidence location: `/tmp/mediaflow-b393-r6-{python,focused,web,web-focused,web-rerun,e2e,docker,api,actions,bounded,lifecycle}.log`.
-Real Local probes: `/tmp/mediaflow-b393-r6-api.py`, `/tmp/mediaflow-b393-r6-{actions,bounded,lifecycle}.mjs`
-with `/tmp/mediaflow-b393-r5-server.py`; browser action screenshots are
-`/tmp/mediaflow-b393-r6-actions-{1536,390}.png`. These are local validation artifacts, not repository
-product files. Task review used the reported Head above; the two later commits through this packet's
-Head alter only TASK.md, so all final validation covers the same implementation.
-
-## A Final Review — Historical FIX REQUIRED (2026-09-26)
-
-```text
-Review type: rejection and correction-scope decision
-Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Reviewed Implementation Head: c84d545a6b3d122d405ba03a286910322a765266
-Repository checkpoint inspected: f3873521aa1c03bff83fb8acb1afe20be24d59ee
-Decision: FIX REQUIRED
-Next: B PLANS ONE FOCUSED CORRECTION TASK
-```
-
-### Review authority and limits
-
-The user explicitly authorized the existing B agent to exercise A authority: “授权你A的权限 A 审核
-空根路径 P1 和首次设置入口衔接范围，记录 FIX REQUIRED 并提交 checkpoint”. This is the disclosed
-role-separation exception required by the development workflow; this review does not claim an
-independent reviewer. A inspected the Slice Base..Head manifest, current production implementations
-and the recorded findings, and reran the targeted reproductions below. It is a rejecting review,
-not a renewed assertion that all other outcomes or the complete final gate have passed.
-
-### P0/P1 Blockers
-
-- **P1 — Legal provider-root configuration cannot be read by the required workspace.**
-  In the current same-version application/API and Web, a valid complete managed runtime can add
-  an unreferenced disabled OpenList object with an empty root. Save and inventory both return 200,
-  but the actual frontend inventory normalizer rejects the API projection and makes the entire
-  Storage workspace unavailable. The backend permits this configuration, and the OpenList adapter
-  resolves both empty and `/` roots to its service root. The reproduced disabled case is a normal
-  supported configuration, not a capability-removed fake. This violates RO-2/RO-3/RO-6 and AC-2/3/4's
-  usable provider-safe inventory and post-save recovery. Fix the input/projection/list/detail/Edit
-  round trip and an honest provider-root display; retain strict unrelated payload checks and Local
-  confinement. Already-saved entries must recover without manual database edits, deletion or replay.
-  The step-by-step real API and production-normalizer evidence is in B Post-handoff Findings.
-
-- **P1 — The promised setup recovery handoff is absent at the Storage failure surface.**
-  A real management-only instance with an authenticated admin returns `setupRequired: true`.
-  Opening `/ui-v2/storage` shows the no-Active message, disabled Add and Refresh; the page body has
-  zero setup/configuration links or setup buttons. Refresh cannot establish an initial runtime.
-  The current V1 `/ui` does have functioning Create first Draft / Resume setup Draft after
-  authentication, and the global System Settings migration landing links to V1; this finding does
-  not claim that setup is absent everywhere. The gap is the required actionable recovery from this
-  Storage state and a clear continuation back to the user's goal, under A Scope Decisions' existing
-  setup/handoff boundary, RO-6 and AC-7. Provide the page-local setup handoff, continue existing
-  setup through the existing authority, and an explicit return that refreshes actual Active truth.
-  A real browser reproduction confirms this missing entry and the working V1 create/resume flow.
-
-### Authorized correction boundary
-
-- Treat both blockers as one coherent Storage workspace readability and recovery correction, not
-  one Task per field, button or test. Do not reopen the three passed Tasks or move their Bases.
-- Accept provider-valid empty roots in existing typed read surfaces and show a truthful provider-root
-  label. Empty, `/` and non-empty OpenList roots must survive Save, inventory, detail, Edit and reload.
-  Other providers retain their existing semantics; never reinterpret an invalid Local root as `/`.
-- At genuine setup-required Storage state, expose `去完成设置` or an equivalent explicit action
-  into the existing V1 Configuration setup workflow. A small V1 entry/return affordance and bounded
-  readiness projection reuse are permitted if necessary to complete this handoff. The existing
-  workflow owns first-Draft creation/resume, checks and activation. Do not duplicate it in Storage.
-- Returning or reconnecting refetches current authority. Preserve unfinished setup; distinguish
-  first setup, temporarily unavailable Active and malformed inventory. Read-only users receive
-  actionable administrator guidance. A click that merely navigates or inspects readiness must not
-  create a Draft, activate, repeat Save or start Storage/media work.
-- Preserve the current memory-only Bearer model. A V1 authentication prompt is acceptable within
-  the existing migration boundary; do not pass tokens in URLs/storage, invent a token bridge or
-  weaken RBAC to make the handoff appear seamless. Return targets are fixed or same-origin
-  allowlisted application routes, with no arbitrary redirect.
-- The broader `V2-SETUP-001/002` native wizard, global post-login onboarding and System Settings
-  redesign remain future scope. This correction does not migrate general Configuration, remove
-  any existing deferral, invent workflow defaults or bypass complete checked activation.
-
-### Validation and return to A
-
-- Repeated `PYTHONPATH=. .venv/bin/python /tmp/mediaflow-openlist-empty-root-probe.py` followed by
-  `node /tmp/mediaflow-openlist-normalize-probe.cjs`: current defect reproduced; Save/inventory 200,
-  empty-root response rejected, otherwise identical `/` response accepted with all three entries.
-- Ran the real application with SQLite management-only bootstrap via
-  `/tmp/mediaflow-a39-setup-server.py`, then `node /tmp/mediaflow-a39-setup-probe.mjs`: current V2
-  setup CTA count 0, configuration-link count 0, readiness setupRequired true; existing V1 first
-  Draft creation and Resume both work. This used only temporary state and synthetic credentials.
-  Log: `/tmp/mediaflow-a39-setup-probe.log`; image: `/tmp/mediaflow-a39-setup-gap.png`.
-- `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations`:
-  PASS, 27 tests, 0 skips, 4.148 s. These existing tests do not disprove the reproduced UI gaps.
-- The prior full Python/Web/browser/Docker results remain historical. No full final gate was rerun
-  for this rejecting review, and no production behavior or test assertion was edited.
-- B plans from the actual committed A-review Head. The correction must prove provider-root
-  round-trip and a fresh/resumable setup-to-Storage return journey, with negative permissions,
-  malformed response, stale/unknown outcome and zero-mutation safeguards. After its Task passes,
-  return Slice status to READY FOR A REVIEW and submit the corrected Head/evidence to A; do not
-  declare Slice PASS/CLOSED or silently revive the superseded packet's completeness assertion.
-
-
-## B Correction Return — Task 39.4
-
-```text
-Slice: 39 — Storage Management Workspace
-Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Head SHA: 466337c1337d0b03315d813ba258124538565cc1
-Task: 39.4 — Restore Storage inventory and setup recovery
-Task Base: 3779d203821930ad898fea49df2cee796c7a1c79
-B Task Decision: PASS
-Decision: SLICE READY FOR A REVIEW
-Next: A FINAL REVIEW
-```
-
-This is the correction return required by A's rejecting review, not a second B Slice-final
-completion judgement or a replacement A Final Review. The earlier A rejection and Closure Packet
-stay historical. A owns the next complete Slice Base..Head acceptance decision.
-
-Corrected A blockers:
-
-- Empty-root readability: COMPLETE. The production normalizer accepts the provider-valid empty
-  root while preserving its identity and unrelated bounds/types. The actual API and Python-served
-  Web now complete checked Save → full inventory → detail/Edit → reload. Existing saved entries
-  need no rewrite, deletion/recreation or mutation replay. Empty, `/` and non-empty roots are proven.
-- Setup recovery handoff: COMPLETE. Genuine setup-required Storage exposes the existing V1 setup
-  path, preserves/resumes the first Draft, completes the existing checked activation and provides
-  an explicit return to the actual Storage inventory. Existing memory-only authentication and
-  backend authority remain in force. No native V2 wizard/global onboarding is claimed.
-
-Tasks completed:
-
-- 39.1
-- 39.2
-- 39.3
-- 39.4
-
-Correction validation performed independently by B:
-
-- `.venv/bin/python -m unittest tests.test_management_setup tests.test_v2_storage_operations tests.test_storage_page_local_save tests.test_configuration_objects`: PASS, 128 tests, 0 skips.
-- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,843 tests, 7 existing isolated
-  real-service/endurance skips; 362.298 s. No production remote-service acceptance was attempted.
-- `cd web && npm test -- --run src/entities/storage/storage-management.test.ts src/entities/storage/storage-form.test.ts src/shared/api/storage-management-api.test.ts src/features/storage/StorageManagementPage.test.tsx`: PASS, 113 tests.
-- `cd web && npm test -- --run`: PASS, 724 tests / 47 files, 0 skips; 303.73 s.
-- `cd web && npm run test:e2e -- --grep 'Storage management'`: initial 28 PASS / 1 FAIL;
-  affected test alone 1 PASS; unchanged complete rerun 29 PASS / 0 skips, 49.2 s. See P2 below.
-- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: PASS.
-- `.venv/bin/ruff format --check . && .venv/bin/ruff check .`: PASS, 316 formatted files.
-  `.venv/bin/python -m compileall -q mediaflow tests scripts`: PASS.
-- `python3 -u scripts/docker_release_security_smoke_test.py --image mediaflow:b394-review`: PASS.
-  The committed candidate passed V1/V2 serving, security headers, RBAC/denial, checked runtime,
-  Worker execution and log/SQLite redaction checks. Developer's previous temporary bind failure
-  did not recur; its historical report is retained without presenting it as today's result.
-- Real SQLite/Local, actual V1/V2 browser continuation and three provider-root Save projections:
-  PASS, via `/tmp/b394-server.py` and `/tmp/b394-realjourney.mjs`; detail in root `TASK.md`.
-  Fixture configuration was entered using the existing Advanced JSON editor; real checks and
-  explicit checked activation were used, with no fabricated evidence or V1 test replacement.
-- Governance before handoff, diff whitespace, exact manifest, private-file and dependency audits:
-  PASS. The final documentation checkpoint must also pass governance after committing its factual
-  status/Head transition. No schema change requires a new migration gate.
-
-Safety Evidence:
-
-- Read/navigation only projects existing authority; no automatic Draft creation, checks, activation,
-  media work or Storage mutation. Required negative/regression tests remain intact.
-- Local validation/confinement, exact checked publication and optimistic concurrency are unchanged.
-  Fixed same-origin links carry no secret/token and grant no new authority; viewers cannot mutate.
-- No private config/credential, unrelated image or reference-image change in Base..Head.
-
-Known Non-blocking Issues:
-
-- P2: the new setup browser test asserts the Storage URL before re-authentication, racing the
-  existing AuthBoundary redirect to the connection entry. Initial gate failed there; targeted and
-  full reruns passed unchanged. The real application restores Storage after authentication, so no
-  current user-impacting recovery failure was reproduced. No test/assertion was relaxed or skipped.
-- Existing ResourceWarnings, jsdom scrollTo notices and Vite bundle-size advisory remain non-fatal.
-
-Explicitly Deferred:
-
-- Unchanged from the Contract. General Configuration migration, native V2 wizard/global onboarding,
-  new authentication mechanisms and Storage write probes remain outside this correction.
-
-Documentation Reconciliation Needed:
-
-- A should reconcile configuration guidance's empty-root defect/workaround wording and Product
-  Experience's factual no-CTA statement with this implementation, without claiming the broader
-  native V2 setup target is delivered.
-- A owns the new full Base..Head acceptance, Closure Packet reconciliation and any final closure.
-  B has not reopened an earlier passed Task, moved any Base or declared the Slice PASS/CLOSED.
-
-## Current Closure Packet — Task 39.5
-
-```text
-Slice: 39 — Storage Management Workspace
-Base SHA: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Head SHA: f458646d3dac280b118a511c60ec53a5d3075d67
-```
-
-Required Outcomes:
-
-- RO-1 COMPLETE — V2 Storage workspace, shared shell/search, provider summaries, bounded table and
-  four-step Add/Edit journey.
-- RO-2 COMPLETE — Truthful bounded inventory, provider-safe location identity, references and
-  secret-free detail/readiness projections.
-- RO-3 COMPLETE — Typed six-provider Add/Edit, immutable IDs, exact-Active checked publication and
-  preservation of prior Active on failure.
-- RO-4 COMPLETE — Checked copy, enable/disable and reference-safe removal with explicit recovery.
-- RO-5 COMPLETE — Zero-mutation Connection/Read diagnostics with bounded evidence and recovery.
-- RO-6 COMPLETE — Actionable setup, validation, provider, authority, stale and unknown-result
-  recovery states without raw secrets or implementation-token ceremony.
-- RO-7 COMPLETE — Shared API/Web authority, RBAC, redaction, audit, concurrency and regression
-  compatibility.
-- RO-8 COMPLETE — A resident Worker started before Active consumes ResourceLibrary and MediaLibrary
-  Copy/Move, including controlled OpenList Move, under each admitted immutable snapshot and kind.
-- RO-9 COMPLETE — Liveness, registration/schema and command/pin readiness are distinct; waiting
-  reasons, durable state and recovery remain visible across outage/restart without resubmission.
-
-Required Surfaces:
-
-- COMPLETE — `/ui-v2/storage`, shared navigation/search, provider summaries, six-column inventory,
-  detail/readiness and typed Add/Edit drawer.
-- COMPLETE — Bounded references, zero-mutation diagnostics, matching API/Web lifecycle and recovery.
-- COMPLETE — ResourceLibrary/MediaLibrary transfer submission/progress and durable Operations revisit.
-- COMPLETE — Resident Worker registration/heartbeat, authenticated command-aware readiness and
-  Compose/container health signal.
-
-Implemented:
-
-- Task 39.5 — Resident transfer continuity, exact pinned reconstruction, command-aware Worker
-  readiness, durable outage/restart progress projection and Docker startup-order lifecycle proof.
-- Tasks 39.1–39.4 — Previously passed Storage inventory, typed checked publication, safe row actions,
-  and provider-root/setup recovery foundations.
-
-Tasks completed:
-
-- 39.1
-- 39.2
-- 39.3
-- 39.4
-- 39.5 — PASS at `f458646d3dac280b118a511c60ec53a5d3075d67`
-
-Final Tests:
-
-- `.venv/bin/python -m unittest tests.test_direct_file_transfers tests.test_media_library_transfers tests.test_processing_worker_readiness tests.test_container_probe tests.test_container_deployment tests.test_openlist_storage tests.test_configuration_snapshot tests.test_manual_organize_execution tests.test_automation_job_fencing`: PASS, 277 tests.
-- `.venv/bin/python -m unittest discover -s tests`: PASS, 1,850 tests, 7 existing optional/external skips.
-- `cd web && npm test -- --run`: PASS, 727 tests / 47 files.
-- Required focused Web gate: PASS, 80 tests / 5 files.
-- Required browser selection: PASS, 61 Chromium tests.
-- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build`: PASS.
-- Ruff format/lint, compileall, governance and `git diff --check`: PASS.
-- Docker lifecycle startup-order/OpenList Move: PASS with unchanged Worker identity.
-- Docker health/readiness, transfer-impact and release-security smoke gates: PASS.
-- No schema change; migration gate not applicable. No production remote service, credential or user
-  media was used. Full manifest/private-config and FFmpeg/FFprobe audits passed for the reviewed
-  implementation range.
-
-Safety Evidence:
-
-- Resident claims, leases, mutation fences, per-item checkpoints and uncertain-effect resolution are
-  retained through reconstruction, restart and slow provider calls; completed effects are terminal
-  and uncertain effects are not replayed.
-- Current Active controls new admission; admitted work retains its exact revision/digest and library
-  kind. Missing/corrupt context, unavailable credentials and unsupported commands fail closed before
-  new Storage mutation.
-- Durable transfer reads use a kind-pinned, zero-Storage read projection when API restart has no
-  process-local Active binding. RBAC, redaction and cross-kind isolation remain backend-authoritative.
-- Health probes verify registration/command readiness without provider calls, configuration writes or
-  media work. OrganizerExecutor remains the only mutation boundary.
-
-Known Non-blocking Issues:
-
-- Existing SQLite `ResourceWarning` messages, jsdom `scrollTo()` notices and the Vite bundle-size
-  advisory remain non-fatal; no current P0/P1 blocker was found.
-- Later documentation/report commits after the reviewed implementation Head include unrelated user
-  image work; they are not part of this packet's Base..Head implementation range and must remain
-  outside A's product acceptance diff.
-
-Explicitly Deferred:
-
-- Unchanged from the Contract: mutation-based Storage write probes, general Configuration migration,
-  native V2 setup wizard/global onboarding, new providers/Secret Store integration, new file commands,
-  scheduler/worker platform redesign, automatic uncertain replay and new identity/session systems.
-
-Documentation Reconciliation Needed:
-
-- A should reconcile CURRENT architecture, deployment and Product Experience facts with resident
-  transfer continuity/readiness and the durable outage/restart projection, while retaining the
-  zero-mutation diagnostic boundary and existing deferrals.
-- A owns the final Base..Head review, any Roadmap/Progress reconciliation and Slice PASS/CLOSED
-  decision. This packet does not declare closure.
-
-Decision: SLICE READY FOR A REVIEW
+Not performed. A reviews the entire immutable Base..Implementation Head against this Contract and
+alone reconciles delivered CURRENT facts and declares PASS / CLOSED.
