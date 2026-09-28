@@ -128,6 +128,16 @@ function normalizeItem(value: unknown, family: RuleFamily): RuleInventoryItem {
   return item;
 }
 
+export const RULES_INVENTORY_LIMITS: Readonly<Record<RuleFamily, number>> = {
+  typeBindings: 8648,
+  recognitionTypes: 47569,
+  recognitionRules: 9261,
+  metadataPolicies: 33758,
+  namingPolicies: 95138,
+  classificationPolicies: 47569,
+  organizePolicies: 34884,
+};
+
 export function normalizeRulesWorkspace(value: unknown): RulesWorkspaceModel {
   const source = readRecord(value, "rules");
   const available = normalizeBoolean(source.available, "rules.available");
@@ -145,7 +155,8 @@ export function normalizeRulesWorkspace(value: unknown): RulesWorkspaceModel {
   const sections = {} as Record<RuleFamily, readonly RuleInventoryItem[]>;
   for (const family of RULE_FAMILIES) {
     const values = sectionsSource[family];
-    if (!Array.isArray(values) || values.length > 512) {
+    const maxItems = RULES_INVENTORY_LIMITS[family];
+    if (!Array.isArray(values) || values.length > maxItems) {
       throw new Error(`invalid field: sections.${family}`);
     }
     sections[family] = values.map((item) => normalizeItem(item, family));

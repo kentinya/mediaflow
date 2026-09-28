@@ -6789,6 +6789,26 @@ class ConfigurationObjectService:
     _STORAGE_INVENTORY_LIMIT = 100
     _REFERENCE_DETAIL_LIMIT = 32
 
+    # The Rules workspace read projection (Slice 41, Task 41.1) must deliver
+    # the complete bounded inventory, never a silently truncated page.  Active
+    # rule families live inside one managed document capped at 1 MiB
+    # (``_canonical_document``), so every legal Active section is bounded by
+    # that document rather than by an arbitrary per-section page.  The
+    # per-family limits below are the exact document-derived maxima: each is
+    # the largest section that can coexist with one minimal object in every
+    # other required family inside a 1 MiB canonical document.  Backend and
+    # frontend enforce the same bound, so a validated Active section can never
+    # fail closed in the browser as malformed.
+    _RULES_INVENTORY_LIMITS = {
+        "typeBindings": 8648,
+        "recognitionTypes": 47569,
+        "recognitionRules": 9261,
+        "metadataPolicies": 33758,
+        "namingPolicies": 95138,
+        "classificationPolicies": 47569,
+        "organizePolicies": 34884,
+    }
+
     _RULE_FAMILIES = {
         "typeBindings": "recognitionTypePolicies",
         "recognitionTypes": "recognitionTypes",
@@ -6918,6 +6938,13 @@ class ConfigurationObjectService:
         gaps: list[dict[str, str]] = []
         for family_name, values in raw.items():
             ordered = sorted(values, key=lambda value: str(value.get("id", "")))
+            limit = self._RULES_INVENTORY_LIMITS[family_name]
+            if len(ordered) > limit:
+                return {
+                    **unavailable,
+                    "reason": "malformed",
+                    "readiness": {"state": "MALFORMED", "gaps": []},
+                }
             counts[family_name] = len(ordered)
             enabled_counts[family_name] = sum(
                 1 for value in ordered if value.get("enabled", True) is not False
@@ -6974,6 +7001,82 @@ class ConfigurationObjectService:
                     }
                 projected.append(item)
             sections[family_name] = projected
+
+        # Effective enabled bindings drive downstream readiness: a
+        # RecognitionType without an enabled type binding cannot enter the
+        # processing chain, even when every family has configured rows.  The
+        # resolver semantics are reused exactly — disabled bindings are
+        # skipped, a duplicate enabled binding per type is a malformed
+        # snapshot, and an enabled binding whose RecognitionType is disabled
+        # is not effective — so Overview cannot report READY while no type
+        # has a usable downstream selection.
+        enabled_bindings = [
+            value for value in raw["typeBindings"] if value.get("enabled", True) is not False
+        ]
+        enabled_types = {
+            str(value.get("id"))
+            for value in raw["recognitionTypes"]
+            if value.get("enabled", True) is not False
+        }
+        seen_types: set[str] = set()
+        effective_types: set[str] = set()
+        for value in enabled_bindings:
+            type_id = str(value.get("recognitionType"))
+            if type_id in seen_types:
+                return {
+                    **unavailable,
+                    "reason": "malformed",
+                    "readiness": {"state": "MALFORMED", "gaps": []},
+                }
+            seen_types.add(type_id)
+            if type_id in enabled_types:
+                effective_types.add(type_id)
+        if counts.get("typeBindings"):
+            if not effective_types:
+                gaps.append(
+                    {
+                        "family": "typeBindings",
+                        "message": (
+                            "No enabled RecognitionType binding selects downstream policies."
+                        ),
+                        "nextAction": (
+                            "Enable one type binding per RecognitionType before organizing."
+                        ),
+                    }
+                )
+            else:
+                configured = {
+                    family
+                    for family in (
+                        "recognitionTypes",
+                        "recognitionRules",
+                        "metadataPolicies",
+                        "namingPolicies",
+                        "classificationPolicies",
+                        "organizePolicies",
+                    )
+                    if counts.get(family)
+                }
+                enabled_type_list = [
+                    value
+                    for value in raw["recognitionTypes"]
+                    if value.get("enabled", True) is not False
+                ]
+                if configured and len(effective_types) < len(enabled_type_list):
+                    unbound = sorted(enabled_types - effective_types)
+                    gaps.append(
+                        {
+                            "family": "typeBindings",
+                            "message": (
+                                "Some enabled RecognitionTypes have no enabled binding: "
+                                + ", ".join(unbound[:8])
+                                + ("" if len(unbound) <= 8 else f" and {len(unbound) - 8} more.")
+                            ),
+                            "nextAction": (
+                                "Enable one type binding for each listed RecognitionType."
+                            ),
+                        }
+                    )
 
         return {
             "available": True,

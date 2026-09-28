@@ -135,4 +135,23 @@ describe("normalizeRulesWorkspace", () => {
       normalizeRulesWorkspace({ ...rulesPayload, sections }),
     ).toThrow();
   });
+
+  it("accepts legal configurations with up to the per-family limit items", () => {
+    const extraTypes = Array.from({ length: 513 }, (_, i) => ({
+      id: `type-${i}`,
+      name: `Type ${i}`,
+      description: null,
+      enabled: true,
+      summary: `Type ${i}`,
+      references: { incoming: 0, impact: "unreferenced" as const },
+    }));
+    const model = normalizeRulesWorkspace({
+      ...rulesPayload,
+      sections: {
+        ...rulesPayload.sections,
+        recognitionTypes: extraTypes,
+      },
+    });
+    expect(model.sections.recognitionTypes.length).toBe(513);
+  });
 });
