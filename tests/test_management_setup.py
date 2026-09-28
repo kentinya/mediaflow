@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from mediaflow.application.configuration_snapshot import (
@@ -139,6 +140,41 @@ class ManagementSetupTests(unittest.TestCase):
         self.assertEqual(system["system"]["configuration_state"], "SETUP_REQUIRED")
         self.assertIsNone(system["system"]["configuration_snapshot_id"])
         self.assertEqual(system["management"]["workflowAvailable"], False)
+
+    def test_command_readiness_respects_scope_permissions_after_configuration(self) -> None:
+        document = {
+            "storages": [{"id": "local", "enabled": True}],
+            "resourceLibraries": [{"id": "incoming", "storageId": "local", "enabled": True}],
+            "mediaLibraries": [],
+            "recognitionTypes": [],
+            "recognitionRules": [],
+            "recognitionTypePolicies": [],
+            "metadataPolicies": [],
+            "namingPolicies": [],
+            "classificationPolicies": [],
+            "organizePolicies": [],
+            "automation": {"schedules": [{"id": "daily", "enabled": True}]},
+            "notifications": {
+                "webhooks": [{"id": "ops", "enabled": True}],
+            },
+        }
+        active = SimpleNamespace(document=document)
+        status = {
+            "active": {"revisionId": "active-1"},
+            "setupRequired": False,
+        }
+        with patch.object(self.service, "active", return_value=active):
+            viewer = self.api._command_readiness_document(self.viewer, status)
+            admin = self.api._command_readiness_document(self.admin, status)
+        self.assertTrue(viewer["libraryBrowse"]["ready"])
+        self.assertTrue(viewer["libraryBrowse"]["authorized"])
+        for key in ("directTransfer", "scheduling", "notification"):
+            self.assertFalse(viewer[key]["ready"])
+            self.assertEqual(viewer[key]["condition"], "unauthorized")
+            self.assertFalse(viewer[key]["authorized"])
+        for key in ("directTransfer", "scheduling", "notification"):
+            self.assertTrue(admin[key]["ready"])
+            self.assertTrue(admin[key]["authorized"])
 
     def test_api_serve_starts_from_minimal_bootstrap_without_runtime_objects(self) -> None:
         class Server:
