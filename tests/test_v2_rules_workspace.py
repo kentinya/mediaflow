@@ -161,6 +161,41 @@ class RulesWorkspaceJourneyTests(unittest.TestCase):
         self.assertFalse(body["available"])
         self.assertEqual(body["reason"], "malformed")
 
+    def test_projection_handles_legal_513_recognition_types(self) -> None:
+        doc = copy.deepcopy(self.configuration.active().document)
+        types = list(doc["recognitionTypes"])
+        for i in range(510):
+            types.append({"id": f"x{i:05d}", "name": f"Extra {i}"})
+        doc["recognitionTypes"] = types
+        draft = self.configuration.import_draft(doc, actor="test")
+        validated = self.configuration.validate(draft.revision_id, actor="test")
+        self.configuration.activate(
+            validated.revision_id, expected_version=validated.version, actor="test"
+        )
+        status, body = request(self.api)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["available"])
+        self.assertEqual(len(body["sections"]["recognitionTypes"]), 513)
+        self.assertEqual(body["overview"]["counts"]["recognitionTypes"], 513)
+
+    def test_readiness_is_not_ready_when_all_type_bindings_are_disabled(self) -> None:
+        doc = copy.deepcopy(self.configuration.active().document)
+        for binding in doc["recognitionTypePolicies"]:
+            binding["enabled"] = False
+        draft = self.configuration.import_draft(doc, actor="test")
+        validated = self.configuration.validate(draft.revision_id, actor="test")
+        self.configuration.activate(
+            validated.revision_id, expected_version=validated.version, actor="test"
+        )
+        status, body = request(self.api)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["available"])
+        self.assertEqual(body["readiness"]["state"], "PARTIAL")
+        self.assertEqual(body["overview"]["enabledCounts"]["typeBindings"], 0)
+        binding_gaps = [g for g in body["readiness"]["gaps"] if g["family"] == "typeBindings"]
+        self.assertTrue(len(binding_gaps) > 0)
+        self.assertIn("enabled RecognitionType binding", binding_gaps[0]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

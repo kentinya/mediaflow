@@ -92,10 +92,23 @@ function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
 function Inventory({
   family,
   items,
+  totalInFamily,
 }: {
   readonly family: RuleFamily;
   readonly items: readonly RuleInventoryItem[];
+  readonly totalInFamily: number;
 }) {
+  if (totalInFamily === 0) {
+    return (
+      <div className="mf-rules-empty">
+        <h2>尚无{LABELS[family]}配置</h2>
+        <p>
+          当前 Active 配置中未包含任何{LABELS[family]}。访问本页不会创建
+          Draft，也没有改变任何配置。
+        </p>
+      </div>
+    );
+  }
   if (items.length === 0) {
     return (
       <div className="mf-rules-empty">
@@ -259,7 +272,11 @@ export function RulesWorkspacePage() {
                     </select>
                   </label>
                 </div>
-                <Inventory family={section} items={items} />
+                <Inventory
+                  family={section}
+                  items={items}
+                  totalInFamily={data.sections[section].length}
+                />
               </section>
             )}
           </section>

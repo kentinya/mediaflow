@@ -120,4 +120,39 @@ describe("RulesWorkspacePage", () => {
     await user.keyboard("{Enter}");
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
   });
+
+  it("renders distinct truthful empty-family onboarding state when active has empty sections", async () => {
+    const emptyCounts = Object.fromEntries(
+      Object.keys(rulesPayload.sections).map((key) => [key, 0]),
+    );
+    stub({
+      ...rulesPayload,
+      available: true,
+      reason: null,
+      active: { status: "ACTIVE", version: 1, sequence: 1 },
+      readiness: { state: "EMPTY", gaps: [] },
+      overview: {
+        relationship: [
+          "RecognitionRule",
+          "RecognitionType",
+          "RecognitionTypePolicy",
+        ],
+        counts: emptyCounts,
+        enabledCounts: emptyCounts,
+      },
+      sections: Object.fromEntries(
+        Object.keys(rulesPayload.sections).map((key) => [key, []]),
+      ),
+    });
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "整理规则" });
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "识别类型" }));
+    expect(
+      screen.getByRole("heading", { name: "尚无识别类型配置" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "没有匹配结果" })).toBeNull();
+  });
 });
