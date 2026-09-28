@@ -139,21 +139,99 @@ responses and temporary roots where a read-side dependency must be exercised.
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_v2_rules_workspace.py`
+- `web/src/entities/rules/rules-workspace.ts`
+- `web/src/entities/rules/rules-workspace.test.ts`
+- `web/src/features/rules/RulesWorkspacePage.tsx`
+- `web/src/features/rules/RulesWorkspacePage.test.tsx`
+- `web/src/routes/router.tsx`
+- `web/src/shared/api/api-client.ts`
+- `web/src/shared/api/rules-workspace-api.test.ts`
+- `web/src/shared/navigation/destination-model.ts`
+- `web/src/shared/navigation/destination-model.test.ts`
+- `web/src/shared/ui/styles.css`
+- `TASK.md`
+
 ### Implemented
+
+- Added a bounded `GET /api/v1/operations/rules/inventory` projection that reads one exact managed
+  Active revision, verifies integrity, exposes Active sequence/readiness/Overview and every rules
+  family, and returns only allowlisted IDs, display text, enabled state, summaries and reference
+  impact. The projection never returns revision IDs, digests, credentials, raw provider options,
+  Drafts, audit payloads or unrelated configuration.
+- Preserved RecognitionType identity explicitly in Type Binding rows: the `type-C` binding reports
+  RecognitionType `C` while independently referencing Naming/Classification/Organize policy `A`.
+  Search/family/enabled query inputs are strictly allowlisted and reads create no successor, Task,
+  Provider call, Storage access or media/configuration mutation.
+- Added the native `/ui-v2/rules` destination to the shared shell and route model. The page opens as
+  a full-width Overview with no selected object, drawer or editor, and provides keyboard-operable
+  tabs for Type Bindings, Recognition Types, Recognition Rules, Metadata, Naming, Classification
+  and Organize policies.
+- Added complete Active inventory tables with local search and enabled-state filtering, truthful
+  empty/no-match states, reference/enabled visibility, responsive layout, read-only refresh and
+  bounded no-Active/malformed/unavailable/permission recovery through the shared authorized-read
+  boundary.
+- Added backend, entity, API, route, shell and component regressions for exact-Active selection,
+  redaction, section completeness, query allowlists, permission/no-Active/malformed outcomes,
+  RecognitionType-C preservation, default closed editor state, search/filter/tab/refresh behavior
+  and keyboard recovery.
 
 ### Tests and Results
 
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py` — PASS (4 tests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_management_setup.py`
+  — PASS on the final Python candidate (93 tests, 96 subtests).
+- `python3 -m compileall -q mediaflow` — PASS.
+- `npm --prefix web test -- --run` — PASS (53 files, 763 tests) before the final additional
+  malformed-recovery keyboard regression; production code was unchanged afterward.
+- `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx src/routes/router.test.tsx src/shared/navigation/destination-model.test.ts src/shared/ui/AppShell.test.tsx`
+  — PASS on the final candidate (6 files, 32 tests).
+- `npm --prefix web run typecheck`, `npm --prefix web run lint`, and
+  `npm --prefix web run format:check` — PASS on the final candidate.
+- `.venv/bin/ruff format --check mediaflow/application/configuration_objects.py mediaflow/interfaces/service_api.py tests/test_v2_rules_workspace.py`
+  and `.venv/bin/ruff check ...` — PASS.
+- `python3 scripts/check_governance.py` and `git diff --check` — PASS.
+- External TMDB, SMB, OpenList and S3/R2 services — SKIP / not required; tests used managed local
+  configuration, fakes and bounded local responses only.
+
 ### Decisions
+
+- Active browser identity is represented by status and monotonic Active sequence/version only.
+  Internal revision IDs and digests remain server-side because this read journey does not need them.
+- The backend returns the complete validated rule-family sections from one captured Active revision;
+  the normal page fetch is unfiltered and the browser performs read-only search/filtering over that
+  complete result. The same endpoint accepts only the documented bounded filters for API clients.
+- Reference impact is computed from RecognitionRule outputs and RecognitionTypePolicy references;
+  bindings expose referenced policy IDs without resolving, substituting or rewriting their
+  RecognitionType identity.
+- Existing shared authentication/RBAC, route continuation and authorized-read recovery remain the
+  only frontend authority boundaries; no new client-side policy resolver or mutation command was
+  introduced.
 
 ### Remaining In-Slice Work
 
+- Slice 41 still requires the explicitly deferred mutation/editor journey, automatic checked
+  Save/validation/activation, object lifecycle/reference-safe changes, and exact-revision
+  tests/previews defined by later in-Slice work. This Task does not plan or implement those units.
+
 ### Risks / Deviations
+
+- The first format checks found newly added Python/TypeScript files needing the repository formatters;
+  they were formatted and all applicable final quality checks were rerun successfully.
+- The complete Web suite emits the repository's existing jsdom `scrollTo` diagnostics; all tests
+  passed and this Task did not change that test-environment behavior.
+- The four pre-existing untracked `docs/pics/*.png` files were preserved untouched and excluded from
+  both the implementation checkpoint and this report. `config/alist.json` remains ignored and was
+  not staged or read.
+- No production credentials, external accounts, real media or Storage mutations were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 1b30e71240e15afd7a0076b97f6347534fe0d651
 ```
 
 ## B Review Result
