@@ -73,6 +73,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
     → Slice 39 — Storage Management Workspace (PASS / CLOSED)
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
+    → Slice 41 — V2 Organizing Rules Workspace (ACTIVE; TARGET below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -338,6 +339,75 @@ mandatory. Deployment/restart-only settings cannot be shown as hot-consumed. Acc
 actual no-Active→empty Active→configured operation without resident process restart, including
 controlled scheduling/delivery and transfer regression. This capability does not remove V1 or migrate
 every policy/Review/Recovery workspace.
+
+## TARGET — V2 organizing rules workspace (Slice 41)
+
+Slice 41 adds one native V2 presentation/composition layer over the existing managed configuration
+and policy engines. It does not introduce new domain ownership. The intended authority path is:
+
+```text
+/ui-v2/rules explicit edit intent
+  -> ManagedConfiguration Active / existing successor Draft
+  -> generic object normalization + reference/audit/concurrency services
+  -> exact-revision Strategy Test / Metadata Test / Naming Preview /
+     Classification Preview / Organize authority explanation
+  -> whole-document validation + applicable checked evidence
+  -> atomic Active publication and immutable runtime binding
+  -> existing Files / Operations / Automation / API / CLI consumers
+```
+
+The frontend route owns interaction and typed presentation only. It may maintain unsaved form state,
+search/filter state, selected tab/object and query cache, but none of those is configuration or
+runtime authority. Active comes only from the managed backend projection. Saving one editor mutates
+the exact successor Draft through optimistic concurrency; checked activation publishes the complete
+revision, not only the visible object. Entry/read/search/filter/navigation creates no Draft or work.
+
+The workspace exposes Overview, RecognitionTypePolicy bindings, Recognition Types, Recognition
+Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. The five
+user-supplied images establish shared-shell/list-editor composition and visual language, not data
+schema, sample fixtures or pixel-identical output. Metadata/Organize editors use the same composition
+without inventing fields absent from the current domain.
+
+Production domain semantics remain unchanged:
+
+- `RecognitionRuleEngine` evaluates compatible typed condition trees and resolves actual
+  priority/score/ambiguity/`stopOnMatch` evidence. The browser does not implement a second rule
+  evaluator or treat visual order as a different algorithm.
+- `RecognitionTypePolicyResolver` permits one enabled policy per RecognitionType and resolves four
+  references. Downstream reuse cannot replace RecognitionType; C remains C when it uses A policies.
+- `MetadataProvider` remains the provider abstraction and TMDB the current production provider.
+  Explicit live tests may use it under current timeout/retry/rate-limit/redaction; read/navigation
+  and offline tests do not call it.
+- Naming and Classification reuse their pure engines. Naming yields safe components; Classification
+  yields MediaLibrary identity plus safe relative destination. Neither mutates Storage.
+- Organize Policy describes operation/conflict/attachments/duplicate/rollback/cleanup behavior. Its
+  editor and authority explanation do not issue a Task, persistent unattended grant or execution
+  authority.
+
+Existing generic `/api/v1/configuration/revisions/.../objects/...` routes and application services
+remain the source for object lifecycle. Slice 41 may add bounded rule-workspace projections or
+composition commands to avoid leaking whole-document protocols to the browser, but those adapters
+must delegate to the same permission, schema, normalization, reference, audit, exact-version,
+validation and activation services. V1 and V2 may coexist without schema or semantic forks.
+
+Preview/test results are evidence, not runtime state. They are internally bound to the exact
+revision/version/digest, become stale after relevant edits and remain bounded and secret-free.
+Offline recognition/naming/classification/organize analysis performs zero Provider and Storage
+mutation. An explicit live Metadata test may call the configured Provider but creates no media
+Task/Job and never reads or mutates Storage. No Preview grants execution.
+
+Atomic activation uses Slice 40's shared applicability decision: validate every populated object and
+declared reference, require only evidence applicable to configured enabled capabilities, reject a
+broken declared graph, and leave unrelated empty families legal. Publication starts no processing.
+New admissions use the new Active; existing Preview/Task/Job/Automation work retains its immutable
+pin. Configuration history, results and media contents are never deleted by object removal.
+
+The route lives inside the existing React/TypeScript AppShell and central authenticated API/query
+boundary. Wide presentation uses the reference list/editor relationship; narrow presentation may
+stack views or use a drawer while preserving focus, unsaved-state protection and safe deep links.
+The Python backend remains authoritative for RBAC, policy decisions, Active identity and every
+mutation boundary. `OrganizerExecutor` remains the sole Storage mutator, and this workspace performs
+no Storage mutation.
 
 ## Persistence
 

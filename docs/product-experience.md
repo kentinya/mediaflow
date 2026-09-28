@@ -268,6 +268,48 @@ must become readable after the correction without a database edit, delete/recrea
 - **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
   Unsupported operations never silently fall back to another operation.
 
+### TARGET — V2 organizing rules workspace (Slice 41)
+
+- **Goal:** maintain and understand the complete rule graph from RecognitionRule through
+  RecognitionType and its Metadata/Naming/Classification/Organize binding, then publish the exact
+  tested revision without raw JSON or V1 UI as the ordinary path.
+- **Entry:** choose `整理规则` in the shared V2 shell, open `/ui-v2/rules`, or follow a capability
+  recovery link from Settings. Entry, refresh, search, filter and selection are read-only and do not
+  create a Draft, call a Provider or start work.
+- **Visible state:** show runtime-consumed Active separately from an existing successor Draft and
+  unsaved editor input. The workspace contains Overview, Type Bindings, Recognition Types,
+  Recognition Rules, Metadata Policies, Naming Policies, Classification Policies and Organize
+  Policies. Each inventory shows stable identity, enabled state, references/impact and bounded
+  readiness. Draft data is never presented as Active merely because it was saved.
+- **Action:** explicitly begin or resume the successor Draft; add/copy/edit/enable/disable or
+  reference-safe delete one object; run exact-Draft Strategy Test or policy preview; save the object
+  to Draft; then explicitly validate and checked-activate all Draft changes. Internal revision and
+  digest fences remain backend-managed.
+- **Success:** the exact immutable candidate becomes Active, the workspace refetches runtime truth
+  and downstream Files/Operations/Automation resolve the same policy semantics. Activation alone
+  starts no scan, Task, Job, scheduled occurrence, notification or Storage mutation.
+- **Failure:** incompatible condition/operator, unsafe regex/template/path, duplicate enabled type
+  binding, missing/disabled reference, missing Provider secret, failed explicit test, stale Draft,
+  denied permission, malformed response, validation/evidence failure or unknown activation outcome
+  names the affected object/stage and leaves the previous Active in use when failure is known.
+- **Recovery:** preserve correctable input and durable Draft; refresh stale authority before
+  reapplying intent; follow reference impact to repoint dependents; rerun only stale/failed explicit
+  evidence; verify actual Active after an unknown outcome before another publication attempt.
+
+The supplied `策略绑定.png`, `识别类型.png`, `识别规则.png`, `命名规则.png` and `分类规则.png` images
+define business relationship, list/editor composition and visual style. Their sample IDs, names,
+counts, priorities, conditions, templates, targets and status values are illustrative only, and
+pixel-identical reproduction is not required. The production rule engine remains authoritative:
+priority/score/ambiguity/`stopOnMatch` are not replaced by visual list order; one enabled binding is
+allowed per RecognitionType; Classification selects a MediaLibrary plus safe relative path; Movie
+and TV naming retain their actual template families.
+
+Tests and previews are bounded analysis. Offline Strategy Test performs no Provider call; a live
+Metadata test occurs only after explicit intent through the configured Provider abstraction. Naming
+Preview never renames, Classification Preview never creates/moves and Organize authority/whole-chain
+Preview never grants execution. RecognitionType identity remains independent: C stays C when it
+uses policies associated with A.
+
 ## Real Storage Files
 
 ### Current
