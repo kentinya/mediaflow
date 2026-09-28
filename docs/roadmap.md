@@ -55,7 +55,7 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 
 V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 and
 37–40 are closed historical capabilities. Slice 41 is ACTIVE for the native V2 organizing-rules
-workspace selected by A on 2026-09-28 from the five user-supplied business/style references. Those
+workspace selected by A on 2026-09-28 from the six user-supplied business/style references. Those
 images define relationship, composition and visual language rather than actual production data or
 pixel-identical fixtures. Slice 39 delivered the V2 Storage management
 workspace, reusing the existing managed-configuration and Storage foundations, together with

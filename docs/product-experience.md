@@ -300,10 +300,13 @@ must become readable after the correction without a database edit, delete/recrea
   stale/failed explicit evidence; verify actual Active after an unknown Save outcome before another
   Save attempt.
 
-The supplied `策略绑定.png`, `识别类型.png`, `识别规则.png`, `命名规则.png` and `分类规则.png` images
-define business relationship, list/editor composition and visual style. Their sample IDs, names,
-counts, priorities, conditions, templates, targets and status values are illustrative only, and
-pixel-identical reproduction is not required. The production rule engine remains authoritative:
+The supplied `策略绑定.png`, `识别类型.png`, `识别规则.png`, `元数据类型.png`, `命名规则.png` and
+`分类规则.png` images define business relationship, full-width inventory composition, create-drawer
+form style and visual language. Their sample IDs, names, counts, priorities, conditions, templates,
+targets and status values are illustrative only, and pixel-identical reproduction is not required.
+The default page state is the complete inventory; the reference editor panel is opened only through
+an explicit Add action, while existing Edit is a separate explicit full-page state. The production
+rule engine remains authoritative:
 priority/score/ambiguity/`stopOnMatch` are not replaced by visual list order; one enabled binding is
 allowed per RecognitionType; Classification selects a MediaLibrary plus safe relative path; Movie
 and TV naming retain their actual template families.

@@ -374,10 +374,10 @@ general-configuration Draft changes. Save may reuse current evidence only when i
 exact candidate; otherwise the backend reruns the applicable check before activation.
 
 The workspace exposes Overview, RecognitionTypePolicy bindings, Recognition Types, Recognition
-Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. The five
-user-supplied images establish shared-shell/list-editor composition and visual language, not data
-schema, sample fixtures or pixel-identical output. Metadata/Organize editors use the same composition
-without inventing fields absent from the current domain.
+Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. The six
+user-supplied images establish shared-shell/inventory composition, create-drawer form style and
+visual language, not data schema, sample fixtures or pixel-identical output. Metadata/Organize
+editors use the same composition without inventing fields absent from the current domain.
 
 Production domain semantics remain unchanged:
 
@@ -418,8 +418,10 @@ New admissions use the new Active; existing Preview/Task/Job/Automation work ret
 pin. Configuration history, results and media contents are never deleted by object removal.
 
 The route lives inside the existing React/TypeScript AppShell and central authenticated API/query
-boundary. Wide presentation uses the reference list/editor relationship; narrow presentation may
-stack views or use a drawer while preserving focus, unsaved-state protection and safe deep links.
+boundary. Each rule-family route loads as a complete full-width inventory with no selected object,
+editor or drawer. An explicit Add action opens the create drawer; row selection, search, filter, tab
+navigation and refresh do not. Existing-object Edit is an explicit full-page state/route. Narrow
+presentation remains complete and preserves focus, unsaved-state protection and safe deep links.
 The Python backend remains authoritative for RBAC, policy decisions, Active identity and every
 mutation boundary. `OrganizerExecutor` remains the sole Storage mutator, and this workspace performs
 no Storage mutation.
