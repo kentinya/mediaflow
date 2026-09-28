@@ -8,13 +8,13 @@ individual capabilities and use them without restarting resident services.
 Slice ID: 40
 Name: V2 Settings and Empty-Baseline Startup
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: FIX REQUIRED
+Status: READY FOR A REVIEW
 Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
-Implementation Head: 868f5a2417792e4f5a135f3667384bd9a21c479c
+Implementation Head: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
 Contract Revision: 2026-09-27 — A selection after Slice 39 closure
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS ONE FOCUSED CORRECTION TASK
+Next Action: A FINAL REVIEW
 ```
 
 ## Authority and sequencing
@@ -281,7 +281,7 @@ checkpoint only receives textual/governance checks; no implementation acceptance
 ```text
 Slice: 40 — V2 Settings and Empty-Baseline Startup
 Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
-Head SHA: 868f5a2417792e4f5a135f3667384bd9a21c479c
+Head SHA: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
 
 Required Outcomes:
 - RO-1 — COMPLETE: native V2 Settings owns explicit first-Draft creation/resume, labelled JSON/export,
@@ -310,6 +310,7 @@ Implemented:
 - Native Settings lifecycle, truthful/redacted package exchange and bounded advanced editing.
 - Resident service composition and durable current/pinned snapshot adoption across activation.
 - Incremental business setup, safe Settings return and permission-aware command readiness.
+- Exact validation-version handoff, serialized Settings writes and real-browser first activation.
 - Media-free deployment overlay, health/fault recovery and real end-to-end acceptance harnesses.
 
 Tasks completed:
@@ -317,19 +318,21 @@ Tasks completed:
 - 40.2 — Native V2 Settings lifecycle and bounded configuration authority.
 - 40.3 — Resident Worker, Scheduler and Notification Worker lifecycle.
 - 40.4 — Incremental business setup and command readiness without restart.
+- 40.5 — First-Draft validation and exact-version activation recovery.
 
 Final Tests:
 - `.venv/bin/python -m unittest discover -s tests` — PASS, 1902 tests, 7 skips.
 - `.venv/bin/python -m unittest tests.test_management_setup` — PASS, 18 tests.
 - `.venv/bin/python -m unittest tests.test_upgrade_preflight` — PASS, 4 tests.
-- `cd web && npm test -- --run` — PASS, 50 files / 751 tests.
+- `cd web && npm test -- --run` — PASS, 50 files / 752 tests.
 - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS;
   existing bundle-size advisory only.
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts`
   — PASS, 323 files formatted; lint/compile PASS.
 - `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py`
-  — PASS, media-free and optional-mount stacks, real Python-served Web/API journey and unchanged
-  resident process identities.
+  — PASS, media-free and optional-mount stacks; real Python-served Chromium created, validated and
+  checked-activated the exact first-Draft version, observed empty Active and unchanged resident
+  process identities with zero activation work.
 - `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py` — PASS.
 - `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS.
 - `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py` — PASS.
@@ -341,6 +344,8 @@ Final Tests:
 
 Safety Evidence:
 - Empty activation and all readiness/Settings reads created no media work, delivery or Storage mutation.
+- Validation version is adopted exactly and Settings mutations are serialized; stale/concurrent and
+  unknown outcomes retain strict backend fencing and explicit recovery.
 - Exact Active and admitted pins, current revocable permissions, leases/fences and unknown-outcome
   recovery passed full Python plus restart/fault, transfer and release-security acceptance.
 - Real Compose proved no restart across empty/populated activation and completed Scan, Preview,
