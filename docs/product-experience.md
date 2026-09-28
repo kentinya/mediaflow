@@ -1,9 +1,9 @@
 # MediaFlow Product Experience
 
 This document defines the canonical operator journeys for MediaFlow V1 and the explicitly separated
-active V2 migration target. It describes user-visible behavior and completion semantics, not
+V2 migration program. It describes user-visible behavior and completion semantics, not
 implementation history or frontend styling. Large-Slice order and status are maintained in
-[`roadmap.md`](roadmap.md); the active implementation boundary is in [`SLICE.md`](../SLICE.md).
+[`roadmap.md`](roadmap.md); the current Slice authority is in [`SLICE.md`](../SLICE.md).
 
 ## Product Experience Priority
 
@@ -172,11 +172,10 @@ read-only destination precheck for the MediaLibrary destination on any supported
 older Local-only setup check stays available as a Local diagnostic and is not required for
 activation.
 
-### TARGET — V2 Settings and empty-business activation
+### CURRENT — V2 Settings and empty-business activation
 
-Slice 40 selects this journey. It replaces the earlier mandatory Storage/library/policy wizard and
-business-page first-Draft proposal; it is not CURRENT behavior. Slice 39's delivered Storage→V1
-setup→Storage recovery remains available until the native V2 path is implemented.
+Slice 40 delivers this journey. It replaces the earlier mandatory Storage/library/policy wizard and
+business-page first-Draft proposal. The existing V1 setup handoff remains available during migration.
 
 - **Goal:** make a fresh installation manageable and incrementally configure its capabilities without
   having to define media business objects during deployment or first activation.
@@ -609,9 +608,10 @@ fails closed before mutation when source evidence cannot be proved. Closed Slice
 old V2 shell presentation with the shared shell shown in the Files reference and completed the
 current Files workspace defined by [`file-page-visual-spec.md`](file-page-visual-spec.md). Its
 post-closure correction also aligned formal `library/path` destination semantics with the local
-CLI and removed the direct browser Upload/Download vertical. The previously planned later
-migration boundaries remain retired. The MediaLibrary journey selected for the next Slice is
-specified separately as TARGET below.
+CLI and removed the direct browser Upload/Download vertical. Closed Slice 38 delivered the separate
+MediaLibrary journey; Slice 39 delivered Storage management and transfer continuity; Slice 40
+delivered native Settings, empty-business activation and resident configuration adoption. The
+previously planned Slice 34–36 migration boundaries remain retired.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -707,8 +707,8 @@ specified separately as TARGET below.
   manual Organize, Automation and Notification journeys while preserving backend RBAC, immutable
   binding, fencing, explicit destructive intent and OrganizerExecutor-only mutation.
 - **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Review/Recovery
-  and wholesale policy-workspace migration remain outside Slice 40. Its selected Settings/empty-
-  baseline TARGET above does not claim that the existing Configuration landing has already migrated.
+  and wholesale policy-workspace migration remain outside Slice 40. The CURRENT Settings/empty-
+  baseline journey above does not claim those deferred workspaces have migrated.
 
 ## Files Journey Update — 2026-09-14
 

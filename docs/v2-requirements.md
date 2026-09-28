@@ -11,12 +11,12 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 39 — Storage Management Workspace — PASS / CLOSED
-Slice 39 Base: d02539e49d5c99c3e3c0c70de5e994e42824a18e
-Slice 39 Implementation Head: f458646d3dac280b118a511c60ec53a5d3075d67
-Slice 39 A Final Review: PASS / CLOSED — 2026-09-27
-Current Contract: Slice 40 — V2 Settings and Empty-Baseline Startup — ACTIVE
-Next action: B plans the first implementation Task after the Contract checkpoint
+Most recently closed large Slice: Slice 40 — V2 Settings and Empty-Baseline Startup — PASS / CLOSED
+Slice 40 Base: d814b7c1c6819e79271245a1126f53aca6aeaf69
+Slice 40 Implementation Head: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
+Slice 40 A Final Review: PASS / CLOSED — 2026-09-28
+Current Contract: none
+Next action: A selects the next large Slice
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
@@ -29,15 +29,16 @@ Upload/Download and does not claim those surfaces as delivered.
 Slice 38 has implemented the MediaLibrary workspace, route-separation baseline and focused
 page-local editing requirements through its reviewed implementation head. Slice 39 has implemented
 the Storage management workspace, provider-root/setup recovery and admitted-transfer Worker
-continuity/readiness through its reviewed implementation head. The stable requirements below
-describe delivered boundaries and explicitly identified targets; an ACTIVE Contract does not mean
-its implementation is delivered. Slice contracts own implementation scope and acceptance.
+continuity/readiness through its reviewed implementation head. Slice 40 has implemented native V2
+Settings, legal empty-business activation, conditional configuration applicability, command-specific
+readiness and resident-service adoption without mandatory media mounts or restart. The stable
+requirements below describe delivered boundaries and explicitly identified targets; Slice contracts
+own implementation scope and acceptance.
 
-The setup, empty-business configuration and resident-service requirements below are TARGET work
-selected by Slice 40, not delivered behavior. They replace the former mandatory Storage/library/
-policy setup wizard and the proposal for business pages to save first-setup Drafts without Active.
-The delivered V1 setup handoff remains available during migration; Slice 39's closed scope is
-unchanged. A owns implementation scope and sequencing.
+The setup, empty-business configuration and resident-service requirements below are delivered Slice
+40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal
+for business pages to save first-setup Drafts without Active. The V1 setup handoff remains available
+during migration; earlier closed Slice scope is unchanged.
 `V2-STO-001` makes existing provider-valid root semantics explicit across Web surfaces.
 
 ## Stable V2 requirements

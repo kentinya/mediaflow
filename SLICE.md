@@ -8,13 +8,13 @@ individual capabilities and use them without restarting resident services.
 Slice ID: 40
 Name: V2 Settings and Empty-Baseline Startup
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
 Implementation Head: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
 Contract Revision: 2026-09-27 — A selection after Slice 39 closure
 Risk: High
 Final Test Level: T4
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and sequencing
@@ -66,8 +66,8 @@ command readiness. Remaining gaps verified by A:
 Applicable requirements: `V2-SETUP-001/002`, `V2-CONFIG-001` through `V2-CONFIG-004`,
 `V2-RUNTIME-001/002`, `V2-DEPLOY-002`, `V2-UX-*`, `V2-AUTH-*`, `V2-MIG-*`, existing `UX-*`,
 `REQ-CONFIG-*`, `REQ-TASK-009/010`, `REQ-SCHED-*`, `REQ-NOTIFY-*`, `REQ-DEPLOY-*` and `REQ-SAFE-*`.
-Accompanying V2 TARGET updates describe intended work, not delivered CURRENT behavior. Frozen V1
-requirements and historical acceptances remain unchanged.
+The V2 TARGET updates recorded at activation are delivered by the reviewed Implementation Head and
+reconciled as CURRENT at closure. Frozen V1 requirements and historical acceptances remain unchanged.
 
 ## Operator journey and Required Surfaces
 
@@ -436,3 +436,29 @@ tests. Existing Contract outcomes, surfaces, safety invariants, Base and deferra
 - After the correction Task passes B review, B must rerun the focused real journey and assigned T4
   gates, update the Closure Packet evidence/head, return Status to `READY FOR A REVIEW`, and stop.
   Only A may then perform the renewed Base..corrected-Head final review and declare closure.
+
+## A Final Review — PASS / CLOSED (2026-09-28)
+
+```text
+Reviewed Range: d814b7c1c6819e79271245a1126f53aca6aeaf69..7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
+Repository Checkpoint Inspected: 3d546dfcc63a435197d1ba2576eee70d3f0aa59f
+Decision: PASS
+P0/P1 Blockers: None
+Closure Reconciliation: COMPLETE — SLICE.md, TASK.md, Roadmap, Progress, Product Experience,
+Architecture, V2 requirements and the canonical product specification now record the reviewed
+Slice 40 capability as CURRENT / PASS / CLOSED; deployment guidance was already factual at Head.
+```
+
+The full Base..corrected-Head review found RO-1 through RO-7 and every Required Surface complete.
+The native Settings journey now carries the exact validation-produced Draft version into checked
+activation and serializes conflicting writes; stale/concurrent and unknown outcomes remain fenced
+with explicit recovery. Real Python-served Web and Docker acceptance proved management-only startup,
+empty activation with zero media work/delivery/Storage mutation, incremental configuration and
+resident Worker/Scheduler/Notification adoption without restart. Full Python/Web, quality, transfer,
+health, restart/fault and release-security gates passed. RecognitionType identity, immutable pins,
+RBAC/redaction, no silent overwrite/delete and OrganizerExecutor-only Storage mutation remain intact.
+
+The previously recorded P1 rejection at Implementation Head `868f5a2` remains immutable history and
+is resolved by correction Head `7805fa0`. Existing SQLite `ResourceWarning` output, jsdom `scrollTo`
+diagnostics and the Web bundle-size advisory remain non-blocking. Contract deferrals are unchanged
+and are not runtime dependencies of the delivered journey.

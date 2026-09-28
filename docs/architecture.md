@@ -72,7 +72,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 37 — Files Workspace, Common File Management and V2 Shell
     → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
     → Slice 39 — Storage Management Workspace (PASS / CLOSED)
-    → Slice 40 — V2 Settings and Empty-Baseline Startup (ACTIVE; TARGET below)
+    → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -285,16 +285,17 @@ in this page-local flow. A validation, dependency, Storage-check, activation or 
 failure rejects the command and leaves the previous Active pointer and runtime authority intact.
 The general Configuration surface continues to expose the explicit Draft/Validate/Activate journey.
 
-## TARGET — Empty business runtime and resident configuration lifecycle
+## CURRENT — Empty business runtime and resident configuration lifecycle
 
-Slice 40 selects this boundary; it is not implemented CURRENT behavior. At its Base the starter
-Draft already contains empty business collections, but strict strategy/runtime loading rejects
-them. V2 Settings remains a migration landing, Scheduler/Notification startup loads workflow
-configuration, Notification targets are constructed at startup, and Compose requires media mounts.
-The existing transfer-specific resident reconstruction above is delivered and must be preserved.
+Slice 40 delivers this boundary at Implementation Head
+`7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7`. At its Base the starter Draft contained empty business
+collections, but strict strategy/runtime loading rejected them; V2 Settings was a migration landing,
+Scheduler/Notification startup loaded workflow configuration, Notification targets were constructed
+at startup and Compose required media mounts. The delivered implementation removes those setup
+dependencies while preserving the transfer-specific resident reconstruction above.
 
-The target separates three facts: a structurally valid configuration graph, the exact published
-immutable Active snapshot, and capability readiness for a command/scope. An empty graph satisfies
+The delivered boundary separates three facts: a structurally valid configuration graph, the exact
+published immutable Active snapshot, and capability readiness for a command/scope. An empty graph satisfies
 the first two after explicit activation, with no fabricated Recognition or policy objects. Every
 populated object and declared reference still validates. Runtime construction must represent absent
 capabilities without exceptions or development defaults. Command admission returns bounded
@@ -333,9 +334,9 @@ explicit upgrade/recovery boundary. No API process supervision or new scheduler/
 
 Backend RBAC, exact successor/concurrency/evidence, audit/redaction, published pins, revocable
 authority, lease/fence ownership, OrganizerExecutor-only mutation and uncertain-effect recovery stay
-mandatory. Deployment/restart-only settings cannot be shown as hot-consumed. Final acceptance must
-prove actual no-Active→empty Active→configured operation without resident process restart, including
-controlled scheduling/delivery and transfer regression. This target does not remove V1 or migrate
+mandatory. Deployment/restart-only settings cannot be shown as hot-consumed. Acceptance proves
+actual no-Active→empty Active→configured operation without resident process restart, including
+controlled scheduling/delivery and transfer regression. This capability does not remove V1 or migrate
 every policy/Review/Recovery workspace.
 
 ## Persistence
