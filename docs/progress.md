@@ -8,13 +8,10 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 40 — **V2 Settings and Empty-Baseline Startup** — is the ACTIVE
-Contract in [`SLICE.md`](../SLICE.md), with no implementation Task yet. Next: B plans its first Task
-after the Contract checkpoint and governance check. Slice 39 remains PASS / CLOSED at Base
-`d02539e49d5c99c3e3c0c70de5e994e42824a18e` and Implementation Head
-`f458646d3dac280b118a511c60ec53a5d3075d67` after A's 2026-09-27 final review; its full Contract and
-review remain in Git. Slice 38 remains historically PASS / CLOSED at Base `9e801ae4485bc95d714a8902bf45bf37896fbc2a`
-and Implementation Head `7d4503e45dc3aa79628ed0d98e887167e1e7c529`; Slice 37's closure is also
+V2 remains active on `main`; Slice 40 — **V2 Settings and Empty-Baseline Startup** — is PASS / CLOSED
+under [`SLICE.md`](../SLICE.md) at Base `d814b7c1c6819e79271245a1126f53aca6aeaf69` and
+Implementation Head `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7` after A's 2026-09-28 final review.
+The next legal action is A selects the next large Slice. Earlier Slice 37–39 closures remain
 unchanged. This pointer summarizes current development; the ledger below records closed Slices.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
@@ -42,6 +39,23 @@ legal action at that historical checkpoint was A selecting the next large Slice.
 ## Most Recently Closed Slice
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
+
+### Slice 40 — V2 Settings and Empty-Baseline Startup
+
+```text
+Status: PASS / CLOSED
+Base: d814b7c1c6819e79271245a1126f53aca6aeaf69
+Implementation Head: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
+A Final Review: PASS / CLOSED — 2026-09-28
+```
+
+Delivered native V2 first-Draft/Settings lifecycle, legal empty-business activation, truthful
+redacted exchange and bounded advanced settings, conditional publication checks and incremental
+business successors, command-specific readiness, media-free Compose startup and resident Worker,
+Scheduler and Notification Worker adoption without restart. Deferred scope remains wholesale
+policy/Recognition/Review/Recovery workspace migration, V1 cutover, generated onboarding defaults,
+new identity/Secret Store/deployment mutation, scheduler/queue redesign, new providers/commands and
+automatic uncertain-effect replay.
 
 ### Slice 38 — MediaLibrary Files Workspace and Route Separation
 
@@ -310,6 +324,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 40 — V2 Settings and Empty-Baseline Startup | PASS / CLOSED | `d814b7c1c6819e79271245a1126f53aca6aeaf69` | `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7` | A Final Review PASS / CLOSED — 2026-09-28 | Native V2 Settings and first-Draft lifecycle, legal empty-business Active, conditional publication, incremental successors, command readiness, media-free startup and resident service adoption without restart | Wholesale policy/Recognition/Review/Recovery migration, V1 cutover, generated onboarding defaults, new identity/Secret Store/deployment mutation, scheduler/queue redesign, new providers/commands and automatic uncertain replay |
 | 39 — Storage Management Workspace | PASS / CLOSED | `d02539e49d5c99c3e3c0c70de5e994e42824a18e` | `f458646d3dac280b118a511c60ec53a5d3075d67` | A Final Review PASS / CLOSED — 2026-09-27 | V2 Storage management workspace, typed checked lifecycle, zero-mutation diagnostics, provider-root/setup recovery, resident ResourceLibrary/MediaLibrary transfer continuity and truthful Worker readiness/waiting recovery | Mutation-based Storage probes, general Configuration/native V2 setup migration, new providers/Secret Store integration, new file commands, scheduler redesign, automatic uncertain replay and new identity/session systems |
 | 38 — MediaLibrary Files Workspace and Route Separation | PASS / CLOSED | `9e801ae4485bc95d714a8902bf45bf37896fbc2a` | `7d4503e45dc3aa79628ed0d98e887167e1e7c529` | A Final Review PASS / CLOSED — 2026-09-25 | Separate MediaLibrary and ResourceLibrary Files routes, live MediaLibrary browsing, bounded common maintenance and transfer recovery, reference-aligned presentation, and symmetric exact-Active page-local library editing with checked atomic activation | Card statistics/capacity/placeholders, thumbnails, MediaLibrary Scan/Preview/Organize, browser Upload/Download, cross-kind direct transfers, transfer Replace mode, ID migration, broad configuration redesign, V1 cutover, universal rollback and automatic uncertain replay |
 | 37 — Files Workspace, Common File Management and V2 Shell | PASS / CLOSED | `b507edba167f5af3af8c53bfcf1417ba4fefddf4` | `aa54854c442d117c7eb23ae9800045c423db1368` | A Final Review PASS / CLOSED — 2026-09-23 | Reference-aligned shared V2 shell, live ResourceLibrary Files workspace, atomic activation, bounded common file management without the direct browser Upload/Download vertical, formal `library/path` destination parity, truthful refresh/presentation, exact Storage path identity, multi-item Organize continuation and RecognitionType-driven Web policy binding | Arbitrary binary/media editing, unbounded operations, V1 cutover, broad non-Files redesign, new providers/identity systems, universal rollback and automatic uncertain replay |
