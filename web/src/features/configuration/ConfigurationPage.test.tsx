@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { authStore } from "../../shared/api/auth-store";
 import { renderApp } from "../../../tests/utils";
@@ -227,28 +227,81 @@ describe("V2 configuration route", () => {
     expect(screen.getByRole("button", { name: "Refresh" })).toBeVisible();
   });
 
-  it("keeps the mutable draftVersion through edit, validate and checked activation", async () => {
+  it("activates with the exact version produced by first-Draft validation", async () => {
     const calls: Array<{ input: string; init?: RequestInit }> = [];
+    let validated = false;
     const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
       calls.push({ input, init });
-      if (init?.method === "PUT")
+      if (input.endsWith("/validate")) {
+        validated = true;
+        return response({
+          revisionId: "draft-1",
+          version: 3,
+          status: "validated",
+        });
+      }
+      if (input.endsWith("/activate"))
+        return response({ revisionId: "draft-1", version: 3 });
+      if (input.includes("/revisions/draft-1"))
+        return response({
+          revisionId: "draft-1",
+          version: validated ? 3 : 2,
+          status: validated ? "validated" : "draft",
+          document: {},
+        });
+      if (input.includes("/system/settings"))
         return response({
           revisionId: "draft-1",
           revisionVersion: 2,
-          draftVersion: 4,
-          sections: {
-            General: {
-              locale: {
-                label: "语言",
-                value: "en-US",
-                valueType: "string",
-                boundary: "hot_consumed",
-              },
-            },
-          },
+          draftVersion: validated ? 3 : 2,
+          sections: {},
         });
-      if (input.endsWith("/validate"))
-        return response({ revisionId: "draft-1", version: 2 });
+      return response({
+        authority: "MANAGED",
+        setupRequired: true,
+        setupDraft: { revisionId: "draft-1", version: validated ? 3 : 2 },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await userEvent.click(
+      await screen.findByRole("button", { name: "恢复 Draft" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "验证 Draft" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "checked-activate" }),
+      ).toBeEnabled(),
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "checked-activate" }),
+    );
+    await waitFor(() =>
+      expect(calls.some((call) => call.input.endsWith("/activate"))).toBe(true),
+    );
+    const activation = calls.find((call) => call.input.endsWith("/activate"));
+    expect(JSON.parse(String(activation?.init?.body))).toMatchObject({
+      expectedVersion: 3,
+      checked: true,
+    });
+    expect(calls.some((call) => call.init?.method === "PUT")).toBe(false);
+  });
+
+  it("serializes validation, its authoritative refresh, and later writes", async () => {
+    let resolveValidation!: (value: Response) => void;
+    let validationCalls = 0;
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push({ input, init });
+      if (input.endsWith("/validate")) {
+        validationCalls += 1;
+        return new Promise<Response>((resolve) => {
+          resolveValidation = resolve;
+        });
+      }
       if (input.endsWith("/activate"))
         return response({ revisionId: "draft-1", version: 2 });
       if (input.includes("/revisions/draft-1"))
@@ -256,8 +309,8 @@ describe("V2 configuration route", () => {
       if (input.includes("/system/settings"))
         return response({
           revisionId: "draft-1",
-          revisionVersion: 2,
-          draftVersion: 3,
+          revisionVersion: 1,
+          draftVersion: 2,
           sections: {
             General: {
               locale: {
@@ -283,27 +336,47 @@ describe("V2 configuration route", () => {
     await userEvent.click(
       await screen.findByRole("button", { name: "恢复 Draft" }),
     );
+
+    await userEvent.click(screen.getByRole("button", { name: "验证 Draft" }));
+    expect(screen.getByRole("button", { name: "验证 Draft" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "checked-activate" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "保存设置 Draft" }),
+    ).toBeDisabled();
     await userEvent.click(
-      await screen.findByRole("button", { name: "保存设置 Draft" }),
+      screen.getByRole("button", { name: "checked-activate" }),
+    );
+    expect(
+      calls.filter((call) => call.input.endsWith("/activate")),
+    ).toHaveLength(0);
+    expect(validationCalls).toBe(1);
+
+    await act(async () => {
+      resolveValidation(
+        response({ revisionId: "draft-1", version: 2, status: "validated" }),
+      );
+    });
+    await waitFor(() =>
+      expect(screen.getByText(/Draft 验证完成/)).toBeVisible(),
     );
     await waitFor(() =>
-      expect(calls.some((call) => call.init?.method === "PUT")).toBe(true),
+      expect(
+        screen.getByRole("button", { name: "checked-activate" }),
+      ).toBeEnabled(),
     );
-    const save = calls.find((call) => call.init?.method === "PUT");
-    expect(JSON.parse(String(save?.init?.body))).toMatchObject({
-      revisionId: "draft-1",
-      expectedVersion: 3,
-    });
-    await userEvent.click(screen.getByRole("button", { name: "验证 Draft" }));
     await userEvent.click(
       screen.getByRole("button", { name: "checked-activate" }),
     );
     await waitFor(() =>
-      expect(calls.some((call) => call.input.endsWith("/activate"))).toBe(true),
+      expect(
+        calls.filter((call) => call.input.endsWith("/activate")),
+      ).toHaveLength(1),
     );
     const activation = calls.find((call) => call.input.endsWith("/activate"));
     expect(JSON.parse(String(activation?.init?.body))).toMatchObject({
-      expectedVersion: 4,
+      expectedVersion: 2,
       checked: true,
     });
   });
@@ -458,6 +531,11 @@ describe("V2 configuration route", () => {
       await screen.findByRole("button", { name: "恢复 Draft" }),
     );
     await userEvent.click(screen.getByRole("button", { name: "验证 Draft" }));
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "checked-activate" }),
+      ).toBeEnabled(),
+    );
     await userEvent.click(
       screen.getByRole("button", { name: "checked-activate" }),
     );
