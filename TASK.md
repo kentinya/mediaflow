@@ -133,21 +133,79 @@ Managed configuration response contract → V2 Settings mutation state → real 
 
 ### Changed Files
 
+- `web/src/features/configuration/ConfigurationPage.tsx`
+- `web/src/features/configuration/ConfigurationPage.test.tsx`
+- `scripts/docker_empty_baseline_smoke_test.py`
+- `TASK.md`
+
 ### Implemented
+
+- Made successful validation adopt the exact backend-returned Draft identity and version, then wait
+  for the exact revision/System Settings refresh before checked activation is available. Missing or
+  unreadable authoritative results enter the existing explicit verification gate instead of
+  guessing a version or publishing.
+- Serialized create/save/validate/activate/export writes through the existing mutation lifecycle;
+  conflicting write controls remain disabled through the mutation and its authoritative refresh.
+  System Settings input is preserved during post-validation refresh when its field remains valid.
+- Added production-shaped component coverage for first-Draft version N validation returning N+1,
+  activation with exactly N+1, and delayed validation preventing overlapping validation,
+  activation, or settings save.
+- Replaced the media-free smoke suite's direct API first activation with a real Python-served
+  Playwright journey that clicks Create, Validate, and checked-activate, verifies the request uses
+  the validation response version, observes the empty Active state, and confirms zero durable work.
 
 ### Tests and Results
 
+- `cd web && npm test -- --run src/features/configuration/ConfigurationPage.test.tsx` — PASS
+  (1 file, 13 tests).
+- `.venv/bin/python -m unittest tests.test_management_setup tests.test_configuration_objects` —
+  PASS (89 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1902 tests, 7 skips).
+- `cd web && npm test -- --run && npm run typecheck && npm run lint && npm run format:check && npm run build`
+  — PASS on the final formatted candidate (50 files, 752 tests).
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts`
+  — PASS (323 files already formatted; Ruff and compileall passed).
+- `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py`
+  — PASS (real Python-served Web first activation, empty and optional-media stacks, zero activation
+  work, unchanged resident process identities).
+- `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_restart_fault_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py` — PASS.
+- Persistence/schema gates — SKIP (this Task made no persistence or schema change, so the Task's
+  conditional upgrade gates were not applicable).
+- `python3 scripts/check_governance.py` and `git diff --check` — PASS.
+- Real external SMB/OpenList/S3/TMDB services — UNAVAILABLE / not used; all acceptance data,
+  credentials, media, metadata and receivers were isolated fixtures as required.
+
 ### Decisions
+
+- The validation response version is the exact optimistic-concurrency token for the next explicit
+  activation. The subsequent read refreshes presentation and preserves input but never infers,
+  increments, or silently substitutes a different version.
+- A failed post-validation authoritative refresh blocks further writes pending explicit
+  verification, even though validation itself succeeded; this avoids presenting stale state or
+  publishing without the required refreshed view.
+- Backend concurrency, checked evidence, atomic activation, RBAC and immutable Active binding remain
+  unchanged.
 
 ### Remaining In-Slice Work
 
+- None known outside this Task; B must reevaluate the Slice Required Outcomes after review.
+
 ### Risks / Deviations
+
+- The first full Web chain reached `format:check` with two changed TypeScript files needing Prettier;
+  they were formatted and the complete Web chain was rerun successfully on the final candidate.
+- Existing Python `ResourceWarning` output, jsdom `scrollTo` diagnostics and the Vite bundle-size
+  advisory remain pre-existing and were not changed by this focused correction.
+- No production credentials or real external services were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [full SHA]
+Head SHA: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
 ```
 
 ## B Review Result
