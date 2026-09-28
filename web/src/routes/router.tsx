@@ -12,6 +12,7 @@ import { EntryPage } from "../features/entry/EntryPage";
 import { MigrationPage } from "../features/migration/MigrationPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { StorageManagementPage } from "../features/storage/StorageManagementPage";
+import { RulesWorkspacePage } from "../features/rules/RulesWorkspacePage";
 import { MediaLibraryFilesPage } from "../features/library/MediaLibraryFilesPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { OperationsLanding } from "../features/operations/OperationsLanding";
@@ -294,6 +295,12 @@ const storageManagementRoute = createRoute({
   component: StorageManagementPage,
 });
 
+const rulesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "rules",
+  component: RulesWorkspacePage,
+});
+
 const routeTree = rootRoute.addChildren([
   entryRoute,
   dashboardRoute,
@@ -329,6 +336,7 @@ const routeTree = rootRoute.addChildren([
   reviewRoute,
   configurationRoute,
   storageManagementRoute,
+  rulesRoute,
 ]);
 
 export function createAppRouter(

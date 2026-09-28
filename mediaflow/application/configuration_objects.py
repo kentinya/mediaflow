@@ -6789,6 +6789,221 @@ class ConfigurationObjectService:
     _STORAGE_INVENTORY_LIMIT = 100
     _REFERENCE_DETAIL_LIMIT = 32
 
+    _RULE_FAMILIES = {
+        "typeBindings": "recognitionTypePolicies",
+        "recognitionTypes": "recognitionTypes",
+        "recognitionRules": "recognitionRules",
+        "metadataPolicies": "metadataPolicies",
+        "namingPolicies": "namingPolicies",
+        "classificationPolicies": "classificationPolicies",
+        "organizePolicies": "organizePolicies",
+    }
+
+    @staticmethod
+    def _rules_text(value: object, maximum: int = 240) -> str:
+        text = str(value or "").replace("\x00", " ").replace("\r", " ").replace("\n", " ")
+        return text[:maximum]
+
+    @classmethod
+    def _rules_summary(cls, family: str, item: Mapping[str, object]) -> str:
+        if family == "typeBindings":
+            return " · ".join(
+                f"{label}: {cls._rules_text(item.get(field), 64)}"
+                for label, field in (
+                    ("Metadata", "metadataPolicy"),
+                    ("Naming", "namingPolicy"),
+                    ("Classification", "classificationPolicy"),
+                    ("Organize", "organizePolicy"),
+                )
+            )
+        if family == "recognitionRules":
+            return (
+                f"→ {cls._rules_text(item.get('outputRecognitionType'), 64)} · "
+                f"priority {item.get('priority', 0)} · score {item.get('score', 0)}"
+            )
+        if family == "metadataPolicies":
+            return " · ".join(
+                value
+                for value in (
+                    cls._rules_text(item.get("providerId"), 64),
+                    cls._rules_text(item.get("mediaType"), 32),
+                    cls._rules_text(item.get("language"), 32),
+                    cls._rules_text(item.get("region"), 32),
+                )
+                if value
+            )
+        if family == "namingPolicies":
+            return f"{cls._rules_text(item.get('mediaTypeMode') or 'shared', 32)} templates"
+        if family == "classificationPolicies":
+            rules = item.get("rules", [])
+            return f"{len(rules) if isinstance(rules, list) else 0} classification rules"
+        if family == "organizePolicies":
+            return (
+                f"{cls._rules_text(item.get('operation') or 'MOVE', 32)} · "
+                f"conflict {cls._rules_text(item.get('conflictStrategy') or 'manual', 32)}"
+            )
+        return cls._rules_text(item.get("description") or "Recognition type", 240)
+
+    @classmethod
+    def _rules_reference_counts(cls, document: Mapping[str, object]) -> dict[tuple[str, str], int]:
+        counts: dict[tuple[str, str], int] = {}
+
+        def add(family: str, object_id: object) -> None:
+            if isinstance(object_id, str) and object_id:
+                key = (family, object_id)
+                counts[key] = counts.get(key, 0) + 1
+
+        for rule in cls._canonical_objects(document, "recognitionRules"):
+            add("recognitionTypes", rule.get("outputRecognitionType"))
+        for binding in cls._canonical_objects(document, "recognitionTypePolicies"):
+            add("recognitionTypes", binding.get("recognitionType"))
+            add("metadataPolicies", binding.get("metadataPolicy"))
+            add("namingPolicies", binding.get("namingPolicy"))
+            add("classificationPolicies", binding.get("classificationPolicy"))
+            add("organizePolicies", binding.get("organizePolicy"))
+        return counts
+
+    def active_rules_workspace(
+        self,
+        *,
+        family: str | None = None,
+        query: str = "",
+        enabled: bool | None = None,
+    ) -> dict[str, object]:
+        """Return one complete, secret-free read model from the exact Active revision."""
+
+        unavailable: dict[str, object] = {
+            "available": False,
+            "reason": "unavailable",
+            "active": None,
+            "readiness": {"state": "UNAVAILABLE", "gaps": []},
+            "overview": {
+                "relationship": [],
+                "counts": {key: 0 for key in self._RULE_FAMILIES},
+                "enabledCounts": {key: 0 for key in self._RULE_FAMILIES},
+            },
+            "sections": {key: [] for key in self._RULE_FAMILIES},
+            "filters": {"family": family, "query": query, "enabled": enabled},
+        }
+        try:
+            active = self._managed.active()
+        except Exception:
+            return unavailable
+        if active is None:
+            return {
+                **unavailable,
+                "reason": "no_active",
+                "readiness": {"state": "NO_ACTIVE", "gaps": []},
+            }
+        try:
+            self._managed.verify_integrity(active)
+            raw = {
+                name: self._canonical_objects(active.document, section)
+                for name, section in self._RULE_FAMILIES.items()
+            }
+            references = self._rules_reference_counts(active.document)
+        except RuntimeSnapshotUnavailable:
+            return unavailable
+        except Exception:
+            return {
+                **unavailable,
+                "reason": "malformed",
+                "readiness": {"state": "MALFORMED", "gaps": []},
+            }
+
+        needle = query.strip().casefold()
+        sections: dict[str, list[dict[str, object]]] = {}
+        counts: dict[str, int] = {}
+        enabled_counts: dict[str, int] = {}
+        gaps: list[dict[str, str]] = []
+        for family_name, values in raw.items():
+            ordered = sorted(values, key=lambda value: str(value.get("id", "")))
+            counts[family_name] = len(ordered)
+            enabled_counts[family_name] = sum(
+                1 for value in ordered if value.get("enabled", True) is not False
+            )
+            if not ordered:
+                gaps.append(
+                    {
+                        "family": family_name,
+                        "message": f"No Active {family_name} are configured.",
+                        "nextAction": f"Open {family_name} when configuration is required.",
+                    }
+                )
+            projected: list[dict[str, object]] = []
+            for value in ordered:
+                object_id = str(value["id"])
+                name = self._rules_text(value.get("name") or object_id, 160)
+                description = self._rules_text(value.get("description"), 320)
+                summary = self._rules_summary(family_name, value)
+                is_enabled = value.get("enabled", True) is not False
+                if family is not None and family_name != family:
+                    continue
+                if enabled is not None and is_enabled is not enabled:
+                    continue
+                if needle and not any(
+                    needle in candidate.casefold()
+                    for candidate in (object_id, name, description, summary)
+                ):
+                    continue
+                item: dict[str, object] = {
+                    "id": object_id,
+                    "name": name,
+                    "description": description,
+                    "enabled": is_enabled,
+                    "summary": summary,
+                    "references": {
+                        "incoming": references.get((family_name, object_id), 0),
+                        "impact": (
+                            "referenced"
+                            if references.get((family_name, object_id), 0)
+                            else "unreferenced"
+                        ),
+                    },
+                }
+                if family_name == "typeBindings":
+                    item["recognitionType"] = self._rules_text(value.get("recognitionType"), 64)
+                    item["policyReferences"] = {
+                        key: self._rules_text(value.get(key), 64)
+                        for key in (
+                            "metadataPolicy",
+                            "namingPolicy",
+                            "classificationPolicy",
+                            "organizePolicy",
+                        )
+                    }
+                projected.append(item)
+            sections[family_name] = projected
+
+        return {
+            "available": True,
+            "reason": None,
+            "active": {
+                "status": "ACTIVE",
+                "version": active.version,
+                "sequence": active.revision_sequence or active.version,
+            },
+            "readiness": {
+                "state": "READY" if not gaps else "PARTIAL" if any(counts.values()) else "EMPTY",
+                "gaps": gaps,
+            },
+            "overview": {
+                "relationship": [
+                    "RecognitionRule",
+                    "RecognitionType",
+                    "RecognitionTypePolicy",
+                    "MetadataPolicy",
+                    "NamingPolicy",
+                    "ClassificationPolicy",
+                    "OrganizePolicy",
+                ],
+                "counts": counts,
+                "enabledCounts": enabled_counts,
+            },
+            "sections": sections,
+            "filters": {"family": family, "query": query, "enabled": enabled},
+        }
+
     def active_storage_management(
         self,
         *,

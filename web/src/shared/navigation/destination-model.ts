@@ -55,6 +55,14 @@ const destinationData = [
     v1Path: "/ui" as const,
   },
   {
+    id: "rules",
+    label: "Organizing Rules",
+    path: "/rules",
+    title: "Organizing Rules | MediaFlow",
+    availability: "implemented" as const,
+    description: "Inspect the exact Active recognition-to-policy graph.",
+  },
+  {
     id: "storage-management",
     label: "Storage Management",
     path: "/storage",
@@ -390,10 +398,10 @@ export const shellDestinations: readonly ShellDestination[] = [
   {
     id: "rules",
     label: "整理规则",
-    ariaLabel: "Review & Recovery Migration",
-    path: "/review",
+    ariaLabel: "Organizing rules",
+    path: "/rules",
     icon: "rules",
-    isActive: (pathname) => pathname === "/review",
+    isActive: (pathname) => pathname === "/rules",
   },
   {
     id: "automation",

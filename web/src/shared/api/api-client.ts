@@ -71,6 +71,11 @@ import {
   StorageFilesApiError,
   SystemStatusApiError,
 } from "./api-errors";
+import {
+  normalizeRulesWorkspace,
+  type RuleFamily,
+  type RulesWorkspaceModel,
+} from "../../entities/rules/rules-workspace";
 
 /**
  * The bounded recentLimit used by the proving route; the existing API accepts
@@ -4996,6 +5001,57 @@ export class StorageManagementApiError extends ApiReadError {
   constructor(category: ApiReadErrorCategory) {
     super(category, STORAGE_API_ERROR_MESSAGES[category]);
     this.name = "StorageManagementApiError";
+  }
+}
+
+export class RulesWorkspaceApiError extends ApiReadError {
+  constructor(category: ApiReadErrorCategory) {
+    super(category);
+    this.name = "RulesWorkspaceApiError";
+  }
+}
+
+export interface RulesInventoryQuery {
+  readonly family?: RuleFamily | null;
+  readonly query?: string;
+  readonly enabled?: boolean | null;
+}
+
+export function rulesInventoryPath(options: RulesInventoryQuery = {}): string {
+  const params = new URLSearchParams();
+  if (options.family) params.set("family", options.family);
+  const query = options.query?.trim() ?? "";
+  if (query) params.set("q", query.slice(0, 256));
+  if (typeof options.enabled === "boolean")
+    params.set("enabled", String(options.enabled));
+  const encoded = params.toString();
+  return `/api/v1/operations/rules/inventory${encoded ? `?${encoded}` : ""}`;
+}
+
+export async function fetchRulesInventory(
+  token: string | null,
+  options: RulesInventoryQuery = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesWorkspaceModel> {
+  let response: Response;
+  try {
+    response = await fetchImpl(rulesInventoryPath(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    throw new RulesWorkspaceApiError("unavailable");
+  }
+  if (response.status === 401) throw new RulesWorkspaceApiError("unauthorized");
+  if (response.status === 403) throw new RulesWorkspaceApiError("forbidden");
+  if (!response.ok)
+    throw new RulesWorkspaceApiError(
+      response.status >= 500 ? "unavailable" : "rejected",
+    );
+  try {
+    return normalizeRulesWorkspace(await response.json());
+  } catch {
+    throw new RulesWorkspaceApiError("malformed");
   }
 }
 
