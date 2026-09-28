@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { fetchRulesInventory } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
+import { destinations } from "../../shared/navigation/destination-model";
 import {
   RULE_FAMILIES,
   type RuleFamily,
@@ -22,6 +23,47 @@ const LABELS: Readonly<Record<RuleFamily, string>> = {
 };
 
 type Section = "overview" | RuleFamily;
+
+/**
+ * Dependency-ordered onboarding guidance for one empty Active family.
+ *
+ * The read journey may not invent an editor, so the empty state names the
+ * creation order the backend actually validates — a RecognitionRule needs an
+ * existing output RecognitionType, a ClassificationPolicy rule needs a
+ * configured MediaLibrary, and a type binding needs one enabled binding per
+ * RecognitionType — instead of offering a control that cannot complete it.
+ */
+const EMPTY_FAMILY_GUIDANCE: Readonly<Record<RuleFamily, string>> = {
+  typeBindings:
+    "类型绑定需要已有的识别类型，以及被引用的元数据、命名、分类和整理策略；每个识别类型只允许一个已启用绑定。",
+  recognitionTypes:
+    "识别类型是识别规则的输出目标，也是类型绑定的主体，建议先创建。",
+  recognitionRules:
+    "识别规则必须引用已存在的识别类型作为输出目标，请先创建识别类型。",
+  metadataPolicies: "元数据策略可独立创建，随后由类型绑定引用。",
+  namingPolicies: "命名策略可独立创建，随后由类型绑定引用。",
+  classificationPolicies:
+    "分类策略的规则会引用已配置的媒体库，可独立创建并由类型绑定引用。",
+  organizePolicies:
+    "整理策略可独立创建并由类型绑定引用；HardLink/SoftLink 不会静默降级为 Copy/Move。",
+};
+
+/**
+ * The create surface available in the current supported journey for every
+ * rule family: the existing configuration workflow, whose typed object forms,
+ * validation and checked activation already own rule/policy object lifecycle.
+ * The path is read from the single typed destination model (the same
+ * `v1Path` the migration surface uses) so this handoff cannot drift into a
+ * second route enumeration.
+ *
+ * It is one plain same-origin document navigation — it carries no credential
+ * from the memory-only V2 session, creates no Draft on arrival and performs no
+ * configuration write by itself. `/ui-v2/rules` keeps reading only its own
+ * Active projection, so a published object appears here after an explicit
+ * refresh; the V2 create drawer/editor remains deferred in this Task.
+ */
+const CONFIGURATION_WORKFLOW_PATH =
+  destinations.find((item) => item.id === "configuration")?.v1Path ?? "/ui";
 
 function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
   if (model.available) return null;
@@ -105,6 +147,20 @@ function Inventory({
         <p>
           当前 Active 配置中未包含任何{LABELS[family]}。访问本页不会创建
           Draft，也没有改变任何配置。
+        </p>
+        <p>{EMPTY_FAMILY_GUIDANCE[family]}</p>
+        <div className="mf-actions">
+          <a
+            className="mf-button mf-button-primary"
+            href={CONFIGURATION_WORKFLOW_PATH}
+          >
+            去配置工作流添加{LABELS[family]}
+          </a>
+        </div>
+        <p>
+          该入口只做一次同源跳转，不会自动创建 Draft 或改变
+          Active；创建、校验和激活都由你在现有配置工作流中显式完成。发布后回到本页重新连接并刷新，即可读取新的
+          Active 对象。
         </p>
       </div>
     );
