@@ -283,30 +283,82 @@ Status: READY FOR B REVIEW
 Head SHA: 858e2cd47a3d0762afc934db9d1badc02e52afdd
 ```
 
+### Developer Correction Completion Report
+
+### Changed Files
+
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_management_setup.py`
+
+### Implemented
+
+- Corrected every configured unauthorized command/scope readiness entry so its durable state
+  explicitly reports permission denial and its next action directs the operator to obtain the
+  required permission. Command-specific recovery destinations remain unchanged.
+- Extended the configured Viewer/Admin readiness regression to assert the action-oriented
+  unauthorized recovery fields while preserving Admin readiness.
+
+### Tests and Results
+
+- `.venv/bin/python -m unittest tests.test_management_setup` — PASS (18 tests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1902 tests, 7 skips).
+- `cd web && npm test -- --run` — PASS (50 files, 751 tests).
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `python3 scripts/check_governance.py && git diff --check` — PASS.
+- `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py` — PASS (media-free and optional-mount stacks; later publication adopted without restart).
+- `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_restart_fault_smoke_test.py` — PASS.
+- Real Python-served browser and upgrade evidence from unchanged Task candidate `858e2cd47a3d0762afc934db9d1badc02e52afdd` is retained; this correction changes only readiness projection copy and its API regression assertions.
+- Real external SMB/OpenList/S3/TMDB services were not used; no production credentials were required.
+
+### Decisions
+
+- Authorization denial is authoritative for readiness messaging but does not grant or replace the
+  existing route and command permission checks.
+- Unauthorized entries retain their command-specific recovery destination for diagnosis while
+  replacing configuration-oriented recovery instructions with permission recovery.
+
+### Remaining In-Slice Work
+
+- None known outside this Task; B must reevaluate the Slice Required Outcomes after review.
+
+### Risks / Deviations
+
+- Existing Python `ResourceWarning` output, jsdom `scrollTo` diagnostics and bundle-size advisory
+  remain non-blocking and pre-existing.
+- No external services or real credentials were used.
+
+### Checkpoint
+
+Status: READY FOR B REVIEW
+Head SHA: 868f5a2417792e4f5a135f3667384bd9a21c479c
+
 ## B Review Result
 
 ```text
-Reviewed: 09d429b75bc87847b716b6e0d2f082fa9f1c1800..0490d469b5ebf18dca1e87a636032faedb71e066
+Reviewed: 0490d469b5ebf18dca1e87a636032faedb71e066..858e2cd47a3d0762afc934db9d1badc02e52afdd
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Command-specific readiness does not distinguish authorization for configured browse/transfer
-  capabilities. In `mediaflow/interfaces/service_api.py`, `_command_readiness_document` marks
-  `libraryBrowse` and `directTransfer` `admission_ready` with `authorized: true` whenever an
-  enabled ResourceLibrary/MediaLibrary exists, without checking the authenticated principal's
-  permissions; the same projection also leaves configured scheduling/notification entries as
-  `ready`/`disabled` without an authorization decision. The production routes independently
-  enforce `READ`/`EXECUTE_MANUAL_ORGANIZE` and their management permissions, so this is reachable
-  by a legitimate Viewer/operator read of `/api/v1/management/readiness` and produces a misleading
-  Settings readiness state before the subsequent command is denied. Reproduction on this
-  Task Head: a real `ManagementSetupTests` API with a valid activated configuration containing
-  enabled Local Storage and ResourceLibrary returned for `viewer-token`:
-  `libraryBrowse=admission_ready`, `directTransfer=admission_ready`, both `authorized=true`;
-  the Viewer holds only `READ`, while transfer mutation requires
-  `EXECUTE_MANUAL_ORGANIZE`. This violates Slice RO-4's requirement that API/Web distinguish
-  missing, disabled, unavailable and unauthorized prerequisites. Add backend-authoritative
-  permission entries for each affected command/scope (including the no-Active/unavailable paths
-  where applicable), keep `ready=false` and `condition=unauthorized` when denied, and add a
-  regression covering a configured-but-unauthorized principal plus the allowed principal.
+- Unauthorized command readiness still exposes configuration recovery instead of permission
+  recovery. On the actual correction checkpoint, B activated a valid managed configuration with
+  enabled Local Storage and ResourceLibrary, then called the production
+  `/api/v1/management/readiness` endpoint as the legitimate Viewer. `directTransfer` correctly
+  returned `ready=false`, `condition=unauthorized`, and `authorized=false`, but its
+  `durableState` was `direct transfer scope available` and its `nextAction` was
+  `add an enabled library`; scheduling and notification use the same unconditional configuration
+  messages. The required configuration already exists, so Settings sends the user to an action
+  that cannot resolve the permission failure. The new focused test passes because it asserts only
+  `ready`, `condition`, and `authorized`; it does not assert the promised action-oriented recovery.
+  This violates Slice RO-4 and this Task's command/scope readiness Acceptance Criterion requiring
+  a useful recovery destination and distinguishable unauthorized prerequisite. Make every
+  unauthorized entry return a bounded permission-denial durable state and a permission recovery
+  action (while retaining the command-specific safe destination), and extend the configured
+  Viewer/Admin regression to assert those recovery fields. B ran
+  `.venv/bin/python -m unittest tests.test_management_setup` on the reviewed checkpoint: 18 tests
+  passed, which confirms the missing assertion rather than disproving the reproduced API defect.
