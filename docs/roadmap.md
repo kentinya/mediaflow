@@ -26,7 +26,7 @@ only in [the development workflow](development-workflow.md).
 | 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library create/edit/remove and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving and extending the Files journey with checked ResourceLibrary/MediaLibrary editing | PASS / CLOSED | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
 | 39 — Storage Management Workspace | Deliver the V2 Storage management journey from the supplied reference: bounded provider inventory and references, typed Local/SMB/OpenList/S3/R2 configuration, page-local checked Active Add/Edit/copy/enable/disable/remove, and zero-mutation Connection/Read diagnostics; complete the existing admitted-transfer Worker handoff across first activation/configuration changes, with truthful health and waiting-state recovery | PASS / CLOSED | 38 and existing managed-configuration/Storage foundations |
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
-| 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, exact Active/successor Draft lifecycle, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and checked atomic publication while preserving RecognitionType identity | ACTIVE | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
+| 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | ACTIVE | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 
 ## Current boundary
 
@@ -105,8 +105,8 @@ business Active, conditional publication checks, command-specific readiness and 
 adoption without mandatory media mounts or process restart. Mandatory media-business onboarding,
 wholesale policy-page migration and V1 retirement remained deferred at closure. Slice 41 now owns
 the organizing-rule portion of that migration: `/ui-v2/rules`, the complete RecognitionType policy
-graph, typed policy forms, exact-revision tests/previews and checked publication using existing
-Python authority. Metadata Provider switching, Review/Recovery migration, actual media execution
+graph, typed policy forms, exact-revision tests/previews and one-click Save with automatic checked
+activation using existing Python authority. Metadata Provider switching, Review/Recovery migration, actual media execution
 from the rules page, V1 retirement and unrelated configuration redesign remain outside Slice 41.
 This Roadmap does not retain the retired Slice 34–36 program rows.
 

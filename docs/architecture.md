@@ -346,21 +346,32 @@ Slice 41 adds one native V2 presentation/composition layer over the existing man
 and policy engines. It does not introduce new domain ownership. The intended authority path is:
 
 ```text
-/ui-v2/rules explicit edit intent
-  -> ManagedConfiguration Active / existing successor Draft
-  -> generic object normalization + reference/audit/concurrency services
-  -> exact-revision Strategy Test / Metadata Test / Naming Preview /
-     Classification Preview / Organize authority explanation
+/ui-v2/rules explicit Save
+  -> exact ManagedConfiguration Active + focused object candidate
+  -> internal successor composition + normalization + reference/audit/concurrency services
   -> whole-document validation + applicable checked evidence
   -> atomic Active publication and immutable runtime binding
   -> existing Files / Operations / Automation / API / CLI consumers
+
+explicit Test / Preview before Save
+  -> exact bounded page-scoped candidate revision (non-Active)
+  -> Strategy Test / Metadata Test / Naming Preview /
+     Classification Preview / Organize authority explanation
+  -> evidence only; no activation or execution authority
 ```
 
 The frontend route owns interaction and typed presentation only. It may maintain unsaved form state,
 search/filter state, selected tab/object and query cache, but none of those is configuration or
-runtime authority. Active comes only from the managed backend projection. Saving one editor mutates
-the exact successor Draft through optimistic concurrency; checked activation publishes the complete
-revision, not only the visible object. Entry/read/search/filter/navigation creates no Draft or work.
+runtime authority. Active comes only from the managed backend projection. Clicking Save submits the
+focused object candidate with the exact Active identity; one backend command composes a successor,
+validates the complete document, runs applicable checks and atomically activates it. The operator
+does not perform separate Save-Draft, Validate or Activate actions. Entry/read/search/filter/
+navigation creates no Draft or work.
+
+An explicit Test/Preview may stage a bounded page-scoped candidate and exact evidence so existing
+revision-bound engines remain reusable. That state is visibly non-Active and cannot include unrelated
+general-configuration Draft changes. Save may reuse current evidence only when it still matches the
+exact candidate; otherwise the backend reruns the applicable check before activation.
 
 The workspace exposes Overview, RecognitionTypePolicy bindings, Recognition Types, Recognition
 Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. The five
@@ -386,9 +397,11 @@ Production domain semantics remain unchanged:
 
 Existing generic `/api/v1/configuration/revisions/.../objects/...` routes and application services
 remain the source for object lifecycle. Slice 41 may add bounded rule-workspace projections or
-composition commands to avoid leaking whole-document protocols to the browser, but those adapters
-must delegate to the same permission, schema, normalization, reference, audit, exact-version,
-validation and activation services. V1 and V2 may coexist without schema or semantic forks.
+one page-level Save-and-Activate composition command to avoid leaking whole-document protocols to
+the browser, but those adapters must delegate to the same permission, schema, normalization,
+reference, audit, exact-version, validation and activation services. The Save candidate is based on
+the current Active and may not silently publish unrelated changes from another general-configuration
+Draft. V1 and V2 may coexist without schema or semantic forks.
 
 Preview/test results are evidence, not runtime state. They are internally bound to the exact
 revision/version/digest, become stale after relevant edits and remain bounded and secret-free.
@@ -396,9 +409,11 @@ Offline recognition/naming/classification/organize analysis performs zero Provid
 mutation. An explicit live Metadata test may call the configured Provider but creates no media
 Task/Job and never reads or mutates Storage. No Preview grants execution.
 
-Atomic activation uses Slice 40's shared applicability decision: validate every populated object and
-declared reference, require only evidence applicable to configured enabled capabilities, reject a
-broken declared graph, and leave unrelated empty families legal. Publication starts no processing.
+Automatic activation after Save uses Slice 40's shared applicability decision: validate every
+populated object and declared reference, require only evidence applicable to configured enabled
+capabilities, reject a broken declared graph, and leave unrelated empty families legal. Publication
+starts no processing. A known failure keeps prior Active and correctable input/recovery candidate;
+an unknown outcome is resolved by rereading managed authority before any repeat.
 New admissions use the new Active; existing Preview/Task/Job/Automation work retains its immutable
 pin. Configuration history, results and media contents are never deleted by object removal.
 
