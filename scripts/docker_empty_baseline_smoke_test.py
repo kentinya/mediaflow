@@ -814,6 +814,67 @@ def assert_real_web_status(stack: Stack) -> None:
     print("   real Python-served Web renders service health, waiting and Settings recovery")
 
 
+def activate_empty_baseline_through_web(stack: Stack) -> dict:
+    """Run the native first-Draft buttons against the real Python-served SPA."""
+
+    code = """
+        import {chromium, expect} from '@playwright/test';
+        const browser = await chromium.launch({headless:true});
+        let validatedVersion = null;
+        let activationVersion = null;
+        try {
+            const page = await browser.newPage({viewport:{width:1280,height:900}});
+            page.on('response', async response => {
+                if (response.url().endsWith('/validate') && response.ok()) {
+                    validatedVersion = (await response.json()).version;
+                }
+            });
+            page.on('request', request => {
+                if (request.url().endsWith('/activate')) {
+                    activationVersion = request.postDataJSON().expectedVersion;
+                }
+            });
+            await page.goto(process.env.MF_TEST_BASE + '/ui-v2/configuration');
+            await page.getByLabel('API token').fill(process.env.MF_TEST_TOKEN);
+            await page.getByRole('button', {name:'Connect', exact:true}).click();
+            await expect(page.getByRole('heading', {name:'需要创建首个 Draft'})).toBeVisible();
+            await page.getByRole('button', {name:'创建首个 Draft'}).click();
+            await expect(page.getByRole('button', {name:'验证 Draft'})).toBeVisible();
+            await page.getByRole('button', {name:'验证 Draft'}).click();
+            await expect(page.getByText(/Draft 验证完成/)).toBeVisible();
+            const activate = page.getByRole('button', {name:'checked-activate'});
+            await expect(activate).toBeEnabled();
+            await activate.click();
+            await expect(page.getByRole('heading', {
+                name:'Active 已激活,媒体业务尚未配置'})).toBeVisible();
+            const stores = await page.evaluate(
+                () => JSON.stringify([localStorage, sessionStorage]));
+            if(stores.includes(process.env.MF_TEST_TOKEN)) throw new Error('token persisted');
+            if(validatedVersion === null || activationVersion !== validatedVersion) {
+                throw new Error(
+                    `activation version ${activationVersion} did not match ` +
+                    `validation ${validatedVersion}`);
+            }
+            console.log(JSON.stringify({validatedVersion, activationVersion}));
+        } finally { await browser.close(); }
+    """
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", code],
+        cwd=ROOT / "web",
+        env={**os.environ, "MF_TEST_BASE": stack.base, "MF_TEST_TOKEN": stack.token},
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode:
+        raise RuntimeError("real Python-served first activation failed: " + result.stderr)
+    evidence = json.loads(result.stdout.strip().splitlines()[-1])
+    print(
+        "   real Python-served Web created, validated and checked-activated "
+        f"exact Draft version {evidence['validatedVersion']}"
+    )
+    return evidence
+
+
 def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -> None:
     suffix = f"{os.getpid()}-{int(time.time())}"
     # The receiver address and its certificate must both be settled *before*
@@ -863,9 +924,8 @@ def accept_media_free_stack(image: str, receiver: WebhookReceiver, keep: bool) -
         if before != {"jobs": 0, "deliveries": 0, "tasks": 0}:
             raise RuntimeError(f"startup created durable work: {before}")
 
-        print("   activating an empty baseline through the real API...")
-        baseline = empty_baseline_document(stack)
-        stack.activate(baseline)
+        print("   activating an empty baseline through the real Python-served Web...")
+        activate_empty_baseline_through_web(stack)
         status = stack.json_api("/api/v1/configuration")
         if not status["emptyActive"]:
             raise RuntimeError("empty baseline activation did not publish an empty Active")

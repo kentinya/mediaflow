@@ -301,17 +301,19 @@ export function ConfigurationPage() {
         preserveInput &&
         nextFields.some((field) => field.path === settingPath)
       ) {
-        return;
+        return true;
       }
       const first = nextFields[0];
       if (first) {
         setSettingPath(first.path);
         setSettingValue(text(first.value, ""));
       }
+      return true;
     } catch {
       setMessage(
         "Revision 或设置读取失败;原有选择和 Active 保持不变。请刷新后重试,并核对该 Draft 是否仍可用。",
       );
+      return false;
     }
   };
 
@@ -339,9 +341,44 @@ export function ConfigurationPage() {
     // Publication and edit writes are never retried automatically: an
     // uncertain outcome must be verified by the operator first.
     retry: false,
-    onSuccess: async (_result, request) => {
+    onSuccess: async (result, request) => {
       setMessage("操作已完成,请重新检查当前配置状态。");
-      void client.invalidateQueries({ queryKey: QUERY_KEY });
+      await client.invalidateQueries({ queryKey: QUERY_KEY });
+      const resultDocument = asRecord(result);
+      if (request.action === "create-first-draft") {
+        const createdId = text(resultDocument?.revisionId, "");
+        if (createdId) await inspect(createdId);
+      }
+      if (request.action === "validate") {
+        const validatedId = text(resultDocument?.revisionId, revisionId ?? "");
+        const validatedVersion = Number(resultDocument?.version);
+        if (
+          !validatedId ||
+          !Number.isInteger(validatedVersion) ||
+          validatedVersion < 1
+        ) {
+          setAwaitingVerification(true);
+          setMessage(
+            "验证响应缺少权威 Draft 版本;系统不会猜测版本或继续发布。请先核实当前配置状态。",
+          );
+          return;
+        }
+        setRevisionId(validatedId);
+        // Keep correctable settings input while refreshing the exact revision.
+        // The validation response remains the activation token: if another
+        // writer advances the Draft during this read, checked activation must
+        // conflict rather than publish changes that were not validated here.
+        const refreshed = await inspect(validatedId, true);
+        setSelectedVersion(validatedVersion);
+        if (!refreshed) {
+          setAwaitingVerification(true);
+          setMessage(
+            "Draft 已验证,但无法完成权威状态刷新;系统不会继续发布。请先核实当前配置状态。",
+          );
+          return;
+        }
+        setMessage("Draft 验证完成,已载入用于 checked activation 的精确版本。");
+      }
       if (request.action === "activate" && revisionId !== null) {
         // Refresh the exact revision so the page shows the published Active
         // snapshot and its runtime consumption state, not the stale Draft view.
@@ -512,7 +549,7 @@ export function ConfigurationPage() {
                 !draft &&
                 data.canManageConfiguration !== false && (
                   <Button
-                    disabled={awaitingVerification}
+                    disabled={awaitingVerification || mutation.isPending}
                     onClick={() =>
                       mutation.mutate({
                         action: "create-first-draft",
@@ -574,6 +611,7 @@ export function ConfigurationPage() {
                 <div className="mf-actions">
                   <Button
                     variant="secondary"
+                    disabled={mutation.isPending}
                     onClick={() =>
                       mutation.mutate({
                         action: "export",
@@ -593,7 +631,7 @@ export function ConfigurationPage() {
                       {data.canManageConfiguration !== false && (
                         <Button
                           variant="secondary"
-                          disabled={awaitingVerification}
+                          disabled={awaitingVerification || mutation.isPending}
                           onClick={() =>
                             mutation.mutate({
                               action: "validate",
@@ -606,7 +644,7 @@ export function ConfigurationPage() {
                       )}
                       {data.canActivateConfiguration !== false && (
                         <Button
-                          disabled={awaitingVerification}
+                          disabled={awaitingVerification || mutation.isPending}
                           onClick={() =>
                             mutation.mutate({
                               action: "activate",
@@ -720,7 +758,7 @@ export function ConfigurationPage() {
                   />
                 </label>
                 <Button
-                  disabled={awaitingVerification}
+                  disabled={awaitingVerification || mutation.isPending}
                   onClick={() =>
                     mutation.mutate({
                       action: "save-settings",
