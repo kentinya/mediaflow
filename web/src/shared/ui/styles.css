@@ -181,6 +181,29 @@ body {
   border-radius: 0.8rem;
   padding: 1.1rem;
 }
+/* The rules surface is a light page inside the dark-default `.mf-button` base,
+   so its onboarding handoff restates the light palette and the shared focus
+   ring instead of inheriting an unreadable dark background. It is styled here
+   rather than globally so no other surface's buttons change. */
+.mf-rules-empty .mf-actions {
+  align-items: center;
+}
+.mf-rules-empty .mf-button {
+  display: inline-block;
+  border: 1px solid var(--accent);
+  border-radius: 0.5rem;
+  background: var(--accent);
+  color: #fff;
+  padding: 0.6rem 1rem;
+  font: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+}
+.mf-rules-empty .mf-button:hover {
+  border-color: #0d4fb8;
+  background: #0d4fb8;
+}
 .mf-rules-flow {
   display: flex;
   flex-wrap: wrap;

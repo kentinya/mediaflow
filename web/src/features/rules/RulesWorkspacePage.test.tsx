@@ -125,7 +125,7 @@ describe("RulesWorkspacePage", () => {
     const emptyCounts = Object.fromEntries(
       Object.keys(rulesPayload.sections).map((key) => [key, 0]),
     );
-    stub({
+    const fetchMock = stub({
       ...rulesPayload,
       available: true,
       reason: null,
@@ -147,12 +147,42 @@ describe("RulesWorkspacePage", () => {
     authStore.setToken("rules-token");
     renderApp("/ui-v2/rules");
     await screen.findByRole("heading", { name: "整理规则" });
-    await userEvent
-      .setup()
-      .click(screen.getByRole("button", { name: "识别类型" }));
-    expect(
-      screen.getByRole("heading", { name: "尚无识别类型配置" }),
-    ).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "没有匹配结果" })).toBeNull();
+    const user = userEvent.setup();
+
+    // Every empty family — not only the first tab — presents onboarding with a
+    // concrete, currently supported next action, and none of them is presented
+    // as a failed search or opens an editor.
+    const families = [
+      { tab: "类型绑定", guidance: /只允许一个已启用绑定/ },
+      { tab: "识别类型", guidance: /建议先创建/ },
+      { tab: "识别规则", guidance: /必须引用已存在的识别类型/ },
+      { tab: "元数据策略", guidance: /可独立创建/ },
+      { tab: "命名策略", guidance: /可独立创建/ },
+      { tab: "分类策略", guidance: /引用已配置的媒体库/ },
+      { tab: "整理策略", guidance: /不会静默降级/ },
+    ] as const;
+    for (const { tab, guidance } of families) {
+      await user.click(screen.getByRole("button", { name: tab }));
+      expect(
+        screen.getByRole("heading", { name: `尚无${tab}配置` }),
+      ).toBeVisible();
+      // The empty family is onboarding, not a failed search.
+      expect(
+        screen.queryByRole("heading", { name: "没有匹配结果" }),
+      ).toBeNull();
+      expect(screen.getByText(guidance)).toBeVisible();
+      expect(
+        screen.getByRole("link", { name: `去配置工作流添加${tab}` }),
+      ).toHaveAttribute("href", "/ui");
+      expect(screen.queryByRole("dialog")).toBeNull();
+      // The search box is unused, so this state can never be a filter artifact.
+      expect(screen.getByRole("searchbox", { name: "搜索" })).toHaveValue("");
+    }
+
+    // Reading and onboarding navigation submit no configuration write: the
+    // only request so far is the page's own read.
+    for (const call of fetchMock.mock.calls)
+      expect(call[1]).toMatchObject({ method: "GET" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
