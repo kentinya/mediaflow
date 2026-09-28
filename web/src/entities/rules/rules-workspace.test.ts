@@ -1,0 +1,138 @@
+import { describe, expect, it } from "vitest";
+import { normalizeRulesWorkspace } from "./rules-workspace";
+
+export const rulesPayload = {
+  available: true,
+  reason: null,
+  active: { status: "ACTIVE", version: 4, sequence: 2 },
+  readiness: { state: "READY", gaps: [] },
+  overview: {
+    relationship: [
+      "RecognitionRule",
+      "RecognitionType",
+      "RecognitionTypePolicy",
+    ],
+    counts: {
+      typeBindings: 1,
+      recognitionTypes: 1,
+      recognitionRules: 1,
+      metadataPolicies: 1,
+      namingPolicies: 1,
+      classificationPolicies: 1,
+      organizePolicies: 1,
+    },
+    enabledCounts: {
+      typeBindings: 1,
+      recognitionTypes: 1,
+      recognitionRules: 1,
+      metadataPolicies: 1,
+      namingPolicies: 1,
+      classificationPolicies: 1,
+      organizePolicies: 1,
+    },
+  },
+  sections: {
+    typeBindings: [
+      {
+        id: "type-C",
+        name: "type-C",
+        description: "",
+        enabled: true,
+        summary: "Metadata: C · Naming: A · Classification: A · Organize: A",
+        references: { incoming: 0, impact: "unreferenced" },
+        recognitionType: "C",
+        policyReferences: {
+          metadataPolicy: "C",
+          namingPolicy: "A",
+          classificationPolicy: "A",
+          organizePolicy: "A",
+        },
+      },
+    ],
+    recognitionTypes: [
+      {
+        id: "C",
+        name: "Special",
+        description: "Special type",
+        enabled: true,
+        summary: "Special type",
+        references: { incoming: 2, impact: "referenced" },
+      },
+    ],
+    recognitionRules: [
+      {
+        id: "special",
+        name: "Special rule",
+        description: "",
+        enabled: true,
+        summary: "→ C · priority 100 · score 100",
+        references: { incoming: 0, impact: "unreferenced" },
+      },
+    ],
+    metadataPolicies: [
+      {
+        id: "C",
+        name: "C",
+        description: "",
+        enabled: true,
+        summary: "tmdb · movie",
+        references: { incoming: 1, impact: "referenced" },
+      },
+    ],
+    namingPolicies: [
+      {
+        id: "A",
+        name: "Movie naming",
+        description: "",
+        enabled: true,
+        summary: "movie templates",
+        references: { incoming: 1, impact: "referenced" },
+      },
+    ],
+    classificationPolicies: [
+      {
+        id: "A",
+        name: "Movie classification",
+        description: "",
+        enabled: true,
+        summary: "5 classification rules",
+        references: { incoming: 1, impact: "referenced" },
+      },
+    ],
+    organizePolicies: [
+      {
+        id: "A",
+        name: "A",
+        description: "",
+        enabled: true,
+        summary: "MOVE · conflict manual",
+        references: { incoming: 1, impact: "referenced" },
+      },
+    ],
+  },
+  filters: { family: null, query: "", enabled: null },
+};
+
+describe("normalizeRulesWorkspace", () => {
+  it("accepts the bounded exact-Active graph and preserves type identity", () => {
+    const model = normalizeRulesWorkspace(rulesPayload);
+    expect(model.sections.typeBindings[0]?.recognitionType).toBe("C");
+    expect(model.sections.typeBindings[0]?.policyReferences?.namingPolicy).toBe(
+      "A",
+    );
+  });
+
+  it("rejects unknown states and incomplete sections", () => {
+    expect(() =>
+      normalizeRulesWorkspace({
+        ...rulesPayload,
+        readiness: { state: "MAGIC", gaps: [] },
+      }),
+    ).toThrow();
+    const sections = { ...rulesPayload.sections } as Record<string, unknown>;
+    delete sections.organizePolicies;
+    expect(() =>
+      normalizeRulesWorkspace({ ...rulesPayload, sections }),
+    ).toThrow();
+  });
+});

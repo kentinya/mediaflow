@@ -17,6 +17,7 @@ describe("destination model", () => {
       "Operations",
       "Review & Recovery",
       "Configuration",
+      "Organizing Rules",
       "Storage Management",
     ]);
     expect(
@@ -55,6 +56,7 @@ describe("destination model", () => {
     expect(destinationForPath("/dashboard")?.id).toBe("overview");
     expect(destinationForPath("/medialib/files")?.id).toBe("library");
     expect(destinationForPath("/resourcelib/files")?.id).toBe("library-files");
+    expect(destinationForPath("/rules")?.id).toBe("rules");
     expect(destinationForPath("/library")).toBeUndefined();
     expect(destinationForPath("/library/files")).toBeUndefined();
     expect(destinationForPath("/library/file-index")).toBeUndefined();

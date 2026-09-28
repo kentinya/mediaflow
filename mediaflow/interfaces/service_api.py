@@ -2786,6 +2786,13 @@ class MediaFlowApi:
             return self._storage_operations_projection(
                 parts, method, environ, start_response, principal
             )
+        if parts[:4] == ["api", "v1", "operations", "rules"]:
+            if parts != ["api", "v1", "operations", "rules", "inventory"]:
+                return self._error(start_response, 404, "not_found", "route was not found")
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require(principal, ApiPermission.READ)
+            return self._rules_inventory_operator_page(environ, start_response)
         if parts == ["api", "v1", "management", "readiness"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -9156,6 +9163,10 @@ class MediaFlowApi:
             if len(parts) == 7 and parts[4] == "storage" and parts[6] == "check":
                 return "/api/v1/operations/storage-management/storage/{id}/check"
             return "/api/v1/<unmatched>"
+        if len(parts) >= 4 and parts[:4] == ["api", "v1", "operations", "rules"]:
+            if len(parts) == 5 and parts[4] == "inventory":
+                return "/api/v1/operations/rules/inventory"
+            return "/api/v1/<unmatched>"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
         if (
@@ -13160,6 +13171,65 @@ class MediaFlowApi:
                 "nextAfter": next_after,
             },
         )
+
+    # ------------------------------------------------------------------
+    # V2 Rules workspace read projection (bounded, secret-free)
+
+    _RULE_INVENTORY_FAMILIES = frozenset(
+        {
+            "typeBindings",
+            "recognitionTypes",
+            "recognitionRules",
+            "metadataPolicies",
+            "namingPolicies",
+            "classificationPolicies",
+            "organizePolicies",
+        }
+    )
+
+    def _rules_inventory_operator_page(self, environ: dict, start_response: Callable):
+        query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(query).difference({"family", "q", "enabled"}) or any(
+            len(values) != 1 for values in query.values()
+        ):
+            raise ValueError("Rules inventory query accepts family, q and enabled once")
+        family = query.get("family", [None])[0] or None
+        if family is not None and family not in self._RULE_INVENTORY_FAMILIES:
+            raise ValueError("Rules inventory family is unsupported")
+        search = query.get("q", [""])[0]
+        if len(search) > 256 or "\0" in search:
+            raise ValueError("Rules inventory search must be at most 256 characters")
+        enabled_value = query.get("enabled", [None])[0]
+        if enabled_value not in {None, "", "true", "false"}:
+            raise ValueError("Rules inventory enabled filter must be true or false")
+        enabled = None if enabled_value in {None, ""} else enabled_value == "true"
+        if self._configuration_objects is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        try:
+            document = self._configuration_objects.active_rules_workspace(
+                family=family,
+                query=search,
+                enabled=enabled,
+            )
+        except Exception:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "Rules inventory is unavailable",
+                details={
+                    "durableState": "Active configuration remains unchanged",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "inspect Settings and refresh after Active is available",
+                },
+            )
+        return self._response(start_response, 200, document)
 
     # ------------------------------------------------------------------
     # V2 Storage management operations projections (bounded, secret-free)
