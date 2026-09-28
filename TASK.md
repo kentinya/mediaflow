@@ -1,332 +1,184 @@
-# Task 41.1 — Rules workspace read model and full-width inventories
+# Task 41.2 — Foundational rule objects with one-save Active publication
 
-This Task follows [the development workflow](../docs/development-workflow.md) and is subordinate to
-the current [`SLICE.md`](../SLICE.md).
+This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
+the current [Slice Contract](SLICE.md).
 
 ```text
-Task ID: 41.1
+Task ID: 41.2
 Parent Slice: 41
-Status: READY FOR B REVIEW
-Task Base: 5c8aeb40fd7ea43daac100f7b205b082da921336
-Difficulty: Medium
-Test Level: T3
+Status: PLANNED
+Task Base: 34dc6e35982c19fbbedb72aba0bc31c6353bc805
+Difficulty: High
+Test Level: T4
 Planner / Reviewer: B
 ```
 
 ## Goal
 
-Deliver the read-only entry journey for the V2 organizing-rules workspace (RO-1 and the read-only
-parts of RO-7/RO-8): an authenticated operator can open `/ui-v2/rules`, understand the recognition-
-to-policy relationship, and inspect every rule-family inventory from the exact immutable Active
-configuration. The initial state is a complete full-width inventory with no selected object, drawer
-or editor; search, filtering, tab changes and refresh remain read-only.
+An administrator can build and maintain the independently creatable foundations of the rules graph
+in V2—Recognition Types and Metadata, Naming, Classification and Organize Policies—and click one
+`保存` action per intended change to validate and atomically publish the exact successor Active
+configuration. This advances Slice RO-2, the RecognitionType portion of RO-3, the four typed editors
+in RO-5, and the associated RO-7/RO-8 publication and recovery behavior.
 
 ## Why This Task Exists
 
-Slice 41 is active, but V2 has no Rules route, navigation destination, typed rules entity or bounded
-operator projection. The existing generic configuration revision document is an implementation
-surface containing unrelated sections and evidence, and is not a suitable Web contract for the
-rules journey. The first independent unit must establish one server-authoritative, secret-free read
-model and prove the user can enter and scan the complete rule graph before any mutation workflow is
-added. This is the largest useful foundation for the later typed editors, tests/previews and
-automatic Save/activation tasks.
+Task 41.1 established the exact-Active, read-only workspace, but its empty-state action still hands
+off to the existing configuration UI because V2 has no editor or publication command. The five
+families here are the legal building blocks an administrator can create before a RecognitionRule or
+type binding completes the graph. They share one high-risk mutation boundary: a focused object
+candidate must become a checked immutable Active revision without publishing unrelated Draft work.
+Implementing that boundary together with these complete typed object journeys is one coherent
+vertical unit. RecognitionRule/type-binding authoring and exact-candidate tests/previews remain the
+next dependent in-Slice units, not separate fields or buttons in this Task.
 
 ## Implementation Scope
 
-Domain/Application/API:
+Application / Persistence / API:
 
-- Add a bounded read-only rules operator projection backed by the exact current Active managed
-  revision. It must expose Active identity/readiness, Overview relationship data, and all eight
-  sections: Type Bindings, Recognition Types, Recognition Rules, Metadata Policies, Naming Policies,
-  Classification Policies and Organize Policies.
-- Include stable IDs, names, bounded descriptions/summaries, enabled state and bounded reference /
-  impact summaries needed by the inventories. Preserve RecognitionType identity and show binding
-  references without resolving or rewriting policy identity.
-- Keep the projection secret-free and digest-free for the browser. Do not return credentials,
-  authorization material, raw provider options, audit payloads, Draft contents, execution authority,
-  internal tokens or unrelated configuration sections. Active is the only source for the displayed
-  objects; no Draft is created or read as Active.
-- Expose bounded, action-oriented unavailable, empty-active, unauthorized, forbidden and malformed
-  read outcomes. Reads must perform no Storage access, Provider call, Task/Job creation, Draft write,
-  schedule/notification work or media mutation.
+- Add a narrowly scoped rules-workspace command for RecognitionType, MetadataPolicy, NamingPolicy,
+  ClassificationPolicy and OrganizePolicy create, edit, copy, enable/disable where the domain allows
+  it, and reference-safe delete. Reuse managed object normalization, optimistic concurrency,
+  reference evidence, audit, whole-document validation, Slice 40 applicable checks and checked
+  atomic activation. One explicit final `保存`/confirmed list intent must complete publication;
+  never leave a successful action as a hidden unpublished Draft.
+- Compose only the focused change from one exact Active snapshot. Verify the submitted observed
+  Active authority against that snapshot, including its version/digest internally; fail closed on
+  stale authority. Keep unrelated saved Drafts and existing pinned work untouched. Do not expose a
+  revision ID, digest, grant or secret as an ordinary user step.
+- Provide bounded, allowlisted Active detail/edit data for these five families, actual available
+  MediaLibrary/provider references and secret readiness, and reference impact needed for safe
+  enable/disable/delete. Preserve existing V1 `/api/v1/configuration/*` behavior and use the same
+  application permissions and semantics for the new V2 command.
+- Return explicit success, validation/evidence/reference/stale/permission/activation failure and
+  unknown-outcome recovery data: affected object/stage, whether Active changed, durable candidate
+  state if any, what input can be corrected, and the safe next action. Verify current managed Active
+  before any manual retry of an unknown Save outcome; never automatically resubmit it. Audit
+  bounded before/after and result without secrets.
 
-Web/API:
+Web:
 
-- Add a typed frontend API/entity boundary with strict response normalization and bounded error
-  categories. Query/search/filter parameters must be allowlisted and must not make the browser
-  infer or substitute policy data.
-- Add `/ui-v2/rules` to the typed route/destination model and make `整理规则` the active shared-shell
-  destination. Existing routes and Settings/Review recovery destinations remain unchanged.
-- Implement one Rules page with an Overview and the eight required rule-family sections. Each family
-  opens as a full-width searchable inventory with real Active rows, enabled/reference state and a
-  clear empty/no-match state. Narrow and keyboard operation must remain complete.
-- Entry, selection, search, filter, tab navigation and refresh never open a drawer or editor and
-  never perform a configuration mutation. A row may be highlighted or inspected as read-only, but
-  edit/create routes are explicitly deferred.
-- Render distinct loading, no Active/onboarding, empty inventory, no-match, unauthorized,
-  forbidden, unavailable/malformed and refresh-recovery states with a safe next action. Do not
-  expose raw revision IDs/digests or protocol/exception text as ordinary workflow steps.
+- Keep every family entry as the existing complete full-width inventory with no selected object,
+  editor or drawer. Only its explicit `添加xx` action opens a create drawer; row selection, search,
+  filter, tab change and refresh stay read-only. An explicit Edit action opens a refresh-safe
+  full-page state for an existing object. Copy opens a new-ID candidate; list-level enable/disable
+  and reference-safe delete have a clear explicit final intent.
+- Build purpose-built typed forms for the five families using their current domain fields and
+  compatibility. RecognitionType has stable ID/name/description/enabled state and incoming rule/
+  binding impact. MetadataPolicy shows configured provider, media/query mode, locale, thresholds,
+  timeout/retry/request limits and secret readiness without returning credentials. NamingPolicy
+  shows actual Movie and TV templates, supported variables/formatting, missing-variable behavior
+  and component length. ClassificationPolicy edits ordered supported conditions and separate
+  MediaLibrary ID plus safe relative path. OrganizePolicy shows operation, conflict, attachment,
+  duplicate, rollback and cleanup settings with explicit overwrite/delete/cleanup risk; it has no
+  invented enabled toggle or implicit operation fallback.
+- Show Active separately from unsaved form input and any labelled failed-Save candidate. Save
+  progress, publication result, validation blockers, stale authority, reference impact and safe
+  recovery remain visible. Preserve correctable input across failed Save, refresh, navigation,
+  reconnect and stale recovery, or warn before discarding it. Do not ask users to perform separate
+  Draft Save, Validate, Activate or raw revision-token transfer.
+- After a known successful Save, refetch the server Active inventory/readiness and make the new
+  object or change visible. Settings/V1/API and new admissions must observe the same immutable
+  published authority; page entry and inspection still create no Draft/work/Provider call or
+  Storage mutation.
 
 Tests:
 
-- Add focused Python API/projection tests for exact-Active selection, section completeness, bounded
-  redaction, references/impact, empty/unavailable/permission/malformed responses and zero side
-  effects.
-- Add typed entity/API tests for accepted and rejected payloads, query allowlists and error mapping.
-- Add component/router/navigation tests for the route, all eight sections, default closed editor state,
-  search/filter/tab/refresh read-only behavior, empty/no-match/error recovery and responsive/keyboard
-  reachability.
+- Cover the five-family empty-Active onboarding sequence and real Active successor publication;
+  each operation's allowed and rejected states; exact-Active stale writers and concurrency;
+  field/reference/template/path/secret failures; copy identity and default-disabled behavior where
+  supported; reference-protected deletion; correctable known and unknown Save outcomes; RBAC,
+  audit/redaction and zero media/Storage work.
+- Cover drawer-only Add, explicit full-page Edit, no automatic opening from inventory actions,
+  unsaved-input protection, accessible narrow/keyboard operation, typed API/error normalization,
+  and the post-Save Active refetch. Use temporary roots, fakes and local servers, never real media
+  or production provider credentials.
 
-Files/areas frozen for this Task:
-
-- Existing managed configuration lifecycle, validation, activation, policy resolver, Strategy Test,
-  Naming/Classification/Organize Preview and Settings authority remain unchanged except for the
-  narrow read projection required above.
-- No changes to `config/alist.json`, real credentials, supplied reference images, Storage adapters,
-  OrganizerExecutor or the V1 `/ui` journey.
+Frozen boundaries: RecognitionRule/type-binding authoring and Strategy Test; Metadata live test,
+Naming/Classification/Organize/whole-chain previews; rule-engine/policy-resolver semantics;
+Storage adapters and OrganizerExecutor; other V2 pages except a necessary factual Settings
+readiness/return integration. Do not edit the six supplied reference images or `config/alist.json`.
 
 ## Acceptance Criteria
 
-- [ ] An authenticated operator can reach `/ui-v2/rules` from the shared shell and via a normal
-      deep-link; the page is protected by the existing backend-authoritative read permission.
-- [ ] The backend projection is derived from one exact Active revision, contains all eight required
-      sections plus bounded Overview/identity/readiness data, and never labels Draft/candidate data
-      as Active.
-- [ ] Projection and frontend normalization are bounded and secret-free: no credentials, tokens,
-      digests, audit contents, unrelated configuration, provider response DTOs or raw exceptions
-      cross the Rules Web boundary.
-- [ ] The default page is a complete full-width Overview/inventory state with no selected object,
-      drawer or editor. All eight sections are discoverable and display actual Active rows or a
-      truthful empty state; reference/impact and enabled state remain visible.
-- [ ] Search and supported filters operate over the complete returned Active inventory, have
-      deterministic no-match behavior, and do not create Drafts, call Providers, inspect Storage,
-      create work or mutate configuration. Refresh only re-reads the projection.
-- [ ] Loading, no Active/onboarding, empty, no-match, unauthorized, forbidden, unavailable and
-      malformed states each explain the durable state and a meaningful safe next action without
-      exposing implementation-detail ceremony.
-- [ ] The implementation preserves RecognitionType identity, policy-binding semantics and all
-      Slice safety invariants; no new mutation path or frontend authority is introduced.
-- [ ] Required T3 focused, related integration and normal Web quality checks pass, and the
-      checkpoint contains only this Task's coherent changes.
+- [ ] From the existing `/ui-v2/rules` inventory, an authorized administrator can Add, Edit, Copy,
+      enable/disable where supported, and reference-safely delete each of the five included object
+      families through typed V2 controls. Default inventory, drawer and full-page Edit behavior
+      match Slice AC-1; no ordinary step requires V1 or whole-document JSON for these five families.
+- [ ] One explicit `保存` or confirmed list action composes only the intended object change from the
+      observed exact Active, validates the complete successor, runs applicable checks and atomically
+      activates it. Success visibly shows the new actual Active and refreshes inventory/readiness;
+      reads, selection and navigation have zero configuration or media side effects.
+- [ ] Every form represents current backend fields and references accurately. Invalid fields,
+      duplicate IDs, unknown variables, unsafe templates/paths, missing/disabled references,
+      unavailable provider secret and unsupported effects fail with the relevant object/stage and
+      an actionable next step. No frontend policy authority or invented fallback appears.
+- [ ] Edit keeps ID immutable; copy has a new stable ID and defaults disabled for kinds supporting
+      enabled state. Enable/disable/delete show actual reference impact, and referenced deletion is
+      blocked. Destructive policy settings are explicit but create no execution grant or media work.
+- [ ] Stale or simultaneous Saves cannot publish the wrong successor; known failures preserve the
+      prior Active and correctable input/candidate. Unknown outcomes prompt Active verification and
+      never auto-replay. Browser-visible and audit/error data are bounded and secret-free.
+- [ ] V1/API/CLI, Files and Automation retain the same backend policy semantics and immutable pins;
+      no new Storage mutation path, Provider call on read/Save, Task/Job, schedule occurrence or
+      notification is introduced by this workspace.
+- [ ] T4 focused, integration, full regression, browser and quality/safety gates below pass, with
+      unavailable environmental gates reported honestly. The checkpoint contains only this Task's
+      coherent changes and preserves pre-existing user files.
 
 ## Required Tests
 
-- `python3 -m pytest -q mediaflow/tests` (or the repository's focused Python test selection covering
-  the new projection and service API, plus directly affected configuration tests).
-- `python3 -m compileall -q mediaflow`.
-- `npm --prefix web test -- --run` with the new Rules entity/API/router/component tests and affected
-  navigation/shell tests.
-- `npm --prefix web run typecheck` (or the repository's equivalent typecheck script), lint and
-  format checks for changed Web files.
-- `python3 scripts/check_governance.py` and `git diff --check`.
-
-External TMDB, SMB, OpenList, S3/R2 and user media are not required; use fakes, mocks, bounded local
-responses and temporary roots where a read-side dependency must be exercised.
+- New focused Python tests for the rules Save composition/detail/reference boundary, plus
+  `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_successor_draft.py tests/test_configuration_naming.py tests/test_configuration_classification.py tests/test_configuration_organize.py tests/test_configuration_management.py tests/test_configuration_status.py`.
+- New focused Web entity/API/form/router tests and `npm --prefix web test -- --run` for all affected
+  regression tests.
+- `npm --prefix web run build`, `npm --prefix web run typecheck`, `npm --prefix web run lint`,
+  `npm --prefix web run format:check`, and focused
+  `npm --prefix web run test:e2e -- --grep 'rules'` browser journey tests. If browser binaries or
+  Docker are unavailable, report the actual unavailable gate; do not turn it into PASS or skip.
+- `.venv/bin/python -m unittest discover -s tests`,
+  `.venv/bin/python -m compileall -q mediaflow tests scripts`,
+  `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`,
+  `python3 scripts/check_governance.py`, and `git diff --check`.
+- `scripts/docker_release_security_smoke_test.py` using the repository's documented invocation;
+  report environmental unavailability precisely if the isolated Compose harness cannot start.
 
 ## Non-goals
 
-- Object create/copy/edit/enable-disable/delete forms or any drawer/full-page editor.
-- Page-level Save, automatic validation, checked activation, Draft recovery or Active publication.
-- Recognition Strategy Test, Metadata test, Naming Preview, Classification Preview, Organize
-  authority/whole-chain Preview or live Provider calls.
-- Starting Scan/Preview/Organize, scheduled work, notification delivery, Storage browsing or any
-  OrganizerExecutor/Storage mutation.
-- New recognition fields/operators, Metadata Providers, policy semantics, frontend policy resolver,
-  bulk editing, visual graph authoring, V1 retirement or unrelated shell/page redesign.
-- Optional visual polish, extra sample data, P2 cleanup or test-only work outside the read journey.
+- RecognitionRule nested condition editing, rule priority/score/ambiguity UX, and
+  RecognitionTypePolicy binding authoring. These dependent graph objects remain in this Slice.
+- Recognition Strategy Test, Metadata live test, Naming Preview, Classification Preview and
+  Organize/whole-chain authority Preview; no preview-driven execution authority.
+- Provider switching, new Metadata Provider, naming variable or classification condition, media
+  execution, new Storage adapter, V1 retirement, unrelated Settings/Files/Automation redesign.
+- Test-only polish, additional sample data or optional visual tuning unrelated to this journey.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- `mediaflow/application/configuration_objects.py`
-- `mediaflow/interfaces/service_api.py`
-- `tests/test_v2_rules_workspace.py`
-- `web/src/entities/rules/rules-workspace.ts`
-- `web/src/entities/rules/rules-workspace.test.ts`
-- `web/src/features/rules/RulesWorkspacePage.tsx`
-- `web/src/features/rules/RulesWorkspacePage.test.tsx`
-- `web/src/routes/router.tsx`
-- `web/src/shared/api/api-client.ts`
-- `web/src/shared/api/rules-workspace-api.test.ts`
-- `web/src/shared/navigation/destination-model.ts`
-- `web/src/shared/navigation/destination-model.test.ts`
-- `web/src/shared/ui/styles.css`
-- `TASK.md`
-
 ### Implemented
-
-- Added a bounded `GET /api/v1/operations/rules/inventory` projection that reads one exact managed
-  Active revision, verifies integrity, exposes Active sequence/readiness/Overview and every rules
-  family, and returns only allowlisted IDs, display text, enabled state, summaries and reference
-  impact. The projection never returns revision IDs, digests, credentials, raw provider options,
-  Drafts, audit payloads or unrelated configuration.
-- Preserved RecognitionType identity explicitly in Type Binding rows: the `type-C` binding reports
-  RecognitionType `C` while independently referencing Naming/Classification/Organize policy `A`.
-  Search/family/enabled query inputs are strictly allowlisted and reads create no successor, Task,
-  Provider call, Storage access or media/configuration mutation.
-- Added the native `/ui-v2/rules` destination to the shared shell and route model. The page opens as
-  a full-width Overview with no selected object, drawer or editor, and provides keyboard-operable
-  tabs for Type Bindings, Recognition Types, Recognition Rules, Metadata, Naming, Classification
-  and Organize policies.
-- Added complete Active inventory tables with local search and enabled-state filtering, truthful
-  empty/no-match states, reference/enabled visibility, responsive layout, read-only refresh and
-  bounded no-Active/malformed/unavailable/permission recovery through the shared authorized-read
-  boundary.
-- Added backend, entity, API, route, shell and component regressions for exact-Active selection,
-  redaction, section completeness, query allowlists, permission/no-Active/malformed outcomes,
-  RecognitionType-C preservation, default closed editor state, search/filter/tab/refresh behavior
-  and keyboard recovery.
-- Correction loop (B blockers only):
-  - Aligned backend and browser bounds using document-derived legal limits (`_RULES_INVENTORY_LIMITS`
-    in the projection and `RULES_INVENTORY_LIMITS` in the typed entity), both derived from the
-    1 MiB managed-document ceiling. A legal Active configuration with more than 512 items (for
-    example 513 RecognitionTypes) now delivers every row instead of failing closed as malformed;
-    both sides fail closed only past the same document-derived bound. Covered by a Python
-    projection regression and an entity normalization regression.
-  - Derived Overview readiness from *effective* enabled bindings and references: a binding counts
-    only when it is enabled, its RecognitionType is enabled, and all four referenced policies exist
-    and are enabled (skipping disabled references exactly like `RecognitionTypePolicyResolver`).
-    Disabled bindings, unbound enabled types and enabled bindings pointing at disabled downstream
-    policies each surface a `PARTIAL` readiness with one bounded gap per family and an actionable
-    next action; `READY` is only reported when every enabled RecognitionType resolves. Covered by
-    regressions for all-binding-disabled and disabled-NamingPolicy graphs.
-  - Distinguished empty-family onboarding state from filtered no-match state: a family whose Active
-    section is empty renders a truthful `尚无…配置` state that says reads created no Draft, while
-    `没有匹配结果` remains reserved for search/status filters that matched nothing. Covered by a
-    Web component regression for the empty case alongside the existing no-match case.
-  - Made the empty-family state actually continue onboarding: every empty family now states the
-    creation order the backend validates for that family and offers one concrete, currently
-    supported next action — a same-origin document handoff to the existing configuration workflow
-    that owns typed rule/policy object forms, validation and checked activation. The handoff path is
-    read from the single typed destination model (the same `v1Path` the migration surface uses), is a
-    plain navigation that carries no memory-only credential, creates no Draft on arrival and writes
-    no configuration, and the filtered `没有匹配结果` state is unchanged. The Web regression now
-    walks all seven empty families and asserts per-family guidance, the matching create link and
-    `href`, the absence of any dialog, that no filter is in use, and that only the page's own `GET`
-    was issued; the regression was verified to fail without the fix.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py` — PASS (9 tests, including the
-  513-RecognitionType, disabled-binding, disabled-reference, bounded-gap and empty-family
-  regressions).
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_management_setup.py`
-  — PASS (98 tests, 96 subtests).
-- `python3 -m compileall -q mediaflow` — PASS.
-- `npm --prefix web test -- --run` — PASS (53 files, 774 tests) on the final correction candidate.
-- `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx src/routes/router.test.tsx src/shared/navigation/destination-model.test.ts src/shared/ui/AppShell.test.tsx`
-  — PASS (6 files, 42 tests) on the final correction candidate.
-- `npm --prefix web test -- --run src/features/rules/RulesWorkspacePage.test.tsx` — PASS (10 tests)
-  on the final candidate, including the strengthened empty-family regression that walks all seven
-  families. The same regression was run with the new empty-family action removed and failed with
-  `Unable to find an element with the text: /只允许一个已启用绑定/`, confirming it is a real
-  regression test rather than a tautology; the fix was then restored and the test re-run green.
-- `npm --prefix web run typecheck`, `npm --prefix web run lint`, and
-  `npm --prefix web run format:check` — PASS.
-- `.venv/bin/ruff format --check .` and `.venv/bin/ruff check .` — PASS (324 files already
-  formatted; all checks passed).
-- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/python -m unittest discover -s tests` — PASS (1911 tests, 7 skips) after this report
-  documented the release-quality gates; the single in-range failure before that documentation fix
-  was `test_release_quality_gate_commands_are_documented_for_task_execution`, which reads TASK.md
-  itself and fails for any real Task that omits these commands (it passed at Task Base only because
-  TASK.md there was the `NO ACTIVE IMPLEMENTATION TASK` notice; it entered the range with B's
-  planning commit `78cda5e`, before this correction).
-- `scripts/docker_release_security_smoke_test.py` (run as
-  `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py`) — UNAVAILABLE
-  (environmental, unrelated): the harness fails while creating its own temporary Compose stack with
-  `bind source path does not exist: /tmp/mediaflow-smoke-security-*/media/organized` (first attempt)
-  and `.../mediaflow.json` (reproduced again on this final correction candidate). The identical
-  failure was reproduced on a clean checkout at the reviewed HEAD `7c1e8ac` in a separate worktree,
-  and the Task range touches no Dockerfile, Compose file or script; no packaging/delivery change is
-  claimed by this correction.
-- `python3 scripts/check_governance.py` and `git diff --check` — PASS.
-- External TMDB, SMB, OpenList and S3/R2 services — SKIP / not required; tests used managed local
-  configuration, fakes and bounded local responses only.
-
 ### Decisions
-
-- Active browser identity is represented by status and monotonic Active sequence/version only.
-  Internal revision IDs and digests remain server-side because this read journey does not need them.
-- The backend returns the complete validated rule-family sections from one captured Active revision;
-  the normal page fetch is unfiltered and the browser performs read-only search/filtering over that
-  complete result. The same endpoint accepts only the documented bounded filters for API clients.
-- Reference impact is computed from RecognitionRule outputs and RecognitionTypePolicy references;
-  bindings expose referenced policy IDs without resolving, substituting or rewriting their
-  RecognitionType identity.
-- Bounded rules inventory limits are derived from the 1 MiB canonical document maximum and enforced
-  identically in Python and TypeScript (`RULES_INVENTORY_LIMITS`), allowing legal configs (e.g. 513
-  items) to load completely while preserving defense-in-depth against malformed payloads.
-- Overview readiness checks that configured RecognitionTypes have effective enabled bindings before
-  declaring `READY`; empty families or disabled bindings surface actionable gaps.
-- The empty-family next action hands off to the existing configuration workflow rather than adding a
-  V2 create form: this Task's Non-goals explicitly exclude object create/edit forms and any drawer or
-  full-page editor, and `/ui` remains a documented supported surface until V2 parity and cutover
-  acceptance. The V2 rule editors stay deferred to later in-Slice work.
-- The handoff is a plain anchor, not a router `Link`, so it is an ordinary same-origin document
-  navigation that cannot inherit the V2 in-memory token; its destination comes from the typed
-  destination model instead of a new hardcoded route.
-- Existing shared authentication/RBAC, route continuation and authorized-read recovery remain the
-  only frontend authority boundaries; no new client-side policy resolver or mutation command was
-  introduced.
 
 ### Remaining In-Slice Work
 
-- Slice 41 still requires the explicitly deferred mutation/editor journey, automatic checked
-  Save/validation/activation, object lifecycle/reference-safe changes, and exact-revision
-  tests/previews defined by later in-Slice work. This Task does not plan or implement those units.
-
 ### Risks / Deviations
-
-- The correction loop produced three code checkpoints after the reviewed Head, all limited to B's
-  blockers: `766fa05` (bounds alignment, truthful readiness derivation and distinct empty-family
-  state), `df8ea42` (effective binding/reference readiness with bounded per-family gaps) and
-  `59ce2b1` (dependency-ordered guidance plus a concrete safe next action for every empty family).
-  No reviewed or rejected history was amended or rewritten.
-- The full Python regression exposed one in-range documentation-policy failure
-  (`test_release_quality_gate_commands_are_documented_for_task_execution`): it reads TASK.md and
-  requires a real Task to list the release-quality gate commands. The failure entered with B's
-  planning commit `78cda5e`, not with this correction; it is fixed here by running and documenting
-  those exact gates rather than by weakening the assertion.
-- `scripts/docker_release_security_smoke_test.py` remains UNAVAILABLE for this environment: its own
-  temporary Compose stack fails on missing bind-source paths, reproduced identically on a clean
-  checkout of the reviewed HEAD in a separate worktree, with no Dockerfile/Compose/script change in
-  this Task's range. No packaging or release-security claim is made by this correction.
-- The first format checks found newly added Python/TypeScript files needing the repository formatters;
-  they were formatted and all applicable final quality checks were rerun successfully.
-- The complete Web suite emits the repository's existing jsdom `scrollTo` diagnostics; all tests
-  passed and this Task did not change that test-environment behavior.
-- The four pre-existing untracked `docs/pics/*.png` files were preserved untouched and excluded from
-  both the implementation checkpoint and this report. `config/alist.json` remains ignored and was
-  not staged or read.
-- No production credentials, external accounts, real media or Storage mutations were used.
 
 ### Checkpoint
 
 ```text
-Status: READY FOR B REVIEW
-Head SHA: 59ce2b1fc98d1b57ad69716dbc247c268571043a
+Status: PENDING
+Head SHA: PENDING
 ```
-
-The named SHA is this round's code correction checkpoint; this report travels in the immediately
-following `docs(task-41.1)` checkpoint, matching the convention used earlier in this Task. The
-reviewed range `5c8aeb40fd7ea43daac100f7b205b082da921336..59ce2b1` therefore covers every change.
 
 ## B Review Result
 
 ```text
-Reviewed: 5c8aeb40fd7ea43daac100f7b205b082da921336..df8ea424e333e0526a7b6c7422b14a7a7b8c51f6
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- A legal validated and activated empty-business configuration reaches `/ui-v2/rules` with seven
-  empty families (`test_empty_active_families_report_seven_bounded_onboarding_gaps` passes). After
-  selecting an empty family, `Inventory` renders “尚无…配置” and says the read created no Draft, but
-  offers no action or destination for adding the missing object; the Web test checks only the
-  heading. An administrator cannot continue onboarding from this state, contrary to Task Acceptance
-  Criterion 6 and Slice RO-8's actionable empty-state recovery. Provide a concrete safe next action
-  for the empty-family state that is available in the current supported journey, and assert it in
-  the Web test. Keep the distinct filtered no-match behavior.
