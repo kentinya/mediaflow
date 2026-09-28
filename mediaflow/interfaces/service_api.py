@@ -8106,13 +8106,21 @@ class MediaFlowApi:
                 else "missing"
             ),
             durable_state=(
-                "enabled Storage is configured; live access is verified by the command"
+                "Storage access permission denied"
+                if not authorized_for("storageAccess")
+                else "enabled Storage is configured; live access is verified by the command"
                 if enabled_storages
                 else "Storage definitions are disabled"
                 if storage_present
                 else "no Storage definitions"
             ),
-            next_action="enable a Storage" if storage_present else "add a Storage",
+            next_action=(
+                "contact an administrator for the required permission"
+                if not authorized_for("storageAccess")
+                else "enable a Storage"
+                if storage_present
+                else "add a Storage"
+            ),
             recovery_destination="/ui-v2/storage",
             authorized=authorized_for("storageAccess"),
         )
@@ -8127,10 +8135,18 @@ class MediaFlowApi:
                 if (resource_present or media_present)
                 else "missing"
             ),
-            durable_state="browseable library configured"
-            if (enabled_resources or enabled_media)
-            else "no enabled library",
-            next_action="add a ResourceLibrary or MediaLibrary",
+            durable_state=(
+                "library browse permission denied"
+                if not authorized_for("libraryBrowse")
+                else "browseable library configured"
+                if (enabled_resources or enabled_media)
+                else "no enabled library"
+            ),
+            next_action=(
+                "contact an administrator for the required permission"
+                if not authorized_for("libraryBrowse")
+                else "add a ResourceLibrary or MediaLibrary"
+            ),
             recovery_destination="/ui-v2/resourcelib/files",
             authorized=authorized_for("libraryBrowse"),
         )
@@ -8145,10 +8161,18 @@ class MediaFlowApi:
                 if (resource_present or media_present)
                 else "missing"
             ),
-            durable_state="direct transfer scope available"
-            if (enabled_resources or enabled_media)
-            else "no transfer scope",
-            next_action="add an enabled library",
+            durable_state=(
+                "direct transfer permission denied"
+                if not authorized_for("directTransfer")
+                else "direct transfer scope available"
+                if (enabled_resources or enabled_media)
+                else "no transfer scope"
+            ),
+            next_action=(
+                "contact an administrator for the required permission"
+                if not authorized_for("directTransfer")
+                else "add an enabled library"
+            ),
             recovery_destination="/ui-v2/resourcelib/files",
             authorized=authorized_for("directTransfer"),
         )
@@ -8215,10 +8239,20 @@ class MediaFlowApi:
                 if schedule_present
                 else "missing"
             ),
-            durable_state="enabled schedule definitions are available"
-            if schedules
-            else "no schedule definitions",
-            next_action="enable a schedule" if schedule_present else "add an enabled schedule",
+            durable_state=(
+                "scheduling permission denied"
+                if not authorized_for("scheduling")
+                else "enabled schedule definitions are available"
+                if schedules
+                else "no schedule definitions"
+            ),
+            next_action=(
+                "contact an administrator for the required permission"
+                if not authorized_for("scheduling")
+                else "enable a schedule"
+                if schedule_present
+                else "add an enabled schedule"
+            ),
             recovery_destination="/ui-v2/operations/automation",
             authorized=authorized_for("scheduling"),
         )
@@ -8233,11 +8267,17 @@ class MediaFlowApi:
                 if notification_present
                 else "missing"
             ),
-            durable_state="webhook targets are configured"
-            if notifications
-            else "no webhook targets",
+            durable_state=(
+                "notification configuration permission denied"
+                if not authorized_for("notification")
+                else "webhook targets are configured"
+                if notifications
+                else "no webhook targets"
+            ),
             next_action=(
-                "enable a Webhook target"
+                "contact an administrator for the required permission"
+                if not authorized_for("notification")
+                else "enable a Webhook target"
                 if notification_present
                 else "add an enabled Webhook target"
             ),
