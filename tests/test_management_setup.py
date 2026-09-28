@@ -172,6 +172,11 @@ class ManagementSetupTests(unittest.TestCase):
             self.assertFalse(viewer[key]["ready"])
             self.assertEqual(viewer[key]["condition"], "unauthorized")
             self.assertFalse(viewer[key]["authorized"])
+            self.assertIn("permission denied", viewer[key]["durableState"])
+            self.assertEqual(
+                viewer[key]["nextAction"],
+                "contact an administrator for the required permission",
+            )
         for key in ("directTransfer", "scheduling", "notification"):
             self.assertTrue(admin[key]["ready"])
             self.assertTrue(admin[key]["authorized"])
