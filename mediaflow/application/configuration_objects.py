@@ -6935,7 +6935,11 @@ class ConfigurationObjectService:
         sections: dict[str, list[dict[str, object]]] = {}
         counts: dict[str, int] = {}
         enabled_counts: dict[str, int] = {}
-        gaps: list[dict[str, str]] = []
+        # Readiness gaps are bounded to one entry per rule family so the Web
+        # contract never receives more gaps than families; the bounded message
+        # and next action explain the durable state without unbounded text.
+        gap_text: dict[str, list[str]] = {}
+        gap_actions: dict[str, str] = {}
         for family_name, values in raw.items():
             ordered = sorted(values, key=lambda value: str(value.get("id", "")))
             limit = self._RULES_INVENTORY_LIMITS[family_name]
@@ -6950,12 +6954,11 @@ class ConfigurationObjectService:
                 1 for value in ordered if value.get("enabled", True) is not False
             )
             if not ordered:
-                gaps.append(
-                    {
-                        "family": family_name,
-                        "message": f"No Active {family_name} are configured.",
-                        "nextAction": f"Open {family_name} when configuration is required.",
-                    }
+                gap_text.setdefault(family_name, []).append(
+                    f"No Active {family_name} are configured."
+                )
+                gap_actions[family_name] = (
+                    f"Add {family_name} before the recognition-to-policy chain can be used."
                 )
             projected: list[dict[str, object]] = []
             for value in ordered:
@@ -7007,9 +7010,10 @@ class ConfigurationObjectService:
         # processing chain, even when every family has configured rows.  The
         # resolver semantics are reused exactly — disabled bindings are
         # skipped, a duplicate enabled binding per type is a malformed
-        # snapshot, and an enabled binding whose RecognitionType is disabled
-        # is not effective — so Overview cannot report READY while no type
-        # has a usable downstream selection.
+        # snapshot, an enabled binding whose RecognitionType is disabled is not
+        # effective, and an enabled binding that references a missing or
+        # disabled downstream policy cannot resolve — so Overview cannot report
+        # READY while no type has a usable downstream selection.
         enabled_bindings = [
             value for value in raw["typeBindings"] if value.get("enabled", True) is not False
         ]
@@ -7018,8 +7022,30 @@ class ConfigurationObjectService:
             for value in raw["recognitionTypes"]
             if value.get("enabled", True) is not False
         }
+        # OrganizePolicy has no enable state in the domain model, so every
+        # configured organize policy stays usable by reference.
+        reference_catalogs = {
+            "metadataPolicy": {
+                str(value.get("id"))
+                for value in raw["metadataPolicies"]
+                if value.get("enabled", True) is not False
+            },
+            "namingPolicy": {
+                str(value.get("id"))
+                for value in raw["namingPolicies"]
+                if value.get("enabled", True) is not False
+            },
+            "classificationPolicy": {
+                str(value.get("id"))
+                for value in raw["classificationPolicies"]
+                if value.get("enabled", True) is not False
+            },
+            "organizePolicy": {str(value.get("id")) for value in raw["organizePolicies"]},
+        }
         seen_types: set[str] = set()
         effective_types: set[str] = set()
+        bound_types: set[str] = set()
+        unresolved: list[str] = []
         for value in enabled_bindings:
             type_id = str(value.get("recognitionType"))
             if type_id in seen_types:
@@ -7029,54 +7055,68 @@ class ConfigurationObjectService:
                     "readiness": {"state": "MALFORMED", "gaps": []},
                 }
             seen_types.add(type_id)
-            if type_id in enabled_types:
-                effective_types.add(type_id)
-        if counts.get("typeBindings"):
-            if not effective_types:
-                gaps.append(
-                    {
-                        "family": "typeBindings",
-                        "message": (
-                            "No enabled RecognitionType binding selects downstream policies."
-                        ),
-                        "nextAction": (
-                            "Enable one type binding per RecognitionType before organizing."
-                        ),
-                    }
+            if type_id not in enabled_types:
+                continue
+            bound_types.add(type_id)
+            blocked = [
+                f"{field}={value.get(field)}"
+                for field, available in reference_catalogs.items()
+                if str(value.get(field)) not in available
+            ]
+            if blocked:
+                unresolved.append(f"{value.get('id')} ({', '.join(blocked)})")
+                continue
+            effective_types.add(type_id)
+        if counts.get("typeBindings") and effective_types != enabled_types:
+            if counts.get("recognitionTypes") and not effective_types:
+                gap_text.setdefault("typeBindings", []).append(
+                    "No enabled RecognitionType binding resolves to enabled downstream policies"
+                    + (f"; unresolved: {', '.join(sorted(unresolved)[:4])}" if unresolved else "")
+                    + "."
                 )
-            else:
-                configured = {
-                    family
-                    for family in (
-                        "recognitionTypes",
-                        "recognitionRules",
-                        "metadataPolicies",
-                        "namingPolicies",
-                        "classificationPolicies",
-                        "organizePolicies",
+                gap_actions["typeBindings"] = (
+                    "Enable one type binding per RecognitionType with enabled Metadata, Naming, "
+                    "Classification and Organize policy references."
+                )
+            elif counts.get("recognitionTypes"):
+                unbound = sorted(enabled_types - bound_types)
+                if unbound:
+                    gap_text.setdefault("typeBindings", []).append(
+                        "Some enabled RecognitionTypes have no enabled binding: "
+                        + ", ".join(unbound[:8])
+                        + ("" if len(unbound) <= 8 else f" and {len(unbound) - 8} more.")
                     )
-                    if counts.get(family)
-                }
-                enabled_type_list = [
-                    value
-                    for value in raw["recognitionTypes"]
-                    if value.get("enabled", True) is not False
-                ]
-                if configured and len(effective_types) < len(enabled_type_list):
-                    unbound = sorted(enabled_types - effective_types)
-                    gaps.append(
-                        {
-                            "family": "typeBindings",
-                            "message": (
-                                "Some enabled RecognitionTypes have no enabled binding: "
-                                + ", ".join(unbound[:8])
-                                + ("" if len(unbound) <= 8 else f" and {len(unbound) - 8} more.")
-                            ),
-                            "nextAction": (
-                                "Enable one type binding for each listed RecognitionType."
-                            ),
-                        }
+                    gap_actions.setdefault(
+                        "typeBindings",
+                        "Enable one type binding for each listed RecognitionType.",
                     )
+                if unresolved:
+                    gap_text.setdefault("typeBindings", []).append(
+                        "Some enabled bindings reference disabled or missing downstream policies: "
+                        + ", ".join(sorted(unresolved)[:4])
+                        + ("" if len(unresolved) <= 4 else f" and {len(unresolved) - 4} more.")
+                    )
+                    if "typeBindings" not in gap_actions:
+                        gap_actions["typeBindings"] = (
+                            "Enable or create the referenced Metadata, Naming, Classification and "
+                            "Organize policies."
+                        )
+                    elif unbound:
+                        # Both conditions coexist, so the single bounded next
+                        # action must name both safe corrections rather than
+                        # promising only one of them.
+                        gap_actions["typeBindings"] = (
+                            "Enable the missing type bindings and enable or create the referenced "
+                            "Metadata, Naming, Classification and Organize policies."
+                        )
+        gaps = [
+            {
+                "family": family_name,
+                "message": self._rules_text(" ".join(messages), 320),
+                "nextAction": self._rules_text(gap_actions[family_name], 320),
+            }
+            for family_name, messages in gap_text.items()
+        ]
 
         return {
             "available": True,

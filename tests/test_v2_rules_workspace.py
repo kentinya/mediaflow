@@ -161,17 +161,24 @@ class RulesWorkspaceJourneyTests(unittest.TestCase):
         self.assertFalse(body["available"])
         self.assertEqual(body["reason"], "malformed")
 
-    def test_projection_handles_legal_513_recognition_types(self) -> None:
+    def _activate_document(self, mutate) -> None:
         doc = copy.deepcopy(self.configuration.active().document)
-        types = list(doc["recognitionTypes"])
-        for i in range(510):
-            types.append({"id": f"x{i:05d}", "name": f"Extra {i}"})
-        doc["recognitionTypes"] = types
+        mutate(doc)
         draft = self.configuration.import_draft(doc, actor="test")
         validated = self.configuration.validate(draft.revision_id, actor="test")
+        self.assertEqual(validated.status.value, "validated")
         self.configuration.activate(
             validated.revision_id, expected_version=validated.version, actor="test"
         )
+
+    def test_projection_handles_legal_513_recognition_types(self) -> None:
+        def add_types(doc):
+            types = list(doc["recognitionTypes"])
+            for i in range(510):
+                types.append({"id": f"x{i:05d}", "name": f"Extra {i}"})
+            doc["recognitionTypes"] = types
+
+        self._activate_document(add_types)
         status, body = request(self.api)
         self.assertEqual(status, 200)
         self.assertTrue(body["available"])
@@ -179,14 +186,11 @@ class RulesWorkspaceJourneyTests(unittest.TestCase):
         self.assertEqual(body["overview"]["counts"]["recognitionTypes"], 513)
 
     def test_readiness_is_not_ready_when_all_type_bindings_are_disabled(self) -> None:
-        doc = copy.deepcopy(self.configuration.active().document)
-        for binding in doc["recognitionTypePolicies"]:
-            binding["enabled"] = False
-        draft = self.configuration.import_draft(doc, actor="test")
-        validated = self.configuration.validate(draft.revision_id, actor="test")
-        self.configuration.activate(
-            validated.revision_id, expected_version=validated.version, actor="test"
-        )
+        def disable_bindings(doc):
+            for binding in doc["recognitionTypePolicies"]:
+                binding["enabled"] = False
+
+        self._activate_document(disable_bindings)
         status, body = request(self.api)
         self.assertEqual(status, 200)
         self.assertTrue(body["available"])
@@ -195,6 +199,60 @@ class RulesWorkspaceJourneyTests(unittest.TestCase):
         binding_gaps = [g for g in body["readiness"]["gaps"] if g["family"] == "typeBindings"]
         self.assertTrue(len(binding_gaps) > 0)
         self.assertIn("enabled RecognitionType binding", binding_gaps[0]["message"])
+
+    def test_readiness_reports_disabled_downstream_reference(self) -> None:
+        def disable_naming(doc):
+            for policy in doc["namingPolicies"]:
+                if policy["id"] == "A":
+                    policy["enabled"] = False
+
+        self._activate_document(disable_naming)
+        status, body = request(self.api)
+        self.assertEqual(status, 200)
+        self.assertEqual(body["readiness"]["state"], "PARTIAL")
+        binding_gaps = [g for g in body["readiness"]["gaps"] if g["family"] == "typeBindings"]
+        self.assertEqual(len(binding_gaps), 1)
+        self.assertIn("namingPolicy=A", binding_gaps[0]["message"])
+        self.assertIn("disabled or missing downstream policies", binding_gaps[0]["message"])
+
+    def test_readiness_gaps_stay_bounded_and_unique_per_family(self) -> None:
+        def add_types(doc):
+            types = list(doc["recognitionTypes"])
+            for i in range(510):
+                types.append({"id": f"x{i:05d}", "name": f"Extra {i}"})
+            doc["recognitionTypes"] = types
+
+        self._activate_document(add_types)
+        body = ConfigurationObjectService(self.configuration).active_rules_workspace()
+        self.assertEqual(body["readiness"]["state"], "PARTIAL")
+        families = [gap["family"] for gap in body["readiness"]["gaps"]]
+        self.assertEqual(len(families), len(set(families)))
+        self.assertLessEqual(len(families), 7)
+        for gap in body["readiness"]["gaps"]:
+            self.assertLessEqual(len(gap["message"]), 320)
+            self.assertLessEqual(len(gap["nextAction"]), 320)
+
+    def test_empty_active_families_report_seven_bounded_onboarding_gaps(self) -> None:
+        def empty_families(doc):
+            for family in (
+                "recognitionTypes",
+                "recognitionRules",
+                "recognitionTypePolicies",
+                "metadataPolicies",
+                "namingPolicies",
+                "classificationPolicies",
+                "organizePolicies",
+            ):
+                doc[family] = []
+
+        self._activate_document(empty_families)
+        status, body = request(self.api)
+        self.assertEqual(status, 200)
+        self.assertTrue(body["available"])
+        self.assertEqual(body["readiness"]["state"], "EMPTY")
+        self.assertEqual(len(body["readiness"]["gaps"]), 7)
+        self.assertTrue(all(values == [] for values in body["sections"].values()))
+        self.assertEqual(body["overview"]["counts"]["recognitionTypes"], 0)
 
 
 if __name__ == "__main__":
