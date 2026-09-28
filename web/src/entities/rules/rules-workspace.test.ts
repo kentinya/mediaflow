@@ -154,4 +154,39 @@ describe("normalizeRulesWorkspace", () => {
     });
     expect(model.sections.recognitionTypes.length).toBe(513);
   });
+
+  it("accepts a bounded PARTIAL readiness gap for disabled downstream references", () => {
+    const model = normalizeRulesWorkspace({
+      ...rulesPayload,
+      readiness: {
+        state: "PARTIAL",
+        gaps: [
+          {
+            family: "typeBindings",
+            message:
+              "Some enabled bindings reference disabled or missing downstream policies: type-C (namingPolicy=A)",
+            nextAction:
+              "Enable or create the referenced Metadata, Naming, Classification and Organize policies.",
+          },
+        ],
+      },
+    });
+    expect(model.readiness.state).toBe("PARTIAL");
+    expect(model.readiness.gaps[0]?.family).toBe("typeBindings");
+    expect(model.readiness.gaps[0]?.message).toContain("disabled or missing");
+  });
+
+  it("rejects more readiness gaps than there are rule families", () => {
+    const gap = {
+      family: "typeBindings" as const,
+      message: "gap",
+      nextAction: "fix it",
+    };
+    expect(() =>
+      normalizeRulesWorkspace({
+        ...rulesPayload,
+        readiness: { state: "PARTIAL", gaps: Array(8).fill(gap) },
+      }),
+    ).toThrow();
+  });
 });
