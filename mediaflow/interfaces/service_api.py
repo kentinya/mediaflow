@@ -7925,6 +7925,47 @@ class MediaFlowApi:
         """
 
         status = status or self._configuration_service.status_document()
+        required_permissions = {
+            "storageConfiguration": frozenset(
+                {ApiPermission.MANAGE_CONFIGURATION, ApiPermission.ACTIVATE_CONFIGURATION}
+            ),
+            "libraryConfiguration": frozenset(
+                {ApiPermission.MANAGE_CONFIGURATION, ApiPermission.ACTIVATE_CONFIGURATION}
+            ),
+            "storageAccess": frozenset({ApiPermission.READ}),
+            "libraryBrowse": frozenset({ApiPermission.READ}),
+            "directTransfer": frozenset({ApiPermission.EXECUTE_MANUAL_ORGANIZE}),
+            "scan": frozenset({ApiPermission.SUBMIT_DRY_RUN}),
+            "preview": frozenset({ApiPermission.MANAGE_MANUAL_ORGANIZE}),
+            "organize": frozenset(
+                {ApiPermission.MANAGE_MANUAL_ORGANIZE, ApiPermission.EXECUTE_MANUAL_ORGANIZE}
+            ),
+            "scheduling": frozenset({ApiPermission.GRANT_UNATTENDED_EXECUTION}),
+            "notification": frozenset({ApiPermission.MANAGE_CONFIGURATION}),
+        }
+
+        def authorized_for(key: str) -> bool:
+            return required_permissions[key].issubset(principal.permissions)
+
+        def unavailable_for(key: str, destination: str, reason: str, next_action: str):
+            authorized = authorized_for(key)
+            return self._readiness_entry(
+                ready=False,
+                condition="unauthorized" if not authorized else reason,
+                durable_state=(
+                    "the connected API principal lacks the permission required for this scope"
+                    if not authorized
+                    else reason
+                ),
+                next_action=(
+                    "contact an administrator for the required permission"
+                    if not authorized
+                    else next_action
+                ),
+                recovery_destination=destination,
+                authorized=authorized,
+            )
+
         active = status.get("active")
         if not isinstance(active, dict):
             reason = (
@@ -7936,17 +7977,8 @@ class MediaFlowApi:
                 else "repair the Active configuration, then refresh"
             )
 
-            def unavailable(destination):
-                return self._readiness_entry(
-                    ready=False,
-                    condition=reason,
-                    durable_state=reason,
-                    next_action=next_action,
-                    recovery_destination=destination,
-                )
-
             return {
-                key: unavailable("/ui-v2/configuration")
+                key: unavailable_for(key, "/ui-v2/configuration", reason, next_action)
                 for key in (
                     "storageConfiguration",
                     "libraryConfiguration",
@@ -7967,12 +7999,11 @@ class MediaFlowApi:
             document = None
         if not isinstance(document, dict):
             return {
-                key: self._readiness_entry(
-                    ready=False,
-                    condition="active_unavailable",
-                    durable_state="active_unavailable",
-                    next_action="repair the Active configuration, then refresh",
-                    recovery_destination="/ui-v2/configuration",
+                key: unavailable_for(
+                    key,
+                    "/ui-v2/configuration",
+                    "active_unavailable",
+                    "repair the Active configuration, then refresh",
                 )
                 for key in (
                     "storageConfiguration",
@@ -8064,9 +8095,11 @@ class MediaFlowApi:
             recovery_destination="/ui-v2/storage",
         )
         storage_access = self._readiness_entry(
-            ready=bool(enabled_storages),
+            ready=bool(enabled_storages) and authorized_for("storageAccess"),
             condition=(
-                "admission_ready"
+                "unauthorized"
+                if not authorized_for("storageAccess")
+                else "admission_ready"
                 if enabled_storages
                 else "disabled"
                 if storage_present
@@ -8081,11 +8114,14 @@ class MediaFlowApi:
             ),
             next_action="enable a Storage" if storage_present else "add a Storage",
             recovery_destination="/ui-v2/storage",
+            authorized=authorized_for("storageAccess"),
         )
         browse = self._readiness_entry(
-            ready=bool(enabled_resources or enabled_media),
+            ready=bool(enabled_resources or enabled_media) and authorized_for("libraryBrowse"),
             condition=(
-                "admission_ready"
+                "unauthorized"
+                if not authorized_for("libraryBrowse")
+                else "admission_ready"
                 if (enabled_resources or enabled_media)
                 else "disabled"
                 if (resource_present or media_present)
@@ -8096,11 +8132,14 @@ class MediaFlowApi:
             else "no enabled library",
             next_action="add a ResourceLibrary or MediaLibrary",
             recovery_destination="/ui-v2/resourcelib/files",
+            authorized=authorized_for("libraryBrowse"),
         )
         transfer = self._readiness_entry(
-            ready=bool(enabled_resources or enabled_media),
+            ready=bool(enabled_resources or enabled_media) and authorized_for("directTransfer"),
             condition=(
-                "admission_ready"
+                "unauthorized"
+                if not authorized_for("directTransfer")
+                else "admission_ready"
                 if (enabled_resources or enabled_media)
                 else "disabled"
                 if (resource_present or media_present)
@@ -8111,6 +8150,7 @@ class MediaFlowApi:
             else "no transfer scope",
             next_action="add an enabled library",
             recovery_destination="/ui-v2/resourcelib/files",
+            authorized=authorized_for("directTransfer"),
         )
         scan_permission = permission(dry_run, "/ui-v2/operations/scans/new", "Scan")
         scan = scan_permission or self._readiness_entry(
@@ -8165,18 +8205,33 @@ class MediaFlowApi:
             item for item in notifications if isinstance(item, dict) and item.get("enabled", True)
         ]
         scheduling = self._readiness_entry(
-            ready=bool(schedules),
-            condition="ready" if schedules else "disabled" if schedule_present else "missing",
+            ready=bool(schedules) and authorized_for("scheduling"),
+            condition=(
+                "unauthorized"
+                if not authorized_for("scheduling")
+                else "ready"
+                if schedules
+                else "disabled"
+                if schedule_present
+                else "missing"
+            ),
             durable_state="enabled schedule definitions are available"
             if schedules
             else "no schedule definitions",
             next_action="enable a schedule" if schedule_present else "add an enabled schedule",
             recovery_destination="/ui-v2/operations/automation",
+            authorized=authorized_for("scheduling"),
         )
         notification = self._readiness_entry(
-            ready=bool(notifications),
+            ready=bool(notifications) and authorized_for("notification"),
             condition=(
-                "ready" if notifications else "disabled" if notification_present else "missing"
+                "unauthorized"
+                if not authorized_for("notification")
+                else "ready"
+                if notifications
+                else "disabled"
+                if notification_present
+                else "missing"
             ),
             durable_state="webhook targets are configured"
             if notifications
@@ -8187,6 +8242,7 @@ class MediaFlowApi:
                 else "add an enabled Webhook target"
             ),
             recovery_destination="/ui-v2/operations/notifications",
+            authorized=authorized_for("notification"),
         )
         return {
             "storageConfiguration": storage_config,

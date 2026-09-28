@@ -6,7 +6,7 @@ This Task follows [the development workflow](docs/development-workflow.md) and i
 ```text
 Task ID: 40.4
 Parent Slice: 40
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 09d429b75bc87847b716b6e0d2f082fa9f1c1800
 Difficulty: High
 Test Level: T4
@@ -212,6 +212,8 @@ remove assertions or suppress failures/skips. Report exact commands, totals and 
 - `web/src/features/library/StorageFilesPage.tsx`
 - `web/src/features/library/MediaLibraryFilesPage.tsx`
 - `web/src/shared/navigation/settings-return.ts`
+- `mediaflow/interfaces/service_api.py` (correction: readiness authorization matrix)
+- `tests/test_management_setup.py` (configured Viewer/Admin readiness regression)
 - Related API/entity/test fixtures under `web/src/**` and `tests/**`.
 
 ### Implemented
@@ -226,14 +228,21 @@ remove assertions or suppress failures/skips. Report exact commands, totals and 
   API process without restart.
 - Added focused Settings return, command-readiness and management-only adoption regression tests;
   updated route fixtures to the native V2 Settings path.
+- Correction: command readiness now derives `authorized` and `unauthorized` states from the exact
+  authenticated principal. Browse requires `READ`; direct transfer requires
+  `EXECUTE_MANUAL_ORGANIZE`; scheduling requires `GRANT_UNATTENDED_EXECUTION`; notification
+  configuration requires `MANAGE_CONFIGURATION`. Unauthorized configured scopes remain `ready=false`
+  and expose an action-oriented permission recovery.
 
 ### Tests and Results
 
 - `python3 scripts/check_governance.py` — PASS.
 - `.venv/bin/python -m unittest discover -s tests` — PASS (1901 tests, 7 pre-existing skips).
+- Correction rerun: `.venv/bin/python -m unittest discover -s tests` — PASS (1902 tests, 7 skips).
 - Focused Task modules — PASS (340 tests).
 - `cd web && npm test -- --run` — PASS (50 files, 751 tests).
 - `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS.
+- Correction rerun: `cd web && npm test -- --run && npm run build` — PASS (50 files, 751 tests).
 - `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py` — PASS (media-free and optional-mount stacks, no resident restart across publication).
 - `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py` — PASS.
@@ -251,6 +260,8 @@ remove assertions or suppress failures/skips. Report exact commands, totals and 
   enforced by the existing command admission/execution boundaries.
 - Settings return targets are a closed route enum with bounded library/path context; malformed,
   traversal and off-origin values are ignored rather than navigated.
+- Readiness authorization is advisory state only; existing API route permission checks and command
+  admission remain authoritative and unchanged.
 
 ### Remaining In-Slice Work
 
@@ -263,19 +274,39 @@ remove assertions or suppress failures/skips. Report exact commands, totals and 
   contention, not a reproduced product failure.
 - Existing Python ResourceWarning/jsdom scroll diagnostics and the known bundle-size advisory remain
   non-blocking and pre-existing.
+- No external services or real credentials were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: cfa285679052c824c6854ec219b0fd0e1bdc4b21
+Head SHA: [pending correction commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 09d429b75bc87847b716b6e0d2f082fa9f1c1800..0490d469b5ebf18dca1e87a636032faedb71e066
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- Command-specific readiness does not distinguish authorization for configured browse/transfer
+  capabilities. In `mediaflow/interfaces/service_api.py`, `_command_readiness_document` marks
+  `libraryBrowse` and `directTransfer` `admission_ready` with `authorized: true` whenever an
+  enabled ResourceLibrary/MediaLibrary exists, without checking the authenticated principal's
+  permissions; the same projection also leaves configured scheduling/notification entries as
+  `ready`/`disabled` without an authorization decision. The production routes independently
+  enforce `READ`/`EXECUTE_MANUAL_ORGANIZE` and their management permissions, so this is reachable
+  by a legitimate Viewer/operator read of `/api/v1/management/readiness` and produces a misleading
+  Settings readiness state before the subsequent command is denied. Reproduction on this
+  Task Head: a real `ManagementSetupTests` API with a valid activated configuration containing
+  enabled Local Storage and ResourceLibrary returned for `viewer-token`:
+  `libraryBrowse=admission_ready`, `directTransfer=admission_ready`, both `authorized=true`;
+  the Viewer holds only `READ`, while transfer mutation requires
+  `EXECUTE_MANUAL_ORGANIZE`. This violates Slice RO-4's requirement that API/Web distinguish
+  missing, disabled, unavailable and unauthorized prerequisites. Add backend-authoritative
+  permission entries for each affected command/scope (including the no-Active/unavailable paths
+  where applicable), keep `ready=false` and `condition=unauthorized` when denied, and add a
+  regression covering a configured-but-unauthorized principal plus the allowed principal.
