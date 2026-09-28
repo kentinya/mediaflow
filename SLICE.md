@@ -8,13 +8,13 @@ individual capabilities and use them without restarting resident services.
 Slice ID: 40
 Name: V2 Settings and Empty-Baseline Startup
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: FIX REQUIRED
 Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
 Implementation Head: 868f5a2417792e4f5a135f3667384bd9a21c479c
 Contract Revision: 2026-09-27 — A selection after Slice 39 closure
 Risk: High
 Final Test Level: T4
-Next Action: A FINAL REVIEW
+Next Action: B PLANS ONE FOCUSED CORRECTION TASK
 ```
 
 ## Authority and sequencing
@@ -367,7 +367,67 @@ Documentation Reconciliation Needed:
 Decision: SLICE READY FOR A REVIEW
 ```
 
-## A Final Review
+## A Final Review — FIX REQUIRED (2026-09-28)
 
-Not performed. A reviews the entire immutable Base..Implementation Head against this Contract and
-alone reconciles delivered CURRENT facts and declares PASS / CLOSED.
+```text
+Review type: rejection and correction-scope decision
+Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
+Reviewed Implementation Head: 868f5a2417792e4f5a135f3667384bd9a21c479c
+Repository checkpoint inspected: faf1a24bcad88be984bc9f24c130cd20cb93fc48
+Decision: FIX REQUIRED
+Next: B PLANS ONE FOCUSED CORRECTION TASK
+```
+
+### Review authority and limits
+
+The user explicitly authorized the current B agent to exercise A authority after the failed real
+first-configuration attempt: `授权你A的权限`. This is the disclosed role-separation exception required
+by the development workflow; this rejecting review does not claim an independent reviewer. A
+inspected the actual deployed same-version API state, production Web implementation and relevant
+tests. Existing Contract outcomes, surfaces, safety invariants, Base and deferrals remain unchanged.
+
+### P0/P1 Blockers
+
+- **P1 — The native first-Draft validation-to-activation journey deterministically submits a stale
+  optimistic version.** In the current supported V2 Settings page, `验证 Draft` calls the production
+  validation endpoint, which advances the mutable Draft version, but the success handler neither
+  consumes the returned version nor reloads the exact revision/System Settings projection. The next
+  `checked-activate` therefore submits the pre-validation `selectedVersion`; the backend correctly
+  rejects it and tells the operator to refresh the current Active/Draft. The user's actual managed
+  deployment reproduced this with no Active and one intact Draft at revision
+  `e61e18fb-764e-4aa6-a43c-145104282532`: after the failed journey the backend truth was
+  `status=validated`, `version=3`, `draftVersion=3`, no validation errors and no Active. This is a
+  legal management-only bootstrap and the ordinary documented button sequence, so it is production
+  reachable and blocks the required first activation. It violates RO-1 and AC-3, and invalidates the
+  Closure Packet's claim that the native Settings lifecycle is complete. The existing component
+  test does not falsify the defect: its validation mock does not model the real version transition
+  and its asserted activation token comes from a prior settings-save response.
+
+### Authorized correction boundary
+
+- Keep backend optimistic concurrency and checked activation strict. Do not accept a stale version,
+  bypass validation/evidence, automatically replay a rejected/unknown write or activate a different
+  revision.
+- After successful validation, bind the page to the exact returned/current Draft version before
+  activation and show the refreshed durable state. Serialize the relevant writes so validation and
+  activation cannot overlap or race through independently enabled controls.
+- Preserve correctable input, explicit unknown-outcome verification, concurrent-winner handling,
+  memory-only Bearer authority and the previous Active when present. Refresh/reconnect remains
+  read-only and must not create, validate or activate a Draft.
+- Cover the actual create/resume -> validate (version advances) -> checked activation journey without
+  requiring the operator to discover a reload workaround. Use production-shaped version semantics
+  and retain stale/concurrent rejection coverage.
+- This is one focused Settings lifecycle correction. It does not authorize configuration redesign,
+  new business objects, backend concurrency relaxation, V1 removal or any deferred workspace work.
+
+### Evidence and return to A
+
+- Actual authenticated `GET /api/v1/configuration/status`, revision detail and System Settings
+  projection on the user's running four-service Compose deployment confirmed the intact validated
+  Draft at mutable version 3 and absence of Active; no write was performed during review.
+- Source inspection confirmed validation success is ignored by the shared mutation handler while
+  activation sends `selectedVersion`. Current tests model a prior save token rather than the
+  first-Draft version transition.
+- After the correction Task passes B review, B must rerun the focused real journey and assigned T4
+  gates, update the Closure Packet evidence/head, return Status to `READY FOR A REVIEW`, and stop.
+  Only A may then perform the renewed Base..corrected-Head final review and declare closure.
