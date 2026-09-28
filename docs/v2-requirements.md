@@ -15,13 +15,15 @@ Most recently closed large Slice: Slice 40 — V2 Settings and Empty-Baseline St
 Slice 40 Base: d814b7c1c6819e79271245a1126f53aca6aeaf69
 Slice 40 Implementation Head: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
 Slice 40 A Final Review: PASS / CLOSED — 2026-09-28
-Current Contract: none
-Next action: A selects the next large Slice
+Current Contract: Slice 41 — V2 Organizing Rules Workspace — ACTIVE
+Slice 41 Base: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
+Slice 41 Implementation Head: not yet set
+Next action: checkpoint the A-owned Contract and Roadmap, then B plans the first coherent Task
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32, 33 and 37 are closed. Slice 37 replaced the prior V2
-shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
+product requirements. Slices 30, 31, 32, 33 and 37–40 are closed; Slice 41 is active. Slice 37
+replaced the prior V2 shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
 are retired from the current Roadmap; their historical references remain historical and do not change
 the stable requirements layer. The stable common-file-management target retains its broader future
 capability set; the current Slice 37 delivery boundary explicitly excludes direct browser
@@ -31,9 +33,11 @@ page-local editing requirements through its reviewed implementation head. Slice 
 the Storage management workspace, provider-root/setup recovery and admitted-transfer Worker
 continuity/readiness through its reviewed implementation head. Slice 40 has implemented native V2
 Settings, legal empty-business activation, conditional configuration applicability, command-specific
-readiness and resident-service adoption without mandatory media mounts or restart. The stable
-requirements below describe delivered boundaries and explicitly identified targets; Slice contracts
-own implementation scope and acceptance.
+readiness and resident-service adoption without mandatory media mounts or restart. Slice 41 is the
+active TARGET for the native V2 organizing-rules workspace. Its five supplied page images describe
+business relationship and visual style, not actual production data or pixel-identical fixtures. The
+stable requirements below describe delivered boundaries and explicitly identified targets; Slice
+contracts own implementation scope and acceptance.
 
 The setup, empty-business configuration and resident-service requirements below are delivered Slice
 40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal
@@ -55,6 +59,14 @@ during migration; earlier closed Slice scope is unchanged.
 | V2-CONFIG-002 | Settings shows labelled Active/Draft JSON and exports complete portable supported managed configuration without secret values or deployment authority. | Default to the exact runtime-consumed Active; no Active shows Draft/no-Draft, while corrupt Active remains explicit. Retain safe environment references, redact unsafe URL credentials, exclude database/principal/token startup authority, and bind validated imports to the receiving deployment. |
 | V2-CONFIG-003 | Advanced Settings edits only backend-supported configuration absent from other management pages through the normal managed lifecycle. | Backend allowlists/schema reject arbitrary JSON fields, unknown/unconsumed settings and deployment database/identity changes. RBAC, audit, exact successor, validation and activation apply; deployment/restart-only values cannot be mislabelled as currently consumed. |
 | V2-CONFIG-004 | Business readiness is command/scope-specific and separate from configuration validity or Active existence. | Incremental objects can publish while unrelated families remain empty. Missing/disabled/unavailable/unauthorized prerequisites have bounded reasons and recovery; missing media policies do not disable valid direct file operations. Admission/execution revalidate and preserve prior Active/input on failed publication. |
+| V2-RULES-001 | V2 provides one discoverable organizing-rules workspace for the complete RecognitionType policy graph. | An administrator can manage Overview, type bindings, Recognition Types, Recognition Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies through a native V2 journey. Supplied references govern structure/style only; their example data is never runtime or acceptance authority. |
+| V2-RULES-002 | Rule-workspace edits use one exact successor Draft and explicit whole-revision publication. | Read/navigation creates no Draft. Object Save changes only the labelled Draft; Active remains the immutable runtime-consumed snapshot until explicit checked activation succeeds. Stale/failed/unknown publication preserves or verifies durable state without automatic resubmission. |
+| V2-RULES-003 | RecognitionType and RecognitionRule editing exposes the production condition and resolution semantics. | Typed nested AND/OR/NOT conditions, compatible field/operator/value controls, priority, score, stop-on-match, ambiguity and bounded evidence match the backend engine. Unsafe regex and invalid values fail; list order does not invent a first-match algorithm. |
+| V2-RULES-004 | RecognitionTypePolicy binds one enabled RecognitionType to Metadata, Naming, Classification and Organize policies without changing recognition identity. | Duplicate enabled bindings and missing/disabled references fail. Downstream policy reuse remains legal and explainable; RecognitionType C remains C when it uses another type's naming, classification or organize policies. |
+| V2-RULES-005 | Metadata, Naming, Classification and Organize policies have purpose-built typed Web editors over the shared managed configuration authority. | Forms expose current domain fields and compatibility without inventing Provider switching, fallback or execution authority. Movie/TV templates remain distinct; classification selects MediaLibrary plus safe relative path; high-risk organize effects are explicit. |
+| V2-RULES-006 | Rule and policy tests/previews are exact-revision, bounded, explainable and zero Storage mutation. | Recognition Strategy Test, Metadata test, Naming Preview, Classification Preview and Organize authority/whole-chain explanation identify the tested Draft, become stale after relevant edits, expose secret-free evidence and create no executable work or execution authority. Provider access occurs only through an explicit applicable test. |
+| V2-RULES-007 | Object lifecycle, references and activation remain backend authoritative and consistent across Web/API/runtime consumers. | Create/copy/edit/enable-disable/reference-safe delete, audit, RBAC, optimistic concurrency, validation/applicable evidence and atomic activation reuse shared services. Files Organize, Automation, API and CLI consume the same published semantics; the frontend never resolves or caches policy as authority. |
+| V2-RULES-008 | Empty, partial, invalid and failed rule graphs provide actionable recovery. | Empty Active offers dependency guidance without generated defaults. Disabled/missing references, invalid conditions/templates/paths, Provider/secret failures, stale Drafts, denied permission, malformed responses and activation failures state what is durable, whether Active changed and the explicit safe next action. |
 | V2-RUNTIME-001 | MediaFlow Worker starts and registers without Active and consumes later eligible work without restart. | Keep FileTransfer consumption resident; no valid authorized published context means no processing/mutation. Preserve supported command readiness, exact admitted pins, claims/leases/fences and per-item uncertainty recovery. Current Active governs new admission and does not replace older valid pins. |
 | V2-RUNTIME-002 | Scheduler and Notification Worker remain resident through absent/empty/unavailable configuration and adopt current valid configuration without restart. | No eligible schedule means no Job; unavailable Active never uses cached schedules. No usable Webhook means no send or targetless claim; preserve target identity and delivery recovery without silent retargeting. Configuration read failures explain waiting while preserving process and durable state. |
 | V2-STO-001 | Every provider-valid Storage root round-trips through typed Save, inventory, detail and Edit. | OpenList's empty root and `/` both represent its service root; render a clear provider-root label without dropping the row or rejecting the whole inventory. Existing saved empty-root entries remain readable. Other provider and Local confinement rules stay intact; failed list rendering never implies Save rollback or triggers automatic resubmission. |
