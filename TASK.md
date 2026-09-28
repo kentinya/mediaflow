@@ -6,7 +6,7 @@ the current [`SLICE.md`](../SLICE.md).
 ```text
 Task ID: 41.1
 Parent Slice: 41
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: 5c8aeb40fd7ea43daac100f7b205b082da921336
 Difficulty: Medium
 Test Level: T3
@@ -177,21 +177,54 @@ responses and temporary roots where a read-side dependency must be exercised.
   redaction, section completeness, query allowlists, permission/no-Active/malformed outcomes,
   RecognitionType-C preservation, default closed editor state, search/filter/tab/refresh behavior
   and keyboard recovery.
+- Correction loop (B blockers only):
+  - Aligned backend and browser bounds using document-derived legal limits (`_RULES_INVENTORY_LIMITS`
+    in the projection and `RULES_INVENTORY_LIMITS` in the typed entity), both derived from the
+    1 MiB managed-document ceiling. A legal Active configuration with more than 512 items (for
+    example 513 RecognitionTypes) now delivers every row instead of failing closed as malformed;
+    both sides fail closed only past the same document-derived bound. Covered by a Python
+    projection regression and an entity normalization regression.
+  - Derived Overview readiness from *effective* enabled bindings and references: a binding counts
+    only when it is enabled, its RecognitionType is enabled, and all four referenced policies exist
+    and are enabled (skipping disabled references exactly like `RecognitionTypePolicyResolver`).
+    Disabled bindings, unbound enabled types and enabled bindings pointing at disabled downstream
+    policies each surface a `PARTIAL` readiness with one bounded gap per family and an actionable
+    next action; `READY` is only reported when every enabled RecognitionType resolves. Covered by
+    regressions for all-binding-disabled and disabled-NamingPolicy graphs.
+  - Distinguished empty-family onboarding state from filtered no-match state: a family whose Active
+    section is empty renders a truthful `尚无…配置` state that says reads created no Draft, while
+    `没有匹配结果` remains reserved for search/status filters that matched nothing. Covered by a
+    Web component regression for the empty case alongside the existing no-match case.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py` — PASS (4 tests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py` — PASS (9 tests, including the
+  513-RecognitionType, disabled-binding, disabled-reference, bounded-gap and empty-family
+  regressions).
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_management_setup.py`
-  — PASS on the final Python candidate (93 tests, 96 subtests).
+  — PASS (98 tests, 96 subtests).
 - `python3 -m compileall -q mediaflow` — PASS.
-- `npm --prefix web test -- --run` — PASS (53 files, 763 tests) before the final additional
-  malformed-recovery keyboard regression; production code was unchanged afterward.
+- `npm --prefix web test -- --run` — PASS (53 files, 774 tests) on the final correction candidate.
 - `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx src/routes/router.test.tsx src/shared/navigation/destination-model.test.ts src/shared/ui/AppShell.test.tsx`
-  — PASS on the final candidate (6 files, 32 tests).
+  — PASS (6 files, 42 tests) on the final correction candidate.
 - `npm --prefix web run typecheck`, `npm --prefix web run lint`, and
-  `npm --prefix web run format:check` — PASS on the final candidate.
-- `.venv/bin/ruff format --check mediaflow/application/configuration_objects.py mediaflow/interfaces/service_api.py tests/test_v2_rules_workspace.py`
-  and `.venv/bin/ruff check ...` — PASS.
+  `npm --prefix web run format:check` — PASS.
+- `.venv/bin/ruff format --check .` and `.venv/bin/ruff check .` — PASS (324 files already
+  formatted; all checks passed).
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1911 tests, 7 skips) after this report
+  documented the release-quality gates; the single in-range failure before that documentation fix
+  was `test_release_quality_gate_commands_are_documented_for_task_execution`, which reads TASK.md
+  itself and fails for any real Task that omits these commands (it passed at Task Base only because
+  TASK.md there was the `NO ACTIVE IMPLEMENTATION TASK` notice; it entered the range with B's
+  planning commit `78cda5e`, before this correction).
+- `scripts/docker_release_security_smoke_test.py` (run as
+  `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py`) — UNAVAILABLE
+  (environmental, unrelated): the harness fails while creating its own temporary Compose stack with
+  `bind source path does not exist: /tmp/mediaflow-smoke-security-*/media/organized` (first attempt)
+  and `.../mediaflow.json` (second attempt). The identical failure was reproduced on a clean
+  checkout at the reviewed HEAD `7c1e8ac` in a separate worktree, and the Task range touches no
+  Dockerfile, Compose file or script; no packaging/delivery change is claimed by this correction.
 - `python3 scripts/check_governance.py` and `git diff --check` — PASS.
 - External TMDB, SMB, OpenList and S3/R2 services — SKIP / not required; tests used managed local
   configuration, fakes and bounded local responses only.
@@ -206,6 +239,11 @@ responses and temporary roots where a read-side dependency must be exercised.
 - Reference impact is computed from RecognitionRule outputs and RecognitionTypePolicy references;
   bindings expose referenced policy IDs without resolving, substituting or rewriting their
   RecognitionType identity.
+- Bounded rules inventory limits are derived from the 1 MiB canonical document maximum and enforced
+  identically in Python and TypeScript (`RULES_INVENTORY_LIMITS`), allowing legal configs (e.g. 513
+  items) to load completely while preserving defense-in-depth against malformed payloads.
+- Overview readiness checks that configured RecognitionTypes have effective enabled bindings before
+  declaring `READY`; empty families or disabled bindings surface actionable gaps.
 - Existing shared authentication/RBAC, route continuation and authorized-read recovery remain the
   only frontend authority boundaries; no new client-side policy resolver or mutation command was
   introduced.
@@ -218,6 +256,19 @@ responses and temporary roots where a read-side dependency must be exercised.
 
 ### Risks / Deviations
 
+- The correction loop produced two code checkpoints after the reviewed Head, both limited to B's
+  blockers: `766fa05` (bounds alignment, truthful readiness derivation and distinct empty-family
+  state) and `df8ea42` (effective binding/reference readiness with bounded per-family gaps). No
+  reviewed or rejected history was amended or rewritten.
+- The full Python regression exposed one in-range documentation-policy failure
+  (`test_release_quality_gate_commands_are_documented_for_task_execution`): it reads TASK.md and
+  requires a real Task to list the release-quality gate commands. The failure entered with B's
+  planning commit `78cda5e`, not with this correction; it is fixed here by running and documenting
+  those exact gates rather than by weakening the assertion.
+- `scripts/docker_release_security_smoke_test.py` remains UNAVAILABLE for this environment: its own
+  temporary Compose stack fails on missing bind-source paths, reproduced identically on a clean
+  checkout of the reviewed HEAD in a separate worktree, with no Dockerfile/Compose/script change in
+  this Task's range. No packaging or release-security claim is made by this correction.
 - The first format checks found newly added Python/TypeScript files needing the repository formatters;
   they were formatted and all applicable final quality checks were rerun successfully.
 - The complete Web suite emits the repository's existing jsdom `scrollTo` diagnostics; all tests
@@ -231,17 +282,36 @@ responses and temporary roots where a read-side dependency must be exercised.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 1b30e71240e15afd7a0076b97f6347534fe0d651
+Head SHA: df8ea424e333e0526a7b6c7422b14a7a7b8c51f6
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 5c8aeb40fd7ea43daac100f7b205b082da921336..1b30e71240e15afd7a0076b97f6347534fe0d651
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-If `FIX REQUIRED`, list only blockers for this Task. Fixes remain in this Task unless B explicitly
-finds a genuinely independent business goal. This result does not close the Slice or update Roadmap.
+- The complete Active inventory can become unusable for a legal configuration. A temporary managed
+  configuration with 513 RecognitionTypes passed import, validation and activation; the production
+  projection returned all 513 rows, while `normalizeRulesWorkspace` rejects any section longer than
+  512. An administrator opening `/ui-v2/rules` would see a malformed-response error instead of the
+  required complete inventory (Task Acceptance Criteria 3–4; Slice RO-1). Align the backend and
+  browser bounds with legal Active configuration, using a complete bounded delivery strategy if
+  needed, and cover this case in the affected tests.
+- The displayed readiness is false for a legal Active graph. With every RecognitionTypePolicy
+  binding disabled, the managed document passed validation and activation; the projection returned
+  `readiness.state = READY`, `enabledCounts.typeBindings = 0` and no gaps. An administrator entering
+  Overview is told the rules are ready even though no type has an enabled downstream binding (Task
+  Acceptance Criteria 2 and 6; Slice RO-1, RO-4 and RO-8). Derive readiness and next actions from
+  effective enabled bindings/references and the existing capability semantics, and add a regression
+  for this valid partial configuration.
+- Empty Active inventories are presented as search failures. A legal validated and activated
+  document with all seven rule-family arrays empty returns `available = true`, `readiness.state =
+  EMPTY` and empty sections. On any family tab, `Inventory` always renders “没有匹配结果” and tells the
+  operator to adjust search/status filters, even with no filter in use. This hides the actual
+  onboarding state and gives the wrong recovery action (Task Acceptance Criteria 4 and 6; Slice
+  RO-1 and RO-8). Render a distinct empty-family state with truthful next action while preserving
+  the separate no-match state for filtered results; cover both in the Web tests.
