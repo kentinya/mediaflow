@@ -12,7 +12,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: ACTIVE
 Base SHA: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
 Implementation Head: NOT SET
-Contract Revision: 2026-09-28 — A Save-lifecycle correction authorized by the user
+Contract Revision: 2026-09-28 — A default-page/create-drawer correction authorized by the user
 Risk: High
 Final Test Level: T4
 Next Action: B PLANS THE FIRST COHERENT IMPLEMENTATION TASK AFTER THIS CONTRACT CHECKPOINT
@@ -30,6 +30,12 @@ The user's subsequent direction—`点击保存后自动完成验证和激活`�
 two-step Draft-save/publication interaction. The managed Draft/Validated states remain backend
 lifecycle and recovery mechanisms, but the ordinary rule editor exposes one Save intent that
 automatically validates and activates on success.
+
+The user's latest direction also replaces the reference screenshots' always-open split editor as
+the default state: each rule-family route opens as one complete full-width inventory page with no
+selected object, form or drawer. Only an explicit `添加xx` action opens the create drawer. Row
+selection, search, filtering, tab navigation and refresh never open it. Existing-object Edit remains
+an explicit action and uses a dedicated full-page edit state/route rather than the Add drawer.
 
 A owns this Contract, stable V2 requirement additions, TARGET product journey and TARGET
 architecture. B owns coherent Task sizing after the Contract and Roadmap are committed. No
@@ -60,14 +66,16 @@ Slice and must remain unchanged:
 - `docs/pics/策略绑定.png`
 - `docs/pics/识别类型.png`
 - `docs/pics/识别规则.png`
+- `docs/pics/元数据类型.png`
 - `docs/pics/命名规则.png`
 - `docs/pics/分类规则.png`
 
 They establish the shared light-shell context, `整理规则` information architecture, horizontal
-rule-family navigation, list/detail editor composition, restrained white/light-gray surfaces, blue
-primary actions, green enabled state, searchable inventories and clear form hierarchy. They do not
-define actual IDs, names, descriptions, counts, priorities, scores, conditions, templates, media
-types, target paths, status values or sample data. They are not pixel-identical screenshot fixtures.
+rule-family navigation, restrained white/light-gray surfaces, blue primary actions, green enabled
+state, searchable inventories and clear form hierarchy. The screenshots' right-side editor panels
+describe field grouping and form style only; they are not the page-load state. They do not define
+actual IDs, names, descriptions, counts, priorities, scores, conditions, templates, media types,
+target paths, status values or sample data. They are not pixel-identical screenshot fixtures.
 
 Where a reference conflicts with current domain semantics, stable requirements or safety, the
 domain and safety rules win. In particular:
@@ -77,6 +85,10 @@ domain and safety rules win. In particular:
   runs applicable checks and atomically publishes Active. There is no ordinary user step for
   `保存草稿`, `校验` or `激活` after this Save. A failed Save may retain a labelled recoverable
   candidate, but it never replaces the previous Active.
+- Default entry is a full-width inventory with no drawer or form. `添加识别类型`, `添加规则`,
+  `添加元数据策略`, `添加命名规则`, `添加分类规则`, `添加整理策略` and the equivalent binding action
+  are the only controls that open a create drawer. Row selection never opens a drawer; existing
+  object Edit is an explicit full-page edit state/route.
 - Recognition rules are resolved using the production priority/score/ambiguity/`stopOnMatch`
   semantics. Visual row order or drag handles must not imply a different first-match algorithm.
 - One enabled RecognitionType policy binding is allowed per RecognitionType. Binding priority is not
@@ -86,10 +98,11 @@ domain and safety rules win. In particular:
 - Movie and TV naming use their actual distinct template sets. A Movie-only example does not narrow
   the supported NamingPolicy model.
 
-Metadata Policy and Organize Policy have no supplied page image. They must use the same workspace
-layout, interaction language and design system because a type binding is not a complete usable graph
-without them. Their fields and behavior come from the existing domain and stable requirements, not
-invented reference data.
+Organize Policy has no supplied page image. It must use the same full-width inventory, create-drawer,
+full-page edit interaction language and design system because a type binding is not a complete usable
+graph without it. Its fields and behavior come from the existing domain and stable requirements,
+not invented reference data. `元数据类型.png` supplies the Metadata Policy field/style reference;
+its example TMDB values remain illustrative.
 
 ## Baseline and applicable requirements
 
@@ -125,8 +138,8 @@ Applicable stable requirements include `REQ-GEN-001` through `REQ-GEN-004`, `UX-
 |---|---|
 | Goal | Safely maintain and understand the complete recognition-to-policy rule graph consumed by runtime. |
 | Entry | Choose `整理规则` in the shared V2 shell or open `/ui-v2/rules` through normal authenticated deep-link continuation. Settings capability/readiness states may link here; a read-only visit creates no Draft or work. |
-| Visible state | Show exact Active identity and capability readiness, plus unsaved editor input or a recoverable failed-Save candidate when one exists. Within the workspace expose Overview, Type Bindings, Recognition Types, Recognition Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. Lists show stable identity, bounded description/summary, enabled state and reference/impact state without presenting unsaved or failed candidates as Active. |
-| Action | Add, copy, edit, enable/disable or reference-safe delete objects; run exact-revision tests/previews; click `保存` once for the backend to persist the candidate, validate the whole graph, run applicable checks and atomically activate it. |
+| Visible state | Show exact Active identity and capability readiness on a complete full-width inventory page. Entry has no selected object, editor or drawer. Within the workspace expose Overview, Type Bindings, Recognition Types, Recognition Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. Lists show stable identity, bounded description/summary, enabled state and reference/impact state without presenting unsaved or failed candidates as Active. |
+| Action | Search/filter/select the inventory without opening an editor; click an explicit `添加xx` action to open a create drawer; use an explicit Edit action for an existing object in its full-page edit state; run exact-revision tests/previews; click `保存` once for the backend to persist the candidate, validate the whole graph, run applicable checks and atomically activate it. |
 | Success | One immutable checked revision becomes actual Active runtime authority immediately after Save. Lists and readiness refetch from it; previews and explanations identify the exact revision tested. Save/activation creates no scan, Task, Job, schedule occurrence, Provider call or Storage mutation. |
 | Failure | Invalid field/operator/template/path, duplicate identity, dangling/disabled reference, duplicate enabled type binding, unsafe regex/path, missing secret, Provider/test failure, stale Active/Save candidate, failed evidence, activation/runtime-load or persistence failure identifies the object/stage, durable state and safe next action. Previous Active remains in use. |
 | Recovery | Preserve correctable form input and any labelled recoverable candidate; refresh stale authority before reapplying intended changes; follow reference impact to repoint dependents; rerun only the explicit test/check whose evidence is missing or stale; verify actual Active after an unknown Save outcome before retry. |
@@ -135,8 +148,9 @@ Required product surfaces:
 
 - one native V2 `/ui-v2/rules` route inside the shared shell and one discoverable `整理规则`
   navigation destination;
-- desktop list/editor composition derived from the references, plus accessible narrow layouts that
-  use stacked views or a drawer without losing list context and unsaved-state protection;
+- default full-width inventory pages derived from the references, with accessible narrow layouts;
+  no editor or drawer is open on entry and the list remains usable while an explicit create drawer
+  is open;
 - typed frontend entities/query/mutation boundaries for the exact managed revision and all eight
   rule/policy families;
 - shared authenticated API/application behavior for inventory/detail, object lifecycle, reference
@@ -155,12 +169,16 @@ Required product surfaces:
 - The page provides one coherent workspace with Overview, Type Bindings, Recognition Types,
   Recognition Rules, Metadata Policies, Naming Policies, Classification Policies and Organize
   Policies. Tabs/routes are refresh-safe and deep-linkable where useful.
+- Every rule-family entry defaults to a complete full-width inventory: no row is selected, no edit
+  form is mounted and no drawer is open. A visible `添加xx` command is the only create-drawer entry;
+  search, filter, row selection, tab changes and refresh do not open it. Existing-object Edit is a
+  separate explicit full-page edit state/route.
 - The supplied images govern structure and style only. Production lists use actual Active objects,
   explicitly labelled recovery candidates, actual references and actual readiness; no example ID,
   count, condition or target is hard-coded as product truth or acceptance data.
-- Wide layout uses searchable list plus selected-object editor; narrow/keyboard operation remains
-  complete. Editors default closed or safely unselected when no object is chosen and do not discard
-  unsaved input on search, filter, navigation, reconnect or stale-authority recovery without warning.
+- Wide layout uses a searchable full-width list; narrow/keyboard operation remains complete. Create
+  drawers and explicit full-page Edit states do not discard unsaved input on search, filter,
+  navigation, reconnect or stale-authority recovery without warning.
 - Overview explains the processing relationship rather than merely counting rows:
 
   ```text
@@ -361,9 +379,9 @@ Required product surfaces:
   cross-deployment merge or replacement of Settings package exchange.
 - V1 `/ui` retirement, authentication/session redesign, OIDC, a new API version, distributed config
   service or frontend-owned business authority.
-- Pixel-identical reproduction of the five reference images or acceptance of their example data as
+- Pixel-identical reproduction of the six reference images or acceptance of their example data as
   production fixtures. Controlled visual comparison is diagnostic only.
-- Editing, recompressing or regenerating the five supplied images. They are consumed unchanged as
+- Editing, recompressing or regenerating the six supplied images. They are consumed unchanged as
   reference assets.
 - Unrelated Storage, Files, MediaLibrary, Dashboard, Operations, Automation, Notifications or
   deployment redesign.
@@ -372,7 +390,7 @@ Required product surfaces:
 
 | ID | Acceptance |
 |---|---|
-| AC-1 | `/ui-v2/rules` is a discoverable, authenticated shared-shell workspace with all eight required sections, reference-aligned list/editor composition and complete narrow/keyboard operation. Reference example data is not hard-coded. |
+| AC-1 | `/ui-v2/rules` is a discoverable, authenticated shared-shell workspace with all eight required sections and complete narrow/keyboard operation. Each rule-family route opens as a complete full-width inventory with no selected object, editor or drawer. Only its explicit `添加xx` action opens the create drawer; row selection/search/filter/tab/refresh never does. Existing Edit is an explicit full-page state. Reference example data is not hard-coded. |
 | AC-2 | Active, unsaved input, automatic Save/validation/activation progress, and any recoverable failed-Save candidate remain visibly distinct. Reads create no Draft/work; only explicit Save submits a successor candidate. |
 | AC-3 | All seven managed object families in scope support typed create/copy/edit/enable-disable where applicable/reference-safe delete using exact-version backend authority, audit and actionable stale/reference recovery. |
 | AC-4 | RecognitionType and nested RecognitionRule editing enforce actual field/operator/value semantics, priority/score/stop behavior, ambiguity evidence and safe regex bounds. |
@@ -396,9 +414,10 @@ the strongest lower level B can justify for a genuinely isolated unit. Slice Fin
   reference protection and activation conflict/recovery;
 - explicit RegressionType-C matrices through direct resolver, exact-candidate Strategy Test, published
   runtime, Files manual Organize Preview and Automation admission where applicable;
-- focused Web typed-model/API/query/component tests for every family, Active/candidate state, unsaved
-  protection, accessibility, responsive layout, malformed/401/403/stale/reference/error recovery and
-  no retry/resubmit on refresh;
+- focused Web typed-model/API/query/component tests for every family, default full-width inventory,
+  closed drawer on entry/row selection/search/filter/tab/refresh, Add-only create-drawer opening,
+  explicit full-page Edit, Active/candidate state, unsaved protection, accessibility, responsive
+  layout, malformed/401/403/stale/reference/error recovery and no retry/resubmit on refresh;
 - browser journeys for empty Active onboarding, dependency-ordered object Saves, tests/previews,
   automatic validation/activation failure recovery, successful Save and post-Save policy consumption;
 - full Python and Web regressions, frontend typecheck/lint/format/build, Python format/lint/compile,
@@ -407,7 +426,7 @@ the strongest lower level B can justify for a genuinely isolated unit. Slice Fin
   live Provider tests are bounded and redact failures; all previews/tests have zero Storage mutation;
 - audit that no FFmpeg/FFprobe dependency, raw secret, private configuration, example-reference data
   authority or alternate Storage mutator entered the range;
-- checksum or exact-byte comparison showing the five supplied reference images were not modified.
+- checksum or exact-byte comparison showing the six supplied reference images were not modified.
 
 External/provider tests that cannot run must be reported with the actual reason and may not be
 converted into PASS. Production TMDB, SMB, OpenList, S3/R2 or user media are not required for unit
