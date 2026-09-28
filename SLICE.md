@@ -8,13 +8,13 @@ individual capabilities and use them without restarting resident services.
 Slice ID: 40
 Name: V2 Settings and Empty-Baseline Startup
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
-Implementation Head: NOT SET
+Implementation Head: 868f5a2417792e4f5a135f3667384bd9a21c479c
 Contract Revision: 2026-09-27 — A selection after Slice 39 closure
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS THE FIRST IMPLEMENTATION TASK
+Next Action: A FINAL REVIEW
 ```
 
 ## Authority and sequencing
@@ -278,8 +278,94 @@ checkpoint only receives textual/governance checks; no implementation acceptance
 
 ## Closure Packet
 
-Not submitted. Implementation has not started. After each Task PASS B reevaluates all Required
-Outcomes; once complete, B runs the Slice-final gate and returns one compact Closure Packet to A.
+```text
+Slice: 40 — V2 Settings and Empty-Baseline Startup
+Base SHA: d814b7c1c6819e79271245a1126f53aca6aeaf69
+Head SHA: 868f5a2417792e4f5a135f3667384bd9a21c479c
+
+Required Outcomes:
+- RO-1 — COMPLETE: native V2 Settings owns explicit first-Draft creation/resume, labelled JSON/export,
+  checked empty activation, truthful state and permission-aware recovery.
+- RO-2 — COMPLETE: the empty business envelope is legal; populated objects retain shared conditional
+  schema/reference/evidence validation without synthetic defaults.
+- RO-3 — COMPLETE: Active/Draft JSON identity, portable redacted exchange, deployment-authority
+  exclusion and allowlisted advanced settings are bound to actual consumers.
+- RO-4 — COMPLETE: Storage and both libraries publish exact incremental successors; API/Web report
+  command-specific missing/disabled/unavailable/unauthorized readiness and bounded recovery.
+- RO-5 — COMPLETE: Worker remains registered without Active/with empty Active, adopts later eligible
+  work without restart and preserves pinned/fenced transfer and media-work authority.
+- RO-6 — COMPLETE: Scheduler and Notification Worker wait safely, adopt applicable configuration
+  without restart and retain occurrence/target/retry/uncertainty semantics.
+- RO-7 — COMPLETE: default Compose needs no media mount, separates infrastructure and work readiness,
+  and exposes bounded repair paths for Active, schema, database, pin, secret and mount faults.
+
+Required Surfaces:
+- Native V2 Settings and shared navigation/auth/deep links — COMPLETE.
+- Authenticated configuration and command/scope readiness APIs — COMPLETE.
+- Existing business-page empty/readiness/successor-save states — COMPLETE.
+- Resident API, Worker, Scheduler and Notification Worker processes and health projections — COMPLETE.
+
+Implemented:
+- Legal empty managed configuration with shared applicability and exact checked publication.
+- Native Settings lifecycle, truthful/redacted package exchange and bounded advanced editing.
+- Resident service composition and durable current/pinned snapshot adoption across activation.
+- Incremental business setup, safe Settings return and permission-aware command readiness.
+- Media-free deployment overlay, health/fault recovery and real end-to-end acceptance harnesses.
+
+Tasks completed:
+- 40.1 — Empty runtime envelope and conditional applicability.
+- 40.2 — Native V2 Settings lifecycle and bounded configuration authority.
+- 40.3 — Resident Worker, Scheduler and Notification Worker lifecycle.
+- 40.4 — Incremental business setup and command readiness without restart.
+
+Final Tests:
+- `.venv/bin/python -m unittest discover -s tests` — PASS, 1902 tests, 7 skips.
+- `.venv/bin/python -m unittest tests.test_management_setup` — PASS, 18 tests.
+- `.venv/bin/python -m unittest tests.test_upgrade_preflight` — PASS, 4 tests.
+- `cd web && npm test -- --run` — PASS, 50 files / 751 tests.
+- `cd web && npm run typecheck && npm run lint && npm run format:check && npm run build` — PASS;
+  existing bundle-size advisory only.
+- `.venv/bin/ruff format --check . && .venv/bin/ruff check . && .venv/bin/python -m compileall -q mediaflow tests scripts`
+  — PASS, 323 files formatted; lint/compile PASS.
+- `TMPDIR=/root MEDIAFLOW_SMOKE_TEMP_DIR=/root .venv/bin/python scripts/docker_empty_baseline_smoke_test.py`
+  — PASS, media-free and optional-mount stacks, real Python-served Web/API journey and unchanged
+  resident process identities.
+- `TMPDIR=/root .venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_health_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_restart_fault_smoke_test.py` — PASS.
+- `TMPDIR=/root .venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py` — PASS, genuine
+  schema-38 upgrade/failure/restore recovery.
+- `python3 scripts/check_governance.py`, candidate/Base..Head `git diff --check`, manifest/private-file/
+  credential/dependency audit — PASS. No real external SMB/OpenList/S3/TMDB service was used.
+
+Safety Evidence:
+- Empty activation and all readiness/Settings reads created no media work, delivery or Storage mutation.
+- Exact Active and admitted pins, current revocable permissions, leases/fences and unknown-outcome
+  recovery passed full Python plus restart/fault, transfer and release-security acceptance.
+- Real Compose proved no restart across empty/populated activation and completed Scan, Preview,
+  Organize, both library transfers, scheduled work and controlled signed delivery.
+- Deployment authority and secrets stayed excluded/redacted; `config/alist.json` remains ignored and
+  untracked; no new dependency or FFmpeg/FFprobe path was introduced.
+- Full regression retains RecognitionType C identity and OrganizerExecutor-only mutation coverage.
+
+Known Non-blocking Issues:
+- Existing Python SQLite ResourceWarning output, jsdom `scrollTo` diagnostics and Web bundle-size
+  advisory remain non-blocking.
+- Existing unrelated deployment Markdown target/root-level parser cleanup remains outside this Slice.
+
+Explicitly Deferred:
+- Unchanged from this Contract: full policy/Recognition/Review/Recovery workspace migration, V1
+  removal/cutover, onboarding defaults, identity/Secret Store/deployment mutation, and scheduler/
+  queue/provider/command expansion remain deferred.
+
+Documentation Reconciliation Needed:
+- A should reconcile Slice 40 delivered CURRENT facts and closure pointers across the canonical
+  product requirements, Product Experience, Requirements/Architecture, Roadmap/Progress and
+  deployment guidance without changing the reviewed implementation range.
+
+Decision: SLICE READY FOR A REVIEW
+```
 
 ## A Final Review
 
