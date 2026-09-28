@@ -195,6 +195,16 @@ responses and temporary roots where a read-side dependency must be exercised.
     section is empty renders a truthful `尚无…配置` state that says reads created no Draft, while
     `没有匹配结果` remains reserved for search/status filters that matched nothing. Covered by a
     Web component regression for the empty case alongside the existing no-match case.
+  - Made the empty-family state actually continue onboarding: every empty family now states the
+    creation order the backend validates for that family and offers one concrete, currently
+    supported next action — a same-origin document handoff to the existing configuration workflow
+    that owns typed rule/policy object forms, validation and checked activation. The handoff path is
+    read from the single typed destination model (the same `v1Path` the migration surface uses), is a
+    plain navigation that carries no memory-only credential, creates no Draft on arrival and writes
+    no configuration, and the filtered `没有匹配结果` state is unchanged. The Web regression now
+    walks all seven empty families and asserts per-family guidance, the matching create link and
+    `href`, the absence of any dialog, that no filter is in use, and that only the page's own `GET`
+    was issued; the regression was verified to fail without the fix.
 
 ### Tests and Results
 
@@ -207,6 +217,11 @@ responses and temporary roots where a read-side dependency must be exercised.
 - `npm --prefix web test -- --run` — PASS (53 files, 774 tests) on the final correction candidate.
 - `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx src/routes/router.test.tsx src/shared/navigation/destination-model.test.ts src/shared/ui/AppShell.test.tsx`
   — PASS (6 files, 42 tests) on the final correction candidate.
+- `npm --prefix web test -- --run src/features/rules/RulesWorkspacePage.test.tsx` — PASS (10 tests)
+  on the final candidate, including the strengthened empty-family regression that walks all seven
+  families. The same regression was run with the new empty-family action removed and failed with
+  `Unable to find an element with the text: /只允许一个已启用绑定/`, confirming it is a real
+  regression test rather than a tautology; the fix was then restored and the test re-run green.
 - `npm --prefix web run typecheck`, `npm --prefix web run lint`, and
   `npm --prefix web run format:check` — PASS.
 - `.venv/bin/ruff format --check .` and `.venv/bin/ruff check .` — PASS (324 files already
@@ -222,9 +237,10 @@ responses and temporary roots where a read-side dependency must be exercised.
   `TMPDIR=/root .venv/bin/python scripts/docker_release_security_smoke_test.py`) — UNAVAILABLE
   (environmental, unrelated): the harness fails while creating its own temporary Compose stack with
   `bind source path does not exist: /tmp/mediaflow-smoke-security-*/media/organized` (first attempt)
-  and `.../mediaflow.json` (second attempt). The identical failure was reproduced on a clean
-  checkout at the reviewed HEAD `7c1e8ac` in a separate worktree, and the Task range touches no
-  Dockerfile, Compose file or script; no packaging/delivery change is claimed by this correction.
+  and `.../mediaflow.json` (reproduced again on this final correction candidate). The identical
+  failure was reproduced on a clean checkout at the reviewed HEAD `7c1e8ac` in a separate worktree,
+  and the Task range touches no Dockerfile, Compose file or script; no packaging/delivery change is
+  claimed by this correction.
 - `python3 scripts/check_governance.py` and `git diff --check` — PASS.
 - External TMDB, SMB, OpenList and S3/R2 services — SKIP / not required; tests used managed local
   configuration, fakes and bounded local responses only.
@@ -244,6 +260,13 @@ responses and temporary roots where a read-side dependency must be exercised.
   items) to load completely while preserving defense-in-depth against malformed payloads.
 - Overview readiness checks that configured RecognitionTypes have effective enabled bindings before
   declaring `READY`; empty families or disabled bindings surface actionable gaps.
+- The empty-family next action hands off to the existing configuration workflow rather than adding a
+  V2 create form: this Task's Non-goals explicitly exclude object create/edit forms and any drawer or
+  full-page editor, and `/ui` remains a documented supported surface until V2 parity and cutover
+  acceptance. The V2 rule editors stay deferred to later in-Slice work.
+- The handoff is a plain anchor, not a router `Link`, so it is an ordinary same-origin document
+  navigation that cannot inherit the V2 in-memory token; its destination comes from the typed
+  destination model instead of a new hardcoded route.
 - Existing shared authentication/RBAC, route continuation and authorized-read recovery remain the
   only frontend authority boundaries; no new client-side policy resolver or mutation command was
   introduced.
@@ -256,10 +279,11 @@ responses and temporary roots where a read-side dependency must be exercised.
 
 ### Risks / Deviations
 
-- The correction loop produced two code checkpoints after the reviewed Head, both limited to B's
+- The correction loop produced three code checkpoints after the reviewed Head, all limited to B's
   blockers: `766fa05` (bounds alignment, truthful readiness derivation and distinct empty-family
-  state) and `df8ea42` (effective binding/reference readiness with bounded per-family gaps). No
-  reviewed or rejected history was amended or rewritten.
+  state), `df8ea42` (effective binding/reference readiness with bounded per-family gaps) and
+  `59ce2b1` (dependency-ordered guidance plus a concrete safe next action for every empty family).
+  No reviewed or rejected history was amended or rewritten.
 - The full Python regression exposed one in-range documentation-policy failure
   (`test_release_quality_gate_commands_are_documented_for_task_execution`): it reads TASK.md and
   requires a real Task to list the release-quality gate commands. The failure entered with B's
@@ -282,36 +306,27 @@ responses and temporary roots where a read-side dependency must be exercised.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: df8ea424e333e0526a7b6c7422b14a7a7b8c51f6
+Head SHA: 59ce2b1fc98d1b57ad69716dbc247c268571043a
 ```
+
+The named SHA is this round's code correction checkpoint; this report travels in the immediately
+following `docs(task-41.1)` checkpoint, matching the convention used earlier in this Task. The
+reviewed range `5c8aeb40fd7ea43daac100f7b205b082da921336..59ce2b1` therefore covers every change.
 
 ## B Review Result
 
 ```text
-Reviewed: 5c8aeb40fd7ea43daac100f7b205b082da921336..1b30e71240e15afd7a0076b97f6347534fe0d651
+Reviewed: 5c8aeb40fd7ea43daac100f7b205b082da921336..df8ea424e333e0526a7b6c7422b14a7a7b8c51f6
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The complete Active inventory can become unusable for a legal configuration. A temporary managed
-  configuration with 513 RecognitionTypes passed import, validation and activation; the production
-  projection returned all 513 rows, while `normalizeRulesWorkspace` rejects any section longer than
-  512. An administrator opening `/ui-v2/rules` would see a malformed-response error instead of the
-  required complete inventory (Task Acceptance Criteria 3–4; Slice RO-1). Align the backend and
-  browser bounds with legal Active configuration, using a complete bounded delivery strategy if
-  needed, and cover this case in the affected tests.
-- The displayed readiness is false for a legal Active graph. With every RecognitionTypePolicy
-  binding disabled, the managed document passed validation and activation; the projection returned
-  `readiness.state = READY`, `enabledCounts.typeBindings = 0` and no gaps. An administrator entering
-  Overview is told the rules are ready even though no type has an enabled downstream binding (Task
-  Acceptance Criteria 2 and 6; Slice RO-1, RO-4 and RO-8). Derive readiness and next actions from
-  effective enabled bindings/references and the existing capability semantics, and add a regression
-  for this valid partial configuration.
-- Empty Active inventories are presented as search failures. A legal validated and activated
-  document with all seven rule-family arrays empty returns `available = true`, `readiness.state =
-  EMPTY` and empty sections. On any family tab, `Inventory` always renders “没有匹配结果” and tells the
-  operator to adjust search/status filters, even with no filter in use. This hides the actual
-  onboarding state and gives the wrong recovery action (Task Acceptance Criteria 4 and 6; Slice
-  RO-1 and RO-8). Render a distinct empty-family state with truthful next action while preserving
-  the separate no-match state for filtered results; cover both in the Web tests.
+- A legal validated and activated empty-business configuration reaches `/ui-v2/rules` with seven
+  empty families (`test_empty_active_families_report_seven_bounded_onboarding_gaps` passes). After
+  selecting an empty family, `Inventory` renders “尚无…配置” and says the read created no Draft, but
+  offers no action or destination for adding the missing object; the Web test checks only the
+  heading. An administrator cannot continue onboarding from this state, contrary to Task Acceptance
+  Criterion 6 and Slice RO-8's actionable empty-state recovery. Provide a concrete safe next action
+  for the empty-family state that is available in the current supported journey, and assert it in
+  the Web test. Keep the distinct filtered no-match behavior.
