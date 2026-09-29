@@ -232,7 +232,7 @@ readiness/return integration. Do not edit the six supplied reference images or `
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: PENDING
+Head SHA: 6075bb0d9755b8f2a9a49e602b8a770bbdeefcb9
 ```
 
 ## B Review Result
