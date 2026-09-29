@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 41.3
 Parent Slice: 41
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 361b03ba908b1f27d92b93a78781df8935aafaff
 Difficulty: High
 Test Level: T4
@@ -134,8 +134,12 @@ images. Do not edit `config/alist.json`.
 - `mediaflow/application/rules_workspace_commands.py`
 - `mediaflow/application/configuration_objects.py`
 - `web/src/entities/rules/rules-form.ts`
+- `web/src/entities/rules/rules-workspace.test.ts`
 - `web/src/features/rules/rules-workspace-labels.ts`
 - `web/src/features/rules/RulesObjectForm.tsx`
+- `web/src/features/rules/RulesWorkspacePage.tsx`
+- `web/src/features/rules/RulesWorkspacePage.test.tsx`
+- `web/src/features/rules/rules-form-fixtures.ts`
 - `tests/test_v2_rules_workspace_commands.py`
 
 ### Implemented
@@ -144,14 +148,23 @@ images. Do not edit `config/alist.json`.
 - Added output RecognitionType and downstream policy reference checks, disabled/missing reference rejection, duplicate enabled-binding protection, and preserved independent RecognitionType identity.
 - Added V2 typed form families with bounded recognition fields, condition-tree JSON control, binding fields and session-safe existing form lifecycle reuse.
 - Expanded the inventory/action authority so these families are no longer deferred by the V2 rules workspace.
+- Correction: removed unsupported Type Binding `description`, exposed bounded enabled catalogs and condition enums from the backend, replaced free-text graph references with typed selectors, and replaced raw condition editing with recursive Atomic/Logical controls.
+- Correction: updated graph-family Web fixtures and empty-state regression coverage to reflect the now-authorable families.
 
 ### Tests and Results
 
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 76 subtests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (full suite completed; resource warnings only).
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run build` — PASS.
-- `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — FAIL: existing 41.2 Web fixtures omit the new form-authority families and deferred-family assertions still expect the old boundary.
+- `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (2 files, 24 tests).
+- `npm --prefix web test -- --run` — FAIL / PRE-EXISTING / UNRELATED: 52 files passed, 782 tests passed, one existing `src/features/operations/AutomationRouter.test.tsx` loading/heading failure.
 - `npm --prefix web run lint` — PASS (build/lint command completed; existing Vite chunk-size warning only).
+- `npm --prefix web run format:check` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
+- `.venv/bin/ruff format --check mediaflow tests scripts` — PASS.
+- `.venv/bin/ruff check mediaflow tests scripts` — PASS.
+- `python3 scripts/check_governance.py` — PASS.
 - `git diff --check` — PASS.
 - Full T4 regression, Docker smoke and rules e2e — NOT RUN in this checkpoint.
 
@@ -167,22 +180,51 @@ images. Do not edit `config/alist.json`.
 
 ### Risks / Deviations
 
-- The existing Web unit fixtures and deferred-family assertions predate Task 41.3 and currently fail against the expanded authority; no production credential, Storage mutation or external service was used.
-- Full T4 quality gates and browser/Docker gates remain outstanding and must be rerun after the frontend fixture/test migration.
+- Full Web regression retains one pre-existing/unrelated AutomationRouter failure; the affected rules regression passes. No production credential, Storage mutation or external service was used.
+- Browser rules e2e and Docker smoke gates remain unavailable/not run in this environment.
 - Pre-existing untracked `docs/pics/*.png` files were preserved; `config/alist.json` remains ignored and unstaged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: f154de6fef6a8d254b1d12b54b39e772dfcfc656
+Head SHA: 29b5983653ecb434b9a719536a82c5bacd750702
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..44a0cd0f6f6a8d254b1d12b54b39e772dfcfc656
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The Type Binding create journey is not publishable. In the legal current Active harness, after
+  creating a new enabled RecognitionType and submitting a binding with the actual enabled policy
+  references, `RulesWorkspaceCommandService.save_object("typeBindings", ...)` fails with
+  `rules_invalid_field` at `compose`: `RecognitionTypePolicy ... contains unsupported field
+  'description'`. The new `_FAMILY_SPECS` and defaults expose `description`, but the current
+  `ConfigurationObjectService._RECOGNITION_TYPE_POLICY_FIELDS` and normalizer do not support it.
+  This is a production-reachable failure of Task AC-1/AC-3 and RO-4. Align the typed projection and
+  form with the real domain fields (or make a deliberate domain-compatible change) so a valid binding
+  can be created, edited and copied without sending an invented field.
+- RecognitionRule condition editing is an ordinary raw JSON textarea (`RulesObjectForm.tsx`,
+  `structure("condition", ...)`) rather than the required typed nested AtomicCondition /
+  LogicalCondition builder. An administrator must author the production condition tree manually and
+  the UI offers no field/operator/value compatibility controls. This violates Task AC-2, the
+  Required Surface typed form contract and RO-3. Implement bounded typed controls for the current
+  condition model; any JSON view may remain support-only and must not be the normal Save path.
+- RecognitionRule output type and all five Type Binding references are free-text inputs. The form
+  authority exposes no actual recognition-type/policy catalogs for selectors, so the UI cannot show
+  available IDs, enabled state or compatibility and instead relies on backend rejection. This
+  violates Task AC-3 and RO-4's selector/reference requirements. Add bounded server projections for
+  the actual catalogs and render typed selectors with disabled/missing-reference evidence; do not
+  silently substitute defaults.
+- The required affected Web regression is failing: `npm --prefix web test -- --run
+  src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` reports
+  7 failed tests (24 total), including form-authority parsing failures and the old deferred-family
+  assertions. The rules fixtures and empty-state tests still describe graph authoring as deferred
+  while production now advertises Add controls, so the checkpoint has neither a passing required
+  regression nor truthful empty-state guidance. Update the fixtures/tests and graph-family empty
+  guidance together, then rerun the full Web suite and the remaining T4 gates.
