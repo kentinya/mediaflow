@@ -124,99 +124,102 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 ### Changed Files
 
 - `mediaflow/application/rules_workspace_commands.py`
-- `mediaflow/application/configuration_objects.py`
 - `mediaflow/interfaces/service_api.py`
-- `web/src/shared/api/api-client.ts`
+- `tests/test_v2_rules_workspace_previews.py`
+- `web/src/entities/rules/rules-form.ts`
+- `web/src/features/rules/rules-form-fixtures.ts`
 - `web/src/features/rules/RulesEditPage.tsx`
 - `web/src/features/rules/RulesEditPage.test.tsx`
-- `web/src/shared/api/rules-workspace-api.test.ts`
-- `tests/test_v2_rules_workspace_previews.py`
+- `web/src/features/rules/RulesObjectDrawer.tsx`
+- `web/src/features/rules/RulesPreviewPanel.tsx`
+- `web/src/features/rules/RulesWorkspacePage.test.tsx`
+- `TASK.md`
 
 ### Implemented
 
-- Added explicit V2 preview controls and visible result/recovery states to the full-page Rules editor, including a separate confirmation before live Metadata Provider access.
-- Added a distinct MetadataPolicy test command that checks the selected policy against the effective RecognitionType binding before returning offline/live evidence.
-- Kept Active preview admission scoped to the V2 command adapter; the underlying configuration service still rejects Active for legacy mutation/preview callers by default.
-- Added focused API and Web coverage for exact revision identity, malformed/stale evidence, zero mutation, explicit intent and bounded result rendering.
+- Added a shared edit/create preview panel that submits the current typed form as an exact bounded candidate, persists it as a validated non-Active revision, and runs the requested analysis against that immutable candidate.
+- Added real ResourceLibrary authority and typed source/path controls, so Strategy and Metadata tests use the selected source library rather than a destination MediaLibrary.
+- Bound every displayed result to its captured sample, preserved sibling outcomes, marked prior results stale after form/sample/publication changes, and added an explicit per-result rerun action with stage-specific recovery.
+- Composed OrganizePolicy authority with the existing destination composition and read-only destination precheck, returning source/target evidence, capability/conflict verdicts, allow/block reasons and `executionAuthorityGranted: none`.
+- Added API and Web regression coverage for edited and newly created candidates, invalid-candidate recovery, distinct source/destination IDs, stale transitions, independent results, zero activation and no execution authority.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_v2_rules_workspace_commands.py tests/test_configuration_objects.py tests/test_configuration_naming.py tests/test_configuration_classification.py tests/test_configuration_organize.py` — PASS (136 passed, 172 subtests).
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (217 passed, 197 subtests).
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_configuration_classification.py tests/test_configuration_organize.py tests/test_configuration_objects.py` — PASS (124 passed, 157 subtests).
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_configuration_objects.py` — PASS (109 passed, 115 subtests).
-- `npm --prefix web test -- --run src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (26 tests).
-- `npm --prefix web test -- --run` — PASS (785 tests / 54 files).
-- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx` — PASS (1 test).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (221 passed, 197 subtests).
+- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx src/features/rules/RulesWorkspacePage.test.tsx` — PASS (21 tests).
+- `npm --prefix web test -- --run` — PASS (786 tests / 54 files).
 - `npm --prefix web run build` — PASS (Vite chunk-size warning only).
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
 - `npm --prefix web run format:check` — PASS.
-- `.venv/bin/ruff check mediaflow/application/configuration_objects.py mediaflow/application/rules_workspace_commands.py mediaflow/interfaces/service_api.py tests/test_v2_rules_workspace_previews.py` — PASS.
-- `.venv/bin/ruff format --check mediaflow/application/configuration_objects.py mediaflow/application/rules_workspace_commands.py tests/test_v2_rules_workspace_previews.py` — PASS.
-- `.venv/bin/ruff format --check .` — covered by the repository T4 formatting gate (scoped equivalent passed).
-- `.venv/bin/ruff check .` — covered by the repository T4 lint gate (scoped equivalent passed).
+- `.venv/bin/ruff format --check mediaflow tests scripts` — PASS (305 files already formatted).
+- `.venv/bin/ruff check mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `python3 scripts/check_governance.py` and `git diff --check` — PASS.
 - `npm --prefix web run test:e2e -- --grep 'rules|preview|strategy'` — PASS (8 tests).
 - `python3 scripts/docker_release_security_smoke_test.py` — PASS (release-security smoke acceptance passed).
-- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING-UNRELATED: one resident-service heartbeat registration error remained; the two Active-preview assertions observed during the first run were caused by a temporary implementation experiment and were reverted, with their focused suites passing afterward.
+- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED (1993 tests, 1 failure, 7 skipped): `ResidentCorrectionTests.test_live_worker_consumes_later_and_old_published_scan_pins` encountered `OperationalError: database is locked`. `tests/test_resident_correction.py` is unchanged in `Task Base..HEAD`; isolated rerun of the same test passed (1 test).
 
 ### Decisions
 
-- Reused `ConfigurationObjectService` as the single preview authority; no duplicate parser, policy resolver, Provider adapter or Storage access was introduced.
-- Kept preview routes POST-only with strict envelopes and `MANAGE_CONFIGURATION` authorization. Preview results never issue execution authority or create Tasks/Jobs.
-- Added an explicit `allow_active` adapter flag so V2 inspection of the exact Active snapshot does not weaken existing legacy service guards.
+- Reused the existing typed object normalization, whole-document validation, strategy, MetadataProvider, naming, classification, destination precheck and organize-authority services; no frontend resolver or alternate Storage path was added.
+- Explicit preview creates a validated non-Active successor from the observed Active fence. It never activates the candidate, and all five analyses consume the candidate revision/version/digest returned by that shared lifecycle.
+- Organize explanation treats destination readiness as read-only evidence and always reports that execution authority is absent; it does not call OrganizerExecutor or grant a token.
 
 ### Remaining In-Slice Work
 
-- Batch/multi-sample preview orchestration remains outside this correction; the editor preserves each explicitly run result independently.
+- No additional in-Slice work is asserted by Developer; B retains responsibility for the Slice outcome decision.
 
 ### Risks / Deviations
 
-- Full Python unittest remains red on one unrelated resident-service test; its failure is retained as evidence rather than hidden.
-- Live Provider behavior depends on the existing configured Provider registry and was not exercised with production credentials.
+- Full Python unittest has one unrelated resident-worker SQLite lock failure; the unchanged test passes in isolation, but the full-run failure is retained rather than hidden.
+- Live Provider behavior remains dependent on deployment-owned Provider configuration and was not exercised with production credentials.
+- The existing four untracked reference images under `docs/pics/` were preserved and excluded from the checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: d2becd2d278a8ac4da1b6f90aefe156dd047a870
+Head SHA: 5a9a6d4318b121dfd6267d6ecc053f05f2ab6b6d
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..8ac709a5abbc4d9fc1abcaae241e44bd9ead86ea
+Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..d2becd2d278a8ac4da1b6f90aefe156dd047a870
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The required Web preview journey is not implemented. Evidence: the Web portion of the checkpoint
-  changes only `web/src/shared/api/api-client.ts`; `runRulesPreview` has no import or call site in
-  `web/src/features/rules`, and the current Rules workspace/edit surfaces have no explicit
-  Strategy/Metadata/Naming/Classification/Organize test or preview controls, bounded sample/result
-  rendering, stale-result state, or per-sample recovery. Add the controls and result/recovery
-  states to the relevant V2 editor surfaces, including explicit live-Metadata intent, without
-  exposing raw revision/digest/token workflow.
-- The `metadata` command is not a distinct Metadata Policy test. Evidence:
-  `MediaFlowApi._rules_preview_command` accepts the same `resourceLibraryId`, `syntheticPath` and
-  `liveMetadata` envelope for `metadata` as `strategy`, then calls
-  `RulesWorkspaceCommandService.preview_strategy`; no MetadataPolicy selector or policy-specific
-  validation/test command is present. Implement the explicit offline/live Metadata Policy test
-  through the existing provider abstraction and preserve its timeout/retry/redaction and
-  zero-work guarantees.
-- Required preview/API coverage is absent. Evidence: `tests/test_v2_rules_workspace_previews.py`
-  does not exist, `rg` finds no test for `/api/v1/operations/rules/previews/*` or
-  `runRulesPreview`, and the new route's exact-revision, malformed-input, stale, redaction,
-  zero-mutation and no-work behavior is therefore unverified. Add focused backend/API and Web
-  entity/component tests for the Task acceptance criteria, then run the required T4 suites.
-- The required formatting gate fails on a changed file. Evidence:
-  `npm --prefix web run format:check` reports style issues in
-  `web/src/shared/api/api-client.ts`. Format the file and rerun the gate; the checkpoint cannot
-  pass while the assigned quality gate is red.
-- The assigned T4 validation is incomplete. Evidence: the Developer report records the full Python
-  and Web regressions as not run, and no preview-specific test module, browser journey or Docker
-  smoke result is recorded. Run the available full regression and quality gates; report any
-  browser/Docker unavailability precisely rather than treating it as a pass.
+- Exact-candidate preview is still missing from the ordinary editor journey (Task Acceptance 1,
+  3 and 5; Slice RO-3/RO-6). `RulesEditPage.runPreview` always sends
+  `authorityIdentity(projectionOutcome.model.active)` and never sends or stages `values`; editing a
+  rule or policy therefore tests the old Active graph, while a newly added object cannot be tested
+  because `RulesObjectDrawer` has no preview action. Compose a bounded non-Active candidate from the
+  current form input, test that exact revision through the shared application authority, and cover
+  edit/create success and invalid-candidate recovery in API and Web tests.
+- Strategy and Metadata tests use the wrong library and cannot complete on a normal legal graph
+  (Task Acceptance 1 and 2; Slice RO-3/RO-6). `RulesEditPage.runPreview` takes
+  `authority.mediaLibraries[0]?.id` as `resourceLibraryId`; the checked-in legal example has source
+  ResourceLibrary `source` and destination MediaLibrary `movies`. Replaying the resulting request
+  against the current API returned HTTP 200 with `status: failed`,
+  `Recognition Strategy Test failed (ValueError)`, and a Draft-recovery instruction even though
+  the page tests Active. Provide a bounded ResourceLibrary selector from real source libraries and
+  typed inputs for the relevant sample, then route both tests through the selected source and show
+  an actionable stage-specific failure. Cover the legal distinct-ID configuration end to end.
+- Preview currentness and independent sample recovery are incorrect (Task Acceptance 5 and 6;
+  Slice RO-6/RO-8). `change`, `setPreviewInput` and successful `save` never invalidate or reconcile
+  `previewResults`; a completed result continues to say it corresponds to the current revision
+  after the form or sample changes or a new Active is published. Each result is displayed only by
+  kind and array index, without the sample that produced it, so repeated samples cannot be
+  distinguished for diagnosis or safe rerun. Bind each result to its exact input and revision,
+  visibly mark affected results stale on edits/publication, preserve sibling outcomes and provide
+  an explicit rerun/verification action. Add Web tests for these transitions.
+- Organize explanation omits the promised destination and allow/block decision (Task Acceptance 4;
+  Slice RO-6). Calling `/api/v1/operations/rules/previews/organize` for RecognitionType C on the
+  current legal graph returned `completed` with operation, conflict and capability names but no
+  source/target composition, destination precheck or reason execution would be allowed or blocked.
+  The route invokes only `organize_authority`, which has no sample/source input. Compose the existing
+  read-only destination and authority analyses for an explicit bounded sample, report the composed
+  target and actionable allow/block reasons, and prove zero mutation and no execution grant.
