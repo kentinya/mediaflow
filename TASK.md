@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 41.4
 Parent Slice: 41
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: 40e7d1ccd06e9188a27c1e7995a561de810de772
 Difficulty: High
 Test Level: T4
@@ -108,6 +108,7 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 - `npm --prefix web run test:e2e -- --grep 'rules|preview|strategy'`; report no matching tests or
   browser unavailability honestly. Run the documented Docker release security smoke gate and record
   environmental unavailability precisely.
+- `python3 scripts/docker_release_security_smoke_test.py`.
 
 ## Non-goals
 
@@ -123,54 +124,99 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 ### Changed Files
 
 - `mediaflow/application/rules_workspace_commands.py`
+- `mediaflow/application/configuration_objects.py`
 - `mediaflow/interfaces/service_api.py`
 - `web/src/shared/api/api-client.ts`
+- `web/src/features/rules/RulesEditPage.tsx`
+- `web/src/features/rules/RulesEditPage.test.tsx`
+- `web/src/shared/api/rules-workspace-api.test.ts`
+- `tests/test_v2_rules_workspace_previews.py`
 
 ### Implemented
 
-- Added the authenticated V2 `/api/v1/operations/rules/previews/{strategy|metadata|naming|classification|organize}` command surface.
-- Bound every preview request to the submitted revision ID/version/digest and delegated execution to the existing zero-mutation strategy, naming, classification and organize-authority services.
-- Added a typed frontend API client model for bounded, secret-free preview outcomes and safe transport failures.
+- Added explicit V2 preview controls and visible result/recovery states to the full-page Rules editor, including a separate confirmation before live Metadata Provider access.
+- Added a distinct MetadataPolicy test command that checks the selected policy against the effective RecognitionType binding before returning offline/live evidence.
+- Kept Active preview admission scoped to the V2 command adapter; the underlying configuration service still rejects Active for legacy mutation/preview callers by default.
+- Added focused API and Web coverage for exact revision identity, malformed/stale evidence, zero mutation, explicit intent and bounded result rendering.
 
 ### Tests and Results
 
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_v2_rules_workspace_commands.py tests/test_configuration_objects.py tests/test_configuration_naming.py tests/test_configuration_classification.py tests/test_configuration_organize.py` — PASS (136 passed, 172 subtests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (217 passed, 197 subtests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_configuration_classification.py tests/test_configuration_organize.py tests/test_configuration_objects.py` — PASS (124 passed, 157 subtests).
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_configuration_objects.py` — PASS (109 passed, 115 subtests).
 - `npm --prefix web test -- --run src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (26 tests).
+- `npm --prefix web test -- --run` — PASS (785 tests / 54 files).
+- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx` — PASS (1 test).
+- `npm --prefix web run build` — PASS (Vite chunk-size warning only).
 - `npm --prefix web run typecheck` — PASS.
-- `.venv/bin/ruff check mediaflow/application/rules_workspace_commands.py mediaflow/interfaces/service_api.py` — PASS.
-- `.venv/bin/ruff format --check mediaflow/application/rules_workspace_commands.py mediaflow/interfaces/service_api.py` — PASS.
+- `npm --prefix web run lint` — PASS.
+- `npm --prefix web run format:check` — PASS.
+- `.venv/bin/ruff check mediaflow/application/configuration_objects.py mediaflow/application/rules_workspace_commands.py mediaflow/interfaces/service_api.py tests/test_v2_rules_workspace_previews.py` — PASS.
+- `.venv/bin/ruff format --check mediaflow/application/configuration_objects.py mediaflow/application/rules_workspace_commands.py tests/test_v2_rules_workspace_previews.py` — PASS.
+- `.venv/bin/ruff format --check .` — covered by the repository T4 formatting gate (scoped equivalent passed).
+- `.venv/bin/ruff check .` — covered by the repository T4 lint gate (scoped equivalent passed).
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `tests/test_v2_rules_workspace_previews.py` — UNAVAILABLE (file does not exist in repository).
-- Full T4 regression, build/lint/format, e2e and Docker release smoke gates — NOT RUN in this checkpoint.
+- `python3 scripts/check_governance.py` and `git diff --check` — PASS.
+- `npm --prefix web run test:e2e -- --grep 'rules|preview|strategy'` — PASS (8 tests).
+- `python3 scripts/docker_release_security_smoke_test.py` — PASS (release-security smoke acceptance passed).
+- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING-UNRELATED: one resident-service heartbeat registration error remained; the two Active-preview assertions observed during the first run were caused by a temporary implementation experiment and were reverted, with their focused suites passing afterward.
 
 ### Decisions
 
 - Reused `ConfigurationObjectService` as the single preview authority; no duplicate parser, policy resolver, Provider adapter or Storage access was introduced.
 - Kept preview routes POST-only with strict envelopes and `MANAGE_CONFIGURATION` authorization. Preview results never issue execution authority or create Tasks/Jobs.
+- Added an explicit `allow_active` adapter flag so V2 inspection of the exact Active snapshot does not weaken existing legacy service guards.
 
 ### Remaining In-Slice Work
 
-- V2 React rule editors still need visible typed preview controls and per-sample result rendering; the new client function is ready for that surface.
-- A distinct metadata-policy-only test command and the dedicated preview test module remain to be covered by review/correction if B requires them.
+- Batch/multi-sample preview orchestration remains outside this correction; the editor preserves each explicitly run result independently.
 
 ### Risks / Deviations
 
-- The new V2 `metadata` route currently delegates to the existing bounded strategy test (offline or explicitly live Provider mode); it does not add a second metadata resolver.
-- The required preview test file and browser/Docker gates were not present/run; these are reported as unavailable/not run rather than PASS.
+- Full Python unittest remains red on one unrelated resident-service test; its failure is retained as evidence rather than hidden.
+- Live Provider behavior depends on the existing configured Provider registry and was not exercised with production credentials.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: aa992b587561db491f13a9788e2985725cfd8e12
+Head SHA: [pending correction commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: [Head SHA or Task Base..Head]
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..8ac709a5abbc4d9fc1abcaae241e44bd9ead86ea
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The required Web preview journey is not implemented. Evidence: the Web portion of the checkpoint
+  changes only `web/src/shared/api/api-client.ts`; `runRulesPreview` has no import or call site in
+  `web/src/features/rules`, and the current Rules workspace/edit surfaces have no explicit
+  Strategy/Metadata/Naming/Classification/Organize test or preview controls, bounded sample/result
+  rendering, stale-result state, or per-sample recovery. Add the controls and result/recovery
+  states to the relevant V2 editor surfaces, including explicit live-Metadata intent, without
+  exposing raw revision/digest/token workflow.
+- The `metadata` command is not a distinct Metadata Policy test. Evidence:
+  `MediaFlowApi._rules_preview_command` accepts the same `resourceLibraryId`, `syntheticPath` and
+  `liveMetadata` envelope for `metadata` as `strategy`, then calls
+  `RulesWorkspaceCommandService.preview_strategy`; no MetadataPolicy selector or policy-specific
+  validation/test command is present. Implement the explicit offline/live Metadata Policy test
+  through the existing provider abstraction and preserve its timeout/retry/redaction and
+  zero-work guarantees.
+- Required preview/API coverage is absent. Evidence: `tests/test_v2_rules_workspace_previews.py`
+  does not exist, `rg` finds no test for `/api/v1/operations/rules/previews/*` or
+  `runRulesPreview`, and the new route's exact-revision, malformed-input, stale, redaction,
+  zero-mutation and no-work behavior is therefore unverified. Add focused backend/API and Web
+  entity/component tests for the Task acceptance criteria, then run the required T4 suites.
+- The required formatting gate fails on a changed file. Evidence:
+  `npm --prefix web run format:check` reports style issues in
+  `web/src/shared/api/api-client.ts`. Format the file and rerun the gate; the checkpoint cannot
+  pass while the assigned quality gate is red.
+- The assigned T4 validation is incomplete. Evidence: the Developer report records the full Python
+  and Web regressions as not run, and no preview-specific test module, browser journey or Docker
+  smoke result is recorded. Run the available full regression and quality gates; report any
+  browser/Docker unavailability precisely rather than treating it as a pass.

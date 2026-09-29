@@ -332,6 +332,7 @@ class RulesWorkspaceCommandService:
             actor=actor,
             policy_id=policy_id,
             sample=sample,
+            allow_active=True,
         )
 
     def preview_classification(
@@ -352,6 +353,7 @@ class RulesWorkspaceCommandService:
             actor=actor,
             policy_id=policy_id,
             sample=sample,
+            allow_active=True,
         )
 
     def explain_organize(
@@ -370,6 +372,7 @@ class RulesWorkspaceCommandService:
             expected_digest=expected_digest,
             actor=actor,
             recognition_type=recognition_type,
+            allow_active=True,
         )
 
     def preview_strategy(
@@ -392,6 +395,31 @@ class RulesWorkspaceCommandService:
             resource_library_id=resource_library_id,
             synthetic_path=synthetic_path,
             live_metadata=live_metadata,
+            allow_active=True,
+        )
+
+    def preview_metadata(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        policy_id: str,
+        resource_library_id: str,
+        synthetic_path: str,
+        live_metadata: bool = False,
+    ):
+        return self._objects.metadata_policy_test(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            policy_id=policy_id,
+            resource_library_id=resource_library_id,
+            synthetic_path=synthetic_path,
+            live_metadata=live_metadata,
+            allow_active=True,
         )
 
     # ------------------------------------------------------------------
