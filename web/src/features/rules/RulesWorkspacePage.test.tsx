@@ -440,10 +440,14 @@ describe("RulesWorkspacePage", () => {
     // Graph families now expose native typed create controls.
     await user.click(screen.getByRole("button", { name: "识别规则" }));
     expect(screen.getByText(/必须引用已存在的识别类型/)).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "添加识别规则" })[0]).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "添加识别规则" })[0],
+    ).toBeVisible();
     await user.click(screen.getByRole("button", { name: "类型绑定" }));
     expect(screen.getByText(/类型绑定需要已有的识别类型/)).toBeVisible();
-    expect(screen.getAllByRole("button", { name: "添加类型绑定" })[0]).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "添加类型绑定" })[0],
+    ).toBeVisible();
   });
 
   it("stays operable by keyboard and narrow layout on the drawer path", async () => {
