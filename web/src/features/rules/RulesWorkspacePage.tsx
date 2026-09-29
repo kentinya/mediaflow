@@ -42,18 +42,16 @@ function isFormFamily(
 /**
  * Dependency-ordered onboarding guidance for one empty Active family.
  *
- * For the five families this workspace authors, the empty state offers the
- * native typed create action; for RecognitionRule and type bindings — a later
- * in-Slice unit — it names the creation order the backend validates and states
- * plainly that authoring is not available here yet, without inventing a control.
+ * Empty states explain the dependency order while every admitted family remains
+ * directly authorable through its typed create action.
  */
 const EMPTY_FAMILY_GUIDANCE: Readonly<Record<RuleFamily, string>> = {
   typeBindings:
-    "类型绑定需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。绑定编辑是本 Slice 后续单元。",
+    "类型绑定需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。",
   recognitionTypes:
     "识别类型是识别规则的输出目标,也是类型绑定的主体,建议先创建。",
   recognitionRules:
-    "识别规则必须引用已存在的识别类型作为输出目标;规则编辑是本 Slice 后续单元,可先创建识别类型。",
+    "识别规则必须引用已存在的识别类型作为输出目标,可先创建识别类型。",
   metadataPolicies: "元数据策略可独立创建,随后由类型绑定引用。",
   namingPolicies: "命名策略可独立创建,随后由类型绑定引用。",
   classificationPolicies:

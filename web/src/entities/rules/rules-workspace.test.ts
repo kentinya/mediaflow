@@ -10,24 +10,15 @@ const ACTION = {
   blocker: null,
 };
 const TOGGLELESS = { ...ACTION, toggle: false };
-const DEFERRED = {
-  create: false,
-  edit: false,
-  copy: false,
-  toggle: false,
-  remove: false,
-  blocker:
-    "RecognitionRule and type-binding authoring is a later in-Slice unit",
-};
 
 export const rulesPayload = {
   available: true,
   reason: null,
   canManage: true,
   actions: {
-    typeBindings: DEFERRED,
+    typeBindings: ACTION,
     recognitionTypes: ACTION,
-    recognitionRules: DEFERRED,
+    recognitionRules: ACTION,
     metadataPolicies: ACTION,
     namingPolicies: ACTION,
     classificationPolicies: ACTION,
