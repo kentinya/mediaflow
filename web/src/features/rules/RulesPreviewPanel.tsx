@@ -160,19 +160,15 @@ function sampleForKind(
 
 function policySelection(
   family: RuleFormFamily,
-  kind: "naming" | "classification",
   candidate: Readonly<Record<string, unknown>>,
 ): Readonly<Record<string, string>> {
-  if (family === "recognitionTypes") {
-    return { mode: "binding", recognitionType: String(candidate.id ?? "") };
-  }
-  if (family === "typeBindings") {
+  if (family === "recognitionTypes" || family === "typeBindings") {
     return {
-      mode: "direct",
-      policyId: String(
-        candidate[
-          kind === "naming" ? "namingPolicy" : "classificationPolicy"
-        ] ?? "",
+      mode: "binding",
+      recognitionType: String(
+        family === "recognitionTypes"
+          ? (candidate.id ?? "")
+          : (candidate.recognitionType ?? ""),
       ),
     };
   }
@@ -546,13 +542,27 @@ export function RulesPreviewPanel({
     () => ruleCandidateFields(family, values),
     [family, values],
   );
+  const boundRecognitionType =
+    family === "recognitionTypes"
+      ? String(candidate.id ?? "")
+      : family === "typeBindings"
+        ? String(candidate.recognitionType ?? "")
+        : null;
+  const usesBoundPolicy = boundRecognitionType !== null;
   const currentSample = useMemo(() => {
     try {
-      return buildSample(sample, pathMode, syntheticPath);
+      const built = buildSample(
+        sample,
+        pathMode && !usesBoundPolicy,
+        syntheticPath,
+      );
+      return boundRecognitionType
+        ? { ...built, recognitionType: boundRecognitionType }
+        : built;
     } catch {
       return null;
     }
-  }, [pathMode, sample, syntheticPath]);
+  }, [boundRecognitionType, pathMode, sample, syntheticPath, usesBoundPolicy]);
   const currentnessKey = JSON.stringify({
     candidate,
     sample,
@@ -606,7 +616,16 @@ export function RulesPreviewPanel({
       return;
     let submittedSample: Record<string, unknown>;
     try {
-      submittedSample = buildSample(sample, pathMode, syntheticPath);
+      submittedSample = buildSample(
+        sample,
+        pathMode && !usesBoundPolicy,
+        syntheticPath,
+      );
+      if (boundRecognitionType)
+        submittedSample = {
+          ...submittedSample,
+          recognitionType: boundRecognitionType,
+        };
     } catch (error) {
       addInvalidResult(kind, String(error));
       return;
@@ -617,9 +636,10 @@ export function RulesPreviewPanel({
     const submittedLibrary = resourceLibraryId;
     const submittedLiveMetadata = liveMetadata;
     const id = nextId.current++;
-    const sampleLabel = pathMode
-      ? `${submittedLibrary || "未选择来源库"} · 路径解析 · ${submittedPath}`
-      : `${submittedLibrary || "未选择来源库"} · ${String(submittedSample.title)} · ${String(submittedSample.mediaType)} · ${String(submittedSample.recognitionType)}`;
+    const sampleLabel =
+      pathMode && !usesBoundPolicy
+        ? `${submittedLibrary || "未选择来源库"} · 路径解析 · ${submittedPath}`
+        : `${submittedLibrary || "未选择来源库"} · ${String(submittedSample.title)} · ${String(submittedSample.mediaType)} · ${String(submittedSample.recognitionType)}`;
     setResults((items) => [
       ...items,
       {
@@ -674,11 +694,7 @@ export function RulesPreviewPanel({
           : kind === "naming" || kind === "classification"
             ? {
                 ...base,
-                policySelection: policySelection(
-                  family,
-                  kind,
-                  submittedCandidate,
-                ),
+                policySelection: policySelection(family, submittedCandidate),
                 sample: boundedSample,
               }
             : {
@@ -724,12 +740,12 @@ export function RulesPreviewPanel({
           样本模式
           <select
             aria-label="样本模式"
-            value={pathMode ? "path" : "synthetic"}
+            value={pathMode && !usesBoundPolicy ? "path" : "synthetic"}
             onChange={(event) => setPathMode(event.target.value === "path")}
             disabled={busy}
           >
             <option value="synthetic">类型化样本</option>
-            <option value="path">从路径解析</option>
+            {!usesBoundPolicy ? <option value="path">从路径解析</option> : null}
           </select>
         </label>
         <label>
@@ -758,7 +774,7 @@ export function RulesPreviewPanel({
             disabled={busy}
           />
         </label>
-        {!pathMode ? (
+        {!pathMode || usesBoundPolicy ? (
           <>
             <label>
               标题
@@ -789,11 +805,12 @@ export function RulesPreviewPanel({
               RecognitionType
               <input
                 aria-label="样本 RecognitionType"
-                value={sample.recognitionType}
+                value={boundRecognitionType ?? sample.recognitionType}
                 maxLength={64}
                 onChange={(event) =>
                   changeSample("recognitionType", event.target.value)
                 }
+                disabled={busy || usesBoundPolicy}
               />
             </label>
             <label>

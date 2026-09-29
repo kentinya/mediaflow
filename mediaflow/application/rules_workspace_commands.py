@@ -474,13 +474,14 @@ class RulesWorkspaceCommandService:
     ):
         """Resolve NamingPolicy from the exact candidate type binding."""
         policy_id = self._bound_policy_id(revision_id, recognition_type, policy="naming")
+        bound_sample = self._bind_preview_sample(sample, recognition_type)
         return self.preview_naming(
             revision_id,
             expected_version=expected_version,
             expected_digest=expected_digest,
             actor=actor,
             policy_id=policy_id,
-            sample=sample,
+            sample=bound_sample,
         )
 
     def preview_classification_for_type(
@@ -495,14 +496,32 @@ class RulesWorkspaceCommandService:
     ):
         """Resolve ClassificationPolicy from the exact candidate type binding."""
         policy_id = self._bound_policy_id(revision_id, recognition_type, policy="classification")
+        bound_sample = self._bind_preview_sample(sample, recognition_type)
         return self.preview_classification(
             revision_id,
             expected_version=expected_version,
             expected_digest=expected_digest,
             actor=actor,
             policy_id=policy_id,
-            sample=sample,
+            sample=bound_sample,
         )
+
+    @staticmethod
+    def _bind_preview_sample(
+        sample: Mapping[str, object], recognition_type: str
+    ) -> dict[str, object]:
+        if not isinstance(sample, Mapping):
+            raise ValueError("bound policy preview sample must be an object")
+        if "path" in sample:
+            raise ValueError(
+                "bound policy preview requires a typed sample so RecognitionType is explicit"
+            )
+        sample_recognition_type = sample.get("recognitionType")
+        if sample_recognition_type is not None and sample_recognition_type != recognition_type:
+            raise ValueError(
+                "bound policy preview sample RecognitionType must match the selected binding"
+            )
+        return {**copy.deepcopy(dict(sample)), "recognitionType": recognition_type}
 
     def _bound_policy_id(self, revision_id: str, recognition_type: str, *, policy: str) -> str:
         if (
