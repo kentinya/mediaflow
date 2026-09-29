@@ -163,7 +163,7 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [pending checkpoint commit]
+Head SHA: aa992b5
 ```
 
 ## B Review Result
