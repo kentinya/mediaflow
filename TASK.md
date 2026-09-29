@@ -123,23 +123,26 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/application/rules_workspace_commands.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_v2_rules_workspace_previews.py`
 - `web/src/features/rules/RulesEditPage.test.tsx`
 - `web/src/features/rules/RulesPreviewPanel.tsx`
-- `web/src/shared/ui/styles.css`
 - `TASK.md`
 
 ### Implemented
 
-- Replaced ordinary raw-JSON sample authoring with bounded typed controls for source/path mode, title, media type, RecognitionType, date/episode fields, filename tags and classification context; the JSON projection remains read-only inside an Advanced/Support disclosure.
-- Added readable per-kind evidence for matched recognition rules and policy bindings, Metadata policy/outcome, rendered naming components, classification rule/MediaLibrary/path, and Organize capabilities, destination, conflict and allow/block reasons. Full evidence JSON is optional Advanced/Support content.
-- Displayed the tested non-Active candidate revision/version on each completed result without exposing digests or turning revision IDs into an operator workflow step.
-- Registered each request as an independent pending result bound to the submitted candidate/sample key. A form or sample edit during the request marks that row stale, and response settlement preserves the stale state while leaving sibling results unchanged and rerunnable.
-- Added Web regressions for normal typed evidence, invalid typed input and correction, structured classification/organize explanations, and the request/edit/response race identified by B.
+- Corrected MetadataPolicy test matching to use the production strategy result's `effectiveMetadataPolicy.id`. An offline test for the effective C policy now succeeds without a Provider call, while a genuinely mismatched policy remains rejected.
+- Added explicit `direct` and `binding` policy-selection envelopes for Naming and Classification preview. Binding mode resolves the applicable policy through the exact staged candidate's `RecognitionTypePolicyResolver` instead of trusting a browser-supplied policy ID.
+- Updated the type editor's whole-chain Naming/Classification actions to submit RecognitionType C in binding mode, producing Policy A results while preserving RecognitionType C. Type bindings use their selected policy references directly.
+- Limited each editor family to actions whose subject it can select truthfully: rule Strategy Test, type/binding whole-chain actions, and the corresponding individual policy action.
+- Added API regressions for effective Metadata C success/mismatch rejection and the C→A Naming/Classification reuse matrix, plus Web assertions for binding selection and action availability.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (221 passed, 197 subtests).
-- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx` — PASS (4 tests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (223 passed, 197 subtests).
+- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx src/features/rules/RulesWorkspacePage.test.tsx` — PASS (24 tests).
 - `npm --prefix web test -- --run` — PASS (789 tests / 54 files).
 - `npm --prefix web run build` — PASS (Vite chunk-size warning only).
 - `npm --prefix web run typecheck` — PASS.
@@ -151,13 +154,13 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 - `python3 scripts/check_governance.py` and `git diff --check` — PASS.
 - `npm --prefix web run test:e2e -- --grep 'rules|preview|strategy'` — PASS (8 tests).
 - `python3 scripts/docker_release_security_smoke_test.py` — PASS (release-security smoke acceptance passed).
-- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED (1993 tests, 1 error, 7 skipped): `ResidentCorrectionTests.test_three_processes_survive_real_write_lock_and_resume_heartbeats` observed a transient missing resident-service row (`NoneType.waiting_reason`). `tests/test_resident_correction.py` is unchanged in `Task Base..Head`; isolated rerun of the same test passed (1 test).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1995 tests, 7 skipped).
 
 ### Decisions
 
-- Kept sample construction as typed presentation only; backend preview services remain authoritative. Each preview kind receives only its backend-supported sample fields, preventing the UI from creating a second policy or validation engine.
-- Kept raw sample/evidence JSON as collapsed read-only support material rather than ordinary input/output.
-- Used a submitted-key snapshot plus the latest rendered key to close the in-flight race; no request is automatically replayed after becoming stale.
+- Kept policy resolution backend-authoritative. The browser states whether the subject is a directly selected policy or a RecognitionType binding; only the shared resolver chooses the bound policy ID.
+- Retained direct mode so a new or edited Naming/Classification policy can still be previewed before it is referenced, while type and binding editors use exact-candidate graph resolution.
+- Did not alter RecognitionType identity: the bound preview result must report Policy A and RecognitionType C independently.
 
 ### Remaining In-Slice Work
 
@@ -165,7 +168,6 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ### Risks / Deviations
 
-- Full Python unittest retains one unrelated resident-service timing failure; the unchanged failing test passes in isolation, and the failure is reported rather than hidden.
 - Live Provider behavior remains dependent on deployment-owned Provider configuration and was not exercised with production credentials.
 - The existing four untracked reference images under `docs/pics/` were preserved and excluded from the checkpoint.
 
@@ -173,35 +175,36 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 5bbcc18a77e54642d010c12471846401256eb011
+Head SHA: b8773c64052504a263d39ef0c551e66480ad71de
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..0541972351ae67fbe6a305192be231907d85aefa
+Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..af6599cd2ae44976993c028eb15ae13749697e37
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The ordinary V2 Test/Preview journey still requires raw JSON authoring and exposes only raw JSON
-  for the decision evidence (Task Acceptance 1, 3, 4 and 6; Slice RO-6 and User Goal). On both the
-  reachable Add drawer and full-page Edit route, `RulesPreviewPanel` offers one `命名、分类与目标样本 JSON`
-  textarea, parses it with `JSON.parse`, and renders the returned `result` with `<pre>{JSON.stringify(...)}</pre>`.
-  There are no typed controls for the supported sample fields and no structured rendering of the
-  matched rule, selected policy, rendered path, capability or allow/block reason; the panel also
-  does not identify the tested candidate revision to the operator. The existing Web test edits that
-  JSON textarea, confirming this is the production interaction rather than a test-only path.
-  Provide bounded typed sample controls and readable, revision-linked per-kind explanations, with
-  raw JSON optional only as an advanced/support view. Cover normal, invalid and recovery states in
-  Web tests.
-- A result can be presented as current after its input changes while the request is in flight
-  (Task Acceptance 5; Slice RO-6). `RulesPreviewPanel.run` captures `candidate` and sample in the
-  request, awaits `runRulesPreview`, then always appends the response with `stale: false`; its
-  `useEffect` marks only results already in the array stale. The surrounding Edit form remains
-  editable during that request. Reproduce by starting a Preview, changing a form field before the
-  response, then resolving it: the newly appended old-candidate result has no stale warning.
-  Bind each pending/result row to the submitted input and revision, compare it with current state
-  when the response settles, and show the explicit rerun action without changing sibling results.
-  Add a Web regression for this request/edit/response sequence.
+- Metadata Policy offline test cannot succeed for a correctly selected effective policy (Task
+  Acceptance 2; Slice RO-6). In the current application service,
+  `ConfigurationObjectService.metadata_policy_test` compares
+  `effectiveMetadataPolicy["policyId"]` with the requested ID, but the production strategy result
+  emits that policy as `effectiveMetadataPolicy["id"]`. Replaying the checked-in legal C graph
+  through `/api/v1/operations/rules/previews/metadata`, with source `source`, path
+  `/C/Special.C.2025.mkv`, selected policy `C` and `liveMetadata: false`, returned HTTP 409
+  `configuration_version_conflict` and the false instruction to select the policy resolved by the
+  binding. The same graph's Strategy Test returned effective Metadata Policy `C`. Compare the
+  actual result field through the shared typed authority and add an API regression proving that
+  the matching offline test succeeds and a genuinely mismatched policy is rejected.
+- The type editor exposes Naming and Classification Preview but sends the RecognitionType ID as
+  each policy ID (Task Acceptance 3 and 6; Slice RO-4/RO-6). `RulesPreviewPanel.run` derives
+  `policyId` from `submittedCandidate.id` for all five actions. In the checked-in legal graph,
+  RecognitionType `C` uses NamingPolicy `A` and ClassificationPolicy `A`; replaying the type
+  editor's request for either preview with `policyId: C` returned HTTP 200 with `status: failed`
+  and `policy_not_found`, while the same candidate/sample with the actual bound ID `A` completed.
+  The current Web test stubs a successful `policyId: C` response, so it does not prove this
+  production path. Resolve the applicable policy from the exact candidate binding for whole-chain
+  actions, and expose only actions whose subject can be selected truthfully; cover the C→A reuse
+  path through API and Web without changing RecognitionType C.
