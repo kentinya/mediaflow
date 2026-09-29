@@ -5711,6 +5711,76 @@ async function rulesReadFailure(response: Response): Promise<RulesRead<never>> {
   };
 }
 
+export type RulesPreviewKind =
+  | "strategy"
+  | "naming"
+  | "classification"
+  | "organize";
+
+export interface RulesPreviewModel {
+  readonly revisionId: string;
+  readonly revisionVersion: number;
+  readonly revisionDigest: string;
+  readonly status: string;
+  readonly stale: boolean;
+  readonly result: Readonly<Record<string, unknown>> | null;
+  readonly message: string | null;
+  readonly nextAction: string | null;
+  readonly failureCategory: string | null;
+}
+
+function normalizeRulesPreview(value: unknown): RulesPreviewModel {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    throw new Error("invalid rules preview");
+  const source = value as Record<string, unknown>;
+  const revisionId = bounded(source.revisionId, 128);
+  const digest = bounded(source.revisionDigest, 128);
+  const status = bounded(source.status, 64);
+  if (!revisionId || !digest || !status ||
+      typeof source.revisionVersion !== "number" ||
+      !Number.isInteger(source.revisionVersion) || source.revisionVersion < 1)
+    throw new Error("invalid rules preview identity");
+  const result = source.result;
+  if (result !== null && (typeof result !== "object" || Array.isArray(result)))
+    throw new Error("invalid rules preview result");
+  return {
+    revisionId,
+    revisionVersion: source.revisionVersion,
+    revisionDigest: digest,
+    status,
+    stale: source.stale === true,
+    result: result as Readonly<Record<string, unknown>> | null,
+    message: bounded(source.message, 512) ?? null,
+    nextAction: bounded(source.nextAction, 512) ?? null,
+    failureCategory: bounded(source.failureCategory, 128) ?? null,
+  };
+}
+
+/** Run one explicit V2 rules preview against an exact revision identity. */
+export async function runRulesPreview(
+  token: string | null,
+  kind: RulesPreviewKind,
+  body: Readonly<Record<string, unknown>>,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RulesPreviewModel>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(`${RULES_BASE}/previews/${kind}`, {
+      method: "POST",
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) return rulesReadFailure(response);
+  try {
+    return { ok: true, status: response.status, model: normalizeRulesPreview(await response.json()) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
 async function readRulesDocument<T>(
   url: string,
   token: string | null,

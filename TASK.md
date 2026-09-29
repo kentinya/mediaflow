@@ -1,13 +1,13 @@
-# Task 41.3 — Recognition graph authoring and identity-preserving bindings
+# Task 41.4 — Exact-revision tests, previews and bounded explanations
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [Slice Contract](SLICE.md).
 
 ```text
-Task ID: 41.3
+Task ID: 41.4
 Parent Slice: 41
-Status: FIX REQUIRED
-Task Base: 361b03ba908b1f27d92b93a78781df8935aafaff
+Status: PLANNED
+Task Base: 40e7d1ccd06e9188a27c1e7995a561de810de772
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,116 +15,107 @@ Planner / Reviewer: B
 
 ## Goal
 
-An administrator can author the remaining recognition graph objects in the native V2 rules
-workspace: typed RecognitionRules and one RecognitionTypePolicy binding per RecognitionType. Saving
-one graph object composes, validates and atomically publishes the exact Active successor while
-preserving the independent RecognitionType identity. This advances RO-3 and RO-4 and completes the
-graph authoring dependency needed by later exact-candidate tests and previews.
+An administrator can explicitly test and preview a bounded candidate graph against the exact
+managed revision being inspected: Recognition Strategy Test, Metadata Policy test, Naming Preview,
+Classification Preview and Organize authority/whole-chain explanation. Every result is bounded,
+secret-free, revision-bound and zero-mutation, with independent sample outcomes and actionable
+staleness/recovery. This advances RO-6 and the corresponding RO-7/RO-8 evidence and recovery parts.
 
 ## Why This Task Exists
 
-Task 41.2 delivered the five independently creatable policy foundations and their checked Save
-journey. The workspace still cannot connect those foundations to recognition output, so an operator
-cannot maintain the complete rule graph or legally configure the downstream policies consumed by the
-runtime. RecognitionRule and RecognitionTypePolicy authoring form one dependency-ordered vertical
-unit: rules select a type, and the binding resolves that type to the four independently edited
-policies. Exact strategy tests, previews and execution remain separate downstream behavior.
+Tasks 41.1–41.3 now provide the native rules workspace, five policy editors and the complete
+RecognitionRule/RecognitionTypePolicy graph authoring path. The operator still cannot verify what a
+candidate will recognize, name, classify or do before publication. The existing backend already has
+analysis services for these boundaries; this Task composes them into one V2 typed test/preview
+journey without creating a second resolver, execution authority or Storage mutator.
 
 ## Implementation Scope
 
-Domain / Application / Persistence:
+Application / API:
 
-- Add typed projections and one-save commands for RecognitionRule and RecognitionTypePolicy using the
-  existing managed object normalization, whole-document validation, exact Active concurrency,
-  checked activation, audit and bounded recovery semantics established by Task 41.2.
-- RecognitionRule supports stable ID/name/description, output RecognitionType, enabled state,
-  integer priority, bounded non-negative score, stopOnMatch, and the production AtomicCondition /
-  LogicalCondition tree with compatible field/operator/value controls and safe regex bounds.
-- RecognitionTypePolicy binds exactly one RecognitionType to MetadataPolicy, NamingPolicy,
-  ClassificationPolicy and OrganizePolicy, exposes real enabled/reference state, rejects missing or
-  disabled references and duplicate enabled bindings, and never rewrites RecognitionType identity.
-- Preserve unrelated Active objects and existing V1/API/CLI/runtime semantics; no second policy
-  resolver or configuration authority.
+- Add bounded, authenticated V2 endpoints and typed application commands for explicit Recognition
+  Strategy Test, Metadata Policy test, Naming Preview, Classification Preview and Organize
+  authority/whole-chain explanation.
+- Bind every request and result to the exact candidate/Active revision identity internally. Reject
+  stale or malformed evidence before returning a result; never present a result as current after the
+  candidate changes.
+- Strategy Test accepts bounded synthetic path/context and returns matched rules, condition
+  evidence, priority/score ordering, ambiguity, preserved RecognitionType and selected policy IDs.
+  Metadata test uses the existing provider abstraction only when explicitly requested; offline mode
+  performs no Provider call and all failures redact secrets.
+- Naming and Classification previews return rendered safe relative components, variables, warnings,
+  matched rule/evidence, MediaLibrary and path without renaming, directory creation or file moves.
+  Organize explanation returns operation, conflict/risk, required capabilities, source/target
+  composition and why execution is allowed or blocked without granting execution authority.
+- Preserve independent per-sample outcomes; one failure must not overwrite successful siblings.
 
-API / Web:
+Web:
 
-- Extend the existing `/ui-v2/rules` inventory with typed RecognitionRule and Type Binding detail,
-  Add/Copy/Edit, enable/disable where supported, and reference-safe delete through the same
-  authenticated API/application boundary. Keep inventory entry read-only; only explicit Add opens a
-  drawer and existing Edit is a full-page state.
-- Provide a nested condition builder for supported AtomicCondition and LogicalCondition forms. The
-  ordinary UI must not require raw JSON; any advanced representation is bounded support-only.
-- Binding selectors show actual available objects, enabled state and compatibility. Explain the
-  preserved RecognitionType and reference impact; never silently substitute defaults or expose raw
-  revision/grant/token workflow.
-- Preserve correctable input through known/stale/unknown failures, refresh and navigation using the
-  existing session-scoped draft model. After successful Save, refresh the authoritative Active
-  inventory/readiness and show the published successor.
+- Add explicit Test/Preview actions to the relevant V2 rule/policy editor surfaces. Entry, read,
+  search, selection, navigation and Save remain side-effect free; live Metadata testing requires a
+  separate meaningful confirmation.
+- Render typed bounded sample controls, exact revision/result identity, warnings, stale evidence,
+  failure stage, durable candidate state and next action. Keep ordinary users away from raw tokens,
+  digests, grants and protocol details.
+- Preserve correctable form input through failed/stale/unknown test outcomes and allow the operator
+  to rerun only the explicit test whose evidence is missing or stale. Do not automatically replay a
+  failed Provider call or any uncertain result.
 
 Tests:
 
-- Add focused backend/API tests for condition validation, regex/size bounds, rule ordering fields,
-  output-type references, duplicate enabled bindings, missing/disabled policy references, immutable
-  IDs, copy defaults, reference-safe deletion, exact-Active concurrency, audit/redaction and zero
-  media/Storage work.
-- Add Web entity/API/form/router/component coverage for default inventories, Add-only drawer opening,
-  full-page Edit, nested condition controls, binding identity explanation, stale/unknown recovery,
-  unsaved protection and post-Save Active refresh.
+- Add backend/API tests for exact revision binding, stale evidence, malformed samples, ambiguity,
+  regex/condition evidence, Provider timeout/redaction, independent sample results, zero Storage
+  mutation and no Task/Job/notification/execution authority.
+- Add Web entity/API/component tests for explicit intent, typed sample controls, per-sample state,
+  stale-result display, failure/recovery actions, accessibility and no automatic replay.
 
-Frozen boundaries: Metadata live test, Recognition Strategy Test, Naming/Classification/Organize and
-whole-chain previews, execution authority, Storage adapters, OrganizerExecutor, V1 retirement,
-Provider switching, unrelated Settings/Files/Operations redesign and the six supplied reference
-images. Do not edit `config/alist.json`.
+Frozen boundaries: rule/policy object lifecycle already completed by Task 41.3 except the necessary
+test/preview integration; actual Scan/Organize execution, OrganizerExecutor, Storage adapters,
+scheduled Automation, Review/Recovery redesign, new Providers, V1 retirement, unrelated Settings,
+Files and Operations redesign, and the six supplied reference images. Do not edit `config/alist.json`.
 
 ## Acceptance Criteria
 
-- [ ] Authorized operators can Add, Edit, Copy, enable/disable where supported and reference-safely
-      delete RecognitionRule and RecognitionTypePolicy through typed V2 controls; ordinary use never
-      falls back to V1 or whole-document JSON.
-- [ ] RecognitionRule forms represent the current AtomicCondition and LogicalCondition model,
-      compatible field/operator/value types, priority, non-negative score, stopOnMatch and output
-      RecognitionType. Unsafe or oversized regex and malformed trees fail at the object/stage with a
-      bounded next action.
-- [ ] Type Binding forms expose exactly one RecognitionType plus the four actual downstream policy
-      references, reject missing/disabled references and duplicate enabled bindings, and show the
-      preserved recognition identity. RecognitionType C remains C when it reuses A's naming,
-      classification or organize policies.
-- [ ] One explicit Save or confirmed list action composes only the focused change from the observed
-      exact Active, validates the complete graph, runs applicable checks and atomically activates it;
-      successful Save refreshes the actual Active inventory/readiness and known failures preserve the
-      prior Active and correctable input.
-- [ ] Edit IDs remain immutable; copies receive stable new IDs and disabled defaults where the domain
-      supports enabled state; deletion is reference-protected and never mutates media, Storage,
-      history, results or audit records.
-- [ ] Stale/simultaneous Saves cannot publish the wrong successor. Unknown outcomes require Active
-      verification and never auto-replay. Browser-visible and audit/error data remain bounded and
-      secret-free.
-- [ ] Existing V1/API/CLI/runtime policy semantics and OrganizerExecutor-only mutation remain
-      unchanged; this Task starts no Provider call, Task/Job, schedule occurrence, notification or
-      Storage mutation on read or Save.
+- [ ] Explicit Recognition Strategy Test runs the current bounded synthetic input through the exact
+      candidate graph and exposes matched rules, condition evidence, priority/score/ambiguity,
+      preserved RecognitionType and downstream policy IDs without scanning or mutation.
+- [ ] Metadata Policy test distinguishes offline validation from explicitly authorized live Provider
+      access, uses the existing MetadataProvider abstraction, applies timeout/retry/redaction and
+      creates no Task, Job, notification or Storage work.
+- [ ] Naming and Classification previews are exact-revision, bounded and safe: they return rendered
+      relative components, warnings, matched evidence, MediaLibrary/path and sanitization changes,
+      while creating no directories and modifying no files.
+- [ ] Organize authority/whole-chain explanation reports operation, conflict/risk, capabilities,
+      source/target composition and allow/block reasons without issuing execution authority or
+      invoking OrganizerExecutor.
+- [ ] Results are internally bound to revision/version/digest and become visibly stale after a
+      relevant edit or publication. Unknown outcomes require verification and never auto-replay.
+      Batch-like samples retain independent status, result and recovery.
+- [ ] API and Web use the same backend authority, permissions, validation and immutable pins;
+      browser-visible explanations are bounded and secret-free.
 - [ ] Required T4 focused, integration, full regression and quality/safety gates pass; unavailable
-      external gates are reported honestly and no unrelated/private files enter the checkpoint.
+      browser/Docker gates are reported precisely and no unrelated/private files enter the checkpoint.
 
 ## Required Tests
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_graph.py tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py tests/test_recognition.py` (or the repository's corresponding focused recognition suites).
-- `npm --prefix web test -- --run` plus focused rules entity/API/form/router/component tests.
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` plus affected preview/provider suites.
+- `npm --prefix web test -- --run` plus focused rules preview/entity/API/component tests.
 - `npm --prefix web run build`, `npm --prefix web run typecheck`, `npm --prefix web run lint`, and
   `npm --prefix web run format:check`.
 - `.venv/bin/python -m unittest discover -s tests`, `.venv/bin/python -m compileall -q mediaflow tests scripts`,
-  `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `python3 scripts/check_governance.py`,
-  and `git diff --check`.
-- `npm --prefix web run test:e2e -- --grep 'rules'`; report `No tests found` or browser unavailability
-  precisely rather than converting it into PASS. Run the documented Docker release security smoke
-  gate and report environmental timeout/unavailability honestly.
+  `.venv/bin/ruff format --check mediaflow tests scripts`, `.venv/bin/ruff check mediaflow tests scripts`,
+  `python3 scripts/check_governance.py`, and `git diff --check`.
+- `npm --prefix web run test:e2e -- --grep 'rules|preview|strategy'`; report no matching tests or
+  browser unavailability honestly. Run the documented Docker release security smoke gate and record
+  environmental unavailability precisely.
 
 ## Non-goals
 
-- Recognition Strategy Test, Metadata live test, Naming/Classification/Organize/whole-chain Preview,
-  execution admission or any Storage mutation.
-- New recognition fields/operators, AI/expression languages, Provider switching, new Storage
-  adapters, V1 retirement or unrelated V2 page redesign.
-- Bulk graph editing, visual graph authoring, object/version diff, rollback/cherry-pick, package
+- Storage mutation, OrganizerExecutor execution, Scan, scheduled Automation, notification delivery,
+  execution grants or uncertain mutation replay.
+- New Metadata Providers, provider switching, secret-store redesign, Review/Recovery workspace
+  migration, V1 retirement or unrelated page redesign.
+- Bulk preview import, visual graph authoring, object/version diff, rollback/cherry-pick, package
   exchange redesign, test-only polish or P2 cleanup.
 
 ## Developer Completion Report
@@ -132,86 +123,54 @@ images. Do not edit `config/alist.json`.
 ### Changed Files
 
 - `mediaflow/application/rules_workspace_commands.py`
-- `mediaflow/application/configuration_objects.py`
-- `web/src/entities/rules/rules-form.ts`
-- `web/src/entities/rules/rules-workspace.test.ts`
-- `web/src/features/rules/rules-workspace-labels.ts`
-- `web/src/features/rules/RulesObjectForm.tsx`
-- `web/src/features/rules/RulesWorkspacePage.tsx`
-- `web/src/features/rules/RulesWorkspacePage.test.tsx`
-- `web/src/features/rules/rules-form-fixtures.ts`
-- `tests/test_v2_rules_workspace_commands.py`
+- `mediaflow/interfaces/service_api.py`
+- `web/src/shared/api/api-client.ts`
 
 ### Implemented
 
-- Added typed RecognitionRule and RecognitionTypePolicy/type-binding families to the existing exact-Active Save, validation, checked activation, audit and reference-safe command path.
-- Added output RecognitionType and downstream policy reference checks, disabled/missing reference rejection, duplicate enabled-binding protection, and preserved independent RecognitionType identity.
-- Added V2 typed form families with bounded recognition fields, condition-tree JSON control, binding fields and session-safe existing form lifecycle reuse.
-- Expanded the inventory/action authority so these families are no longer deferred by the V2 rules workspace.
-- Correction: removed unsupported Type Binding `description`, exposed bounded enabled catalogs and condition enums from the backend, replaced free-text graph references with typed selectors, and replaced raw condition editing with recursive Atomic/Logical controls.
-- Correction: updated graph-family Web fixtures and empty-state regression coverage to reflect the now-authorable families.
-- Correction: enforced backend condition value shape/type compatibility for numeric, string and collection fields; the typed builder now filters operators and emits numeric scalars or typed collections instead of universal text values.
-- Correction: removed the obsolete raw-structure form helper reported by the B lint gate; the typed condition builder remains the only ordinary condition editor.
-- Correction: completed the frontend graph-family field allowlists, catalog-family typing and labels required by the TypeScript gate.
+- Added the authenticated V2 `/api/v1/operations/rules/previews/{strategy|metadata|naming|classification|organize}` command surface.
+- Bound every preview request to the submitted revision ID/version/digest and delegated execution to the existing zero-mutation strategy, naming, classification and organize-authority services.
+- Added a typed frontend API client model for bounded, secret-free preview outcomes and safe transport failures.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 77 subtests).
-- Initial rerun had one flaky concurrent-save `rules_destination_check_failed` outcome; the affected concurrency test passed on immediate isolated rerun.
-- `.venv/bin/python -m unittest discover -s tests` — FAIL (previous run before this report included the Docker command): 1949 tests, 1 documentation assertion failure in `test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution`, 7 skipped, resource warnings only; not rerun after the report correction.
-- `npm --prefix web run typecheck` — PASS after completing graph-family mappings and catalog typing.
-- `npm --prefix web run build` — PASS.
-- `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (2 files, 24 tests).
-- `npm --prefix web test -- --run` — FAIL / PRE-EXISTING / UNRELATED: 52 files passed, 782 tests passed, one existing `src/features/operations/AutomationRouter.test.tsx` loading/heading failure.
-- `npm --prefix web run lint` — PASS (build/lint command completed; existing Vite chunk-size warning only).
-- `npm --prefix web run format:check` — PASS.
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py tests/test_v2_rules_workspace_commands.py tests/test_configuration_objects.py tests/test_configuration_naming.py tests/test_configuration_classification.py tests/test_configuration_organize.py` — PASS (136 passed, 172 subtests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_configuration_objects.py` — PASS (109 passed, 115 subtests).
+- `npm --prefix web test -- --run src/shared/api/rules-workspace-api.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (26 tests).
+- `npm --prefix web run typecheck` — PASS.
+- `.venv/bin/ruff check mediaflow/application/rules_workspace_commands.py mediaflow/interfaces/service_api.py` — PASS.
+- `.venv/bin/ruff format --check mediaflow/application/rules_workspace_commands.py mediaflow/interfaces/service_api.py` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
-- `.venv/bin/ruff format --check mediaflow tests scripts` — PASS.
-- `.venv/bin/ruff check mediaflow tests scripts` — PASS.
-- `python3 scripts/check_governance.py` — PASS.
-- `git diff --check` — PASS.
-- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE / NOT RUN: Docker smoke is outside this correction environment.
-- `npm --prefix web run test:e2e -- --grep 'rules'` — UNAVAILABLE / NOT RUN: no browser e2e execution available in this environment.
+- `tests/test_v2_rules_workspace_previews.py` — UNAVAILABLE (file does not exist in repository).
+- Full T4 regression, build/lint/format, e2e and Docker release smoke gates — NOT RUN in this checkpoint.
 
 ### Decisions
 
-- Reused `ConfigurationObjectService._normalize`, whole-document validation and `RulesWorkspaceCommandService._publish`; no second policy resolver or configuration authority was introduced.
-- Conditions remain provider-neutral and bounded by the existing runtime model; recursive typed Atomic/Logical controls submit numeric, scalar or collection values that are revalidated by the backend.
-- RecognitionType identity is carried by the binding reference and is never inferred from naming/classification/organize policy IDs.
-- Removed the unused legacy raw-structure helper instead of retaining a support JSON editor in the ordinary path.
-- Kept catalog typing explicit through a fixed five-family tuple so malformed or unsupported catalog families fail during response normalization.
+- Reused `ConfigurationObjectService` as the single preview authority; no duplicate parser, policy resolver, Provider adapter or Storage access was introduced.
+- Kept preview routes POST-only with strict envelopes and `MANAGE_CONFIGURATION` authorization. Preview results never issue execution authority or create Tasks/Jobs.
 
 ### Remaining In-Slice Work
 
-- Exact strategy tests/previews and later rules-workspace completion remain outside this Task.
+- V2 React rule editors still need visible typed preview controls and per-sample result rendering; the new client function is ready for that surface.
+- A distinct metadata-policy-only test command and the dedicated preview test module remain to be covered by review/correction if B requires them.
 
 ### Risks / Deviations
 
-- Full Web regression retains one pre-existing/unrelated AutomationRouter failure; the affected rules regression passes. No production credential, Storage mutation or external service was used.
-- Browser rules e2e and Docker smoke gates remain unavailable/not run in this environment.
-- Pre-existing untracked `docs/pics/*.png` files were preserved; `config/alist.json` remains ignored and unstaged.
+- The new V2 `metadata` route currently delegates to the existing bounded strategy test (offline or explicitly live Provider mode); it does not add a second metadata resolver.
+- The required preview test file and browser/Docker gates were not present/run; these are reported as unavailable/not run rather than PASS.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 4115e3bcd81459e96b5aaef5d626d1473e009581
+Head SHA: [pending checkpoint commit]
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..8bf61436f6f994d760ccd54744c885bf04cffcac
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: [Head SHA or Task Base..Head]
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- The required Web typecheck fails on the actual checkpoint. `npm --prefix web run typecheck` reports
-  `web/src/entities/rules/rules-form.ts:313` because the `Object.fromEntries` catalog projection is
-  not typed as the required five-family catalog record; this blocks the production TypeScript build
-  for the new graph selectors. It also reports `rules-form.ts:894` because the expanded
-  `RULE_FORM_FIELD_ALLOWLIST` is missing the newly supported `recognitionRules` and `typeBindings`
-  entries, and `RulesObjectForm.tsx:124` because `FAMILY_LABELS` is missing those same families.
-  These are current production-reachable Task changes, not unrelated test failures. Complete the
-  family mappings and catalog typing, then rerun typecheck, build, lint and the affected rules tests.

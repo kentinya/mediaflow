@@ -9211,6 +9211,8 @@ class MediaFlowApi:
                 return "/api/v1/operations/rules/inventory"
             if len(parts) == 5 and parts[4] == "form-authority":
                 return "/api/v1/operations/rules/form-authority"
+            if len(parts) == 6 and parts[4] == "previews":
+                return f"/api/v1/operations/rules/previews/{parts[5]}"
             if parts[4] == "objects":
                 if len(parts) == 6:
                     return "/api/v1/operations/rules/objects/{family}"
@@ -13280,6 +13282,8 @@ class MediaFlowApi:
             return self._rules_document(
                 start_response, lambda: self._rules_workspace.form_authority()
             )
+        if len(parts) == 6 and parts[4] == "previews" and method == "POST":
+            return self._rules_preview_command(parts, environ, start_response, principal)
         if len(parts) >= 6 and parts[4] == "objects" and parts[5] in RULE_WORKSPACE_FAMILIES:
             return self._rules_object_command(parts, method, environ, start_response, principal)
         if len(parts) >= 5 and parts[4] == "objects":
@@ -13303,6 +13307,127 @@ class MediaFlowApi:
                 },
             )
         return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _rules_preview_command(
+        self,
+        parts: list[str],
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """V2 typed, exact-revision preview surface.
+
+        The command envelope is deliberately strict. Preview requests carry the
+        inspected revision identity, while the application service owns all
+        parsing, provider and policy semantics. No route here creates work or
+        grants execution authority.
+        """
+        self._require_empty_query(environ, "rules preview")
+        self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+        kind = parts[5]
+        allowed = {
+            "strategy": {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "resourceLibraryId",
+                "syntheticPath",
+                "liveMetadata",
+            },
+            "metadata": {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "resourceLibraryId",
+                "syntheticPath",
+                "liveMetadata",
+            },
+            "naming": {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "policyId",
+                "sample",
+            },
+            "classification": {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "policyId",
+                "sample",
+            },
+            "organize": {
+                "expectedRevisionId",
+                "expectedVersion",
+                "expectedDigest",
+                "recognitionType",
+            },
+        }
+        if kind not in allowed:
+            return self._error(start_response, 404, "not_found", "preview route was not found")
+        document = self._document(environ)
+        if set(document) != allowed[kind]:
+            raise ValueError(f"rules {kind} preview contains unsupported or missing fields")
+        revision_id = document["expectedRevisionId"]
+        version = document["expectedVersion"]
+        digest = document["expectedDigest"]
+        if not isinstance(revision_id, str) or not revision_id.strip():
+            raise ValueError("expectedRevisionId must be a non-empty string")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise ValueError("expectedVersion must be a positive integer")
+        if not isinstance(digest, str) or not digest.strip():
+            raise ValueError("expectedDigest must be a non-empty string")
+        if kind in {"naming", "classification"} and not isinstance(document["sample"], dict):
+            raise ValueError("preview sample must be an object")
+        if kind in {"strategy", "metadata"}:
+            if (
+                not isinstance(document["resourceLibraryId"], str)
+                or not document["resourceLibraryId"].strip()
+            ):
+                raise ValueError("resourceLibraryId must be a non-empty string")
+            if (
+                not isinstance(document["syntheticPath"], str)
+                or not document["syntheticPath"].strip()
+            ):
+                raise ValueError("syntheticPath must be a non-empty string")
+            if not isinstance(document["liveMetadata"], bool):
+                raise ValueError("liveMetadata must be a boolean")
+            evidence = self._rules_workspace.preview_strategy(
+                revision_id,
+                expected_version=version,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                resource_library_id=document["resourceLibraryId"],
+                synthetic_path=document["syntheticPath"],
+                live_metadata=document["liveMetadata"],
+            )
+        elif kind == "naming":
+            evidence = self._rules_workspace.preview_naming(
+                revision_id,
+                expected_version=version,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                policy_id=document["policyId"],
+                sample=document["sample"],
+            )
+        elif kind == "classification":
+            evidence = self._rules_workspace.preview_classification(
+                revision_id,
+                expected_version=version,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                policy_id=document["policyId"],
+                sample=document["sample"],
+            )
+        else:
+            evidence = self._rules_workspace.explain_organize(
+                revision_id,
+                expected_version=version,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                recognition_type=document["recognitionType"],
+            )
+        return self._response(start_response, 200, evidence.document())
 
     def _rules_object_command(
         self,
