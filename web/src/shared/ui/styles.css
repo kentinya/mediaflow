@@ -554,6 +554,86 @@ body {
   display: grid;
   gap: 0.9rem;
 }
+.mf-rules-preview {
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+  border: 1px solid #dce3ed;
+  border-radius: 0.6rem;
+  background: #fff;
+}
+.mf-rules-preview-sample-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.65rem;
+}
+.mf-rules-preview-sample-grid label {
+  display: grid;
+  gap: 0.25rem;
+  color: #334155;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+.mf-rules-preview-sample-grid input,
+.mf-rules-preview-sample-grid select,
+.mf-rules-preview-sample-grid textarea {
+  min-height: 2.3rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 0.45rem;
+  padding: 0.4rem 0.55rem;
+  font: inherit;
+  background: #fff;
+}
+.mf-rules-preview-advanced {
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed #c9d3e2;
+  border-radius: 0.45rem;
+  background: #f8fafc;
+}
+.mf-rules-preview-advanced summary {
+  cursor: pointer;
+  color: #41506b;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+.mf-rules-preview-result {
+  display: grid;
+  gap: 0.55rem;
+  padding: 0.85rem;
+  border: 1px solid #dce3ed;
+  border-radius: 0.55rem;
+  background: #fbfcfe;
+}
+.mf-rules-preview-explanation h4 {
+  margin: 0.75rem 0 0.35rem;
+  color: #22314a;
+}
+.mf-rules-preview-explanation dl {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+  gap: 0.3rem 0.75rem;
+  margin: 0;
+}
+.mf-rules-preview-explanation dt {
+  color: #5f6b7d;
+  font-weight: 600;
+}
+.mf-rules-preview-explanation dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.mf-rules-preview-explanation table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.mf-rules-preview-explanation th,
+.mf-rules-preview-explanation td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid #e2e7ef;
+  text-align: left;
+  font-size: 0.8rem;
+}
 @media (max-width: 720px) {
   .mf-rules-drawer {
     top: 8px;
@@ -561,6 +641,9 @@ body {
     bottom: 8px;
     left: 8px;
     width: auto;
+  }
+  .mf-rules-preview-explanation dl {
+    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 900px) {
