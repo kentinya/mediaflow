@@ -90,6 +90,9 @@ describe("RulesEditPage previews", () => {
     renderApp("/ui-v2/rules/edit/recognitionTypes/C");
     expect(await screen.findByRole("heading", { name: "C" })).toBeVisible();
     expect(screen.getByLabelText("样本标题")).toHaveValue("The Matrix");
+    expect(screen.getByLabelText("样本 RecognitionType")).toHaveValue("C");
+    expect(screen.getByLabelText("样本 RecognitionType")).toBeDisabled();
+    expect(screen.queryByRole("option", { name: "从路径解析" })).toBeNull();
     expect(screen.queryByLabelText("命名、分类与目标样本 JSON")).toBeNull();
     expect(screen.queryByRole("button", { name: "测试元数据策略" })).toBeNull();
     const user = userEvent.setup();

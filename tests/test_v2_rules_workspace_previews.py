@@ -244,6 +244,41 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             self.assertEqual(body["result"][result_key], "A", kind)
             self.assertEqual(body["result"]["recognitionType"], "C", kind)
 
+    def test_bound_previews_reject_path_and_mismatched_typed_identity(self) -> None:
+        for kind in ("naming", "classification"):
+            candidate = self.candidate("recognitionTypes", "C")
+            base = {
+                **self.authority(),
+                "candidate": candidate,
+                "policySelection": {
+                    "mode": "binding",
+                    "recognitionType": "C",
+                },
+            }
+            status, body = self.harness.request(
+                "POST",
+                f"/api/v1/operations/rules/previews/{kind}",
+                {**base, "sample": {"path": "/C/Special.C.2025.mkv"}},
+            )
+            self.assertEqual(status, 400, kind)
+            self.assertEqual(body["error"]["code"], "invalid_request", kind)
+
+            sample = {
+                "title": "Special C",
+                "mediaType": "movie",
+                "recognitionType": "B",
+                "year": 2025,
+            }
+            if kind == "naming":
+                sample["extension"] = "mkv"
+            status, body = self.harness.request(
+                "POST",
+                f"/api/v1/operations/rules/previews/{kind}",
+                {**base, "sample": sample},
+            )
+            self.assertEqual(status, 400, kind)
+            self.assertEqual(body["error"]["code"], "invalid_request", kind)
+
     def test_organize_explanation_composes_destination_verdict_without_authority(self) -> None:
         status, body = self.harness.request(
             "POST",
