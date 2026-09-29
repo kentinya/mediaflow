@@ -395,7 +395,7 @@ describe("RulesWorkspacePage", () => {
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 
-  it("deferred families state the real blocker instead of an invented editor", async () => {
+  it("graph families expose their typed create journey and dependency guidance", async () => {
     const empty = Object.fromEntries(
       Object.keys(rulesPayload.sections).map((key) => [key, []]),
     );
@@ -437,13 +437,13 @@ describe("RulesWorkspacePage", () => {
       expect(screen.queryByText(`去配置工作流添加${tab}`)).toBeNull();
       expect(screen.queryByRole("dialog")).toBeNull();
     }
-    // RecognitionRule and type bindings stay a stated later unit, not a fake button.
+    // Graph families now expose native typed create controls.
     await user.click(screen.getByRole("button", { name: "识别规则" }));
-    expect(screen.getByText(/规则编辑是本 Slice 后续单元/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "添加识别规则" })).toBeNull();
+    expect(screen.getByText(/必须引用已存在的识别类型/)).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "添加识别规则" })[0]).toBeVisible();
     await user.click(screen.getByRole("button", { name: "类型绑定" }));
-    expect(screen.getByText(/绑定编辑是本 Slice 后续单元/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "添加类型绑定" })).toBeNull();
+    expect(screen.getByText(/类型绑定需要已有的识别类型/)).toBeVisible();
+    expect(screen.getAllByRole("button", { name: "添加类型绑定" })[0]).toBeVisible();
   });
 
   it("stays operable by keyboard and narrow layout on the drawer path", async () => {

@@ -67,6 +67,12 @@ export interface ProviderReference {
   }[];
 }
 
+export interface RuleCatalogItem {
+  readonly id: string;
+  readonly name: string;
+  readonly enabled: boolean;
+}
+
 export interface RuleEnums {
   readonly mediaTypes: readonly string[];
   readonly mediaQueryTypes: readonly string[];
@@ -80,6 +86,9 @@ export interface RuleEnums {
   readonly conflictStrategies: readonly string[];
   readonly cleanupModes: readonly string[];
   readonly hashModes: readonly string[];
+  readonly conditionFields: readonly string[];
+  readonly conditionOperators: readonly string[];
+  readonly logicalOperators: readonly string[];
 }
 
 export interface RuleFormAuthority {
@@ -88,6 +97,7 @@ export interface RuleFormAuthority {
   readonly families: Readonly<Record<RuleFormFamily, RuleFormDefaults>>;
   readonly mediaLibraries: readonly MediaLibraryReference[];
   readonly providers: readonly ProviderReference[];
+  readonly catalogs: Readonly<Record<"recognitionTypes" | "metadataPolicies" | "namingPolicies" | "classificationPolicies" | "organizePolicies", readonly RuleCatalogItem[]>>;
   readonly enums: RuleEnums;
   readonly limits: {
     readonly objectId: number;
@@ -252,6 +262,9 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
     ),
     cleanupModes: stringList(enumsSource.cleanupModes, "enums.cleanupModes"),
     hashModes: stringList(enumsSource.hashModes, "enums.hashModes"),
+    conditionFields: stringList(enumsSource.conditionFields, "enums.conditionFields"),
+    conditionOperators: stringList(enumsSource.conditionOperators, "enums.conditionOperators"),
+    logicalOperators: stringList(enumsSource.logicalOperators, "enums.logicalOperators"),
   };
   if (!Array.isArray(source.mediaLibraries)) {
     throw new Error("invalid field: mediaLibraries");
@@ -295,12 +308,27 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
       }),
     } satisfies ProviderReference;
   });
+  const catalogsSource = readRecord(source.catalogs, "rulesAuthority.catalogs");
+  const catalogFamilies = ["recognitionTypes", "metadataPolicies", "namingPolicies", "classificationPolicies", "organizePolicies"] as const;
+  const catalogs = Object.fromEntries(catalogFamilies.map((family) => {
+    const values = catalogsSource[family];
+    if (!Array.isArray(values)) throw new Error(`invalid field: catalogs.${family}`);
+    return [family, values.map((raw, index) => {
+      const item = readRecord(raw, `catalogs.${family}[${index}]`);
+      return {
+        id: normalizeBoundedText(item.id, `catalogs.${family}.id`, 64),
+        name: normalizeBoundedText(item.name, `catalogs.${family}.name`, 120),
+        enabled: normalizeBoolean(item.enabled, `catalogs.${family}.enabled`),
+      } satisfies RuleCatalogItem;
+    })];
+  })) as RuleFormAuthority["catalogs"];
   const activeSource = readRecord(source.active, "rulesAuthority.active");
   return {
     active: activeSource,
     families: normalizeFamilyAuthority(source.families),
     mediaLibraries,
     providers,
+    catalogs,
     enums,
     limits: {
       objectId: normalizeBoundedCount(limitsSource.objectId, "limits.objectId"),

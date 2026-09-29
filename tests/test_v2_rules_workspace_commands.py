@@ -364,7 +364,9 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         self.assertEqual(status, 200)
         counts = refreshed["overview"]["counts"]
         for family in RULE_FAMILIES:
-            self.assertEqual(counts[family], 0 if family in {"recognitionRules", "typeBindings"} else 1, family)
+            self.assertEqual(
+                counts[family], 0 if family in {"recognitionRules", "typeBindings"} else 1, family
+            )
         self.assertEqual(
             [item["id"] for item in refreshed["sections"]["recognitionTypes"]], ["movie"]
         )

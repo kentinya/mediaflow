@@ -64,6 +64,7 @@ from mediaflow.domain.organizer import (
     DirectoryCleanupMode,
     OrganizeOperationType,
 )
+from mediaflow.domain.recognition import ConditionField, ConditionOperator, LogicalOperator
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     SUPPORTED_METADATA_PROVIDER_IDS,
     metadata_provider_secret_env_fields,
@@ -106,7 +107,19 @@ _FAMILY_SPECS: dict[str, _FamilySpec] = {
         kind=ConfigurationObjectKind.RECOGNITION_RULE,
         section="recognitionRules",
         label="RecognitionRule",
-        form_fields=frozenset({"id", "name", "description", "condition", "outputRecognitionType", "enabled", "priority", "score", "stopOnMatch"}),
+        form_fields=frozenset(
+            {
+                "id",
+                "name",
+                "description",
+                "condition",
+                "outputRecognitionType",
+                "enabled",
+                "priority",
+                "score",
+                "stopOnMatch",
+            }
+        ),
         supports_enabled=True,
     ),
     "typeBindings": _FamilySpec(
@@ -114,7 +127,19 @@ _FAMILY_SPECS: dict[str, _FamilySpec] = {
         kind=ConfigurationObjectKind.RECOGNITION_TYPE_POLICY,
         section="recognitionTypePolicies",
         label="RecognitionTypePolicy",
-        form_fields=frozenset({"id", "name", "description", "recognitionType", "metadataPolicy", "namingPolicy", "classificationPolicy", "organizePolicy", "enabled", "priority"}),
+        form_fields=frozenset(
+            {
+                "id",
+                "name",
+                "recognitionType",
+                "metadataPolicy",
+                "namingPolicy",
+                "classificationPolicy",
+                "organizePolicy",
+                "enabled",
+                "priority",
+            }
+        ),
         supports_enabled=True,
     ),
     "recognitionTypes": _FamilySpec(
@@ -173,12 +198,24 @@ _NAMING_TEMPLATE_FIELDS = (
 # real backend default instead of an invented one.
 _FORM_DEFAULTS: dict[str, dict[str, object]] = {
     "recognitionRules": {
-        "name": "", "description": "", "condition": {"operator": "always", "children": []},
-        "outputRecognitionType": "", "enabled": True, "priority": 0, "score": 1, "stopOnMatch": False,
+        "name": "",
+        "description": "",
+        "condition": {"operator": "always", "children": []},
+        "outputRecognitionType": "",
+        "enabled": True,
+        "priority": 0,
+        "score": 1,
+        "stopOnMatch": False,
     },
     "typeBindings": {
-        "name": "", "description": "", "recognitionType": "", "metadataPolicy": "",
-        "namingPolicy": "", "classificationPolicy": "", "organizePolicy": "", "enabled": True, "priority": 0,
+        "name": "",
+        "recognitionType": "",
+        "metadataPolicy": "",
+        "namingPolicy": "",
+        "classificationPolicy": "",
+        "organizePolicy": "",
+        "enabled": True,
+        "priority": 0,
     },
     "recognitionTypes": {"name": "", "description": "", "enabled": True},
     "metadataPolicies": {
@@ -316,6 +353,23 @@ class RulesWorkspaceCommandService:
             }
             for provider_id in sorted(SUPPORTED_METADATA_PROVIDER_IDS)
         ]
+        catalogs = {
+            family: [
+                {
+                    "id": str(item.get("id")),
+                    "name": _bounded(item.get("name"), 120) or str(item.get("id")),
+                    "enabled": item.get("enabled", True) is not False,
+                }
+                for item in self._objects._canonical_objects(active.document, section)
+            ]
+            for family, section in (
+                ("recognitionTypes", "recognitionTypes"),
+                ("metadataPolicies", "metadataPolicies"),
+                ("namingPolicies", "namingPolicies"),
+                ("classificationPolicies", "classificationPolicies"),
+                ("organizePolicies", "organizePolicies"),
+            )
+        }
         families = []
         for family in RULE_FAMILIES:
             spec = _FAMILY_SPECS[family]
@@ -342,6 +396,7 @@ class RulesWorkspaceCommandService:
             "families": families,
             "mediaLibraries": media_libraries,
             "metadataProviders": providers,
+            "catalogs": catalogs,
             "enums": {
                 "mediaTypes": [item.value for item in MediaType],
                 "mediaQueryTypes": [item.value for item in MediaQueryType],
@@ -360,6 +415,9 @@ class RulesWorkspaceCommandService:
                 "conflictStrategies": [item.value for item in ConflictStrategy],
                 "cleanupModes": [item.value for item in DirectoryCleanupMode],
                 "hashModes": [item.value for item in HashMode],
+                "conditionFields": [item.value for item in ConditionField],
+                "conditionOperators": [item.value for item in ConditionOperator],
+                "logicalOperators": [item.value for item in LogicalOperator],
             },
             "limits": {
                 "objectId": MAX_RULES_OBJECT_ID_LENGTH,
@@ -1053,9 +1111,12 @@ class RulesWorkspaceCommandService:
                 raise RulesWorkspaceSaveError(
                     "rules_reference_unavailable",
                     f"RecognitionRule output RecognitionType {output!r} is missing or disabled",
-                    status=409, object_kind=spec.family,
+                    status=409,
+                    object_kind=spec.family,
                     object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
-                    stage="reference", durable_state="active_preserved", side_effects="none",
+                    stage="reference",
+                    durable_state="active_preserved",
+                    side_effects="none",
                     next_action="choose an enabled RecognitionType, then save again",
                 )
             return
@@ -1073,24 +1134,36 @@ class RulesWorkspaceCommandService:
                     for item in self._objects._canonical_objects(document, section)
                 }
                 target = catalog.get(str(value.get(field)))
-                if target is None or (section != "organizePolicies" and target.get("enabled", True) is False):
+                if target is None or (
+                    section != "organizePolicies" and target.get("enabled", True) is False
+                ):
                     raise RulesWorkspaceSaveError(
                         "rules_reference_unavailable",
                         f"RecognitionTypePolicy {field} references a missing or disabled object",
-                        status=409, object_kind=spec.family,
+                        status=409,
+                        object_kind=spec.family,
                         object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
-                        stage="reference", durable_state="active_preserved", side_effects="none",
+                        stage="reference",
+                        durable_state="active_preserved",
+                        side_effects="none",
                         next_action=f"choose an enabled {field} reference, then save again",
                     )
             if value.get("enabled", True) is not False:
                 for item in self._objects._canonical_objects(document, "recognitionTypePolicies"):
-                    if str(item.get("id")) != str(value.get("id")) and item.get("enabled", True) is not False and str(item.get("recognitionType")) == str(value.get("recognitionType")):
+                    if (
+                        str(item.get("id")) != str(value.get("id"))
+                        and item.get("enabled", True) is not False
+                        and str(item.get("recognitionType")) == str(value.get("recognitionType"))
+                    ):
                         raise RulesWorkspaceSaveError(
                             "rules_duplicate_enabled_binding",
                             "only one enabled RecognitionTypePolicy may bind each RecognitionType",
-                            status=409, object_kind=spec.family,
+                            status=409,
+                            object_kind=spec.family,
                             object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
-                            stage="reference", durable_state="active_preserved", side_effects="none",
+                            stage="reference",
+                            durable_state="active_preserved",
+                            side_effects="none",
                             next_action="disable or edit the existing binding, then save again",
                         )
             return
