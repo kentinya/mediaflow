@@ -64,7 +64,12 @@ from mediaflow.domain.organizer import (
     DirectoryCleanupMode,
     OrganizeOperationType,
 )
-from mediaflow.domain.recognition import ConditionField, ConditionOperator, LogicalOperator
+from mediaflow.domain.recognition import (
+    ConditionField,
+    ConditionOperator,
+    LogicalOperator,
+    RecognitionType,
+)
 from mediaflow.infrastructure.metadata_provider_bootstrap import (
     SUPPORTED_METADATA_PROVIDER_IDS,
     metadata_provider_secret_env_fields,
@@ -456,6 +461,64 @@ class RulesWorkspaceCommandService:
             sample=sample,
             allow_active=True,
         )
+
+    def preview_naming_for_type(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        recognition_type: str,
+        sample: Mapping[str, object],
+    ):
+        """Resolve NamingPolicy from the exact candidate type binding."""
+        policy_id = self._bound_policy_id(revision_id, recognition_type, policy="naming")
+        return self.preview_naming(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            policy_id=policy_id,
+            sample=sample,
+        )
+
+    def preview_classification_for_type(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        recognition_type: str,
+        sample: Mapping[str, object],
+    ):
+        """Resolve ClassificationPolicy from the exact candidate type binding."""
+        policy_id = self._bound_policy_id(revision_id, recognition_type, policy="classification")
+        return self.preview_classification(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            policy_id=policy_id,
+            sample=sample,
+        )
+
+    def _bound_policy_id(self, revision_id: str, recognition_type: str, *, policy: str) -> str:
+        if (
+            not isinstance(recognition_type, str)
+            or not recognition_type.strip()
+            or len(recognition_type) > MAX_RULES_OBJECT_ID_LENGTH
+        ):
+            raise ValueError("RecognitionType must be bounded and non-empty")
+        revision = self._managed.require(revision_id)
+        resolver, _organize_policies = self._objects._policy_resolution_catalog(revision.document)
+        resolved = resolver.resolve(RecognitionType(recognition_type, recognition_type))
+        if policy == "naming":
+            return resolved.naming_policy_id
+        if policy == "classification":
+            return resolved.classification_policy_id
+        raise ValueError("unsupported bound preview policy")
 
     def explain_organize(
         self,

@@ -91,6 +91,7 @@ describe("RulesEditPage previews", () => {
     expect(await screen.findByRole("heading", { name: "C" })).toBeVisible();
     expect(screen.getByLabelText("样本标题")).toHaveValue("The Matrix");
     expect(screen.queryByLabelText("命名、分类与目标样本 JSON")).toBeNull();
+    expect(screen.queryByRole("button", { name: "测试元数据策略" })).toBeNull();
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "测试识别策略" }));
     expect(await screen.findByText(/候选修订 candidat/)).toBeVisible();
@@ -237,6 +238,7 @@ describe("RulesEditPage previews", () => {
     expect(screen.getByText("Movies")).toBeVisible();
     expect(screen.getByText("Sci-Fi")).toBeVisible();
     expect(previewBodies[0]).toMatchObject({
+      policySelection: { mode: "binding", recognitionType: "C" },
       sample: {
         title: "The Matrix",
         mediaType: "movie",
@@ -278,7 +280,7 @@ describe("RulesEditPage previews", () => {
           return new Response(
             JSON.stringify(
               previewPayload({
-                appliedPolicyId: "C",
+                appliedPolicyId: "A",
                 recognitionType: "C",
                 mediaType: "movie",
                 directory: "The Matrix (2000)",
@@ -316,6 +318,7 @@ describe("RulesEditPage previews", () => {
     expect(await screen.findByText("The Matrix (2000).mkv")).toBeVisible();
     expect(previewBodies).toHaveLength(1);
     expect(previewBodies[0]).toMatchObject({
+      policySelection: { mode: "binding", recognitionType: "C" },
       sample: { title: "The Matrix", year: 2000, recognitionType: "C" },
     });
   });

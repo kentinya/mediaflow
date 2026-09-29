@@ -5664,7 +5664,7 @@ class ConfigurationObjectService:
         )
         result = evidence.result if isinstance(evidence.result, dict) else {}
         effective = result.get("effectiveMetadataPolicy")
-        effective_id = effective.get("policyId") if isinstance(effective, dict) else None
+        effective_id = effective.get("id") if isinstance(effective, dict) else None
         if effective_id != policy_id:
             raise ConfigurationVersionConflict(
                 "MetadataPolicy test does not match the effective policy selected by the candidate",

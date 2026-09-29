@@ -37,7 +37,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
             {
                 **self.authority(),
                 "candidate": self.candidate("namingPolicies", "A"),
-                "policyId": "A",
+                "policySelection": {"mode": "direct", "policyId": "A"},
                 "sample": {
                     "title": "The Matrix",
                     "mediaType": "movie",
@@ -138,7 +138,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
                         "directoryTemplate": "{unknown_variable}",
                     },
                 },
-                "policyId": "new-policy",
+                "policySelection": {"mode": "direct", "policyId": "new-policy"},
                 "sample": {"title": "Example", "mediaType": "movie", "extension": "mkv"},
             },
         )
@@ -162,7 +162,7 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
                     "objectId": None,
                     "values": candidate_values,
                 },
-                "policyId": "candidate-name",
+                "policySelection": {"mode": "direct", "policyId": "candidate-name"},
                 "sample": {
                     "title": "The Matrix",
                     "mediaType": "movie",
@@ -177,6 +177,72 @@ class RulesWorkspacePreviewApiTests(unittest.TestCase):
         active = self.harness.configuration.active()
         assert active is not None
         self.assertNotEqual(active.revision_id, body["revisionId"])
+
+    def test_matching_metadata_policy_offline_succeeds_and_mismatch_is_rejected(self) -> None:
+        request = {
+            **self.authority(),
+            "candidate": self.candidate("metadataPolicies", "C"),
+            "policyId": "C",
+            "resourceLibraryId": "source",
+            "syntheticPath": "/C/Special.C.2025.mkv",
+            "liveMetadata": False,
+        }
+        status, body = self.harness.request(
+            "POST", "/api/v1/operations/rules/previews/metadata", request
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["result"]["effectiveMetadataPolicy"]["id"], "C")
+        self.assertEqual(self.harness.provider_calls, [])
+
+        mismatch = {
+            **self.authority(),
+            "candidate": self.candidate("metadataPolicies", "C"),
+            "policyId": "A",
+            "resourceLibraryId": "source",
+            "syntheticPath": "/C/Special.C.2025.mkv",
+            "liveMetadata": False,
+        }
+        status, body = self.harness.request(
+            "POST", "/api/v1/operations/rules/previews/metadata", mismatch
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"]["code"], "configuration_version_conflict")
+
+    def test_type_c_bound_previews_use_policy_a_without_changing_type(self) -> None:
+        sample = {
+            "title": "Special C",
+            "mediaType": "movie",
+            "recognitionType": "C",
+            "year": 2025,
+            "extension": "mkv",
+        }
+        for kind, result_key in (
+            ("naming", "appliedPolicyId"),
+            ("classification", "appliedPolicyId"),
+        ):
+            kind_sample = (
+                sample
+                if kind == "naming"
+                else {key: value for key, value in sample.items() if key != "extension"}
+            )
+            status, body = self.harness.request(
+                "POST",
+                f"/api/v1/operations/rules/previews/{kind}",
+                {
+                    **self.authority(),
+                    "candidate": self.candidate("recognitionTypes", "C"),
+                    "policySelection": {
+                        "mode": "binding",
+                        "recognitionType": "C",
+                    },
+                    "sample": kind_sample,
+                },
+            )
+            self.assertEqual(status, 200, kind)
+            self.assertEqual(body["status"], "completed", kind)
+            self.assertEqual(body["result"][result_key], "A", kind)
+            self.assertEqual(body["result"]["recognitionType"], "C", kind)
 
     def test_organize_explanation_composes_destination_verdict_without_authority(self) -> None:
         status, body = self.harness.request(
