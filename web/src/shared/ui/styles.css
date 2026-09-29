@@ -317,6 +317,260 @@ body {
   }
 }
 
+/* --- Task 41.2: typed rules-workspace actions, drawer, editor and forms --- */
+.mf-rules-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.mf-rules-actions button,
+.mf-rules-drawer-actions button {
+  min-height: 2rem;
+  padding: 0.25rem 0.6rem;
+  font-size: 0.82rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 0.4rem;
+  background: #fff;
+  color: #17233b;
+  cursor: pointer;
+}
+.mf-rules-actions button:disabled {
+  color: #94a0b2;
+  cursor: not-allowed;
+  background: #f3f5f8;
+}
+.mf-rules-table td:last-child {
+  min-width: 200px;
+}
+.mf-rules-drawer-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+.mf-rules-drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+}
+.mf-rules-drawer {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  bottom: 24px;
+  left: auto;
+  grid-template-columns: 1fr;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  width: min(560px, calc(100vw - 32px));
+}
+.mf-rules-drawer .mf-files-drawer-body {
+  padding: 16px 18px;
+  gap: 0.9rem;
+}
+.mf-rules-drawer-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 12px 18px;
+  border-top: 1px solid #edf0f4;
+  background: #fff;
+}
+.mf-rules-discard,
+.mf-rules-save-failure,
+.mf-rules-save-unknown,
+.mf-rules-published {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.65rem 0.8rem;
+  border-radius: 0.45rem;
+  font-size: 0.86rem;
+}
+.mf-rules-discard,
+.mf-rules-save-failure {
+  background: #fdecec;
+  border: 1px solid #f3c4c4;
+  color: #8c1d18;
+}
+.mf-rules-save-unknown {
+  background: #fff7e6;
+  border: 1px solid #f0d9a8;
+  color: #7a5200;
+}
+.mf-rules-published,
+.mf-rules-verified {
+  background: #e9f7ef;
+  border: 1px solid #bfe3cd;
+  color: #14562f;
+  padding: 0.6rem 0.8rem;
+  border-radius: 0.45rem;
+  font-size: 0.86rem;
+}
+.mf-rules-durable {
+  color: #4b5563;
+  font-size: 0.8rem;
+}
+.mf-rules-form {
+  display: grid;
+  gap: 0.75rem;
+}
+.mf-rules-field {
+  display: grid;
+  gap: 0.25rem;
+}
+.mf-rules-field > label {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #22314a;
+}
+.mf-rules-field input[type="text"],
+.mf-rules-field input[type="number"],
+.mf-rules-field select {
+  min-height: 2.4rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 0.45rem;
+  padding: 0.45rem 0.6rem;
+  font: inherit;
+  background: #fff;
+}
+.mf-rules-field input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+.mf-rules-field[data-disabled="true"] {
+  opacity: 0.72;
+}
+.mf-rules-field-hint {
+  color: #5f6b7d;
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+.mf-rules-field-error,
+.mf-rules-save-failure p:first-child {
+  color: #b3261e;
+  font-size: 0.8rem;
+}
+.mf-rules-field.has-error input,
+.mf-rules-field.has-error select {
+  border-color: #d33;
+}
+.mf-rules-secret-readiness {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px dashed #c9d3e2;
+  border-radius: 0.45rem;
+  font-size: 0.8rem;
+  background: #f7f9fc;
+}
+.mf-rules-secret-readiness ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 0.9rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mf-rules-nested {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.7rem;
+  border: 1px solid #e2e7ef;
+  border-radius: 0.5rem;
+  background: #fbfcfe;
+}
+.mf-rules-nested fieldset {
+  display: grid;
+  gap: 0.35rem;
+  border: 1px solid #e2e7ef;
+  border-radius: 0.45rem;
+  padding: 0.5rem 0.65rem;
+}
+.mf-rules-nested legend {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #41506b;
+}
+.mf-rules-nested label,
+.mf-rules-flag {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+}
+.mf-rules-flag small {
+  flex-basis: 100%;
+  color: #5f6b7d;
+  font-size: 0.74rem;
+}
+.mf-rules-nested select,
+.mf-rules-nested input {
+  min-height: 2.1rem;
+  border: 1px solid #cfd6e1;
+  border-radius: 0.4rem;
+  padding: 0.3rem 0.45rem;
+  font: inherit;
+}
+.mf-rules-nested-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.mf-rules-rules {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.mf-rules-rules li {
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.6rem;
+  border: 1px solid #e2e7ef;
+  border-radius: 0.5rem;
+  background: #fff;
+}
+.mf-rules-rule-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.mf-rules-rule-grid,
+.mf-rules-conditions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.4rem 0.7rem;
+}
+.mf-rules-rule-grid label,
+.mf-rules-conditions label {
+  display: grid;
+  gap: 0.2rem;
+  font-size: 0.78rem;
+  color: #3c4a63;
+}
+.mf-rules-edit-page {
+  display: grid;
+  gap: 0.9rem;
+}
+@media (max-width: 720px) {
+  .mf-rules-drawer {
+    top: 8px;
+    right: 8px;
+    bottom: 8px;
+    left: 8px;
+    width: auto;
+  }
+}
+@media (max-width: 900px) {
+  .mf-rules-drawer {
+    right: 8px;
+    left: 8px;
+    width: auto;
+  }
+}
+
 .mf-shell-main:focus {
   outline: none;
 }

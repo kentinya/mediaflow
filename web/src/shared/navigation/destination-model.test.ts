@@ -26,6 +26,7 @@ describe("destination model", () => {
     expect(childDestinations.map((item) => item.label)).toEqual([
       "Files",
       "Task list",
+      "Edit rule object",
       "Task detail",
       "Job list",
       "Job detail",

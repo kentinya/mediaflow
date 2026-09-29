@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 41.2
 Parent Slice: 41
-Status: PLANNED
+Status: IN PROGRESS
 Task Base: 34dc6e35982c19fbbedb72aba0bc31c6353bc805
 Difficulty: High
 Test Level: T4
@@ -157,20 +157,69 @@ readiness/return integration. Do not edit the six supplied reference images or `
 
 ### Changed Files
 
+- `mediaflow/application/configuration_objects.py`
+- `mediaflow/application/rules_workspace_commands.py`
+- `mediaflow/domain/configuration_management.py`
+- `mediaflow/infrastructure/metadata_provider_bootstrap.py`
+- `mediaflow/interfaces/service_api.py`
+- `tests/test_v2_rules_workspace_commands.py`
+- `web/src/entities/rules/rules-form.ts`, `rules-workspace.ts` and tests
+- `web/src/features/rules/RulesWorkspacePage.tsx`, `RulesEditPage.tsx`, `RulesObjectDrawer.tsx`, `RulesObjectForm.tsx`, fixtures, labels and tests
+- `web/src/routes/router.tsx`
+- `web/src/shared/api/api-client.ts`, navigation destination model/tests and UI styles
+
 ### Implemented
+
+- Added typed, bounded form authority and object projections for RecognitionType, MetadataPolicy,
+  NamingPolicy, ClassificationPolicy and OrganizePolicy, including real references, impact and
+  secret-readiness metadata without credential values.
+- Added one focused Save-and-activate application command per object operation. It composes from the
+  exact observed Active revision, preserves immutable edit IDs, allocates disabled new-ID copies,
+  blocks unsupported or referenced operations, and returns bounded recovery/error state.
+- Added authenticated API routes and typed frontend clients/forms for Add, Edit, Copy, enable/disable
+  where supported, reference-safe delete, explicit drawer/full-page editor flows and post-save Active
+  refresh. RecognitionRule and type-binding authoring remain deferred as required by this Task.
+- Added focused backend and Web regression coverage for onboarding, validation, concurrency, impact,
+  redaction, zero side effects and the RecognitionType identity invariant.
 
 ### Tests and Results
 
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_successor_draft.py tests/test_configuration_naming.py tests/test_configuration_classification.py tests/test_configuration_organize.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (206 tests, 219 subtests).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1948 tests, 7 skipped).
+- `npm --prefix web test -- --run` — PASS (53 test files, 783 tests; jsdom emits existing `scrollTo` diagnostics).
+- `npm --prefix web run build`, `npm --prefix web run typecheck`, `npm --prefix web run lint`, `npm --prefix web run format:check` — PASS.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts`, `.venv/bin/ruff check ...`, `.venv/bin/ruff format --check ...`, `python3 scripts/check_governance.py`, `git diff --check` — PASS.
+- `npm --prefix web run test:e2e -- --grep 'rules'` — UNAVAILABLE / no matching browser tests in the repository (`No tests found`).
+- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE: isolated Compose stack timed out waiting for all services healthy after 150 seconds.
+
 ### Decisions
+
+- Reused the existing managed configuration object normalization, whole-document validation,
+  checked activation and runtime binding instead of creating a second configuration authority.
+- OrganizePolicy exposes no invented enabled toggle or implicit operation fallback; all destructive
+  effects remain explicit policy fields and no media/storage execution path is introduced.
+- Unknown transport or response outcomes are recovery states requiring Active verification and are
+  never automatically replayed.
 
 ### Remaining In-Slice Work
 
+- RecognitionRule and RecognitionTypePolicy authoring, exact-candidate tests/previews and the other
+  rule-graph surfaces remain in Slice 41 but outside this Task.
+
 ### Risks / Deviations
+
+- The four pre-existing untracked `docs/pics/*.png` files were preserved untouched and excluded from
+  this checkpoint. `config/alist.json` remains ignored and unstaged.
+- Full Web test execution initially failed only because its existing destination-model expectation did
+  not include the newly required dynamic rules editor route; the expectation was updated and the
+  final full-suite rerun passed (53 files, 783 tests).
+- Docker and browser e2e gates are unavailable for the environment for the reasons recorded above.
+- No production credentials, external accounts, real media or Storage mutations were used.
 
 ### Checkpoint
 
 ```text
-Status: PENDING
+Status: READY FOR B REVIEW
 Head SHA: PENDING
 ```
 

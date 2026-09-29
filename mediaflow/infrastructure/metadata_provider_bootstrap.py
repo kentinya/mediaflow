@@ -63,8 +63,33 @@ def _requested_provider_ids(provider_ids: Iterable[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(provider_ids))
 
 
+# The one deployment-owned Provider authority.  A managed MetadataPolicy may only
+# reference an id this service can actually construct, and its credential stays
+# an environment reference: `SUPPORTED_METADATA_PROVIDER_IDS` answers "which
+# provider ids exist here" and `TMDB_SECRET_ENV_FIELDS` answers "what must be set
+# for it to work".  Both are consumed by the rules-workspace readiness projection
+# and by this bootstrap, so a projection can never advertise a Provider that
+# construction would reject, and neither surface enumerates the pair twice.
+SUPPORTED_METADATA_PROVIDER_IDS: frozenset[str] = frozenset({"tmdb"})
+TMDB_SECRET_ENV_FIELDS: tuple[str, ...] = ("TMDB_ACCESS_TOKEN", "TMDB_TOKEN")
+
+
+def metadata_provider_secret_env_fields(provider_id: str) -> tuple[str, ...]:
+    """Return the deployment-owned environment names one Provider requires.
+
+    The result names variables only. It never reads or returns a value, so a
+    readiness projection built from it cannot leak a credential.
+    """
+
+    return TMDB_SECRET_ENV_FIELDS if provider_id == "tmdb" else ()
+
+
 def _validate_supported_provider_ids(requested: tuple[str, ...]) -> None:
-    unsupported = tuple(provider_id for provider_id in requested if provider_id != "tmdb")
+    unsupported = tuple(
+        provider_id
+        for provider_id in requested
+        if provider_id not in SUPPORTED_METADATA_PROVIDER_IDS
+    )
     if unsupported:
         raise MetadataProviderBootstrapError(
             "provider_not_configured",
