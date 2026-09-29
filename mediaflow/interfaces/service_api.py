@@ -13338,6 +13338,7 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
+                "policyId",
                 "resourceLibraryId",
                 "syntheticPath",
                 "liveMetadata",
@@ -13392,15 +13393,29 @@ class MediaFlowApi:
                 raise ValueError("syntheticPath must be a non-empty string")
             if not isinstance(document["liveMetadata"], bool):
                 raise ValueError("liveMetadata must be a boolean")
-            evidence = self._rules_workspace.preview_strategy(
-                revision_id,
-                expected_version=version,
-                expected_digest=digest,
-                actor=principal.principal_id,
-                resource_library_id=document["resourceLibraryId"],
-                synthetic_path=document["syntheticPath"],
-                live_metadata=document["liveMetadata"],
-            )
+            if kind == "metadata":
+                if not isinstance(document["policyId"], str) or not document["policyId"].strip():
+                    raise ValueError("policyId must be a non-empty string")
+                evidence = self._rules_workspace.preview_metadata(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    policy_id=document["policyId"],
+                    resource_library_id=document["resourceLibraryId"],
+                    synthetic_path=document["syntheticPath"],
+                    live_metadata=document["liveMetadata"],
+                )
+            else:
+                evidence = self._rules_workspace.preview_strategy(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    resource_library_id=document["resourceLibraryId"],
+                    synthetic_path=document["syntheticPath"],
+                    live_metadata=document["liveMetadata"],
+                )
         elif kind == "naming":
             evidence = self._rules_workspace.preview_naming(
                 revision_id,

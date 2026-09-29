@@ -3016,6 +3016,7 @@ class ConfigurationObjectService:
         resource_library_id: str,
         synthetic_path: str,
         live_metadata: bool = False,
+        allow_active: bool = False,
     ) -> RecognitionStrategyTestEvidence:
         with self._strategy_test_operation_lock:
             return self._run_recognition_strategy_test(
@@ -3026,6 +3027,7 @@ class ConfigurationObjectService:
                 resource_library_id=resource_library_id,
                 synthetic_path=synthetic_path,
                 live_metadata=live_metadata,
+                allow_active=allow_active,
             )
 
     def naming_preview(
@@ -3037,12 +3039,13 @@ class ConfigurationObjectService:
         actor: str,
         policy_id: str,
         sample: Mapping[str, object],
+        allow_active: bool = False,
     ) -> NamingPreviewEvidence:
         revision = self._managed.require(revision_id)
         if revision.status not in {
             ManagedConfigurationStatus.DRAFT,
             ManagedConfigurationStatus.VALIDATED,
-        }:
+        } and not (allow_active and revision.status is ManagedConfigurationStatus.ACTIVE):
             raise ConfigurationVersionConflict(
                 "naming preview requires a Draft or Validated revision",
                 revision_id=revision_id,
@@ -3312,12 +3315,13 @@ class ConfigurationObjectService:
         actor: str,
         policy_id: str,
         sample: Mapping[str, object],
+        allow_active: bool = False,
     ) -> ClassificationPreviewEvidence:
         revision = self._managed.require(revision_id)
         if revision.status not in {
             ManagedConfigurationStatus.DRAFT,
             ManagedConfigurationStatus.VALIDATED,
-        }:
+        } and not (allow_active and revision.status is ManagedConfigurationStatus.ACTIVE):
             raise ConfigurationVersionConflict(
                 "classification preview requires a Draft or Validated revision",
                 revision_id=revision_id,
@@ -3434,12 +3438,13 @@ class ConfigurationObjectService:
         expected_digest: str,
         actor: str,
         recognition_type: str,
+        allow_active: bool = False,
     ) -> OrganizeAuthorityEvidence:
         revision = self._managed.require(revision_id)
         if revision.status not in {
             ManagedConfigurationStatus.DRAFT,
             ManagedConfigurationStatus.VALIDATED,
-        }:
+        } and not (allow_active and revision.status is ManagedConfigurationStatus.ACTIVE):
             raise ConfigurationVersionConflict(
                 "organize authority explanation requires a Draft or Validated revision",
                 revision_id=revision_id,
@@ -5387,9 +5392,12 @@ class ConfigurationObjectService:
         candidate_selection: dict[str, object] | None = None,
         correction_context: dict[str, object] | None = None,
         expected_evidence_tested_at: datetime | None = None,
+        allow_active: bool = False,
     ) -> RecognitionStrategyTestEvidence:
         revision = self._managed.require(revision_id)
-        if revision.status is not ManagedConfigurationStatus.VALIDATED:
+        if revision.status is not ManagedConfigurationStatus.VALIDATED and not (
+            allow_active and revision.status is ManagedConfigurationStatus.ACTIVE
+        ):
             raise ConfigurationVersionConflict(
                 "Recognition Strategy Test requires a Validated Draft",
                 revision_id=revision_id,
@@ -5621,6 +5629,54 @@ class ConfigurationObjectService:
             expected_revision_digest=expected_digest,
             expected_tested_at=expected_evidence_tested_at,
         )
+
+    def metadata_policy_test(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        policy_id: str,
+        resource_library_id: str,
+        synthetic_path: str,
+        live_metadata: bool = False,
+        allow_active: bool = False,
+    ) -> RecognitionStrategyTestEvidence:
+        """Test one selected MetadataPolicy through the existing provider boundary.
+
+        Recognition still supplies the parsed input and type identity, but the
+        requested policy is checked against the effective graph before the test
+        is returned. Offline mode therefore remains a pure validation pass and
+        live mode is the only path that constructs a Provider registry.
+        """
+        if not isinstance(policy_id, str) or not policy_id.strip() or len(policy_id) > 64:
+            raise ValueError("MetadataPolicy ID must be bounded and non-empty")
+        evidence = self._run_recognition_strategy_test(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            resource_library_id=resource_library_id,
+            synthetic_path=synthetic_path,
+            live_metadata=live_metadata,
+            allow_active=allow_active,
+        )
+        result = evidence.result if isinstance(evidence.result, dict) else {}
+        effective = result.get("effectiveMetadataPolicy")
+        effective_id = effective.get("policyId") if isinstance(effective, dict) else None
+        if effective_id != policy_id:
+            raise ConfigurationVersionConflict(
+                "MetadataPolicy test does not match the effective policy selected by the candidate",
+                revision_id=evidence.revision_id,
+                current_version=evidence.revision_version,
+                current_digest=evidence.revision_digest,
+                durable_state="metadata_test_preserved",
+                next_action=(
+                    "select the MetadataPolicy resolved by the RecognitionType binding, then rerun"
+                ),
+            )
+        return evidence
 
     def _strategy_result_document(
         self, strategy: StrategyTestResult, *, live_metadata: bool

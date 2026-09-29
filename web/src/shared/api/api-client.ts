@@ -5712,10 +5712,7 @@ async function rulesReadFailure(response: Response): Promise<RulesRead<never>> {
 }
 
 export type RulesPreviewKind =
-  | "strategy"
-  | "naming"
-  | "classification"
-  | "organize";
+  "strategy" | "metadata" | "naming" | "classification" | "organize";
 
 export interface RulesPreviewModel {
   readonly revisionId: string;
@@ -5736,9 +5733,14 @@ function normalizeRulesPreview(value: unknown): RulesPreviewModel {
   const revisionId = bounded(source.revisionId, 128);
   const digest = bounded(source.revisionDigest, 128);
   const status = bounded(source.status, 64);
-  if (!revisionId || !digest || !status ||
-      typeof source.revisionVersion !== "number" ||
-      !Number.isInteger(source.revisionVersion) || source.revisionVersion < 1)
+  if (
+    !revisionId ||
+    !digest ||
+    !status ||
+    typeof source.revisionVersion !== "number" ||
+    !Number.isInteger(source.revisionVersion) ||
+    source.revisionVersion < 1
+  )
     throw new Error("invalid rules preview identity");
   const result = source.result;
   if (result !== null && (typeof result !== "object" || Array.isArray(result)))
@@ -5775,7 +5777,11 @@ export async function runRulesPreview(
   }
   if (!response.ok) return rulesReadFailure(response);
   try {
-    return { ok: true, status: response.status, model: normalizeRulesPreview(await response.json()) };
+    return {
+      ok: true,
+      status: response.status,
+      model: normalizeRulesPreview(await response.json()),
+    };
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }
