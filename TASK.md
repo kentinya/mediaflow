@@ -175,7 +175,7 @@ images. Do not edit `config/alist.json`.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 2d574c1d88e15584b3c345ec7a9c1a5a5ad333f2
+Head SHA: e0809db4a1d4baf324e3da0f781305d105ca9661
 ```
 
 ## B Review Result
