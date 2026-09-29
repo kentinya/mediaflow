@@ -55,11 +55,6 @@ function numberOf(value: RuleFormValue | undefined): string {
   return typeof value === "number" ? String(value) : "";
 }
 
-function structureOf(value: RuleFormValue | undefined): string {
-  if (value && typeof value === "object") return JSON.stringify(value, null, 2);
-  return typeof value === "string" ? value : "";
-}
-
 type ConditionNode = Record<string, unknown>;
 const NUMERIC_CONDITION_FIELDS = new Set(["year", "season", "episode"]);
 const COLLECTION_CONDITION_FIELDS = new Set(["directory", "hdr_tag", "version_tag", "language_tag"]);
@@ -317,32 +312,6 @@ export function RulesObjectForm({
         disabled={disabled}
         aria-invalid={issue(field) ? true : undefined}
         onChange={(event) => onChange(field, event.target.checked)}
-      />
-    </Field>
-  );
-
-  const structure = (field: string, hint?: string) => (
-    <Field
-      key={field}
-      id={id(field)}
-      label={FIELD_LABELS[field] ?? field}
-      hint={hint}
-      error={issue(field)}
-      disabled={disabled}
-    >
-      <textarea
-        id={id(field)}
-        value={structureOf(values[field])}
-        disabled={disabled}
-        rows={6}
-        aria-invalid={issue(field) ? true : undefined}
-        onChange={(event) => {
-          try {
-            onChange(field, JSON.parse(event.target.value) as RuleFormValue);
-          } catch {
-            onChange(field, event.target.value);
-          }
-        }}
       />
     </Field>
   );
