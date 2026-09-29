@@ -823,6 +823,19 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         self.assertIn("MediaLibrary", str(caught.exception))
         self.assert_active_unchanged(before)
 
+    def test_metadata_save_fails_closed_when_provider_secret_is_unavailable(self) -> None:
+        before = self.configuration.active()
+        with patch.dict(os.environ, {"TMDB_ACCESS_TOKEN": "", "TMDB_TOKEN": ""}):
+            with self.assertRaises(RulesWorkspaceSaveError) as caught:
+                self.save(
+                    "metadataPolicies",
+                    {"id": "missing-secret", "name": "Missing secret", "providerId": "tmdb"},
+                )
+        self.assertEqual(caught.exception.code, "rules_provider_secret_unavailable")
+        self.assertEqual(caught.exception.stage, "reference")
+        self.assertEqual(caught.exception.durable_state, "active_preserved")
+        self.assert_active_unchanged(before)
+
     def test_disabled_media_library_reference_is_blocked_not_substituted(self) -> None:
         document = copy.deepcopy(self.baseline_document)
         for item in document["mediaLibraries"]:

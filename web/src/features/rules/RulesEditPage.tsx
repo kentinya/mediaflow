@@ -29,6 +29,7 @@ import {
   editRuleObject,
   fetchRuleEdit,
   fetchRuleFormAuthority,
+  fetchRulesInventory,
   type RulesCommandResult,
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -39,6 +40,7 @@ import {
   RULE_DRAWER_LABELS,
   RULE_RETURN_TO_LABEL,
   writeRuleDraft,
+  clearRuleDraft,
 } from "./rules-workspace-labels";
 
 const FAMILY_SET: ReadonlySet<string> = new Set(RULE_FORM_FAMILIES);
@@ -157,7 +159,7 @@ export function RulesEditPage() {
                 event.preventDefault();
                 return;
               }
-              writeRuleDraft(family as RuleFormFamily, objectId, {});
+              clearRuleDraft(family as RuleFormFamily, objectId);
             }
           }}
         >
@@ -243,7 +245,11 @@ export function RulesEditPage() {
       observed,
     );
     if (command.ok) {
-      writeRuleDraft(typedFamily, objectId, {});
+      clearRuleDraft(typedFamily, objectId);
+      // Re-read the shared Active inventory/readiness projection after the
+      // publication. The edit page does not own a second inventory authority;
+      // this refresh confirms the new Active is what the workspace will show.
+      await fetchRulesInventory(token).catch(() => undefined);
       setState({
         kind: "published",
         message: "已发布为新的 Active;返回清单即可看到新对象,或继续编辑。",
@@ -272,7 +278,11 @@ export function RulesEditPage() {
     const fresh = await fetchRuleEdit(token, typedFamily, objectId);
     setProjection({ subject, outcome: fresh });
     if (fresh.ok) {
-      writeRuleDraft(typedFamily, objectId, {});
+      const discard = window.confirm(
+        "已读取当前 Active。确认后丢弃当前候选输入并采用 Active 吗?",
+      );
+      if (!discard) return;
+      clearRuleDraft(typedFamily, objectId);
       setLoaded({
         subject,
         values: fresh.model.value as unknown as FormValues,

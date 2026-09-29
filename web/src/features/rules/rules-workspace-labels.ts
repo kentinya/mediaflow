@@ -3,10 +3,9 @@
  * (Slice 41, Task 41.2).
  *
  * A failed Save must not discard what the operator typed. The draft lives in
- * module memory only — the same memory-only discipline the V2 session uses for
- * its token — so it survives a failed Save, route navigation, remount and
- * reconnect, and disappears with the page. Nothing here is persisted to
- * storage, the URL or any log, and it never holds a credential or authority.
+ * sessionStorage-backed so it survives a real browser refresh, route navigation,
+ * remount and reconnect within the authenticated tab. Nothing here is persisted
+ * to the URL or any log, and it never holds a credential or authority.
  */
 
 import type {
@@ -38,6 +37,37 @@ export const RULE_RETURN_TO_LABEL = "返回整理规则清单";
 type Draft = Record<string, RuleFormValue>;
 
 const drafts = new Map<string, Draft>();
+const STORAGE_KEY = "mediaflow.rules.correctable-drafts";
+
+function loadDrafts(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw) as Record<string, Draft>;
+    for (const [draftKey, value] of Object.entries(parsed)) {
+      if (value && typeof value === "object" && !Array.isArray(value)) {
+        drafts.set(draftKey, { ...value });
+      }
+    }
+  } catch {
+    // Storage may be unavailable or contain an old schema; the in-memory store remains safe.
+  }
+}
+
+function persistDrafts(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.sessionStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify(Object.fromEntries(drafts)),
+    );
+  } catch {
+    // A blocked quota does not make the candidate disappear from the current page.
+  }
+}
+
+loadDrafts();
 
 function key(family: RuleFormFamily, objectId: string | null): string {
   return `${family}/${objectId ?? "*"}`;
@@ -57,6 +87,7 @@ export function writeRuleDraft(
   values: Draft,
 ): void {
   drafts.set(key(family, objectId), { ...values });
+  persistDrafts();
 }
 
 export function clearRuleDraft(
@@ -64,9 +95,12 @@ export function clearRuleDraft(
   objectId: string | null,
 ): void {
   drafts.delete(key(family, objectId));
+  persistDrafts();
 }
 
 /** Test seam: forget every correctable draft (never called from product paths). */
 export function __resetRuleDraftsForTests(): void {
   drafts.clear();
+  if (typeof window !== "undefined")
+    window.sessionStorage.removeItem(STORAGE_KEY);
 }

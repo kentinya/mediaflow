@@ -99,6 +99,16 @@ const FIELD_LABELS: Readonly<Record<string, string>> = {
   operation: "整理操作",
   conflictStrategy: "冲突策略",
   overwrite: "允许覆盖",
+  confidence: "置信度",
+  category: "分类",
+  subcategory: "子分类",
+  fastSampleBytes: "快速哈希采样字节数",
+  fullMaxFileSize: "完整哈希最大文件字节数",
+  chunkSize: "哈希块字节数",
+  cleanupCreatedDirectories: "清理本次创建的目录",
+  maxParentDirectories: "最多清理父目录层数",
+  ignorePatterns: "忽略模式",
+  maxEntries: "最多清理条目数",
 };
 
 interface Props {
@@ -450,6 +460,7 @@ const CONDITION_LABELS: Readonly<Record<string, string>> = {
 
 const listConditions = new Set([
   "mediaType",
+  "mediaTypes",
   "genres",
   "countries",
   "languages",
@@ -612,6 +623,59 @@ function ClassificationRules({
                   />
                 </label>
                 <label>
+                  规则描述
+                  <input
+                    type="text"
+                    value={
+                      typeof rule.description === "string"
+                        ? rule.description
+                        : ""
+                    }
+                    disabled={disabled}
+                    onChange={(event) =>
+                      patch(index, (item) => ({
+                        ...item,
+                        description: event.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  置信度
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    value={
+                      typeof rule.confidence === "number" ? rule.confidence : ""
+                    }
+                    disabled={disabled}
+                    onChange={(event) =>
+                      patch(index, (item) => ({
+                        ...item,
+                        confidence:
+                          event.target.value === ""
+                            ? null
+                            : Number(event.target.value),
+                      }))
+                    }
+                  />
+                </label>
+                <label className="mf-rules-flag">
+                  <input
+                    type="checkbox"
+                    checked={rule.enabled !== false}
+                    disabled={disabled}
+                    onChange={(event) =>
+                      patch(index, (item) => ({
+                        ...item,
+                        enabled: event.target.checked,
+                      }))
+                    }
+                  />
+                  启用规则
+                </label>
+                <label>
                   优先级
                   <input
                     type="number"
@@ -662,6 +726,46 @@ function ClassificationRules({
                       </option>
                     ))}
                   </select>
+                </label>
+                <label>
+                  分类
+                  <input
+                    type="text"
+                    value={
+                      typeof result.category === "string" ? result.category : ""
+                    }
+                    disabled={disabled}
+                    onChange={(event) =>
+                      patch(index, (item) => ({
+                        ...item,
+                        result: {
+                          ...resultOf(item),
+                          category: event.target.value,
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <label>
+                  子分类
+                  <input
+                    type="text"
+                    value={
+                      typeof result.subcategory === "string"
+                        ? result.subcategory
+                        : ""
+                    }
+                    disabled={disabled}
+                    onChange={(event) =>
+                      patch(index, (item) => ({
+                        ...item,
+                        result: {
+                          ...resultOf(item),
+                          subcategory: event.target.value,
+                        },
+                      }))
+                    }
+                  />
                 </label>
                 <label>
                   相对路径
@@ -838,6 +942,66 @@ function OrganizeNested({
               </option>
             ))}
           </select>
+          <label>
+            快速采样字节数
+            <input
+              type="number"
+              min="1"
+              value={
+                typeof duplicate.fastSampleBytes === "number"
+                  ? duplicate.fastSampleBytes
+                  : ""
+              }
+              disabled={disabled}
+              onChange={(event) =>
+                patch(
+                  "duplicateDetection",
+                  "fastSampleBytes",
+                  Number(event.target.value),
+                )
+              }
+            />
+          </label>
+          <label>
+            完整哈希最大文件字节数
+            <input
+              type="number"
+              min="1"
+              value={
+                typeof duplicate.fullMaxFileSize === "number"
+                  ? duplicate.fullMaxFileSize
+                  : ""
+              }
+              disabled={disabled}
+              onChange={(event) =>
+                patch(
+                  "duplicateDetection",
+                  "fullMaxFileSize",
+                  Number(event.target.value),
+                )
+              }
+            />
+          </label>
+          <label>
+            哈希块字节数
+            <input
+              type="number"
+              min="1"
+              value={
+                typeof duplicate.chunkSize === "number"
+                  ? duplicate.chunkSize
+                  : ""
+              }
+              disabled={disabled}
+              onChange={(event) =>
+                patch(
+                  "duplicateDetection",
+                  "chunkSize",
+                  Number(event.target.value),
+                )
+              }
+            />
+          </label>
         </label>
       </fieldset>
       <fieldset>
@@ -858,6 +1022,63 @@ function OrganizeNested({
               </option>
             ))}
           </select>
+        </label>
+        {flag("rollback", "cleanupCreatedDirectories", "清理本次创建的目录")}
+        <label>
+          最多清理父目录层数
+          <input
+            type="number"
+            min="0"
+            value={
+              typeof cleanup.maxParentDirectories === "number"
+                ? cleanup.maxParentDirectories
+                : ""
+            }
+            disabled={disabled}
+            onChange={(event) =>
+              patch(
+                "sourceDirectoryCleanup",
+                "maxParentDirectories",
+                Number(event.target.value),
+              )
+            }
+          />
+        </label>
+        <label>
+          忽略模式
+          <input
+            type="text"
+            value={listOf(cleanup.ignorePatterns).join(", ")}
+            disabled={disabled}
+            onChange={(event) =>
+              patch(
+                "sourceDirectoryCleanup",
+                "ignorePatterns",
+                event.target.value
+                  .split(",")
+                  .map((item) => item.trim())
+                  .filter(Boolean),
+              )
+            }
+          />
+        </label>
+        <label>
+          最多清理条目数
+          <input
+            type="number"
+            min="1"
+            value={
+              typeof cleanup.maxEntries === "number" ? cleanup.maxEntries : ""
+            }
+            disabled={disabled}
+            onChange={(event) =>
+              patch(
+                "sourceDirectoryCleanup",
+                "maxEntries",
+                Number(event.target.value),
+              )
+            }
+          />
         </label>
         <p className="mf-rules-field-hint">
           清理会删除源侧目录,属破坏性授权;只有你显式选择非 none

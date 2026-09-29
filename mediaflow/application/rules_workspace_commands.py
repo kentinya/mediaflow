@@ -223,6 +223,7 @@ _FORM_DEFAULTS: dict[str, dict[str, object]] = {
 
 _CLASSIFICATION_CONDITION_FIELDS = (
     "mediaType",
+    "mediaTypes",
     "genres",
     "countries",
     "languages",
@@ -1033,6 +1034,22 @@ class RulesWorkspaceCommandService:
                     next_action=(
                         "choose a configured provider, or deploy the Provider the policy needs, "
                         "then save again"
+                    ),
+                )
+            secret_fields = metadata_provider_secret_env_fields(provider_id)
+            if secret_fields and not any(os.environ.get(field) for field in secret_fields):
+                raise RulesWorkspaceSaveError(
+                    "rules_provider_secret_unavailable",
+                    (f"Metadata Provider {provider_id!r} has no configured deployment credential"),
+                    status=409,
+                    object_kind=spec.family,
+                    object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
+                    stage="reference",
+                    durable_state="active_preserved",
+                    side_effects="none",
+                    next_action=(
+                        "set one approved Provider credential environment variable, then "
+                        "refresh readiness and save again"
                     ),
                 )
             return
