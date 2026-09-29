@@ -172,7 +172,7 @@ images. Do not edit `config/alist.json`.
 ### Decisions
 
 - Reused `ConfigurationObjectService._normalize`, whole-document validation and `RulesWorkspaceCommandService._publish`; no second policy resolver or configuration authority was introduced.
-- Conditions remain provider-neutral and bounded by the existing runtime model; the UI uses a bounded JSON textarea rather than inventing a second condition language.
+- Conditions remain provider-neutral and bounded by the existing runtime model; the UI uses recursive typed Atomic/Logical controls and submits the same condition document validated by the backend.
 - RecognitionType identity is carried by the binding reference and is never inferred from naming/classification/organize policy IDs.
 
 ### Remaining In-Slice Work
