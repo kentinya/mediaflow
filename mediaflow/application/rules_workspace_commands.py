@@ -311,6 +311,90 @@ class RulesWorkspaceCommandService:
         self._managed: ManagedConfigurationService = objects._managed
 
     # ------------------------------------------------------------------
+    # Zero-mutation candidate previews
+    # ------------------------------------------------------------------
+
+    def preview_naming(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        policy_id: str,
+        sample: Mapping[str, object],
+    ):
+        """Run the production naming engine against the exact inspected revision."""
+        return self._objects.naming_preview(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            policy_id=policy_id,
+            sample=sample,
+        )
+
+    def preview_classification(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        policy_id: str,
+        sample: Mapping[str, object],
+    ):
+        """Run the production classification engine without Storage access."""
+        return self._objects.classification_preview(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            policy_id=policy_id,
+            sample=sample,
+        )
+
+    def explain_organize(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        recognition_type: str,
+    ):
+        """Explain declared organize authority; never issue execution authority."""
+        return self._objects.organize_authority(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            recognition_type=recognition_type,
+        )
+
+    def preview_strategy(
+        self,
+        revision_id: str,
+        *,
+        expected_version: int,
+        expected_digest: str,
+        actor: str,
+        resource_library_id: str,
+        synthetic_path: str,
+        live_metadata: bool = False,
+    ):
+        """Run the bounded strategy test through the shared application authority."""
+        return self._objects.recognition_strategy_test(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            resource_library_id=resource_library_id,
+            synthetic_path=synthetic_path,
+            live_metadata=live_metadata,
+        )
+
+    # ------------------------------------------------------------------
     # Reads (zero configuration, Provider, Task/Job or Storage side effects)
     # ------------------------------------------------------------------
 
