@@ -6464,6 +6464,167 @@ function storageInventoryDocument(state, canManage, search) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Rules workspace + Settings rule readiness fake state (Slice 41, Task 41.5)
+//
+// The documents are loaded from web/tests/fixtures/rules-readiness.json, which
+// tests/test_v2_settings_rule_readiness.py captures from the real Python API.
+// The Settings status document reuses the exact inventory readiness so the two
+// surfaces cannot drift apart in the browser proof, and the active revision
+// identity is shared between them: that is what lets the frontend detect a
+// mixed snapshot instead of presenting stale readiness as current.
+// ---------------------------------------------------------------------------
+
+const RULES_FIXTURE = JSON.parse(
+  await readFile(
+    fileURLToPath(new URL("./fixtures/rules-readiness.json", import.meta.url)),
+    "utf8",
+  ),
+);
+
+const RULES_STATES = new Map();
+
+function rulesState(session) {
+  const key = session ?? "shared";
+  let value = RULES_STATES.get(key);
+  if (value === undefined) {
+    value = {
+      // Bumped by /__test__/advance-rules-active so the refresh journey has a
+      // new published Active sequence to observe.
+      advance: 0,
+      sections: RULES_FIXTURE.inventory.sections,
+      counts: RULES_FIXTURE.ruleReadiness.counts,
+      enabledCounts: RULES_FIXTURE.ruleReadiness.enabledCounts,
+      state: RULES_FIXTURE.ruleReadiness.state,
+      gaps: RULES_FIXTURE.ruleReadiness.gaps,
+      available: true,
+      reason: null,
+    };
+    RULES_STATES.set(key, value);
+  }
+  return value;
+}
+
+/** The Active identity the fake currently reports, after any advance. */
+function currentRuleActive(state) {
+  const base = RULES_FIXTURE.ruleReadiness.active;
+  return state.advance === 0
+    ? base
+    : {
+        ...base,
+        revisionId: `${RULES_FIXTURE.activeRevisionId}-${state.advance + 1}`,
+        version: base.version + state.advance,
+        sequence: base.sequence + state.advance,
+      };
+}
+
+/**
+ * The bounded readiness document. It is the exact shape the Python API
+ * publishes on `/api/v1/configuration/status` under `ruleReadiness`, so the
+ * Settings panel is normalized from the same contract in the browser proof.
+ */
+function currentRuleReadiness(state) {
+  const active = currentRuleActive(state);
+  return {
+    available: state.available,
+    reason: state.reason,
+    active: state.available ? active : null,
+    state: state.state,
+    gaps: state.gaps,
+    counts: state.counts,
+    enabledCounts: state.enabledCounts,
+  };
+}
+
+/**
+ * One bounded inventory document. Exactly the backend's allowlisted filters
+ * apply: `family`, `q` and `enabled`. The readiness, counts and Active identity
+ * always describe the whole Active, never the filtered page.
+ */
+function rulesInventoryDocument(state, token, searchParams) {
+  const family = searchParams.get("family");
+  const query = searchParams.get("q") ?? "";
+  const enabledParam = searchParams.get("enabled");
+  const enabled =
+    enabledParam === "true" ? true : enabledParam === "false" ? false : null;
+  const needle = query.trim().toLowerCase();
+  const sections = {};
+  for (const [name, items] of Object.entries(state.sections)) {
+    const selected = family === null || family === name;
+    sections[name] = selected
+      ? items.filter((item) => {
+          const matchesText =
+            needle.length === 0 ||
+            [item.id, item.name, item.description, item.summary].some((value) =>
+              String(value).toLowerCase().includes(needle),
+            );
+          const matchesState = enabled === null || item.enabled === enabled;
+          return matchesText && matchesState;
+        })
+      : [];
+  }
+  const active = currentRuleActive(state);
+  return {
+    ...RULES_FIXTURE.inventory,
+    available: state.available,
+    reason: state.reason,
+    canManage: VIEWER_TOKENS.has(token),
+    active: state.available
+      ? { status: "ACTIVE", version: active.version, sequence: active.sequence }
+      : null,
+    readiness: { state: state.state, gaps: state.gaps },
+    overview: {
+      ...RULES_FIXTURE.inventory.overview,
+      counts: state.counts,
+      enabledCounts: state.enabledCounts,
+    },
+    sections,
+    filters: { family, query, enabled },
+  };
+}
+
+/**
+ * The Settings status document. `ruleReadiness` is the same readiness the rules
+ * inventory read publishes, and `active` carries the same immutable revision
+ * identity so the page can compare them.
+ */
+function configurationStatusDocument(state, token) {
+  const readiness = currentRuleReadiness(state);
+  const active = readiness.active;
+  return {
+    authority: "MANAGED",
+    active:
+      active === null
+        ? null
+        : {
+            revisionId: active.revisionId,
+            version: active.version,
+            revisionSequence: active.sequence,
+            status: "active",
+          },
+    lastKnownActive: null,
+    health: "HEALTHY",
+    managementReady: true,
+    setupRequired: false,
+    runtimeConfigured: true,
+    runtimeReady: true,
+    workflowAvailable: true,
+    businessState: "READY",
+    emptyActive: false,
+    recoveryRequired: false,
+    unavailableReason: null,
+    revisions: [],
+    managedActivation: true,
+    setupDraft: null,
+    setupBlockers: [],
+    nextAction: null,
+    bootstrapMode: "COMPATIBILITY",
+    canManageConfiguration: VIEWER_TOKENS.has(token),
+    canActivateConfiguration: VIEWER_TOKENS.has(token),
+    ruleReadiness: readiness,
+  };
+}
+
 function storageDetailDocument(storage, state, canManage) {
   return {
     storage: {
@@ -7136,6 +7297,46 @@ const server = createServer(async (req, res) => {
         recordManualRequestForSession(entry),
       ),
     );
+    return;
+  }
+
+  // V2 Rules workspace and Settings rule readiness (Slice 41, Task 41.5):
+  // served on the dedicated /api/v1/operations/rules/* spellings BEFORE the
+  // generic alias rewrite so the browser exercises the real route contract.
+  // The documents come from web/tests/fixtures/rules-readiness.json, which is
+  // captured from the real Python API by
+  // tests/test_v2_settings_rule_readiness.py, so the browser journey cannot
+  // drift from the backend shape.
+  if (
+    url.pathname === "/api/v1/operations/rules/inventory" ||
+    url.pathname === "/api/v1/configuration/status"
+  ) {
+    if (url.pathname.endsWith("/inventory") && req.method !== "GET") {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 401, {
+        error: { code: "unauthorized", message: "bearer token required" },
+      });
+      return;
+    }
+    const rules = rulesState(session);
+    if (url.pathname.endsWith("/inventory")) {
+      sendJson(
+        res,
+        200,
+        rulesInventoryDocument(rules, token, url.searchParams),
+      );
+      return;
+    }
+    sendJson(res, 200, configurationStatusDocument(rules, token));
     return;
   }
 
@@ -13127,6 +13328,72 @@ const server = createServer(async (req, res) => {
       `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
     );
     sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  if (url.pathname === "/__test__/reset-rules" && req.method === "POST") {
+    const sessionId =
+      session ?? `shared-${Math.random().toString(36).slice(2, 12)}`;
+    const params = new URLSearchParams(url.search);
+    const gaps = params.get("gaps");
+    const empty = params.get("empty") === "1";
+    const noActive = params.get("noActive") === "1";
+    const zero = Object.fromEntries(
+      Object.keys(RULES_FIXTURE.ruleReadiness.counts).map((key) => [key, 0]),
+    );
+    RULES_STATES.set(sessionId, {
+      advance: 0,
+      // `?empty=1` publishes an Active whose every rule family is empty, so the
+      // dependency path is exercised without inventing an object.
+      sections: empty
+        ? Object.fromEntries(
+            Object.keys(RULES_FIXTURE.inventory.sections).map((key) => [
+              key,
+              [],
+            ]),
+          )
+        : RULES_FIXTURE.inventory.sections,
+      counts: empty || noActive ? zero : RULES_FIXTURE.ruleReadiness.counts,
+      enabledCounts:
+        empty || noActive ? zero : RULES_FIXTURE.ruleReadiness.enabledCounts,
+      available: !noActive,
+      reason: noActive ? "no_active" : null,
+      state: noActive
+        ? "NO_ACTIVE"
+        : empty
+          ? "EMPTY"
+          : gaps
+            ? "PARTIAL"
+            : "READY",
+      gaps:
+        gaps && !noActive && !empty
+          ? [
+              {
+                family: gaps,
+                message: "该规则族尚未完整配置,运行时无法消费全部规则。",
+                nextAction: "前往该规则族补齐缺失的对象。",
+              },
+            ]
+          : [],
+    });
+    res.setHeader(
+      "Set-Cookie",
+      `${MANUAL_SESSION_COOKIE}=${encodeURIComponent(sessionId)}; Path=/; SameSite=Lax`,
+    );
+    sendJson(res, 200, { ok: true, session: sessionId });
+    return;
+  }
+
+  // Publish a successor Active between two readiness reads: the Settings page
+  // must then see a new sequence, and a readiness projection that still named
+  // the previous revision must never be presented as the current one.
+  if (
+    url.pathname === "/__test__/advance-rules-active" &&
+    req.method === "POST"
+  ) {
+    const state = rulesState(session);
+    state.advance += 1;
+    sendJson(res, 200, { ok: true, active: currentRuleActive(state) });
     return;
   }
 

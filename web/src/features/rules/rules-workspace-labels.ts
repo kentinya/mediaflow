@@ -12,7 +12,6 @@ import type {
   RuleFormFamily,
   RuleFormValue,
 } from "../../entities/rules/rules-form";
-import type { RuleFamily } from "../../entities/rules/rules-workspace";
 
 export const RULE_DRAWER_LABELS: Readonly<Record<RuleFormFamily, string>> = {
   recognitionRules: "识别规则",
@@ -24,15 +23,12 @@ export const RULE_DRAWER_LABELS: Readonly<Record<RuleFormFamily, string>> = {
   organizePolicies: "整理策略",
 };
 
-export const RULE_FAMILY_LABELS: Readonly<Record<RuleFamily, string>> = {
-  typeBindings: "类型绑定",
-  recognitionTypes: "识别类型",
-  recognitionRules: "识别规则",
-  metadataPolicies: "元数据策略",
-  namingPolicies: "命名策略",
-  classificationPolicies: "分类策略",
-  organizePolicies: "整理策略",
-};
+/**
+ * The single operator-facing family label set lives in the entity module so
+ * the workspace, Settings readiness and the shared navigation contract can
+ * never disagree about what a rule family is called.
+ */
+export { RULE_FAMILY_LABELS } from "../../entities/rules/rules-workspace";
 
 export const RULE_RETURN_TO_LABEL = "返回整理规则清单";
 

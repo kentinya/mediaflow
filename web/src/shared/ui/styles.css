@@ -3952,3 +3952,56 @@ button.mf-grid-button {
   margin-top: 4px;
   color: var(--files-muted);
 }
+
+/* Rules readiness navigation (Slice 41, Task 41.5) */
+.mf-rules-gaps,
+.mf-rules-onboarding {
+  border: 1px solid #f0d9b5;
+  border-radius: 0.65rem;
+  padding: 0.85rem 1rem;
+  margin-top: 1rem;
+  background: #fffaf1;
+}
+.mf-rules-onboarding {
+  border-color: #d6e3f3;
+  background: #f7fbff;
+}
+.mf-rules-gaps h3,
+.mf-rules-onboarding h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.95rem;
+}
+.mf-rules-gaps ul,
+.mf-rules-onboarding ol {
+  margin: 0;
+  padding-left: 1.1rem;
+  display: grid;
+  gap: 0.5rem;
+}
+.mf-rules-onboarding li span {
+  display: block;
+  color: #697386;
+  font-size: 0.87rem;
+}
+.mf-rules-gap-action,
+.mf-rules-summary-grid h3 a {
+  color: #1f5fbf;
+}
+.mf-rules-gap-action {
+  white-space: nowrap;
+}
+.mf-rule-readiness-list {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: grid;
+  gap: 0.35rem;
+}
+.mf-rule-readiness-list li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  justify-content: space-between;
+  border-bottom: 1px solid #edf0f4;
+  padding-bottom: 0.35rem;
+}

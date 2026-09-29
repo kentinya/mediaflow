@@ -155,6 +155,7 @@ export function RulesEditPage() {
         <Link
           className="mf-button"
           to="/rules"
+          search={isRuleEditFamily(family) ? { section: family } : undefined}
           onClick={(event) => {
             if (dirty && validFamily) {
               if (!window.confirm("表单中有未保存的修改,确定离开并丢弃吗?")) {

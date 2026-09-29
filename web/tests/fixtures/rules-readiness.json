@@ -1,0 +1,376 @@
+{
+  "inventory": {
+    "actions": {
+      "classificationPolicies": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "metadataPolicies": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "namingPolicies": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "organizePolicies": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": false
+      },
+      "recognitionRules": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "recognitionTypes": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "typeBindings": {
+        "blocker": null,
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      }
+    },
+    "active": {
+      "sequence": 1,
+      "status": "ACTIVE",
+      "version": 1
+    },
+    "available": true,
+    "canManage": false,
+    "filters": {
+      "enabled": null,
+      "family": null,
+      "query": ""
+    },
+    "overview": {
+      "counts": {
+        "classificationPolicies": 2,
+        "metadataPolicies": 3,
+        "namingPolicies": 2,
+        "organizePolicies": 2,
+        "recognitionRules": 3,
+        "recognitionTypes": 3,
+        "typeBindings": 3
+      },
+      "enabledCounts": {
+        "classificationPolicies": 2,
+        "metadataPolicies": 3,
+        "namingPolicies": 2,
+        "organizePolicies": 2,
+        "recognitionRules": 3,
+        "recognitionTypes": 3,
+        "typeBindings": 3
+      },
+      "relationship": [
+        "RecognitionRule",
+        "RecognitionType",
+        "RecognitionTypePolicy",
+        "MetadataPolicy",
+        "NamingPolicy",
+        "ClassificationPolicy",
+        "OrganizePolicy"
+      ]
+    },
+    "readiness": {
+      "gaps": [],
+      "state": "READY"
+    },
+    "reason": null,
+    "sections": {
+      "classificationPolicies": [
+        {
+          "description": "",
+          "enabled": true,
+          "id": "A",
+          "name": "Movie classification",
+          "references": {
+            "impact": "referenced",
+            "incoming": 2
+          },
+          "summary": "5 classification rules"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "B",
+          "name": "TV classification",
+          "references": {
+            "impact": "referenced",
+            "incoming": 1
+          },
+          "summary": "1 classification rules"
+        }
+      ],
+      "metadataPolicies": [
+        {
+          "description": "",
+          "enabled": true,
+          "id": "A",
+          "name": "A",
+          "references": {
+            "impact": "referenced",
+            "incoming": 1
+          },
+          "summary": "tmdb · movie · zh-CN · CN"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "B",
+          "name": "B",
+          "references": {
+            "impact": "referenced",
+            "incoming": 1
+          },
+          "summary": "tmdb · tv · zh-CN · CN"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "C",
+          "name": "C",
+          "references": {
+            "impact": "referenced",
+            "incoming": 1
+          },
+          "summary": "tmdb · movie · zh-CN · CN"
+        }
+      ],
+      "namingPolicies": [
+        {
+          "description": "",
+          "enabled": true,
+          "id": "A",
+          "name": "Movie naming",
+          "references": {
+            "impact": "referenced",
+            "incoming": 2
+          },
+          "summary": "movie templates"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "B",
+          "name": "TV naming",
+          "references": {
+            "impact": "referenced",
+            "incoming": 1
+          },
+          "summary": "tv templates"
+        }
+      ],
+      "organizePolicies": [
+        {
+          "description": "",
+          "enabled": true,
+          "id": "A",
+          "name": "A",
+          "references": {
+            "impact": "referenced",
+            "incoming": 2
+          },
+          "summary": "MOVE · conflict manual"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "B",
+          "name": "B",
+          "references": {
+            "impact": "referenced",
+            "incoming": 1
+          },
+          "summary": "MOVE · conflict manual"
+        }
+      ],
+      "recognitionRules": [
+        {
+          "description": "",
+          "enabled": true,
+          "id": "movie-library",
+          "name": "Movie resource library",
+          "references": {
+            "impact": "unreferenced",
+            "incoming": 0
+          },
+          "summary": "→ A · priority 100 · score 100"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "special-library",
+          "name": "Special resource library",
+          "references": {
+            "impact": "unreferenced",
+            "incoming": 0
+          },
+          "summary": "→ C · priority 100 · score 100"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "tv-library",
+          "name": "TV resource library",
+          "references": {
+            "impact": "unreferenced",
+            "incoming": 0
+          },
+          "summary": "→ B · priority 100 · score 100"
+        }
+      ],
+      "recognitionTypes": [
+        {
+          "description": "Standard movie library",
+          "enabled": true,
+          "id": "A",
+          "name": "Normal Movie",
+          "references": {
+            "impact": "referenced",
+            "incoming": 2
+          },
+          "summary": "Standard movie library"
+        },
+        {
+          "description": "Television library",
+          "enabled": true,
+          "id": "B",
+          "name": "TV",
+          "references": {
+            "impact": "referenced",
+            "incoming": 2
+          },
+          "summary": "Television library"
+        },
+        {
+          "description": "Separately configured special type",
+          "enabled": true,
+          "id": "C",
+          "name": "Special",
+          "references": {
+            "impact": "referenced",
+            "incoming": 2
+          },
+          "summary": "Separately configured special type"
+        }
+      ],
+      "typeBindings": [
+        {
+          "description": "",
+          "enabled": true,
+          "id": "type-A",
+          "name": "type-A",
+          "policyReferences": {
+            "classificationPolicy": "A",
+            "metadataPolicy": "A",
+            "namingPolicy": "A",
+            "organizePolicy": "A"
+          },
+          "recognitionType": "A",
+          "references": {
+            "impact": "unreferenced",
+            "incoming": 0
+          },
+          "summary": "Metadata: A · Naming: A · Classification: A · Organize: A"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "type-B",
+          "name": "type-B",
+          "policyReferences": {
+            "classificationPolicy": "B",
+            "metadataPolicy": "B",
+            "namingPolicy": "B",
+            "organizePolicy": "B"
+          },
+          "recognitionType": "B",
+          "references": {
+            "impact": "unreferenced",
+            "incoming": 0
+          },
+          "summary": "Metadata: B · Naming: B · Classification: B · Organize: B"
+        },
+        {
+          "description": "",
+          "enabled": true,
+          "id": "type-C",
+          "name": "type-C",
+          "policyReferences": {
+            "classificationPolicy": "A",
+            "metadataPolicy": "C",
+            "namingPolicy": "A",
+            "organizePolicy": "A"
+          },
+          "recognitionType": "C",
+          "references": {
+            "impact": "unreferenced",
+            "incoming": 0
+          },
+          "summary": "Metadata: C · Naming: A · Classification: A · Organize: A"
+        }
+      ]
+    }
+  },
+  "ruleReadiness": {
+    "active": {
+      "revisionId": "rules-active-rev-e2e-001",
+      "sequence": 1,
+      "status": "ACTIVE",
+      "version": 1
+    },
+    "available": true,
+    "counts": {
+      "classificationPolicies": 2,
+      "metadataPolicies": 3,
+      "namingPolicies": 2,
+      "organizePolicies": 2,
+      "recognitionRules": 3,
+      "recognitionTypes": 3,
+      "typeBindings": 3
+    },
+    "enabledCounts": {
+      "classificationPolicies": 2,
+      "metadataPolicies": 3,
+      "namingPolicies": 2,
+      "organizePolicies": 2,
+      "recognitionRules": 3,
+      "recognitionTypes": 3,
+      "typeBindings": 3
+    },
+    "gaps": [],
+    "reason": null,
+    "state": "READY"
+  },
+  "activeRevisionId": "rules-active-rev-e2e-001",
+  "activeSequence": 1,
+  "activeVersion": 1
+}
