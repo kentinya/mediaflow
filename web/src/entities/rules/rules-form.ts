@@ -73,6 +73,15 @@ export interface RuleCatalogItem {
   readonly enabled: boolean;
 }
 
+export const RULE_CATALOG_FAMILIES = [
+  "recognitionTypes",
+  "metadataPolicies",
+  "namingPolicies",
+  "classificationPolicies",
+  "organizePolicies",
+] as const;
+export type RuleCatalogFamily = (typeof RULE_CATALOG_FAMILIES)[number];
+
 export interface RuleEnums {
   readonly mediaTypes: readonly string[];
   readonly mediaQueryTypes: readonly string[];
@@ -97,7 +106,9 @@ export interface RuleFormAuthority {
   readonly families: Readonly<Record<RuleFormFamily, RuleFormDefaults>>;
   readonly mediaLibraries: readonly MediaLibraryReference[];
   readonly providers: readonly ProviderReference[];
-  readonly catalogs: Readonly<Record<"recognitionTypes" | "metadataPolicies" | "namingPolicies" | "classificationPolicies" | "organizePolicies", readonly RuleCatalogItem[]>>;
+  readonly catalogs: Readonly<
+    Record<RuleCatalogFamily, readonly RuleCatalogItem[]>
+  >;
   readonly enums: RuleEnums;
   readonly limits: {
     readonly objectId: number;
@@ -262,9 +273,18 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
     ),
     cleanupModes: stringList(enumsSource.cleanupModes, "enums.cleanupModes"),
     hashModes: stringList(enumsSource.hashModes, "enums.hashModes"),
-    conditionFields: stringList(enumsSource.conditionFields, "enums.conditionFields"),
-    conditionOperators: stringList(enumsSource.conditionOperators, "enums.conditionOperators"),
-    logicalOperators: stringList(enumsSource.logicalOperators, "enums.logicalOperators"),
+    conditionFields: stringList(
+      enumsSource.conditionFields,
+      "enums.conditionFields",
+    ),
+    conditionOperators: stringList(
+      enumsSource.conditionOperators,
+      "enums.conditionOperators",
+    ),
+    logicalOperators: stringList(
+      enumsSource.logicalOperators,
+      "enums.logicalOperators",
+    ),
   };
   if (!Array.isArray(source.mediaLibraries)) {
     throw new Error("invalid field: mediaLibraries");
@@ -309,19 +329,20 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
     } satisfies ProviderReference;
   });
   const catalogsSource = readRecord(source.catalogs, "rulesAuthority.catalogs");
-  const catalogFamilies = ["recognitionTypes", "metadataPolicies", "namingPolicies", "classificationPolicies", "organizePolicies"] as const;
-  const catalogs = Object.fromEntries(catalogFamilies.map((family) => {
+  const catalogs = {} as Record<RuleCatalogFamily, readonly RuleCatalogItem[]>;
+  for (const family of RULE_CATALOG_FAMILIES) {
     const values = catalogsSource[family];
-    if (!Array.isArray(values)) throw new Error(`invalid field: catalogs.${family}`);
-    return [family, values.map((raw, index) => {
+    if (!Array.isArray(values))
+      throw new Error(`invalid field: catalogs.${family}`);
+    catalogs[family] = values.map((raw, index) => {
       const item = readRecord(raw, `catalogs.${family}[${index}]`);
       return {
         id: normalizeBoundedText(item.id, `catalogs.${family}.id`, 64),
         name: normalizeBoundedText(item.name, `catalogs.${family}.name`, 120),
         enabled: normalizeBoolean(item.enabled, `catalogs.${family}.enabled`),
       } satisfies RuleCatalogItem;
-    })];
-  })) as RuleFormAuthority["catalogs"];
+    });
+  }
   const activeSource = readRecord(source.active, "rulesAuthority.active");
   return {
     active: activeSource,
@@ -894,6 +915,28 @@ export function normalizeRuleObjectProjection(
 const RULE_FORM_FIELD_ALLOWLIST: Readonly<
   Record<RuleFormFamily, ReadonlySet<string>>
 > = {
+  recognitionRules: new Set([
+    "id",
+    "name",
+    "description",
+    "condition",
+    "outputRecognitionType",
+    "enabled",
+    "priority",
+    "score",
+    "stopOnMatch",
+  ]),
+  typeBindings: new Set([
+    "id",
+    "name",
+    "recognitionType",
+    "metadataPolicy",
+    "namingPolicy",
+    "classificationPolicy",
+    "organizePolicy",
+    "enabled",
+    "priority",
+  ]),
   recognitionTypes: new Set(["id", "name", "description", "enabled"]),
   metadataPolicies: new Set([
     "id",

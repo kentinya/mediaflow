@@ -57,64 +57,271 @@ function numberOf(value: RuleFormValue | undefined): string {
 
 type ConditionNode = Record<string, unknown>;
 const NUMERIC_CONDITION_FIELDS = new Set(["year", "season", "episode"]);
-const COLLECTION_CONDITION_FIELDS = new Set(["directory", "hdr_tag", "version_tag", "language_tag"]);
-const COLLECTION_OPERATORS = new Set(["in", "not_in", "between", "contains_any", "contains_all"]);
-const NUMERIC_OPERATORS = new Set(["equals", "not_equals", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal", "between", "in"]);
-const STRING_OPERATORS = new Set(["equals", "not_equals", "contains", "not_contains", "starts_with", "ends_with", "in", "not_in", "regex"]);
-const COLLECTION_FIELD_OPERATORS = new Set(["contains", "not_contains", "contains_any", "contains_all"]);
+const COLLECTION_CONDITION_FIELDS = new Set([
+  "directory",
+  "hdr_tag",
+  "version_tag",
+  "language_tag",
+]);
+const COLLECTION_OPERATORS = new Set([
+  "in",
+  "not_in",
+  "between",
+  "contains_any",
+  "contains_all",
+]);
+const NUMERIC_OPERATORS = new Set([
+  "equals",
+  "not_equals",
+  "greater_than",
+  "greater_than_or_equal",
+  "less_than",
+  "less_than_or_equal",
+  "between",
+  "in",
+]);
+const STRING_OPERATORS = new Set([
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "starts_with",
+  "ends_with",
+  "in",
+  "not_in",
+  "regex",
+]);
+const COLLECTION_FIELD_OPERATORS = new Set([
+  "contains",
+  "not_contains",
+  "contains_any",
+  "contains_all",
+]);
 
-function ConditionBuilder({ authority, value, disabled, onChange }: {
+function ConditionBuilder({
+  authority,
+  value,
+  disabled,
+  onChange,
+}: {
   readonly authority: RuleFormAuthority;
   readonly value: RuleFormValue | undefined;
   readonly disabled: boolean;
   readonly onChange: (value: RuleFormValue) => void;
 }) {
-  const node: ConditionNode = value && typeof value === "object" && !Array.isArray(value)
-    ? { ...(value as ConditionNode) } : { operator: "always", children: [] };
+  const node: ConditionNode =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? { ...(value as ConditionNode) }
+      : { operator: "always", children: [] };
   const logical = Object.prototype.hasOwnProperty.call(node, "children");
   const children = Array.isArray(node.children) ? node.children : [];
   const field = String(node.field ?? authority.enums.conditionFields[0]);
   const allowedOperators = NUMERIC_CONDITION_FIELDS.has(field)
-    ? authority.enums.conditionOperators.filter((item) => NUMERIC_OPERATORS.has(item))
+    ? authority.enums.conditionOperators.filter((item) =>
+        NUMERIC_OPERATORS.has(item),
+      )
     : COLLECTION_CONDITION_FIELDS.has(field)
-      ? authority.enums.conditionOperators.filter((item) => COLLECTION_FIELD_OPERATORS.has(item))
-      : authority.enums.conditionOperators.filter((item) => STRING_OPERATORS.has(item));
+      ? authority.enums.conditionOperators.filter((item) =>
+          COLLECTION_FIELD_OPERATORS.has(item),
+        )
+      : authority.enums.conditionOperators.filter((item) =>
+          STRING_OPERATORS.has(item),
+        );
   const operator = String(node.operator ?? allowedOperators[0]);
   const collectionValue = COLLECTION_OPERATORS.has(operator);
   const numericValue = NUMERIC_CONDITION_FIELDS.has(field);
-  const set = (key: string, next: unknown) => onChange({ ...node, [key]: next } as RuleFormValue);
+  const set = (key: string, next: unknown) =>
+    onChange({ ...node, [key]: next } as RuleFormValue);
   const valueInput = collectionValue ? (
-    <input disabled={disabled} type="text" value={Array.isArray(node.value) ? node.value.join(", ") : ""} onChange={(event) => {
-      const parts = event.target.value.split(",").map((item) => item.trim()).filter(Boolean);
-      set("value", numericValue ? parts.map(Number) : parts);
-    }} />
+    <input
+      disabled={disabled}
+      type="text"
+      value={Array.isArray(node.value) ? node.value.join(", ") : ""}
+      onChange={(event) => {
+        const parts = event.target.value
+          .split(",")
+          .map((item) => item.trim())
+          .filter(Boolean);
+        set("value", numericValue ? parts.map(Number) : parts);
+      }}
+    />
   ) : (
-    <input disabled={disabled} type={numericValue ? "number" : "text"} value={typeof node.value === "string" || typeof node.value === "number" ? String(node.value) : ""} onChange={(event) => set("value", numericValue ? Number(event.target.value) : event.target.value)} />
+    <input
+      disabled={disabled}
+      type={numericValue ? "number" : "text"}
+      value={
+        typeof node.value === "string" || typeof node.value === "number"
+          ? String(node.value)
+          : ""
+      }
+      onChange={(event) =>
+        set(
+          "value",
+          numericValue ? Number(event.target.value) : event.target.value,
+        )
+      }
+    />
   );
-  return <div className="mf-rules-condition-builder">
-    <label>条件类型
-      <select disabled={disabled} value={logical ? "logical" : "atomic"} onChange={(event) => {
-        if (event.target.value === "logical") onChange({ operator: "and", children: [] });
-        else onChange({ field: authority.enums.conditionFields[0], operator: authority.enums.conditionOperators[0], value: "" });
-      }}><option value="logical">逻辑条件</option><option value="atomic">原子条件</option></select>
-    </label>
-    {logical ? <>
-      <label>逻辑运算符<select disabled={disabled} value={String(node.operator ?? "and")} onChange={(event) => set("operator", event.target.value)}>
-        {authority.enums.logicalOperators.map((item) => <option key={item} value={item}>{item}</option>)}
-      </select></label>
-      {String(node.operator) !== "always" ? <div className="mf-rules-condition-children">
-        {children.map((child, index) => <div key={index}><ConditionBuilder authority={authority} value={child as RuleFormValue} disabled={disabled} onChange={(next) => {
-          const nextChildren = children.slice(); nextChildren[index] = next; set("children", nextChildren);
-        }} /><button type="button" disabled={disabled} onClick={() => set("children", children.filter((_, item) => item !== index))}>删除条件</button></div>)}
-        <button type="button" disabled={disabled} onClick={() => set("children", [...children, { field: authority.enums.conditionFields[0], operator: authority.enums.conditionOperators[0], value: "" }])}>添加子条件</button>
-      </div> : null}
-    </> : <>
-      <label>字段<select disabled={disabled} value={field} onChange={(event) => { const nextField = event.target.value; const nextNumeric = NUMERIC_CONDITION_FIELDS.has(nextField); const nextOps = nextNumeric ? authority.enums.conditionOperators.filter((item) => NUMERIC_OPERATORS.has(item)) : COLLECTION_CONDITION_FIELDS.has(nextField) ? authority.enums.conditionOperators.filter((item) => COLLECTION_FIELD_OPERATORS.has(item)) : authority.enums.conditionOperators.filter((item) => STRING_OPERATORS.has(item)); onChange({ field: nextField, operator: nextOps[0], value: nextNumeric ? 0 : "" }); }}>{authority.enums.conditionFields.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-      <label>运算符<select disabled={disabled} value={allowedOperators.includes(operator) ? operator : allowedOperators[0]} onChange={(event) => { const next = event.target.value; set("operator", next); if (COLLECTION_OPERATORS.has(next) && !Array.isArray(node.value)) set("value", numericValue ? [0] : [""]); }}>{allowedOperators.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-      <label>值{valueInput}</label>
-      <label>区分大小写<input type="checkbox" disabled={disabled} checked={node.caseSensitive === true} onChange={(event) => set("caseSensitive", event.target.checked)} /></label>
-    </>}
-  </div>;
+  return (
+    <div className="mf-rules-condition-builder">
+      <label>
+        条件类型
+        <select
+          disabled={disabled}
+          value={logical ? "logical" : "atomic"}
+          onChange={(event) => {
+            if (event.target.value === "logical")
+              onChange({ operator: "and", children: [] });
+            else
+              onChange({
+                field: authority.enums.conditionFields[0],
+                operator: authority.enums.conditionOperators[0],
+                value: "",
+              });
+          }}
+        >
+          <option value="logical">逻辑条件</option>
+          <option value="atomic">原子条件</option>
+        </select>
+      </label>
+      {logical ? (
+        <>
+          <label>
+            逻辑运算符
+            <select
+              disabled={disabled}
+              value={String(node.operator ?? "and")}
+              onChange={(event) => set("operator", event.target.value)}
+            >
+              {authority.enums.logicalOperators.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+          {String(node.operator) !== "always" ? (
+            <div className="mf-rules-condition-children">
+              {children.map((child, index) => (
+                <div key={index}>
+                  <ConditionBuilder
+                    authority={authority}
+                    value={child as RuleFormValue}
+                    disabled={disabled}
+                    onChange={(next) => {
+                      const nextChildren = children.slice();
+                      nextChildren[index] = next;
+                      set("children", nextChildren);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    disabled={disabled}
+                    onClick={() =>
+                      set(
+                        "children",
+                        children.filter((_, item) => item !== index),
+                      )
+                    }
+                  >
+                    删除条件
+                  </button>
+                </div>
+              ))}
+              <button
+                type="button"
+                disabled={disabled}
+                onClick={() =>
+                  set("children", [
+                    ...children,
+                    {
+                      field: authority.enums.conditionFields[0],
+                      operator: authority.enums.conditionOperators[0],
+                      value: "",
+                    },
+                  ])
+                }
+              >
+                添加子条件
+              </button>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <>
+          <label>
+            字段
+            <select
+              disabled={disabled}
+              value={field}
+              onChange={(event) => {
+                const nextField = event.target.value;
+                const nextNumeric = NUMERIC_CONDITION_FIELDS.has(nextField);
+                const nextOps = nextNumeric
+                  ? authority.enums.conditionOperators.filter((item) =>
+                      NUMERIC_OPERATORS.has(item),
+                    )
+                  : COLLECTION_CONDITION_FIELDS.has(nextField)
+                    ? authority.enums.conditionOperators.filter((item) =>
+                        COLLECTION_FIELD_OPERATORS.has(item),
+                      )
+                    : authority.enums.conditionOperators.filter((item) =>
+                        STRING_OPERATORS.has(item),
+                      );
+                onChange({
+                  field: nextField,
+                  operator: nextOps[0],
+                  value: nextNumeric ? 0 : "",
+                });
+              }}
+            >
+              {authority.enums.conditionFields.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            运算符
+            <select
+              disabled={disabled}
+              value={
+                allowedOperators.includes(operator)
+                  ? operator
+                  : allowedOperators[0]
+              }
+              onChange={(event) => {
+                const next = event.target.value;
+                set("operator", next);
+                if (
+                  COLLECTION_OPERATORS.has(next) &&
+                  !Array.isArray(node.value)
+                )
+                  set("value", numericValue ? [0] : [""]);
+              }}
+            >
+              {allowedOperators.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>值{valueInput}</label>
+          <label>
+            区分大小写
+            <input
+              type="checkbox"
+              disabled={disabled}
+              checked={node.caseSensitive === true}
+              onChange={(event) => set("caseSensitive", event.target.checked)}
+            />
+          </label>
+        </>
+      )}
+    </div>
+  );
 }
 
 function listOf(value: unknown): readonly string[] {
@@ -122,6 +329,8 @@ function listOf(value: unknown): readonly string[] {
 }
 
 const FAMILY_LABELS: Readonly<Record<RuleFormFamily, string>> = {
+  recognitionRules: "识别规则",
+  typeBindings: "类型绑定",
   recognitionTypes: "识别类型",
   metadataPolicies: "元数据策略",
   namingPolicies: "命名策略",
@@ -332,12 +541,41 @@ export function RulesObjectForm({
       text("id"),
       text("name"),
       text("description"),
-      <Field key="outputRecognitionType" id={id("outputRecognitionType")} label={FIELD_LABELS.outputRecognitionType} hint="必须引用一个已启用的识别类型。" error={issue("outputRecognitionType")} disabled={disabled}><select id={id("outputRecognitionType")} disabled={disabled} value={textOf(values.outputRecognitionType)} onChange={(event) => onChange("outputRecognitionType", event.target.value)}><option value="">请选择</option>{authority.catalogs.recognitionTypes.map((item) => <option key={item.id} value={item.id} disabled={!item.enabled}>{item.name} ({item.id}){item.enabled ? "" : " · 已禁用"}</option>)}</select></Field>,
+      <Field
+        key="outputRecognitionType"
+        id={id("outputRecognitionType")}
+        label={FIELD_LABELS.outputRecognitionType}
+        hint="必须引用一个已启用的识别类型。"
+        error={issue("outputRecognitionType")}
+        disabled={disabled}
+      >
+        <select
+          id={id("outputRecognitionType")}
+          disabled={disabled}
+          value={textOf(values.outputRecognitionType)}
+          onChange={(event) =>
+            onChange("outputRecognitionType", event.target.value)
+          }
+        >
+          <option value="">请选择</option>
+          {authority.catalogs.recognitionTypes.map((item) => (
+            <option key={item.id} value={item.id} disabled={!item.enabled}>
+              {item.name} ({item.id}){item.enabled ? "" : " · 已禁用"}
+            </option>
+          ))}
+        </select>
+      </Field>,
       number("priority", -1000000, 1000000),
       number("score", 0, 1000000),
       checkbox("stopOnMatch"),
       checkbox("enabled"),
-      <ConditionBuilder key="condition" authority={authority} value={values.condition} disabled={disabled} onChange={(next) => onChange("condition", next)} />,
+      <ConditionBuilder
+        key="condition"
+        authority={authority}
+        value={values.condition}
+        disabled={disabled}
+        onChange={(next) => onChange("condition", next)}
+      />,
     );
   }
 
@@ -346,9 +584,53 @@ export function RulesObjectForm({
       text("id"),
       text("name"),
       text("description"),
-      ...(["recognitionType", "metadataPolicy", "namingPolicy", "classificationPolicy", "organizePolicy"] as const).map((field) => {
-        const catalog = field === "recognitionType" ? "recognitionTypes" : field === "metadataPolicy" ? "metadataPolicies" : field === "namingPolicy" ? "namingPolicies" : field === "classificationPolicy" ? "classificationPolicies" : "organizePolicies";
-        return <Field key={field} id={id(field)} label={FIELD_LABELS[field]} hint={field === "recognitionType" ? "一个识别类型只能有一个已启用绑定。" : undefined} error={issue(field)} disabled={disabled}><select id={id(field)} disabled={disabled} value={textOf(values[field])} onChange={(event) => onChange(field, event.target.value)}><option value="">请选择</option>{authority.catalogs[catalog].map((item) => <option key={item.id} value={item.id} disabled={!item.enabled}>{item.name} ({item.id}){item.enabled ? "" : " · 已禁用"}</option>)}</select></Field>;
+      ...(
+        [
+          "recognitionType",
+          "metadataPolicy",
+          "namingPolicy",
+          "classificationPolicy",
+          "organizePolicy",
+        ] as const
+      ).map((field) => {
+        const catalog =
+          field === "recognitionType"
+            ? "recognitionTypes"
+            : field === "metadataPolicy"
+              ? "metadataPolicies"
+              : field === "namingPolicy"
+                ? "namingPolicies"
+                : field === "classificationPolicy"
+                  ? "classificationPolicies"
+                  : "organizePolicies";
+        return (
+          <Field
+            key={field}
+            id={id(field)}
+            label={FIELD_LABELS[field]}
+            hint={
+              field === "recognitionType"
+                ? "一个识别类型只能有一个已启用绑定。"
+                : undefined
+            }
+            error={issue(field)}
+            disabled={disabled}
+          >
+            <select
+              id={id(field)}
+              disabled={disabled}
+              value={textOf(values[field])}
+              onChange={(event) => onChange(field, event.target.value)}
+            >
+              <option value="">请选择</option>
+              {authority.catalogs[catalog].map((item) => (
+                <option key={item.id} value={item.id} disabled={!item.enabled}>
+                  {item.name} ({item.id}){item.enabled ? "" : " · 已禁用"}
+                </option>
+              ))}
+            </select>
+          </Field>
+        );
       }),
       number("priority", -1000000, 1000000),
       checkbox("enabled"),
