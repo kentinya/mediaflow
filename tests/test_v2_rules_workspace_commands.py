@@ -732,6 +732,16 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                 {"id": "x", "name": "x", "enabled": "yes"},
                 "rules_invalid_field",
             ),
+            "numeric condition text": (
+                "recognitionRules",
+                {
+                    "id": "numeric",
+                    "name": "Numeric",
+                    "condition": {"field": "year", "operator": "equals", "value": "2024"},
+                    "outputRecognitionType": "C",
+                },
+                "rules_invalid_field",
+            ),
             "unknown naming variable": (
                 "namingPolicies",
                 {"id": "x", "name": "x", "directoryTemplate": "{bogus_var}"},

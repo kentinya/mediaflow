@@ -119,6 +119,9 @@ from mediaflow.domain.organizer import (
 )
 from mediaflow.domain.parser import FileContext, ParseResult
 from mediaflow.domain.recognition import (
+    COLLECTION_FIELDS,
+    NUMERIC_FIELDS,
+    STRING_FIELDS,
     AtomicCondition,
     ConditionField,
     ConditionOperator,
@@ -9043,10 +9046,14 @@ class ConfigurationObjectService:
                 raise ValueError(
                     f"RecognitionRule condition has unsupported field {sorted(unknown)[0]!r}"
                 )
+            field = ConditionField(str(value.get("field", "")))
+            operator = ConditionOperator(str(value.get("operator", "")))
+            raw_value = value.get("value")
+            cls._recognition_condition_value(field, operator, raw_value)
             AtomicCondition(
-                ConditionField(str(value.get("field", ""))),
-                ConditionOperator(str(value.get("operator", ""))),
-                value.get("value"),
+                field,
+                operator,
+                raw_value,
                 cls._bool(value, "caseSensitive", False, "RecognitionRule condition"),
             )
             return value
@@ -9064,6 +9071,52 @@ class ConfigurationObjectService:
         # Domain construction enforces always/not/and/or cardinality.
         LogicalCondition(LogicalOperator(str(value.get("operator", ""))), children)  # type: ignore[arg-type]
         return value
+
+    @staticmethod
+    def _recognition_condition_value(
+        field: ConditionField, operator: ConditionOperator, value: object
+    ) -> None:
+        collection_operator = operator in {
+            ConditionOperator.IN,
+            ConditionOperator.NOT_IN,
+            ConditionOperator.BETWEEN,
+            ConditionOperator.CONTAINS_ANY,
+            ConditionOperator.CONTAINS_ALL,
+        }
+        if collection_operator:
+            if not isinstance(value, list) or not value:
+                raise ValueError(
+                    f"RecognitionRule condition {operator.value} requires a non-empty array"
+                )
+            if operator is ConditionOperator.BETWEEN and len(value) != 2:
+                raise ValueError("RecognitionRule condition between requires exactly two bounds")
+            values = value
+        else:
+            if isinstance(value, (list, tuple, set, frozenset)) or value is None:
+                raise ValueError(
+                    f"RecognitionRule condition {operator.value} requires a scalar value"
+                )
+            values = [value]
+        if field in NUMERIC_FIELDS:
+            if any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in values):
+                raise ValueError(
+                    f"RecognitionRule numeric field {field.value} requires numeric values"
+                )
+        elif field in STRING_FIELDS:
+            if any(not isinstance(item, str) for item in values):
+                raise ValueError(
+                    f"RecognitionRule string field {field.value} requires string values"
+                )
+        elif field in COLLECTION_FIELDS:
+            if operator in {ConditionOperator.CONTAINS, ConditionOperator.NOT_CONTAINS}:
+                if not isinstance(value, str):
+                    raise ValueError(
+                        f"RecognitionRule collection field {field.value} requires a string value"
+                    )
+            elif any(not isinstance(item, str) for item in values):
+                raise ValueError(
+                    f"RecognitionRule collection field {field.value} requires string values"
+                )
 
     @staticmethod
     def _bool(value: Mapping[str, object], field: str, default: bool, label: str) -> bool:
