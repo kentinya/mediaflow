@@ -123,9 +123,7 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ### Changed Files
 
-- `mediaflow/application/configuration_objects.py`
 - `mediaflow/application/rules_workspace_commands.py`
-- `mediaflow/interfaces/service_api.py`
 - `tests/test_v2_rules_workspace_previews.py`
 - `web/src/features/rules/RulesEditPage.test.tsx`
 - `web/src/features/rules/RulesPreviewPanel.tsx`
@@ -133,34 +131,34 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ### Implemented
 
-- Corrected MetadataPolicy test matching to use the production strategy result's `effectiveMetadataPolicy.id`. An offline test for the effective C policy now succeeds without a Provider call, while a genuinely mismatched policy remains rejected.
-- Added explicit `direct` and `binding` policy-selection envelopes for Naming and Classification preview. Binding mode resolves the applicable policy through the exact staged candidate's `RecognitionTypePolicyResolver` instead of trusting a browser-supplied policy ID.
-- Updated the type editor's whole-chain Naming/Classification actions to submit RecognitionType C in binding mode, producing Policy A results while preserving RecognitionType C. Type bindings use their selected policy references directly.
-- Limited each editor family to actions whose subject it can select truthfully: rule Strategy Test, type/binding whole-chain actions, and the corresponding individual policy action.
-- Added API regressions for effective Metadata C success/mismatch rejection and the C→A Naming/Classification reuse matrix, plus Web assertions for binding selection and action availability.
+- Bound Naming and Classification samples to the exact RecognitionType selected by the staged candidate's type binding before invoking the production preview engines.
+- Rejected bound path-mode samples and typed samples carrying a different RecognitionType at the shared application/API boundary, so neither path parsing nor browser input can silently replace type C with another identity.
+- Made RecognitionType and Type Binding editor previews use binding-mode backend resolution, fixed the typed sample's RecognitionType to the selected binding, and removed path mode only from those bound actions. Strategy Test still accepts its synthetic path, and direct Naming/Classification policy previews retain path mode.
+- Added API regressions for C→A bound path and mismatched typed samples, plus Web coverage proving the bound identity is fixed and the unsupported path option is absent.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (223 passed, 197 subtests).
-- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx src/features/rules/RulesWorkspacePage.test.tsx` — PASS (24 tests).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py` — PASS (47 passed, 32 subtests).
+- `npm --prefix web test -- --run src/features/rules/RulesEditPage.test.tsx` — PASS (4 tests; jsdom emitted its existing `scrollTo` not-implemented notices).
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_previews.py tests/test_v2_rules_workspace_commands.py tests/test_recognition.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (224 passed, 197 subtests).
 - `npm --prefix web test -- --run` — PASS (789 tests / 54 files).
 - `npm --prefix web run build` — PASS (Vite chunk-size warning only).
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run lint` — PASS.
-- `npm --prefix web run format:check` — PASS.
-- `.venv/bin/ruff format --check .` — PASS (327 files already formatted).
-- `.venv/bin/ruff check .` — PASS.
+- `npm --prefix web run format:check` — initial FAIL on the edited `RulesPreviewPanel.tsx`; corrected with targeted Prettier, then PASS.
+- `.venv/bin/ruff format --check mediaflow tests scripts` — initial FAIL on the edited Python helper; corrected with targeted Ruff formatting, then PASS (305 files already formatted).
+- `.venv/bin/ruff check mediaflow tests scripts` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts` — PASS.
 - `python3 scripts/check_governance.py` and `git diff --check` — PASS.
 - `npm --prefix web run test:e2e -- --grep 'rules|preview|strategy'` — PASS (8 tests).
 - `python3 scripts/docker_release_security_smoke_test.py` — PASS (release-security smoke acceptance passed).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (1995 tests, 7 skipped).
+- `.venv/bin/python -m unittest discover -s tests` — PASS (1996 tests, 7 skipped; existing resource-cleanup warnings were emitted).
 
 ### Decisions
 
-- Kept policy resolution backend-authoritative. The browser states whether the subject is a directly selected policy or a RecognitionType binding; only the shared resolver chooses the bound policy ID.
-- Retained direct mode so a new or edited Naming/Classification policy can still be previewed before it is referenced, while type and binding editors use exact-candidate graph resolution.
-- Did not alter RecognitionType identity: the bound preview result must report Policy A and RecognitionType C independently.
+- Kept the selected binding authoritative for both policy choice and RecognitionType identity. The backend rejects contradictory evidence instead of returning a completed result with a false type.
+- Chose the blocker-authorized fail-closed path for bound path samples because the existing path-only preview contract cannot carry an explicit RecognitionType. Direct policy previews remain unchanged and continue to support path parsing.
+- Preserved the Strategy Test path input and exact-candidate resolver; no frontend policy ID becomes authority.
 
 ### Remaining In-Slice Work
 
@@ -168,43 +166,38 @@ Files and Operations redesign, and the six supplied reference images. Do not edi
 
 ### Risks / Deviations
 
-- Live Provider behavior remains dependent on deployment-owned Provider configuration and was not exercised with production credentials.
+- No production Provider credentials were used; this correction did not change or re-exercise live Provider behavior.
+- The full Python regression passed with existing unclosed-database and temporary-directory `ResourceWarning` output; no test failed.
 - The existing four untracked reference images under `docs/pics/` were preserved and excluded from the checkpoint.
+- `config/alist.json` remains ignored and absent from the worktree/index.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b8773c64052504a263d39ef0c551e66480ad71de
+Head SHA: 5b542cbb001e9c6a798cd011bb4d075925d367fb
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..af6599cd2ae44976993c028eb15ae13749697e37
+Reviewed: 40e7d1ccd06e9188a27c1e7995a561de810de772..e98de2c732cd597d7487b37a6a62713e390c4b9f
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- Metadata Policy offline test cannot succeed for a correctly selected effective policy (Task
-  Acceptance 2; Slice RO-6). In the current application service,
-  `ConfigurationObjectService.metadata_policy_test` compares
-  `effectiveMetadataPolicy["policyId"]` with the requested ID, but the production strategy result
-  emits that policy as `effectiveMetadataPolicy["id"]`. Replaying the checked-in legal C graph
-  through `/api/v1/operations/rules/previews/metadata`, with source `source`, path
-  `/C/Special.C.2025.mkv`, selected policy `C` and `liveMetadata: false`, returned HTTP 409
-  `configuration_version_conflict` and the false instruction to select the policy resolved by the
-  binding. The same graph's Strategy Test returned effective Metadata Policy `C`. Compare the
-  actual result field through the shared typed authority and add an API regression proving that
-  the matching offline test succeeds and a genuinely mismatched policy is rejected.
-- The type editor exposes Naming and Classification Preview but sends the RecognitionType ID as
-  each policy ID (Task Acceptance 3 and 6; Slice RO-4/RO-6). `RulesPreviewPanel.run` derives
-  `policyId` from `submittedCandidate.id` for all five actions. In the checked-in legal graph,
-  RecognitionType `C` uses NamingPolicy `A` and ClassificationPolicy `A`; replaying the type
-  editor's request for either preview with `policyId: C` returned HTTP 200 with `status: failed`
-  and `policy_not_found`, while the same candidate/sample with the actual bound ID `A` completed.
-  The current Web test stubs a successful `policyId: C` response, so it does not prove this
-  production path. Resolve the applicable policy from the exact candidate binding for whole-chain
-  actions, and expose only actions whose subject can be selected truthfully; cover the C→A reuse
-  path through API and Web without changing RecognitionType C.
+- Bound Naming and Classification previews still report the sample's RecognitionType instead of
+  preserving the selected binding's type (Task Acceptance 3 and 6; Slice RO-4/RO-6 and Safety
+  Invariant 2). The current V2 RecognitionType editor offers `从路径解析` and editable sample type,
+  while its Naming/Classification actions send `policySelection: {mode: "binding",
+  recognitionType: "C"}`. Replaying that exact request through the production API against the
+  checked-in legal C→A graph returned HTTP 200 `completed` with Policy A but
+  `result.recognitionType: "preview-movie"` for Naming and `"preview"` for Classification in path
+  mode. With a typed sample whose RecognitionType is B, both returned B despite selecting binding
+  C. The Web result renders that identity, so the operator sees a false type change. Bind or
+  validate the analysis sample's identity against the selected RecognitionType; if bound path mode
+  cannot preserve it, reject bound path samples at the shared API/application boundary and omit
+  that option from the bound Web action, while keeping the required Strategy Test path input and
+  direct policy previews usable. Add API and Web regressions for C→A bound path and mismatched typed
+  samples; neither may silently report a different type.
