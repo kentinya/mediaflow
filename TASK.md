@@ -150,11 +150,12 @@ images. Do not edit `config/alist.json`.
 - Expanded the inventory/action authority so these families are no longer deferred by the V2 rules workspace.
 - Correction: removed unsupported Type Binding `description`, exposed bounded enabled catalogs and condition enums from the backend, replaced free-text graph references with typed selectors, and replaced raw condition editing with recursive Atomic/Logical controls.
 - Correction: updated graph-family Web fixtures and empty-state regression coverage to reflect the now-authorable families.
+- Correction: enforced backend condition value shape/type compatibility for numeric, string and collection fields; the typed builder now filters operators and emits numeric scalars or typed collections instead of universal text values.
 
 ### Tests and Results
 
-- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 76 subtests).
-- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED: 1949 tests, 1 failure in `test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` because this Task report does not yet include the Docker smoke command; 7 skipped, resource warnings only.
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 77 subtests).
+- `.venv/bin/python -m unittest discover -s tests` — FAIL (previous run before this report included the Docker command): 1949 tests, 1 documentation assertion failure in `test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution`, 7 skipped, resource warnings only; not rerun after the report correction.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (2 files, 24 tests).
@@ -172,7 +173,7 @@ images. Do not edit `config/alist.json`.
 ### Decisions
 
 - Reused `ConfigurationObjectService._normalize`, whole-document validation and `RulesWorkspaceCommandService._publish`; no second policy resolver or configuration authority was introduced.
-- Conditions remain provider-neutral and bounded by the existing runtime model; the UI uses recursive typed Atomic/Logical controls and submits the same condition document validated by the backend.
+- Conditions remain provider-neutral and bounded by the existing runtime model; recursive typed Atomic/Logical controls submit numeric, scalar or collection values that are revalidated by the backend.
 - RecognitionType identity is carried by the binding reference and is never inferred from naming/classification/organize policy IDs.
 
 ### Remaining In-Slice Work
@@ -189,43 +190,24 @@ images. Do not edit `config/alist.json`.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 2368e331fb3b642d3ed77ad89a23b67c7d0ef735
+Head SHA: 43c269abc7cacaddaf5ef1d149dc03bbf0d7dddc
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..44a0cd0f6f6a8d254b1d12b54b39e772dfcfc656
+Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..cc930123cd853dd438feabe79d14e0559def1d58
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The Type Binding create journey is not publishable. In the legal current Active harness, after
-  creating a new enabled RecognitionType and submitting a binding with the actual enabled policy
-  references, `RulesWorkspaceCommandService.save_object("typeBindings", ...)` fails with
-  `rules_invalid_field` at `compose`: `RecognitionTypePolicy ... contains unsupported field
-  'description'`. The new `_FAMILY_SPECS` and defaults expose `description`, but the current
-  `ConfigurationObjectService._RECOGNITION_TYPE_POLICY_FIELDS` and normalizer do not support it.
-  This is a production-reachable failure of Task AC-1/AC-3 and RO-4. Align the typed projection and
-  form with the real domain fields (or make a deliberate domain-compatible change) so a valid binding
-  can be created, edited and copied without sending an invented field.
-- RecognitionRule condition editing is an ordinary raw JSON textarea (`RulesObjectForm.tsx`,
-  `structure("condition", ...)`) rather than the required typed nested AtomicCondition /
-  LogicalCondition builder. An administrator must author the production condition tree manually and
-  the UI offers no field/operator/value compatibility controls. This violates Task AC-2, the
-  Required Surface typed form contract and RO-3. Implement bounded typed controls for the current
-  condition model; any JSON view may remain support-only and must not be the normal Save path.
-- RecognitionRule output type and all five Type Binding references are free-text inputs. The form
-  authority exposes no actual recognition-type/policy catalogs for selectors, so the UI cannot show
-  available IDs, enabled state or compatibility and instead relies on backend rejection. This
-  violates Task AC-3 and RO-4's selector/reference requirements. Add bounded server projections for
-  the actual catalogs and render typed selectors with disabled/missing-reference evidence; do not
-  silently substitute defaults.
-- The required affected Web regression is failing: `npm --prefix web test -- --run
-  src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` reports
-  7 failed tests (24 total), including form-authority parsing failures and the old deferred-family
-  assertions. The rules fixtures and empty-state tests still describe graph authoring as deferred
-  while production now advertises Add controls, so the checkpoint has neither a passing required
-  regression nor truthful empty-state guidance. Update the fixtures/tests and graph-family empty
-  guidance together, then rerun the full Web suite and the remaining T4 gates.
+- The typed RecognitionRule condition builder publishes incompatible value types. In the legal current
+  Active harness, saving a rule with `{field: "year", operator: "equals", value: "2024"}` succeeds
+  and publishes Active (`PUBLISHED active`), while the production `AtomicCondition` also accepts the
+  string for a numeric field; the recognition engine then compares an integer parsed year with the
+  string and the rule cannot match. The Web builder's value control is always a text input and does
+  not switch between numeric, collection, string or regex input based on the selected field/operator.
+  This violates Task AC-2 and RO-3's compatible field/operator/value requirement in a current user
+  journey. Make the builder emit the correct numeric/collection/scalar shape, constrain operators to
+  the selected field, and add backend validation so an incompatible condition cannot be published.
