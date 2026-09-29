@@ -1,9 +1,38 @@
 import { describe, expect, it } from "vitest";
 import { normalizeRulesWorkspace } from "./rules-workspace";
 
+const ACTION = {
+  create: true,
+  edit: true,
+  copy: true,
+  toggle: true,
+  remove: true,
+  blocker: null,
+};
+const TOGGLELESS = { ...ACTION, toggle: false };
+const DEFERRED = {
+  create: false,
+  edit: false,
+  copy: false,
+  toggle: false,
+  remove: false,
+  blocker:
+    "RecognitionRule and type-binding authoring is a later in-Slice unit",
+};
+
 export const rulesPayload = {
   available: true,
   reason: null,
+  canManage: true,
+  actions: {
+    typeBindings: DEFERRED,
+    recognitionTypes: ACTION,
+    recognitionRules: DEFERRED,
+    metadataPolicies: ACTION,
+    namingPolicies: ACTION,
+    classificationPolicies: ACTION,
+    organizePolicies: TOGGLELESS,
+  },
   active: { status: "ACTIVE", version: 4, sequence: 2 },
   readiness: { state: "READY", gaps: [] },
   overview: {

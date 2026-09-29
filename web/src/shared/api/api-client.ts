@@ -5571,3 +5571,399 @@ export async function removeStorage(
     fetchImpl,
   );
 }
+
+// ---------------------------------------------------------------------------
+// V2 rules-workspace typed object command (Slice 41, Task 41.2).
+//
+// The five independently creatable rule families are published through
+// /api/v1/operations/rules/*, which reuses the exact managed application
+// service the V1 configuration UI, `/api/v1/configuration/*` and the CLI drive:
+// one explicit Save composes the focused successor from the captured exact
+// Active, validates the whole document, runs the applicable read-only checks and
+// atomically activates it. The browser therefore never performs a separate
+// Draft-save/validate/activate ceremony and never treats a revision token as
+// operator workflow; the observed Active identity it sends is optimistic
+// concurrency evidence managed by the backend, and no secret value travels in
+// either direction.
+
+import {
+  authorityIdentity,
+  normalizeRuleFormAuthority,
+  normalizeRuleObjectProjection,
+  RULE_FORM_FAMILIES,
+  type ActiveAuthorityIdentity,
+  type RuleFormAuthority,
+  type RuleFormFamily,
+  type RuleFormValue,
+  type RuleObjectProjection,
+} from "../../entities/rules/rules-form";
+
+const RULES_BASE = "/api/v1/operations/rules";
+
+export type { ActiveAuthorityIdentity } from "../../entities/rules/rules-form";
+
+const RULE_FORM_FAMILIES_SET: ReadonlySet<string> = new Set(RULE_FORM_FAMILIES);
+
+function isRuleFormFamily(value: string): value is RuleFormFamily {
+  return RULE_FORM_FAMILIES_SET.has(value);
+}
+
+/**
+ * The bounded, secret-free recovery projection of one rules command failure.
+ * Only stable state fields cross this boundary; raw server prose is discarded
+ * and the page presents its own fixed copy plus these safe fields.
+ */
+export interface RulesFailureDetails {
+  readonly objectKind?: string;
+  readonly objectId?: string;
+  readonly stage?: string;
+  readonly durableState?: string;
+  readonly candidateState?: string;
+  readonly sideEffects?: string;
+  readonly retrySafe?: boolean;
+  readonly nextAction?: string;
+  readonly currentRevisionId?: string;
+  readonly referenceItems?: readonly {
+    readonly section: string;
+    readonly id: string;
+    readonly label: string;
+  }[];
+}
+
+function bounded(value: unknown, maximum: number): string | undefined {
+  return typeof value === "string" &&
+    value.length > 0 &&
+    value.length <= maximum
+    ? value
+    : undefined;
+}
+
+function normalizeRulesFailureDetails(
+  value: unknown,
+): RulesFailureDetails | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const details: RulesFailureDetails = {
+    ...(bounded(record.objectKind, 64) !== undefined
+      ? { objectKind: bounded(record.objectKind, 64) }
+      : {}),
+    ...(bounded(record.objectId, 128) !== undefined
+      ? { objectId: bounded(record.objectId, 128) }
+      : {}),
+    ...(bounded(record.stage, 64) !== undefined
+      ? { stage: bounded(record.stage, 64) }
+      : {}),
+    ...(bounded(record.durableState, 128) !== undefined
+      ? { durableState: bounded(record.durableState, 128) }
+      : {}),
+    ...(bounded(record.candidateState, 128) !== undefined
+      ? { candidateState: bounded(record.candidateState, 128) }
+      : {}),
+    ...(bounded(record.sideEffects, 256) !== undefined
+      ? { sideEffects: bounded(record.sideEffects, 256) }
+      : {}),
+    ...(typeof record.retrySafe === "boolean"
+      ? { retrySafe: record.retrySafe }
+      : {}),
+    ...(bounded(record.nextAction, 512) !== undefined
+      ? { nextAction: bounded(record.nextAction, 512) }
+      : {}),
+    ...(bounded(record.currentRevisionId, 128) !== undefined
+      ? { currentRevisionId: bounded(record.currentRevisionId, 128) }
+      : {}),
+    ...(Array.isArray(record.referenceItems)
+      ? {
+          referenceItems: (
+            record.referenceItems as readonly Record<string, unknown>[]
+          )
+            .slice(0, 32)
+            .map((item) => ({
+              section: bounded(item.section, 128) ?? "",
+              id: bounded(item.id, 128) ?? "",
+              label: bounded(item.label, 128) ?? "",
+            })),
+        }
+      : {}),
+  };
+  return Object.keys(details).length > 0 ? details : undefined;
+}
+
+/** A typed rules read result: bounded data, or one safe failure category. */
+export type RulesRead<T> =
+  | { readonly ok: true; readonly status: number; readonly model: T }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: RulesFailureDetails;
+    };
+
+async function rulesReadFailure(response: Response): Promise<RulesRead<never>> {
+  const envelope = await readErrorEnvelope(response);
+  const details = normalizeRulesFailureDetails(envelope.details);
+  return {
+    ok: false,
+    status: response.status,
+    code: bounded(envelope.code, 128) ?? "request_rejected",
+    ...(details === undefined ? {} : { details }),
+  };
+}
+
+async function readRulesDocument<T>(
+  url: string,
+  token: string | null,
+  normalize: (payload: unknown) => T,
+  fetchImpl: FetchLike,
+): Promise<RulesRead<T>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) return rulesReadFailure(response);
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return { ok: true, status: response.status, model: normalize(payload) };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** The typed form authority: real fields, enums, references and secret readiness. */
+export async function fetchRuleFormAuthority(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RuleFormAuthority>> {
+  return readRulesDocument(
+    `${RULES_BASE}/form-authority`,
+    token,
+    normalizeRuleFormAuthority,
+    fetchImpl,
+  );
+}
+
+/** One object's typed edit prefill with its real reference impact. */
+export async function fetchRuleEdit(
+  token: string | null,
+  family: string,
+  objectId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RuleObjectProjection>> {
+  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return readRulesDocument(
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}`,
+    token,
+    normalizeRuleObjectProjection,
+    fetchImpl,
+  );
+}
+
+/** One new-ID copy candidate computed from the backend field authority. */
+export async function fetchRuleCopy(
+  token: string | null,
+  family: string,
+  objectId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RuleObjectProjection>> {
+  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return readRulesDocument(
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}/copy`,
+    token,
+    normalizeRuleObjectProjection,
+    fetchImpl,
+  );
+}
+
+/** Actual reference impact that decides whether a removal is safe. */
+export async function fetchRuleImpact(
+  token: string | null,
+  family: string,
+  objectId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<RuleObjectProjection>> {
+  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return readRulesDocument(
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}/impact`,
+    token,
+    normalizeRuleObjectProjection,
+    fetchImpl,
+  );
+}
+
+/**
+ * Re-read the current Active identity. This is the safe first step after an
+ * unknown Save outcome: it proves what is durable now, before any manual retry.
+ */
+export async function fetchRuleActiveAuthority(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesRead<ActiveAuthorityIdentity>> {
+  return readRulesDocument(
+    `${RULES_BASE}/form-authority`,
+    token,
+    (payload) => authorityIdentity(normalizeRuleFormAuthority(payload).active),
+    fetchImpl,
+  );
+}
+
+/** One typed rules command outcome. */
+export type RulesCommandResult =
+  | {
+      readonly ok: true;
+      readonly status: number;
+      readonly model: RuleObjectProjection;
+    }
+  | {
+      readonly ok: false;
+      readonly status: number;
+      readonly code: string;
+      readonly details?: RulesFailureDetails;
+    };
+
+async function submitRuleCommand(
+  token: string | null,
+  method: "POST" | "PUT" | "DELETE",
+  url: string,
+  body: Record<string, unknown>,
+  fetchImpl: FetchLike,
+): Promise<RulesCommandResult> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, {
+      method,
+      headers: operationsMutationHeaders(token),
+      body: JSON.stringify(body),
+    });
+  } catch {
+    // The browser cannot tell whether the command reached the backend: this is
+    // a state-verification problem, never an automatic replay.
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    const details = normalizeRulesFailureDetails(envelope.details);
+    return {
+      ok: false,
+      status: response.status,
+      code: bounded(envelope.code, 128) ?? "request_rejected",
+      ...(details === undefined ? {} : { details }),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+  try {
+    return {
+      ok: true,
+      status: response.status,
+      model: normalizeRuleObjectProjection(payload),
+    };
+  } catch {
+    // A success body the client cannot parse is an UNKNOWN outcome: publishing
+    // may have happened. Never assume failure and re-send.
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** One explicit `保存` for a new object: validate + activate atomically. */
+export async function saveRuleObject(
+  token: string | null,
+  family: string,
+  value: Readonly<Record<string, RuleFormValue>>,
+  authority: ActiveAuthorityIdentity,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesCommandResult> {
+  if (!isRuleFormFamily(family))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitRuleCommand(
+    token,
+    "POST",
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}`,
+    { object: value, ...authority },
+    fetchImpl,
+  );
+}
+
+/** One explicit `保存` for an existing object; its ID stays immutable. */
+export async function editRuleObject(
+  token: string | null,
+  family: string,
+  objectId: string,
+  value: Readonly<Record<string, RuleFormValue>>,
+  authority: ActiveAuthorityIdentity,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesCommandResult> {
+  if (
+    !isRuleFormFamily(family) ||
+    !isSafeIdentifier(objectId) ||
+    value.id !== objectId
+  )
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitRuleCommand(
+    token,
+    "PUT",
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}`,
+    { object: value, ...authority },
+    fetchImpl,
+  );
+}
+
+/** List-level enable/disable: one explicit final intent, one successor. */
+export async function setRuleObjectEnabled(
+  token: string | null,
+  family: string,
+  objectId: string,
+  enabled: boolean,
+  authority: ActiveAuthorityIdentity,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesCommandResult> {
+  if (
+    !isRuleFormFamily(family) ||
+    !isSafeIdentifier(objectId) ||
+    typeof enabled !== "boolean"
+  )
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitRuleCommand(
+    token,
+    "POST",
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}/state/${enabled ? "enable" : "disable"}`,
+    { enabled, ...authority },
+    fetchImpl,
+  );
+}
+
+/** Reference-safe removal; the backend refuses a still-referenced object. */
+export async function removeRuleObject(
+  token: string | null,
+  family: string,
+  objectId: string,
+  authority: ActiveAuthorityIdentity,
+  fetchImpl: FetchLike = fetch,
+): Promise<RulesCommandResult> {
+  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+    return { ok: false, status: 400, code: "invalid_request" };
+  return submitRuleCommand(
+    token,
+    "DELETE",
+    `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}`,
+    { ...authority },
+    fetchImpl,
+  );
+}

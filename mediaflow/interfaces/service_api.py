@@ -80,6 +80,12 @@ from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_batch import RecoveryBatchContinuationService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
 from mediaflow.application.resident_services import ResidentServiceService
+from mediaflow.application.rules_workspace_commands import (
+    RULE_FAMILIES as RULE_WORKSPACE_FAMILIES,
+)
+from mediaflow.application.rules_workspace_commands import (
+    RulesWorkspaceCommandService,
+)
 from mediaflow.application.storage_browser import (
     RuntimeFilesBrowserService,
     StorageBrowserError,
@@ -110,6 +116,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
     ManagedConfigurationStatus,
     ResourceLibrarySaveError,
+    RulesWorkspaceSaveError,
     RuntimeConfigurationNotConfigured,
     RuntimeSnapshotUnavailable,
 )
@@ -394,6 +401,15 @@ class MediaFlowApi:
                 storage_browser_cursor_secret=storage_browser_cursor_secret,
             )
             if configuration_service is not None
+            else None
+        )
+        # The V2 rules workspace reuses that same application service, so a typed
+        # Save cannot diverge from V1/API/CLI normalization, validation, audit,
+        # concurrency or checked activation semantics; it only composes the focused
+        # object change and delegates publication.
+        self._rules_workspace = (
+            RulesWorkspaceCommandService(self._configuration_objects)
+            if self._configuration_objects is not None
             else None
         )
         self._system_settings = (
@@ -808,6 +824,27 @@ class MediaFlowApi:
                 method,
                 path,
                 "files-direct-command",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=error.details,
+            )
+        except RulesWorkspaceSaveError as error:
+            # Handled before the generic page-local Save family because the
+            # rules-workspace error adds the affected object/stage identity that
+            # the operator needs to continue; the bounded details stay secret-free.
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "rules-workspace-save",
                 "conflict" if error.status < 500 else "error",
                 error.status,
             )
@@ -2787,12 +2824,9 @@ class MediaFlowApi:
                 parts, method, environ, start_response, principal
             )
         if parts[:4] == ["api", "v1", "operations", "rules"]:
-            if parts != ["api", "v1", "operations", "rules", "inventory"]:
-                return self._error(start_response, 404, "not_found", "route was not found")
-            if method != "GET":
-                return self._error(start_response, 405, "method_not_allowed", "GET required")
-            self._require(principal, ApiPermission.READ)
-            return self._rules_inventory_operator_page(environ, start_response)
+            return self._rules_operations_projection(
+                parts, method, environ, start_response, principal
+            )
         if parts == ["api", "v1", "management", "readiness"]:
             if method != "GET":
                 return self._error(start_response, 405, "method_not_allowed", "GET required")
@@ -8711,7 +8745,9 @@ class MediaFlowApi:
         capture the save-time Active, run the checked admission gates and
         publish one atomic successor, so their conflict/unavailable failures
         report the candidate truthfully (`not_published` / `not_saved`) instead
-        of a generic Draft-only state.
+        of a generic Draft-only state.  The V2 rules-workspace object commands
+        are the same class of page-local publication intent, so they report it
+        the same way.
         """
 
         if path in (
@@ -8720,6 +8756,10 @@ class MediaFlowApi:
             "/api/v1/storages",
         ):
             return method == "POST"
+        if method in {"POST", "PUT", "DELETE"} and path.startswith(
+            "/api/v1/operations/rules/objects/"
+        ):
+            return True
         return method == "PUT" and path.startswith("/api/v1/storages/")
 
     @staticmethod
@@ -9164,8 +9204,22 @@ class MediaFlowApi:
                 return "/api/v1/operations/storage-management/storage/{id}/check"
             return "/api/v1/<unmatched>"
         if len(parts) >= 4 and parts[:4] == ["api", "v1", "operations", "rules"]:
+            # The rules-workspace surfaces name their own bounded operator route so
+            # neither a family-specific object ID nor a revision identity appears in
+            # security audit evidence.
             if len(parts) == 5 and parts[4] == "inventory":
                 return "/api/v1/operations/rules/inventory"
+            if len(parts) == 5 and parts[4] == "form-authority":
+                return "/api/v1/operations/rules/form-authority"
+            if parts[4] == "objects":
+                if len(parts) == 6:
+                    return "/api/v1/operations/rules/objects/{family}"
+                if len(parts) == 7:
+                    return "/api/v1/operations/rules/objects/{family}/{id}"
+                if len(parts) == 8 and parts[7] in {"copy", "impact"}:
+                    return f"/api/v1/operations/rules/objects/{{family}}/{{id}}/{parts[7]}"
+                if len(parts) == 9 and parts[7] == "state" and parts[8] in {"enable", "disable"}:
+                    return f"/api/v1/operations/rules/objects/{{family}}/{{id}}/state/{parts[8]}"
             return "/api/v1/<unmatched>"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
@@ -13187,7 +13241,462 @@ class MediaFlowApi:
         }
     )
 
-    def _rules_inventory_operator_page(self, environ: dict, start_response: Callable):
+    def _rules_operations_projection(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """One authenticated surface for the V2 rules workspace reads and Save.
+
+        The inventory read keeps its existing GET-only contract; the typed object
+        commands reuse the same application service, permissions, validation, audit
+        and concurrency boundaries as `/api/v1/configuration/*`, V1, the CLI and the
+        runtime.  Nothing here creates a scan, Task, Job, schedule occurrence,
+        notification, Provider call or Storage mutation.
+        """
+
+        if parts[:5] == ["api", "v1", "operations", "rules", "inventory"]:
+            if parts != ["api", "v1", "operations", "rules", "inventory"]:
+                return self._error(start_response, 404, "not_found", "route was not found")
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require(principal, ApiPermission.READ)
+            return self._rules_inventory_operator_page(environ, start_response, principal)
+        if self._rules_workspace is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        if parts == ["api", "v1", "operations", "rules", "form-authority"]:
+            if method != "GET":
+                return self._error(start_response, 405, "method_not_allowed", "GET required")
+            self._require_empty_query(environ, "rules form authority")
+            self._require(principal, ApiPermission.READ)
+            return self._rules_document(
+                start_response, lambda: self._rules_workspace.form_authority()
+            )
+        if len(parts) >= 6 and parts[4] == "objects" and parts[5] in RULE_WORKSPACE_FAMILIES:
+            return self._rules_object_command(parts, method, environ, start_response, principal)
+        if len(parts) >= 5 and parts[4] == "objects":
+            # A typed family the workspace does not author (recognition rules and
+            # type bindings stay a later in-Slice unit, and any other configuration
+            # kind keeps its existing managed surface).
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                "route was not found",
+                details={
+                    "objectKind": parts[5] if len(parts) > 5 else None,
+                    "durableState": "active_unchanged",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "choose one of the typed rule families this workspace edits: "
+                        + ", ".join(RULE_WORKSPACE_FAMILIES)
+                    ),
+                },
+            )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _rules_object_command(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Typed object reads and the one explicit Save-and-activate command."""
+
+        family = parts[5]
+        if len(parts) == 6:
+            if method != "POST":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "POST required for a new object"
+                )
+            self._require_empty_query(environ, "rules object Save")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            document = self._document(environ)
+            value, authority = self._rules_command_envelope(document, None)
+            return self._rules_publish(
+                start_response,
+                principal,
+                family=family,
+                object_id=None,
+                value=value,
+                authority=authority,
+            )
+        if len(parts) == 7:
+            object_id = parts[6]
+            if method == "GET":
+                self._require_empty_query(environ, "rules object projection")
+                self._require(principal, ApiPermission.READ)
+                return self._rules_document(
+                    start_response,
+                    lambda: self._rules_workspace.edit_projection(family, object_id),
+                )
+            if method == "PUT":
+                self._require_empty_query(environ, "rules object edit")
+                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+                document = self._document(environ)
+                value, authority = self._rules_command_envelope(document, object_id)
+                return self._rules_publish(
+                    start_response,
+                    principal,
+                    family=family,
+                    object_id=object_id,
+                    value=value,
+                    authority=authority,
+                )
+            if method == "DELETE":
+                self._require_empty_query(environ, "rules object removal")
+                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+                document = self._document(environ)
+                authority = self._rules_command_envelope(document, object_id, object=False)[1]
+                return self._rules_publish(
+                    start_response,
+                    principal,
+                    family=family,
+                    object_id=object_id,
+                    value=None,
+                    authority=authority,
+                )
+            return self._error(
+                start_response,
+                405,
+                "method_not_allowed",
+                "GET, PUT or DELETE required for one rules object",
+            )
+        if len(parts) == 8 and parts[7] in {"copy", "impact"}:
+            if method != "GET":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET required for a candidate read"
+                )
+            self._require_empty_query(
+                environ,
+                "rules object copy candidate" if parts[7] == "copy" else "rules object impact",
+            )
+            self._require(principal, ApiPermission.READ)
+            produce = (
+                self._rules_workspace.copy_projection
+                if parts[7] == "copy"
+                else self._rules_workspace.removal_impact
+            )
+            return self._rules_document(start_response, lambda: produce(family, parts[6]))
+        if len(parts) == 9 and parts[7] == "state" and parts[8] in {"enable", "disable"}:
+            if method != "POST":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "POST required for a state change"
+                )
+            self._require_empty_query(environ, "rules object state change")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            document = self._document(environ)
+            enabled = parts[8] == "enable"
+            authority = self._rules_command_envelope(
+                document, parts[6], object=False, enabled=enabled
+            )[1]
+            return self._rules_publish(
+                start_response,
+                principal,
+                family=family,
+                object_id=parts[6],
+                value=None,
+                authority=authority,
+                state=enabled,
+            )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _rules_document(self, start_response: Callable, produce: Callable[[], dict]):
+        try:
+            return self._response(start_response, 200, produce())
+        except LookupError as error:
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                str(error),
+                details={
+                    "durableState": "active_unchanged",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "refresh the Active rules inventory and choose an existing object"
+                    ),
+                },
+            )
+        except RuntimeSnapshotUnavailable as error:
+            return self._error(
+                start_response,
+                503,
+                "configuration_unavailable",
+                str(error),
+                details={
+                    "reason": error.reason,
+                    "durableState": "no_active_configuration"
+                    if error.reason == "active_missing"
+                    else "managed_active_unavailable",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "complete first setup in Settings and activate a configuration, then "
+                        "return to the rules workspace"
+                        if error.reason == "active_missing"
+                        else "repair or replace the unavailable Active configuration, then refresh"
+                    ),
+                },
+            )
+
+    @staticmethod
+    def _rules_command_envelope(
+        document: dict,
+        object_id: str | None,
+        *,
+        object: bool = True,
+        enabled: bool | None = None,
+    ) -> tuple[dict | None, tuple[str, int, str]]:
+        """Validate the bounded command envelope before it reaches the application.
+
+        Exactly the advertised fields are accepted: the typed object for a Save, the
+        boolean intent for a state change, and the observed Active identity for every
+        command.  A missing or extra key is rejected rather than ignored, so a stale or
+        partially-built browser request can never publish a different successor than
+        the operator reviewed.
+        """
+
+        fields = {"expectedRevisionId", "expectedVersion", "expectedDigest"}
+        if object:
+            fields.add("object")
+        if enabled is not None:
+            fields.add("enabled")
+        if set(document) != fields:
+            raise ValueError(
+                "rules object command requires only the typed command fields and the exact "
+                "Active identity"
+            )
+        expected_revision_id = document["expectedRevisionId"]
+        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
+            raise ValueError("expectedRevisionId must be a non-empty string")
+        expected_digest = document["expectedDigest"]
+        if not isinstance(expected_digest, str) or not expected_digest.strip():
+            raise ValueError("expectedDigest must be a non-empty string")
+        expected_version = document["expectedVersion"]
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+            raise ValueError("expectedVersion must be an integer")
+        if enabled is not None and document["enabled"] is not enabled:
+            raise ValueError("rules state change does not match the requested verb")
+        value = document.get("object") if object else None
+        if object and not isinstance(value, dict):
+            raise ValueError("rules object command requires a typed object")
+        if object and object_id is not None and value.get("id") != object_id:
+            raise RulesWorkspaceSaveError(
+                "rules_id_immutable",
+                "the object ID is immutable; an edit may only address the object it opened",
+                status=400,
+                object_id=object_id,
+                stage="compose",
+                durable_state="active_unchanged",
+                side_effects="none",
+                next_action="keep the object ID and correct the editable fields instead",
+            )
+        return (value if object else None), (
+            expected_revision_id,
+            expected_version,
+            expected_digest,
+        )
+
+    def _rules_publish(
+        self,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+        *,
+        family: str,
+        object_id: str | None,
+        value: dict | None,
+        authority: tuple[str, int, str],
+        state: bool | None = None,
+    ):
+        prepared: list[_ApiRuntimeBinding] = []
+        with self._runtime_binding_lock:
+            # Pin the process to the save-time Active before any successor work so a
+            # failed Save leaves a usable old binding and a competing winner can be
+            # consumed explicitly below.
+            self._refresh_configuration_binding_locked()
+            try:
+                if state is not None:
+                    revision = self._rules_workspace.set_enabled(
+                        family,
+                        str(object_id),
+                        enabled=state,
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_rules_binding_for_revision(successor)
+                        ),
+                    )
+                elif value is None:
+                    revision = self._rules_workspace.remove_object(
+                        family,
+                        str(object_id),
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_rules_binding_for_revision(successor)
+                        ),
+                    )
+                else:
+                    revision = self._rules_workspace.save_object(
+                        family,
+                        value,
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        object_id=object_id,
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_rules_binding_for_revision(successor)
+                        ),
+                    )
+            except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                # The repository fences concurrency authoritatively: consume the
+                # winning Active before returning the stale/conflict result.
+                self._refresh_configuration_binding_locked()
+                raise
+            if len(prepared) != 1:
+                raise RulesWorkspaceSaveError(
+                    "rules_runtime_failed",
+                    (
+                        "the successor runtime binding was not prepared; the previous Active "
+                        "remains in use"
+                    ),
+                    status=503,
+                    object_kind=family,
+                    object_id=object_id,
+                    stage="activate",
+                    durable_state="active_preserved",
+                    next_action="refresh the current Active configuration and retry Save",
+                )
+            self._publish_runtime_binding(prepared[0])
+        # A create carries its new identity in the typed object rather than in the
+        # route, so the echoed subject is resolved from the published successor itself.
+        subject_id = object_id
+        if subject_id is None and isinstance(value, dict):
+            candidate_id = value.get("id")
+            if isinstance(candidate_id, str):
+                subject_id = candidate_id
+        return self._rules_save_response(
+            start_response,
+            revision,
+            family,
+            subject_id,
+            action="state" if state is not None else ("remove" if value is None else "save"),
+        )
+
+    def _rules_save_response(
+        self,
+        start_response: Callable,
+        revision,
+        family: str,
+        subject_id: str | None,
+        *,
+        action: str,
+    ):
+        """One bounded Save document so the page can refresh from the successor it published."""
+
+        published = self._configuration_objects._canonical_objects(revision.document, family)
+        item = next(
+            (value for value in published if str(value.get("id")) == str(subject_id)),
+            None,
+        )
+        if action != "remove" and item is None:
+            # Publication succeeded but the intended object is absent from the new
+            # Active: that is a truth the operator must see, never a silent success.
+            raise RulesWorkspaceSaveError(
+                "rules_runtime_failed",
+                (
+                    "the successor was published but does not contain the intended object; "
+                    "verify the current Active rules inventory"
+                ),
+                status=503,
+                object_kind=family,
+                object_id=subject_id,
+                stage="activate",
+                durable_state="successor_published",
+                side_effects="configuration_only",
+                retry_safe=False,
+                next_action="refresh the Active rules inventory and verify the current objects",
+            )
+        if action == "remove" and item is not None:
+            raise RulesWorkspaceSaveError(
+                "rules_runtime_failed",
+                "the successor was published but still contains the object; verify current Active",
+                status=503,
+                object_kind=family,
+                object_id=subject_id,
+                stage="activate",
+                durable_state="successor_published",
+                side_effects="configuration_only",
+                retry_safe=False,
+                next_action="refresh the Active rules inventory and verify the current objects",
+            )
+        return self._response(
+            start_response,
+            200,
+            {
+                "family": family,
+                "action": action,
+                "object": item,
+                "removed": {"id": subject_id} if action == "remove" else None,
+                "active": revision.summary(),
+                "configuration": {
+                    "authority": "MANAGED",
+                    "revisionId": revision.revision_id,
+                    "version": revision.version,
+                    "digest": revision.digest,
+                },
+                "sideEffects": "configuration_only",
+                "nextAction": (
+                    "refresh the Active rules inventory; the published successor is the "
+                    "configuration runtime consumes"
+                ),
+            },
+        )
+
+    def _prepare_rules_binding_for_revision(self, revision):
+        """Bind the rules successor to runtime, or fail with its own code."""
+
+        try:
+            return self._prepare_runtime_binding_for_revision(revision)
+        except ResourceLibrarySaveError as error:
+            if error.code != "resource_library_runtime_failed":
+                raise
+            raise RulesWorkspaceSaveError(
+                "rules_runtime_failed",
+                str(error),
+                status=error.status,
+                revision_id=error.revision_id,
+                durable_state=error.durable_state,
+                side_effects=error.side_effects,
+                retry_safe=error.retry_safe,
+                next_action=error.next_action,
+            ) from error
+
+    def _rules_inventory_operator_page(
+        self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
+    ):
         query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
         if set(query).difference({"family", "q", "enabled"}) or any(
             len(values) != 1 for values in query.values()
@@ -13229,7 +13738,21 @@ class MediaFlowApi:
                     "nextAction": "inspect Settings and refresh after Active is available",
                 },
             )
-        return self._response(start_response, 200, document)
+        return self._response(
+            start_response,
+            200,
+            {
+                **document,
+                # The typed object commands reuse the existing managed-configuration
+                # authority; this read only reports whether the connected principal may
+                # attempt them, so the page never presents a Save it cannot complete and
+                # never decides permissions in the browser.
+                "canManage": {
+                    ApiPermission.MANAGE_CONFIGURATION,
+                    ApiPermission.ACTIVATE_CONFIGURATION,
+                }.issubset(principal.permissions),
+            },
+        )
 
     # ------------------------------------------------------------------
     # V2 Storage management operations projections (bounded, secret-free)

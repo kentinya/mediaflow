@@ -33,6 +33,15 @@ export interface RuleInventoryItem {
   readonly policyReferences?: Readonly<Record<string, string>>;
 }
 
+export interface RuleActionAuthority {
+  readonly create: boolean;
+  readonly edit: boolean;
+  readonly copy: boolean;
+  readonly toggle: boolean;
+  readonly remove: boolean;
+  readonly blocker: string | null;
+}
+
 export interface RulesWorkspaceModel {
   readonly available: boolean;
   readonly reason: "no_active" | "unavailable" | "malformed" | null;
@@ -41,6 +50,8 @@ export interface RulesWorkspaceModel {
     readonly version: number;
     readonly sequence: number;
   } | null;
+  readonly canManage: boolean;
+  readonly actions: Readonly<Record<RuleFamily, RuleActionAuthority>>;
   readonly readiness: {
     readonly state:
       "READY" | "PARTIAL" | "EMPTY" | "NO_ACTIVE" | "UNAVAILABLE" | "MALFORMED";
@@ -138,6 +149,32 @@ export const RULES_INVENTORY_LIMITS: Readonly<Record<RuleFamily, number>> = {
   organizePolicies: 34884,
 };
 
+function normalizeActionAuthority(
+  value: unknown,
+): Record<RuleFamily, RuleActionAuthority> {
+  const source = readRecord(value, "rules.actions");
+  const result = {} as Record<RuleFamily, RuleActionAuthority>;
+  for (const family of RULE_FAMILIES) {
+    const entry = readRecord(source[family], `actions.${family}`);
+    result[family] = {
+      create: normalizeBoolean(entry.create, `actions.${family}.create`),
+      edit: normalizeBoolean(entry.edit, `actions.${family}.edit`),
+      copy: normalizeBoolean(entry.copy, `actions.${family}.copy`),
+      toggle: normalizeBoolean(entry.toggle, `actions.${family}.toggle`),
+      remove: normalizeBoolean(entry.remove, `actions.${family}.remove`),
+      blocker:
+        entry.blocker === null || entry.blocker === undefined
+          ? null
+          : normalizeBoundedText(
+              entry.blocker,
+              `actions.${family}.blocker`,
+              320,
+            ),
+    };
+  }
+  return result;
+}
+
 export function normalizeRulesWorkspace(value: unknown): RulesWorkspaceModel {
   const source = readRecord(value, "rules");
   const available = normalizeBoolean(source.available, "rules.available");
@@ -172,6 +209,8 @@ export function normalizeRulesWorkspace(value: unknown): RulesWorkspaceModel {
   return {
     available,
     reason,
+    canManage: normalizeBoolean(source.canManage, "rules.canManage"),
+    actions: normalizeActionAuthority(source.actions),
     active:
       activeSource === null
         ? null

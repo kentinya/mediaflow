@@ -6819,6 +6819,43 @@ class ConfigurationObjectService:
         "organizePolicies": "organizePolicies",
     }
 
+    # Which lifecycle operations the backend actually accepts for one family.
+    # The V2 workspace renders exactly this authority: it never offers an action
+    # the application would reject (OrganizePolicy has no enable state) and never
+    # implies a family is authored here when it is a later dependent unit.
+    _RULE_WORKSPACE_FAMILIES = (
+        "recognitionTypes",
+        "metadataPolicies",
+        "namingPolicies",
+        "classificationPolicies",
+        "organizePolicies",
+    )
+    _RULE_WORKSPACE_DEFERRED = "RecognitionRule and type-binding authoring is a later in-Slice unit"
+
+    def _rules_actions(self, *, available: bool, reason: str | None = None) -> dict[str, object]:
+        unavailability = None if available else (reason or "unavailable")
+        actions: dict[str, object] = {}
+        for family in self._RULE_FAMILIES:
+            authored = family in self._RULE_WORKSPACE_FAMILIES
+            supports_enabled = family != "organizePolicies"
+            actions[family] = {
+                "create": authored and available,
+                "edit": authored and available,
+                "copy": authored and available,
+                "toggle": authored and available and supports_enabled,
+                "remove": authored and available,
+                "blocker": (
+                    None
+                    if authored and available
+                    else (
+                        self._RULE_WORKSPACE_DEFERRED
+                        if authored is False and available
+                        else unavailability
+                    )
+                ),
+            }
+        return actions
+
     @staticmethod
     def _rules_text(value: object, maximum: int = 240) -> str:
         text = str(value or "").replace("\x00", " ").replace("\r", " ").replace("\n", " ")
@@ -6903,6 +6940,7 @@ class ConfigurationObjectService:
                 "enabledCounts": {key: 0 for key in self._RULE_FAMILIES},
             },
             "sections": {key: [] for key in self._RULE_FAMILIES},
+            "actions": self._rules_actions(available=False, reason="unavailable"),
             "filters": {"family": family, "query": query, "enabled": enabled},
         }
         try:
@@ -6913,6 +6951,7 @@ class ConfigurationObjectService:
             return {
                 **unavailable,
                 "reason": "no_active",
+                "actions": self._rules_actions(available=False, reason="no_active"),
                 "readiness": {"state": "NO_ACTIVE", "gaps": []},
             }
         try:
@@ -6928,6 +6967,7 @@ class ConfigurationObjectService:
             return {
                 **unavailable,
                 "reason": "malformed",
+                "actions": self._rules_actions(available=False, reason="malformed"),
                 "readiness": {"state": "MALFORMED", "gaps": []},
             }
 
@@ -6947,6 +6987,7 @@ class ConfigurationObjectService:
                 return {
                     **unavailable,
                     "reason": "malformed",
+                    "actions": self._rules_actions(available=False, reason="malformed"),
                     "readiness": {"state": "MALFORMED", "gaps": []},
                 }
             counts[family_name] = len(ordered)
@@ -7052,6 +7093,7 @@ class ConfigurationObjectService:
                 return {
                     **unavailable,
                     "reason": "malformed",
+                    "actions": self._rules_actions(available=False, reason="malformed"),
                     "readiness": {"state": "MALFORMED", "gaps": []},
                 }
             seen_types.add(type_id)
@@ -7144,6 +7186,7 @@ class ConfigurationObjectService:
                 "enabledCounts": enabled_counts,
             },
             "sections": sections,
+            "actions": self._rules_actions(available=True),
             "filters": {"family": family, "query": query, "enabled": enabled},
         }
 

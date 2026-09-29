@@ -4,6 +4,7 @@ import copy
 import json
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import StrEnum
@@ -552,6 +553,65 @@ class ResourceLibrarySaveError(RuntimeError):
                 "nextAction": self.next_action,
             }.items()
             if value is not None
+        }
+
+
+class RulesWorkspaceSaveError(ResourceLibrarySaveError):
+    """A bounded, recoverable failure from one rules-workspace object command.
+
+    It extends the page-local Save semantics with the two facts an operator
+    needs to continue safely from the rules workspace: which managed object and
+    which stage of the one Save-and-activate command failed.  Everything stays
+    secret-free and bounded, so an unknown outcome can prompt Active verification
+    instead of an automatic replay, and a known failure keeps naming the
+    correctable candidate.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int = 409,
+        object_kind: str | None = None,
+        object_id: str | None = None,
+        stage: str | None = None,
+        revision_id: str | None = None,
+        durable_state: str = "active_preserved",
+        side_effects: str = "successor_draft_or_read_only_evidence_may_be_retained",
+        retry_safe: bool = True,
+        next_action: str = "correct the reported condition, then retry or refresh Active state",
+        reference_items: tuple[Mapping[str, object], ...] = (),
+    ) -> None:
+        super().__init__(
+            code,
+            message,
+            status=status,
+            revision_id=revision_id,
+            durable_state=durable_state,
+            side_effects=side_effects,
+            retry_safe=retry_safe,
+            next_action=next_action,
+        )
+        self.object_kind = object_kind
+        self.object_id = object_id
+        self.stage = stage
+        self.reference_items = tuple(reference_items)
+
+    @property
+    def details(self) -> dict[str, object]:
+        return {
+            **super().details,
+            **{
+                key: value
+                for key, value in {
+                    "objectKind": self.object_kind,
+                    "objectId": self.object_id,
+                    "stage": self.stage,
+                    "referenceItems": [dict(item) for item in self.reference_items] or None,
+                }.items()
+                if value is not None
+            },
         }
 
 

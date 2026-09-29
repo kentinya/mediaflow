@@ -99,6 +99,15 @@ const childDestinationData = [
     description: "List, filter and page durable Tasks.",
   },
   {
+    id: "rules-edit",
+    label: "Edit rule object",
+    path: "/rules/edit/$family/$objectId",
+    title: "编辑整理规则 | MediaFlow",
+    availability: "implemented" as const,
+    description: "Refresh-safe typed editor for one Active rules object.",
+    dynamicPrefix: "/rules/edit/" as const,
+  },
+  {
     id: "operations-task-detail",
     label: "Task detail",
     path: "/operations/tasks/$taskId",

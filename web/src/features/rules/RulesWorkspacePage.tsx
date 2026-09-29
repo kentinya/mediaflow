@@ -1,69 +1,66 @@
-import { useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { useQuery } from "@tanstack/react-query";
+import { useState, type Dispatch, type SetStateAction } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
-import { fetchRulesInventory } from "../../shared/api/api-client";
+import {
+  fetchRuleActiveAuthority,
+  fetchRuleCopy,
+  fetchRuleImpact,
+  fetchRulesInventory,
+  removeRuleObject,
+  setRuleObjectEnabled,
+  type RulesCommandResult,
+} from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
-import { destinations } from "../../shared/navigation/destination-model";
 import {
   RULE_FAMILIES,
   type RuleFamily,
   type RuleInventoryItem,
   type RulesWorkspaceModel,
 } from "../../entities/rules/rules-workspace";
-
-const LABELS: Readonly<Record<RuleFamily, string>> = {
-  typeBindings: "类型绑定",
-  recognitionTypes: "识别类型",
-  recognitionRules: "识别规则",
-  metadataPolicies: "元数据策略",
-  namingPolicies: "命名策略",
-  classificationPolicies: "分类策略",
-  organizePolicies: "整理策略",
-};
+import {
+  RULE_FORM_FAMILIES,
+  type RuleFormFamily,
+} from "../../entities/rules/rules-form";
+import {
+  RulesObjectDrawer,
+  type RulesDrawerSession,
+} from "./RulesObjectDrawer";
+import { RULE_FAMILY_LABELS as LABELS } from "./rules-workspace-labels";
+import { ruleFailureCopy } from "../../entities/rules/rules-form";
 
 type Section = "overview" | RuleFamily;
+
+const FORM_FAMILY_SET: ReadonlySet<string> = new Set(RULE_FORM_FAMILIES);
+
+function isFormFamily(
+  family: RuleFamily,
+): family is RuleFamily & RuleFormFamily {
+  return FORM_FAMILY_SET.has(family);
+}
 
 /**
  * Dependency-ordered onboarding guidance for one empty Active family.
  *
- * The read journey may not invent an editor, so the empty state names the
- * creation order the backend actually validates — a RecognitionRule needs an
- * existing output RecognitionType, a ClassificationPolicy rule needs a
- * configured MediaLibrary, and a type binding needs one enabled binding per
- * RecognitionType — instead of offering a control that cannot complete it.
+ * For the five families this workspace authors, the empty state offers the
+ * native typed create action; for RecognitionRule and type bindings — a later
+ * in-Slice unit — it names the creation order the backend validates and states
+ * plainly that authoring is not available here yet, without inventing a control.
  */
 const EMPTY_FAMILY_GUIDANCE: Readonly<Record<RuleFamily, string>> = {
   typeBindings:
-    "类型绑定需要已有的识别类型，以及被引用的元数据、命名、分类和整理策略；每个识别类型只允许一个已启用绑定。",
+    "类型绑定需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。绑定编辑是本 Slice 后续单元。",
   recognitionTypes:
-    "识别类型是识别规则的输出目标，也是类型绑定的主体，建议先创建。",
+    "识别类型是识别规则的输出目标,也是类型绑定的主体,建议先创建。",
   recognitionRules:
-    "识别规则必须引用已存在的识别类型作为输出目标，请先创建识别类型。",
-  metadataPolicies: "元数据策略可独立创建，随后由类型绑定引用。",
-  namingPolicies: "命名策略可独立创建，随后由类型绑定引用。",
+    "识别规则必须引用已存在的识别类型作为输出目标;规则编辑是本 Slice 后续单元,可先创建识别类型。",
+  metadataPolicies: "元数据策略可独立创建,随后由类型绑定引用。",
+  namingPolicies: "命名策略可独立创建,随后由类型绑定引用。",
   classificationPolicies:
-    "分类策略的规则会引用已配置的媒体库，可独立创建并由类型绑定引用。",
+    "分类策略的规则会引用已配置的媒体库,可独立创建并由类型绑定引用。",
   organizePolicies:
-    "整理策略可独立创建并由类型绑定引用；HardLink/SoftLink 不会静默降级为 Copy/Move。",
+    "整理策略可独立创建并由类型绑定引用;HardLink/SoftLink 不会静默降级为 Copy/Move。",
 };
-
-/**
- * The create surface available in the current supported journey for every
- * rule family: the existing configuration workflow, whose typed object forms,
- * validation and checked activation already own rule/policy object lifecycle.
- * The path is read from the single typed destination model (the same
- * `v1Path` the migration surface uses) so this handoff cannot drift into a
- * second route enumeration.
- *
- * It is one plain same-origin document navigation — it carries no credential
- * from the memory-only V2 session, creates no Draft on arrival and performs no
- * configuration write by itself. `/ui-v2/rules` keeps reading only its own
- * Active projection, so a published object appears here after an explicit
- * refresh; the V2 create drawer/editor remains deferred in this Task.
- */
-const CONFIGURATION_WORKFLOW_PATH =
-  destinations.find((item) => item.id === "configuration")?.v1Path ?? "/ui";
 
 function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
   if (model.available) return null;
@@ -79,8 +76,8 @@ function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
       </h2>
       <p>
         {noActive
-          ? "当前没有可供运行时消费的 Active 规则。访问本页没有创建 Draft，也没有改变任何配置。"
-          : "当前 Active 仍保持原状；本页没有执行 Provider、Storage、任务或配置写入。"}
+          ? "当前没有可供运行时消费的 Active 规则。访问本页没有创建 Draft,也没有改变任何配置。"
+          : "当前 Active 仍保持原状;本页没有执行 Provider、Storage、任务或配置写入。"}
       </p>
       <Link to="/configuration">前往系统设置查看配置状态</Link>
     </section>
@@ -97,7 +94,7 @@ function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
         <h2 id="rules-overview-title">规则关系概览</h2>
         <p>
           运行时从同一个不可变 Active
-          快照读取以下关系；下游策略复用不会改变识别类型。
+          快照读取以下关系;下游策略复用不会改变识别类型。
         </p>
       </div>
       <ol className="mf-rules-flow" aria-label="规则处理关系">
@@ -120,7 +117,7 @@ function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
           <ul>
             {model.readiness.gaps.map((gap) => (
               <li key={gap.family}>
-                <strong>{LABELS[gap.family]}</strong>：{gap.message}{" "}
+                <strong>{LABELS[gap.family]}</strong>:{gap.message}{" "}
                 {gap.nextAction}
               </li>
             ))}
@@ -131,37 +128,192 @@ function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
   );
 }
 
+interface PendingListCommand {
+  readonly kind: "toggle" | "remove";
+  readonly family: RuleFormFamily;
+  readonly objectId: string;
+  readonly enabled?: boolean;
+  readonly impact?: {
+    readonly total: number;
+    readonly removalBlocked: boolean;
+    readonly items: readonly {
+      readonly section: string;
+      readonly id: string;
+      readonly label: string;
+    }[];
+  };
+  readonly loadingImpact?: boolean;
+}
+
 function Inventory({
   family,
   items,
   totalInFamily,
+  model,
+  canManage,
+  onAdd,
+  onCopy,
+  pending,
+  setPending,
+  onCommanded,
 }: {
   readonly family: RuleFamily;
   readonly items: readonly RuleInventoryItem[];
   readonly totalInFamily: number;
+  readonly model: RulesWorkspaceModel;
+  readonly canManage: boolean;
+  readonly onAdd: (family: RuleFormFamily) => void;
+  readonly onCopy: (family: RuleFormFamily, objectId: string) => void;
+  readonly pending: PendingListCommand | null;
+  readonly setPending: Dispatch<SetStateAction<PendingListCommand | null>>;
+  readonly onCommanded: (message: string) => void;
 }) {
+  const navigate = useNavigate();
+  const token = useAuthToken();
+  const queryClient = useQueryClient();
+  const actions = model.actions[family];
+  const authored = isFormFamily(family) && actions.create && actions.edit;
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+
+  const refreshInventory = () =>
+    queryClient.invalidateQueries({ queryKey: ["rules-workspace", token] });
+
+  const runCommand = async (command: PendingListCommand) => {
+    setBusy(true);
+    setFailure(null);
+    const observed = await fetchRuleActiveAuthority(token);
+    if (!observed.ok) {
+      setBusy(false);
+      setFailure(ruleFailureCopy(observed.code));
+      return;
+    }
+    const outcome: RulesCommandResult =
+      command.kind === "toggle"
+        ? await setRuleObjectEnabled(
+            token,
+            command.family,
+            command.objectId,
+            command.enabled === true,
+            observed.model,
+          )
+        : await removeRuleObject(
+            token,
+            command.family,
+            command.objectId,
+            observed.model,
+          );
+    setBusy(false);
+    if (outcome.ok) {
+      setPending(null);
+      void refreshInventory();
+      onCommanded(
+        command.kind === "toggle"
+          ? `${LABELS[command.family]} ${command.objectId} 已${
+              command.enabled ? "启用" : "停用"
+            },新的 Active 已发布。`
+          : `${LABELS[command.family]} ${command.objectId} 已移除,新的 Active 已发布。`,
+      );
+      return;
+    }
+    if (outcome.code === "rules_object_referenced") {
+      const items = outcome.details?.referenceItems ?? [];
+      setFailure(
+        `该对象仍被 ${outcome.details?.referenceItems?.length ?? 0} 处引用,无法移除:${
+          items.map((item) => `${item.label || item.id}`).join("、") ||
+          "详见引用清单"
+        }。`,
+      );
+      setPending(null);
+      return;
+    }
+    setFailure(ruleFailureCopy(outcome.code));
+  };
+
+  const requestToggle = (objectId: string, enabled: boolean) => {
+    setFailure(null);
+    setPending({
+      kind: "toggle",
+      family: family as RuleFormFamily,
+      objectId,
+      enabled,
+    });
+  };
+
+  const requestRemove = (objectId: string) => {
+    setFailure(null);
+    setPending({
+      kind: "remove",
+      family: family as RuleFormFamily,
+      objectId,
+      loadingImpact: true,
+    });
+    void fetchRuleImpact(token, family as RuleFormFamily, objectId).then(
+      (outcome) => {
+        if (outcome.ok) {
+          const references = outcome.model.references;
+          setPending((current: PendingListCommand | null) =>
+            current &&
+            current.kind === "remove" &&
+            current.objectId === objectId
+              ? {
+                  ...current,
+                  loadingImpact: false,
+                  impact: {
+                    total: references.total,
+                    removalBlocked: references.removalBlocked,
+                    items: references.items.map((item) => ({
+                      section: item.section,
+                      id: item.id,
+                      label: item.label,
+                    })),
+                  },
+                }
+              : current,
+          );
+        } else {
+          setPending((current: PendingListCommand | null) =>
+            current &&
+            current.kind === "remove" &&
+            current.objectId === objectId
+              ? {
+                  ...current,
+                  loadingImpact: false,
+                  impact: { total: 0, removalBlocked: true, items: [] },
+                }
+              : current,
+          );
+          setFailure(ruleFailureCopy(outcome.code));
+        }
+      },
+    );
+  };
+
   if (totalInFamily === 0) {
     return (
       <div className="mf-rules-empty">
         <h2>尚无{LABELS[family]}配置</h2>
         <p>
           当前 Active 配置中未包含任何{LABELS[family]}。访问本页不会创建
-          Draft，也没有改变任何配置。
+          Draft,也没有改变任何配置。
         </p>
         <p>{EMPTY_FAMILY_GUIDANCE[family]}</p>
-        <div className="mf-actions">
-          <a
-            className="mf-button mf-button-primary"
-            href={CONFIGURATION_WORKFLOW_PATH}
-          >
-            去配置工作流添加{LABELS[family]}
-          </a>
-        </div>
-        <p>
-          该入口只做一次同源跳转，不会自动创建 Draft 或改变
-          Active；创建、校验和激活都由你在现有配置工作流中显式完成。发布后回到本页重新连接并刷新，即可读取新的
-          Active 对象。
-        </p>
+        {authored && canManage ? (
+          <div className="mf-actions">
+            <button
+              type="button"
+              className="mf-button mf-button-primary"
+              onClick={() => onAdd(family as RuleFormFamily)}
+            >
+              添加{LABELS[family]}
+            </button>
+          </div>
+        ) : (
+          <p>
+            {actions.blocker ??
+              "当前身份只能查看;创建与修改需要配置管理与激活权限。"}
+          </p>
+        )}
       </div>
     );
   }
@@ -169,12 +321,71 @@ function Inventory({
     return (
       <div className="mf-rules-empty">
         <h2>没有匹配结果</h2>
-        <p>调整搜索或状态筛选；当前 Active 配置没有发生变化。</p>
+        <p>调整搜索或状态筛选;当前 Active 配置没有发生变化。</p>
       </div>
     );
   }
   return (
     <div className="mf-rules-table-wrap">
+      {failure !== null && (
+        <p className="mf-rules-save-failure" role="alert">
+          {failure}
+        </p>
+      )}
+      {pending !== null && (
+        <div
+          className={
+            pending.kind === "remove" ? "mf-rules-discard" : "mf-rules-verified"
+          }
+          role="group"
+          aria-label={
+            pending.kind === "remove" ? "确认移除对象" : "确认启用或停用对象"
+          }
+        >
+          <p>
+            {pending.kind === "toggle"
+              ? `确认${pending.enabled ? "启用" : "停用"}${LABELS[pending.family]} ${pending.objectId}?这会发布一个新的 Active。`
+              : pending.loadingImpact
+                ? "正在读取该对象的真实引用影响..."
+                : pending.impact?.removalBlocked
+                  ? `该对象仍被 ${pending.impact.total} 处引用,不能移除;必须先处理:${
+                      pending.impact.items
+                        .map(
+                          (item) =>
+                            `${item.label || item.id} (${item.section})`,
+                        )
+                        .join("、") || "见服务端引用证据"
+                    }。`
+                  : `确认移除${LABELS[pending.family]} ${pending.objectId}?当前没有任何引用;这会发布不含该对象的新 Active,媒体文件不受影响。`}
+          </p>
+          <div className="mf-actions">
+            {pending.kind === "remove" && pending.impact?.removalBlocked ? (
+              <button type="button" onClick={() => setPending(null)}>
+                返回
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="mf-button mf-button-primary"
+                disabled={
+                  busy ||
+                  (pending.kind === "remove" && pending.loadingImpact === true)
+                }
+                onClick={() => void runCommand(pending)}
+              >
+                {busy
+                  ? "发布中..."
+                  : pending.kind === "remove"
+                    ? "确认移除"
+                    : "确认"}
+              </button>
+            )}
+            <button type="button" onClick={() => setPending(null)}>
+              取消
+            </button>
+          </div>
+        </div>
+      )}
       <table className="mf-rules-table">
         <thead>
           <tr>
@@ -182,6 +393,7 @@ function Inventory({
             <th>摘要</th>
             <th>状态</th>
             <th>引用影响</th>
+            <th>操作</th>
           </tr>
         </thead>
         <tbody>
@@ -212,6 +424,51 @@ function Inventory({
                   ? `${item.references.incoming} 个引用`
                   : "暂无引用"}
               </td>
+              <td>
+                <div className="mf-rules-actions">
+                  {canManage && authored ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void navigate({
+                          to: "/rules/edit/$family/$objectId",
+                          params: {
+                            family: family as string,
+                            objectId: item.id,
+                          },
+                        })
+                      }
+                    >
+                      编辑
+                    </button>
+                  ) : null}
+                  {canManage && actions.copy ? (
+                    <button
+                      type="button"
+                      onClick={() => onCopy(family as RuleFormFamily, item.id)}
+                    >
+                      复制
+                    </button>
+                  ) : null}
+                  {canManage && actions.toggle ? (
+                    <button
+                      type="button"
+                      onClick={() => requestToggle(item.id, !item.enabled)}
+                    >
+                      {item.enabled ? "停用" : "启用"}
+                    </button>
+                  ) : null}
+                  {canManage && actions.remove ? (
+                    <button
+                      type="button"
+                      onClick={() => requestRemove(item.id)}
+                    >
+                      移除
+                    </button>
+                  ) : null}
+                  {!canManage ? <small>只读</small> : null}
+                </div>
+              </td>
             </tr>
           ))}
         </tbody>
@@ -225,6 +482,9 @@ export function RulesWorkspacePage() {
   const [section, setSection] = useState<Section>("overview");
   const [search, setSearch] = useState("");
   const [enabled, setEnabled] = useState<"all" | "enabled" | "disabled">("all");
+  const [drawer, setDrawer] = useState<RulesDrawerSession | null>(null);
+  const [pending, setPending] = useState<PendingListCommand | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const query = useQuery({
     queryKey: ["rules-workspace", token],
     queryFn: () => fetchRulesInventory(token),
@@ -237,7 +497,7 @@ export function RulesWorkspacePage() {
         if (isPending || data === undefined)
           return (
             <div className="mf-rules-state" role="status">
-              正在读取 Active 规则…
+              正在读取 Active 规则...
             </div>
           );
         if (!data.available) return <Availability model={data} />;
@@ -259,6 +519,26 @@ export function RulesWorkspacePage() {
                   enabled === "all" || item.enabled === (enabled === "enabled");
                 return matchesText && matchesState;
               });
+        const openCopy = (target: RuleFormFamily, objectId: string) => {
+          setNotice(null);
+          void fetchRuleCopy(token, target, objectId).then((outcome) => {
+            if (outcome.ok) {
+              setDrawer({
+                family: target,
+                mode: "copy",
+                sourceId: objectId,
+                candidate: outcome.model.value,
+              });
+            } else {
+              setNotice(`复制候选读取失败:${ruleFailureCopy(outcome.code)}`);
+            }
+          });
+        };
+        const onPublished = (message: string) => {
+          setNotice(message);
+          setPending(null);
+          void query.refetch();
+        };
         return (
           <section className="mf-rules-page">
             <header className="mf-rules-header">
@@ -268,13 +548,18 @@ export function RulesWorkspacePage() {
                 </p>
                 <h1>整理规则</h1>
                 <p>
-                  查看识别类型到元数据、命名、分类和整理策略的完整只读关系。
+                  查看并编辑识别类型到元数据、命名、分类和整理策略的完整关系。
                 </p>
               </div>
               <button type="button" onClick={refresh} disabled={isFetching}>
-                {isFetching ? "刷新中…" : "刷新 Active"}
+                {isFetching ? "刷新中..." : "刷新 Active"}
               </button>
             </header>
+            {notice !== null && (
+              <p className="mf-rules-verified" role="status">
+                {notice}
+              </p>
+            )}
             <nav className="mf-rules-tabs" aria-label="规则分类">
               <button
                 type="button"
@@ -303,7 +588,7 @@ export function RulesWorkspacePage() {
                     <h2 id="rules-family-title">{LABELS[section]}</h2>
                     <p>
                       完整 Active
-                      清单；选择、搜索和筛选不会打开编辑器或写入配置。
+                      清单;选择、搜索、筛选和刷新只读,不会打开编辑器或写入配置。
                     </p>
                   </div>
                   <label>
@@ -327,13 +612,43 @@ export function RulesWorkspacePage() {
                       <option value="disabled">已停用</option>
                     </select>
                   </label>
+                  {data.canManage && isFormFamily(section) ? (
+                    <button
+                      type="button"
+                      className="mf-button mf-button-primary"
+                      onClick={() =>
+                        setDrawer({
+                          family: section as RuleFormFamily,
+                          mode: "create",
+                        })
+                      }
+                    >
+                      添加{LABELS[section]}
+                    </button>
+                  ) : null}
                 </div>
                 <Inventory
                   family={section}
                   items={items}
                   totalInFamily={data.sections[section].length}
+                  model={data}
+                  canManage={data.canManage}
+                  onAdd={(target) =>
+                    setDrawer({ family: target, mode: "create" })
+                  }
+                  onCopy={openCopy}
+                  pending={pending}
+                  setPending={setPending}
+                  onCommanded={onPublished}
                 />
               </section>
+            )}
+            {drawer !== null && (
+              <RulesObjectDrawer
+                session={drawer}
+                onClose={() => setDrawer(null)}
+                onPublished={onPublished}
+              />
             )}
           </section>
         );

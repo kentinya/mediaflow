@@ -13,6 +13,7 @@ import { MigrationPage } from "../features/migration/MigrationPage";
 import { ConfigurationPage } from "../features/configuration/ConfigurationPage";
 import { StorageManagementPage } from "../features/storage/StorageManagementPage";
 import { RulesWorkspacePage } from "../features/rules/RulesWorkspacePage";
+import { RulesEditPage } from "../features/rules/RulesEditPage";
 import { MediaLibraryFilesPage } from "../features/library/MediaLibraryFilesPage";
 import { StorageFilesPage } from "../features/library/StorageFilesPage";
 import { OperationsLanding } from "../features/operations/OperationsLanding";
@@ -301,6 +302,12 @@ const rulesRoute = createRoute({
   component: RulesWorkspacePage,
 });
 
+const rulesEditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "rules/edit/$family/$objectId",
+  component: RulesEditPage,
+});
+
 const routeTree = rootRoute.addChildren([
   entryRoute,
   dashboardRoute,
@@ -337,6 +344,7 @@ const routeTree = rootRoute.addChildren([
   configurationRoute,
   storageManagementRoute,
   rulesRoute,
+  rulesEditRoute,
 ]);
 
 export function createAppRouter(
