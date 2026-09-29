@@ -7,6 +7,9 @@
  * enumeration can drift from the navigation model: a path that is not present
  * in the data is neither a valid type nor an allowed continuation target.
  */
+
+import { RULE_FAMILIES } from "../../entities/rules/rules-workspace";
+
 const destinationData = [
   {
     id: "overview",
@@ -613,6 +616,22 @@ export function allowlistedDestinationSearch(
       current.get("command"),
       COMMAND_FILTER_TOKEN,
     );
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (path === "/rules") {
+    // The rules workspace section is a closed allowlist of business families.
+    // Anything else (including a raw revision/digest, secret or arbitrary URL)
+    // is dropped before an authentication continuation can replay it; the
+    // workspace itself then falls back to its read-only Overview.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    const section = current.get("section");
+    if (
+      section !== null &&
+      (RULE_FAMILIES as readonly string[]).includes(section)
+    ) {
+      allowed.set("section", section);
+    }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (

@@ -359,19 +359,30 @@ describe("RulesWorkspacePage", () => {
     // The first close attempt only warns: input is still there, dialog still open.
     expect(await screen.findByText(/有未保存的输入/)).toBeVisible();
     expect(within(dialog).getByLabelText(/^ID/)).toHaveValue("keep-me");
-    // Reopening the family keeps the same correctable candidate.
+    // Changing the section is a navigation, not a discard: the form closes and
+    // the workspace states that correctable input is still held for that family.
     await user.click(screen.getByRole("button", { name: "命名策略" }));
-    await user.click(screen.getByRole("button", { name: "添加命名策略" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText(/仍有未保存的输入保存在本次会话中/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "识别类型" }));
     await user.click(screen.getByRole("button", { name: "添加识别类型" }));
     const reopened = await screen.findByRole("dialog", {
       name: "添加识别类型",
     });
     expect(within(reopened).getByLabelText(/^ID/)).toHaveValue("keep-me");
+    // Correcting the restored candidate is still protected: closing only warns.
+    await user.type(within(reopened).getByLabelText(/^ID/), "x");
     await user.click(
-      within(reopened).getByRole("button", { name: "放弃并关闭" }),
+      within(reopened).getByRole("button", { name: "关闭规则表单" }),
     );
+    expect(await screen.findByText(/有未保存的输入/)).toBeVisible();
+    // Discarding is a second explicit intent and only then forgets the input.
+    await user.click(screen.getByRole("button", { name: "放弃并关闭" }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The forgotten candidate is not restored by a later Add.
+    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const empty = await screen.findByRole("dialog", { name: "添加识别类型" });
+    expect(within(empty).getByLabelText(/^ID/)).toHaveValue("");
   });
 
   it("edit opens the refresh-safe full-page editor with immutable ID", async () => {
@@ -389,10 +400,14 @@ describe("RulesWorkspacePage", () => {
     const idField = screen.getByLabelText(/^ID/) as HTMLInputElement;
     expect(idField.value).toBe("C");
     expect(idField.readOnly).toBe(true);
+    // The return link carries the originating family section, so leaving the
+    // editor and returning lands on the same inventory.
     for (const link of screen.getAllByRole("link", {
       name: "返回整理规则清单",
     }))
-      expect(link.getAttribute("href")).toMatch(/\/ui-v2\/rules$/);
+      expect(link.getAttribute("href")).toBe(
+        "/ui-v2/rules?section=recognitionTypes",
+      );
     expect(
       calls.some((call) => call.url.includes("/objects/recognitionTypes/C")),
     ).toBe(true);
@@ -569,9 +584,11 @@ describe("RulesWorkspacePage", () => {
     expect(
       await screen.findByRole("heading", { name: "尚无 Active 配置" }),
     ).toBeVisible();
+    // The handoff carries only the allowlisted Rules return target: no path,
+    // no identity, no revision and no token.
     expect(
       screen.getByRole("link", { name: "前往系统设置查看配置状态" }),
-    ).toHaveAttribute("href", "/ui-v2/configuration");
+    ).toHaveAttribute("href", "/ui-v2/configuration?returnTo=rules");
     expect(screen.queryByRole("button", { name: /^添加/ })).toBeNull();
   });
 
@@ -596,5 +613,257 @@ describe("RulesWorkspacePage", () => {
     expect(retry).toHaveFocus();
     await user.keyboard("{Enter}");
     await waitFor(() => expect(mock).toHaveBeenCalledTimes(2));
+  });
+});
+
+describe("RulesWorkspacePage section state", () => {
+  it("deep-links to the named family with no selected object or editor", async () => {
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    expect(
+      await screen.findByRole("heading", { name: "识别类型" }),
+    ).toBeVisible();
+    // The family route is the complete full-width inventory: no drawer, no
+    // editor and no command beyond the one inventory read.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.getByRole("row", { name: /Special/ })).toBeVisible();
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+    expect(screen.getByRole("button", { name: "识别类型" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+  });
+
+  it("keeps the section in the URL, and survives Back, Forward and refresh", async () => {
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    const { router } = renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "命名策略" }));
+    await screen.findByRole("heading", { name: "命名策略" });
+    // The open section is real route state, not component-local state.
+    expect(router.state.location.pathname).toBe("/rules");
+    expect(router.state.location.search).toEqual({ section: "namingPolicies" });
+
+    // Back returns to the Overview; Forward returns to the same family.
+    await router.navigate({ to: "/rules" });
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    await router.history.back();
+    expect(
+      await screen.findByRole("heading", { name: "命名策略" }),
+    ).toBeVisible();
+    await router.history.forward();
+    expect(
+      await screen.findByRole("heading", { name: "规则关系概览" }),
+    ).toBeVisible();
+
+    // A refresh re-reads the same inventory; it never falls back to Overview.
+    const reads = calls.length;
+    await router.invalidate();
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    expect(router.state.location.search).toEqual({});
+    expect(calls.length).toBeGreaterThanOrEqual(reads);
+  });
+
+  it("falls back to the read-only Overview for malformed section input without writing", async () => {
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    for (const search of [
+      "?section=not-a-family",
+      "?section=",
+      "?section=../../storage",
+      "?section=Bearer%20abc",
+      "?section=sha256%3Aabcdef",
+      "?section=typeBindings&section=storage",
+    ]) {
+      cleanup();
+      renderApp(`/ui-v2/rules${search}`);
+      expect(
+        await screen.findByRole("heading", { name: "规则关系概览" }),
+      ).toBeVisible();
+      // The invalid value never becomes authority, is never echoed and never
+      // triggers a write.
+      expect(document.body.textContent).not.toContain("Bearer");
+      expect(screen.queryByRole("dialog")).toBeNull();
+    }
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+
+    // A valid section still opens its inventory when unrelated, credential-like
+    // keys ride along; those keys are never read, echoed or turned into
+    // authority by the workspace.
+    cleanup();
+    renderApp("/ui-v2/rules?section=recognitionTypes&token=secret");
+    expect(
+      await screen.findByRole("heading", { name: "识别类型" }),
+    ).toBeVisible();
+    expect(document.body.textContent).not.toContain("secret");
+  });
+
+  it("turns a backend readiness gap into a direct action on the affected family", async () => {
+    const { calls } = stubRules({
+      inventory: {
+        ...rulesPayload,
+        readiness: {
+          state: "PARTIAL",
+          gaps: [
+            {
+              family: "typeBindings",
+              message: "识别类型 C 没有被任何已启用绑定引用。",
+              nextAction: "启用或创建对应的类型绑定。",
+            },
+          ],
+        },
+      },
+    });
+    authStore.setToken("rules-token");
+    const { router } = renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    const user = userEvent.setup();
+    const action = await screen.findByRole("link", { name: "查看类型绑定" });
+    expect(action).toHaveAttribute("href", "/ui-v2/rules?section=typeBindings");
+    await user.click(action);
+    expect(
+      await screen.findByRole("heading", { name: "类型绑定" }),
+    ).toBeVisible();
+    expect(router.state.location.search).toEqual({ section: "typeBindings" });
+    // Reaching the affected inventory is navigation only.
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("walks the dependency order through an empty Active without generating objects", async () => {
+    const empty = Object.fromEntries(
+      Object.keys(rulesPayload.sections).map((key) => [key, []]),
+    );
+    stubRules({
+      inventory: {
+        ...rulesPayload,
+        readiness: { state: "EMPTY", gaps: [] },
+        overview: {
+          relationship: [],
+          counts: Object.fromEntries(
+            Object.keys(rulesPayload.sections).map((key) => [key, 0]),
+          ),
+          enabledCounts: Object.fromEntries(
+            Object.keys(rulesPayload.sections).map((key) => [key, 0]),
+          ),
+        },
+        sections: empty,
+      },
+    });
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    const path = screen.getByRole("heading", { name: "按依赖顺序补齐" });
+    expect(path).toBeVisible();
+    const section = path.closest("div") as HTMLElement;
+    // Every family is offered in dependency order, starting from the one that
+    // has no prerequisite.
+    expect(
+      within(section)
+        .getAllByRole("link")
+        .map((link) => link.textContent),
+    ).toEqual([
+      "识别类型",
+      "识别规则",
+      "元数据策略",
+      "命名策略",
+      "分类策略",
+      "整理策略",
+      "类型绑定",
+    ]);
+    // Guidance explains the prerequisite instead of inventing an example.
+    expect(
+      within(section).getByText(/识别规则必须引用已存在的识别类型/),
+    ).toBeVisible();
+    expect(within(section).getByText(/系统不会生成默认对象/)).toBeVisible();
+  });
+
+  it("keeps the gap action and family entries keyboard reachable", async () => {
+    const { calls } = stubRules({
+      inventory: {
+        ...rulesPayload,
+        readiness: {
+          state: "PARTIAL",
+          gaps: [
+            {
+              family: "recognitionTypes",
+              message: "没有可用的识别类型。",
+              nextAction: "创建识别类型。",
+            },
+          ],
+        },
+      },
+    });
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    const user = userEvent.setup();
+    // The gap action is a real link, so it is reachable and activatable by
+    // keyboard alone; focusing it never opens an editor.
+    // testing-library matches the accessible name exactly by default, so this
+    // resolves to the gap action and not the Overview summary entry.
+    const gap = screen.getByRole("link", { name: "查看识别类型" });
+    gap.focus();
+    expect(gap).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("heading", { name: "识别类型" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Returning to the Overview keeps every family entry reachable the same
+    // way, with no pointer interaction required.
+    await user.click(screen.getByRole("button", { name: "概览" }));
+    const summary = await screen.findByRole("link", {
+      name: "查看命名策略清单",
+    });
+    summary.focus();
+    expect(summary).toHaveFocus();
+    await user.keyboard("{Enter}");
+    expect(
+      await screen.findByRole("heading", { name: "命名策略" }),
+    ).toBeVisible();
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("carries the originating family into Settings and back", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=classificationPolicies");
+    await screen.findByRole("heading", { name: "分类策略" });
+    expect(screen.getByRole("link", { name: "前往系统设置" })).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=rules&returnSection=classificationPolicies",
+    );
+    // From the Overview the handoff carries the target only.
+    cleanup();
+    renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "规则关系概览" });
+    expect(screen.getByRole("link", { name: "前往系统设置" })).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=rules",
+    );
+  });
+
+  it("keeps correctable input when a tab would leave the editing context", async () => {
+    stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=recognitionTypes");
+    await screen.findByRole("heading", { name: "识别类型" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加识别类型" });
+    await user.type(within(dialog).getByLabelText(/^ID/), "movie");
+    // The tab leaves the editing context; the input is not silently lost.
+    await user.click(screen.getByRole("button", { name: "元数据策略" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText(/仍有未保存的输入保存在本次会话中/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "识别类型" }));
+    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const reopened = await screen.findByRole("dialog", {
+      name: "添加识别类型",
+    });
+    expect(within(reopened).getByLabelText(/^ID/)).toHaveValue("movie");
   });
 });

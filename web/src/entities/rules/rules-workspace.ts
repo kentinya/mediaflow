@@ -19,6 +19,60 @@ export const RULE_FAMILIES = [
 
 export type RuleFamily = (typeof RULE_FAMILIES)[number];
 
+const RULE_FAMILY_SET: ReadonlySet<string> = new Set(RULE_FAMILIES);
+
+/** True only for one of the seven allowlisted rule families. */
+export function isRuleFamily(value: unknown): value is RuleFamily {
+  return typeof value === "string" && RULE_FAMILY_SET.has(value);
+}
+
+/** The single operator-facing label set for the seven rule families. */
+export const RULE_FAMILY_LABELS: Readonly<Record<RuleFamily, string>> = {
+  typeBindings: "类型绑定",
+  recognitionTypes: "识别类型",
+  recognitionRules: "识别规则",
+  metadataPolicies: "元数据策略",
+  namingPolicies: "命名策略",
+  classificationPolicies: "分类策略",
+  organizePolicies: "整理策略",
+};
+
+/**
+ * The legal dependency order for incrementally authoring an empty Active.
+ *
+ * It describes what the runtime actually consumes — rules need a type, a
+ * binding needs a type plus all four downstream policies — so empty/partial
+ * guidance can walk the operator through the existing families without
+ * generating a default object or inventing Active readiness.
+ */
+export const RULE_FAMILY_ONBOARDING_ORDER = [
+  "recognitionTypes",
+  "recognitionRules",
+  "metadataPolicies",
+  "namingPolicies",
+  "classificationPolicies",
+  "organizePolicies",
+  "typeBindings",
+] as const satisfies readonly RuleFamily[];
+
+/** What each family depends on before it can enter the runtime chain. */
+export const RULE_FAMILY_DEPENDENCY_GUIDANCE: Readonly<
+  Record<RuleFamily, string>
+> = {
+  typeBindings:
+    "类型绑定需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。",
+  recognitionTypes:
+    "识别类型是识别规则的输出目标,也是类型绑定的主体,建议先创建。",
+  recognitionRules:
+    "识别规则必须引用已存在的识别类型作为输出目标,可先创建识别类型。",
+  metadataPolicies: "元数据策略可独立创建,随后由类型绑定引用。",
+  namingPolicies: "命名策略可独立创建,随后由类型绑定引用。",
+  classificationPolicies:
+    "分类策略的规则会引用已配置的媒体库,可独立创建并由类型绑定引用。",
+  organizePolicies:
+    "整理策略可独立创建并由类型绑定引用;HardLink/SoftLink 不会静默降级为 Copy/Move。",
+};
+
 export interface RuleInventoryItem {
   readonly id: string;
   readonly name: string;

@@ -7931,7 +7931,107 @@ class MediaFlowApi:
             ApiPermission.ACTIVATE_CONFIGURATION in principal.permissions
         )
         status["commandReadiness"] = self._command_readiness_document(principal, status)
+        status["ruleReadiness"] = self._rule_readiness_document(status.get("active"))
         return status
+
+    def _rule_readiness_document(
+        self,
+        status_active: object,
+    ) -> dict[str, object]:
+        """Bounded rule-family readiness derived from the same Active authority.
+
+        Settings and the rules workspace must not disagree about what the runtime
+        consumes. This projection therefore reuses the exact
+        ``ConfigurationObjectService.active_rules_workspace`` read the workspace
+        inventory uses — the same managed Active revision, the same reference
+        resolution and the same gap derivation — and reduces it to counts,
+        readiness state, gaps and one exact Active identity. Nothing is cached,
+        generated, written or resolved in the browser, and no secret, raw
+        document or credential value crosses this boundary.
+
+        The identity is taken from the Active this same status read reported, so
+        the frontend can compare a readiness projection against it: a concurrent
+        activation that lands between the two reads then appears as a mismatch
+        instead of being presented as one consistent snapshot. The rules
+        inventory keeps its own Task 41.1 contract and stays free of revision
+        identity.
+        """
+
+        rule_families = self._RULE_INVENTORY_FAMILY_ORDER
+        empty_families = {family: 0 for family in rule_families}
+        reported = status_active if isinstance(status_active, dict) else {}
+        reported_revision = reported.get("revisionId")
+        reported_sequence = reported.get("revisionSequence")
+        identity = (
+            {
+                "status": "ACTIVE",
+                "revisionId": reported_revision,
+                "version": int(reported.get("version") or reported_sequence),
+                "sequence": int(reported_sequence),
+            }
+            if isinstance(reported_revision, str)
+            and isinstance(reported_sequence, int)
+            and not isinstance(reported_sequence, bool)
+            else None
+        )
+        unavailable: dict[str, object] = {
+            "available": False,
+            "reason": "unavailable",
+            "active": None,
+            "state": "UNAVAILABLE",
+            "gaps": [],
+            "counts": dict(empty_families),
+            "enabledCounts": dict(empty_families),
+        }
+        if self._configuration_objects is None:
+            return unavailable
+        try:
+            document = self._configuration_objects.active_rules_workspace()
+        except Exception:
+            return unavailable
+        if not document.get("available"):
+            reason = document.get("reason")
+            return {
+                **unavailable,
+                "reason": reason if reason in {"no_active", "malformed"} else "unavailable",
+                "state": {
+                    "no_active": "NO_ACTIVE",
+                    "malformed": "MALFORMED",
+                }.get(str(reason), "UNAVAILABLE"),
+            }
+        readiness = document.get("readiness")
+        overview = document.get("overview")
+        readiness = readiness if isinstance(readiness, dict) else {}
+        overview = overview if isinstance(overview, dict) else {}
+        gaps = readiness.get("gaps")
+        bounded_gaps = [
+            {
+                "family": str(item.get("family")),
+                "message": str(item.get("message")),
+                "nextAction": str(item.get("nextAction")),
+            }
+            for item in (gaps if isinstance(gaps, list) else [])
+            if isinstance(item, dict) and item.get("family") in self._RULE_INVENTORY_FAMILIES
+        ][: len(rule_families)]
+        return {
+            "available": True,
+            "reason": None,
+            "active": identity,
+            "state": readiness.get("state", "UNAVAILABLE"),
+            "gaps": bounded_gaps,
+            "counts": self._bounded_rule_counts(overview.get("counts")),
+            "enabledCounts": self._bounded_rule_counts(overview.get("enabledCounts")),
+        }
+
+    def _bounded_rule_counts(self, value: object) -> dict[str, int]:
+        source = value if isinstance(value, dict) else {}
+        counts: dict[str, int] = {}
+        for family in self._RULE_INVENTORY_FAMILIES:
+            item = source.get(family, 0)
+            counts[family] = (
+                item if isinstance(item, int) and not isinstance(item, bool) and item >= 0 else 0
+            )
+        return counts
 
     @staticmethod
     def _readiness_entry(
@@ -13231,17 +13331,16 @@ class MediaFlowApi:
     # ------------------------------------------------------------------
     # V2 Rules workspace read projection (bounded, secret-free)
 
-    _RULE_INVENTORY_FAMILIES = frozenset(
-        {
-            "typeBindings",
-            "recognitionTypes",
-            "recognitionRules",
-            "metadataPolicies",
-            "namingPolicies",
-            "classificationPolicies",
-            "organizePolicies",
-        }
+    _RULE_INVENTORY_FAMILY_ORDER = (
+        "typeBindings",
+        "recognitionTypes",
+        "recognitionRules",
+        "metadataPolicies",
+        "namingPolicies",
+        "classificationPolicies",
+        "organizePolicies",
     )
+    _RULE_INVENTORY_FAMILIES = frozenset(_RULE_INVENTORY_FAMILY_ORDER)
 
     def _rules_operations_projection(
         self,

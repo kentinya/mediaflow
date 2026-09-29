@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearch } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { Button } from "../../shared/ui/Button";
@@ -10,6 +10,14 @@ import {
   readSettingsReturnContext,
   settingsReturnDestination,
 } from "../../shared/navigation/settings-return";
+import {
+  RULE_FAMILY_LABELS,
+  type RuleFamily,
+} from "../../entities/rules/rules-workspace";
+import {
+  normalizeRuleReadiness,
+  type RuleReadiness,
+} from "../../entities/rules/rules-readiness";
 import {
   activateRevision,
   createFirstDraft,
@@ -98,9 +106,18 @@ const READINESS_LABELS: Readonly<Record<string, string>> = {
   active_unavailable: "暂不可用",
 };
 
+/** What the backend rule-readiness state means for the operator. */
+const RULE_READINESS_LABELS: Readonly<Record<string, string>> = {
+  READY: "规则图完整,运行时可直接消费",
+  PARTIAL: "部分规则族尚未就绪",
+  EMPTY: "Active 已激活,但规则族全部为空",
+  NO_ACTIVE: "尚无 Active 配置",
+  UNAVAILABLE: "Active 规则不可读取",
+  MALFORMED: "Active 规则无法解析",
+};
+
 type MutationAction =
   "create-first-draft" | "save-settings" | "validate" | "activate" | "export";
-
 type MutationRequest = {
   readonly action: MutationAction;
   readonly run: () => Promise<unknown>;
@@ -244,6 +261,108 @@ function settingFields(
     }
   }
   return fields;
+}
+
+/**
+ * Rule-family readiness in Settings, derived from the same backend Active
+ * authority the rules workspace inventory reads.
+ *
+ * An unavailable/malformed projection, a missing Active, a denied read and a
+ * concurrent Active change each stay visibly distinct: the panel states which
+ * exact Active it describes and never presents a mixed or stale snapshot as
+ * current readiness.
+ */
+function RuleReadinessPanel({
+  readiness,
+  activeRevisionId,
+}: {
+  readonly readiness: RuleReadiness;
+  /** The Active revision identity reported by this same status read. */
+  readonly activeRevisionId: string | null;
+}) {
+  const currentActive = readiness.active?.revisionId ?? null;
+  // A readiness projection that describes a different revision than the Active
+  // this status read reported is a mixed snapshot: it must not be shown as the
+  // current readiness of the Active above.
+  const mixed =
+    currentActive !== null &&
+    activeRevisionId !== null &&
+    currentActive !== activeRevisionId;
+  return (
+    <section className="mf-panel" aria-label="整理规则就绪状态">
+      <h2>整理规则就绪状态</h2>
+      <p>
+        与整理规则工作区读取同一个 Active
+        权威快照;此处不会创建、修改或缓存配置。
+      </p>
+      <dl className="mf-detail-grid">
+        <div>
+          <dt>规则就绪</dt>
+          <dd>
+            {mixed
+              ? "Active 已变更,需要刷新"
+              : (RULE_READINESS_LABELS[readiness.state] ?? "暂不可用")}
+          </dd>
+        </div>
+        <div>
+          <dt>对应 Active 序号</dt>
+          <dd>{readiness.active?.sequence ?? "无"}</dd>
+        </div>
+      </dl>
+      {mixed ? (
+        <p className="mf-error" role="status">
+          后端报告的就绪快照与上面的 Active
+          不是同一个修订;系统不会把混合快照当作当前就绪状态。请刷新后再判断。
+        </p>
+      ) : null}
+      {!readiness.available || readiness.active === null ? (
+        <p className="mf-error" role="status">
+          {RULE_READINESS_LABELS[readiness.state] ?? "暂不可用"}
+          :当前没有可读取的 Active 规则就绪证据,也不代表规则图是空的。
+        </p>
+      ) : (
+        <ul className="mf-rule-readiness-list">
+          {(Object.keys(RULE_FAMILY_LABELS) as RuleFamily[]).map((family) => (
+            <li key={family}>
+              <Link
+                to="/rules"
+                search={{ section: family }}
+                aria-label={`查看${RULE_FAMILY_LABELS[family]}`}
+              >
+                {RULE_FAMILY_LABELS[family]}
+              </Link>
+              <span>
+                {readiness.counts[family]} 项 ·{" "}
+                {readiness.enabledCounts[family]} 已启用
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {readiness.gaps.length > 0 ? (
+        <div className="mf-rules-gaps">
+          <h3>配置缺口</h3>
+          <ul>
+            {readiness.gaps.map((gap) => (
+              <li key={gap.family}>
+                <Link
+                  to="/rules"
+                  search={{ section: gap.family }}
+                  aria-label={`查看${RULE_FAMILY_LABELS[gap.family]}`}
+                >
+                  {RULE_FAMILY_LABELS[gap.family]}
+                </Link>
+                :{gap.message} {gap.nextAction}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      <div className="mf-actions">
+        <Link to="/rules">打开整理规则工作区</Link>
+      </div>
+    </section>
+  );
 }
 
 export function ConfigurationPage() {
@@ -430,6 +549,18 @@ export function ConfigurationPage() {
                 : "等待配置";
         const fields = settingFields(settings);
         const commandReadiness = asRecord(data.commandReadiness);
+        // A malformed rule-readiness document is an explicit unavailable state,
+        // never zero-count Active readiness: the normalizer's rejection is what
+        // makes a mixed or unreadable snapshot visible instead of silent.
+        const ruleReadiness = (() => {
+          try {
+            return data.ruleReadiness === undefined
+              ? null
+              : normalizeRuleReadiness(data.ruleReadiness);
+          } catch {
+            return null;
+          }
+        })();
         const consumption = asRecord(settings?.consumption);
         const restartRequiredFields = stringList(
           consumption?.restartRequiredFields,
@@ -494,6 +625,27 @@ export function ConfigurationPage() {
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
+            {returnContext !== null && (
+              <StatusBanner variant="info" title="来自其他页面">
+                <p>
+                  本次访问带有受支持的返回上下文;设置页不会自动跳转,只有你明确点击下面的返回操作时才会回到来源位置。
+                </p>
+                <div className="mf-actions">
+                  <Link
+                    to={settingsReturnDestination(returnContext).to}
+                    search={settingsReturnDestination(returnContext).search}
+                  >
+                    {returnContext.target === "rules"
+                      ? returnContext.section !== undefined
+                        ? `返回整理规则 · ${
+                            RULE_FAMILY_LABELS[returnContext.section]
+                          }`
+                        : "返回整理规则"
+                      : "返回上一页"}
+                  </Link>
+                </div>
+              </StatusBanner>
+            )}
             {awaitingVerification && (
               <StatusBanner variant="error" title="操作结果待核实">
                 <p>
@@ -592,6 +744,27 @@ export function ConfigurationPage() {
                     );
                   })}
                 </dl>
+              </section>
+            )}
+            {ruleReadiness !== null ? (
+              <RuleReadinessPanel
+                readiness={ruleReadiness}
+                activeRevisionId={
+                  typeof active?.revisionId === "string"
+                    ? active.revisionId
+                    : null
+                }
+              />
+            ) : (
+              <section className="mf-panel" aria-label="整理规则就绪状态">
+                <h2>整理规则就绪状态</h2>
+                <p className="mf-error" role="status">
+                  后端未提供可解析的整理规则就绪证据;这不代表规则图为空。请刷新或前往整理规则工作区查看实际
+                  Active。
+                </p>
+                <div className="mf-actions">
+                  <Link to="/rules">打开整理规则工作区</Link>
+                </div>
               </section>
             )}
             {selected && (

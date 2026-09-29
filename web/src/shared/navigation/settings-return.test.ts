@@ -33,8 +33,53 @@ describe("Settings return context", () => {
     expect(readSettingsReturnContext(search)).toBeNull();
   });
 
+  it("carries only the allowlisted section for a Rules handoff", () => {
+    const search = settingsReturnSearch({
+      target: "rules",
+      section: "recognitionTypes",
+    });
+    expect(search).toEqual({
+      returnTo: "rules",
+      returnSection: "recognitionTypes",
+    });
+    const context = readSettingsReturnContext(search);
+    expect(context).toEqual({ target: "rules", section: "recognitionTypes" });
+    expect(settingsReturnDestination(context!)).toEqual({
+      to: "/rules",
+      search: { section: "recognitionTypes" },
+    });
+    // An Overview handoff carries nothing but the target itself.
+    expect(settingsReturnSearch({ target: "rules" })).toEqual({
+      returnTo: "rules",
+    });
+    expect(settingsReturnDestination({ target: "rules" })).toEqual({
+      to: "/rules",
+      search: {},
+    });
+  });
+
+  it("refuses to carry a path, identity or unknown family out of Rules", () => {
+    for (const search of [
+      { returnTo: "rules", returnLibraryId: "source-1" },
+      { returnTo: "rules", returnPath: "Season 01" },
+      { returnTo: "rules", returnSection: "not-a-family" },
+      { returnTo: "rules", returnSection: "recognitionTypes/../../storage" },
+      // A digest, revision or credential value is never a valid section.
+      { returnTo: "rules", returnSection: "sha256:abcdef" },
+      { returnTo: "rules", returnSection: "Bearer abc" },
+      { returnTo: "storage", returnSection: "recognitionTypes" },
+    ]) {
+      expect(readSettingsReturnContext(search)).toBeNull();
+    }
+  });
+
   it("does not carry authority or tokens", () => {
     const encoded = JSON.stringify(settingsReturnSearch({ target: "storage" }));
     expect(encoded).toBe('{"returnTo":"storage"}');
+    expect(
+      JSON.stringify(
+        settingsReturnSearch({ target: "rules", section: "typeBindings" }),
+      ),
+    ).toBe('{"returnTo":"rules","returnSection":"typeBindings"}');
   });
 });

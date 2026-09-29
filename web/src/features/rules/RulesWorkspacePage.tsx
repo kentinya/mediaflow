@@ -1,5 +1,5 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
@@ -13,7 +13,11 @@ import {
 } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import {
+  isRuleFamily,
   RULE_FAMILIES,
+  RULE_FAMILY_DEPENDENCY_GUIDANCE,
+  RULE_FAMILY_LABELS as LABELS,
+  RULE_FAMILY_ONBOARDING_ORDER,
   type RuleFamily,
   type RuleInventoryItem,
   type RulesWorkspaceModel,
@@ -26,8 +30,9 @@ import {
   RulesObjectDrawer,
   type RulesDrawerSession,
 } from "./RulesObjectDrawer";
-import { RULE_FAMILY_LABELS as LABELS } from "./rules-workspace-labels";
 import { ruleFailureCopy } from "../../entities/rules/rules-form";
+import { settingsReturnSearch } from "../../shared/navigation/settings-return";
+import { readRuleDraft } from "./rules-workspace-labels";
 
 type Section = "overview" | RuleFamily;
 
@@ -40,25 +45,25 @@ function isFormFamily(
 }
 
 /**
- * Dependency-ordered onboarding guidance for one empty Active family.
- *
- * Empty states explain the dependency order while every admitted family remains
- * directly authorable through its typed create action.
+ * The section is a closed allowlist carried in the URL search string, so a
+ * family deep link, a tab change, browser Back/Forward, a refresh and an
+ * authentication continuation all resolve to the same inventory. Anything that
+ * is not one of the seven families falls back to the read-only Overview without
+ * performing a configuration write.
  */
-const EMPTY_FAMILY_GUIDANCE: Readonly<Record<RuleFamily, string>> = {
-  typeBindings:
-    "类型绑定需要已有的识别类型,以及被引用的元数据、命名、分类和整理策略;每个识别类型只允许一个已启用绑定。",
-  recognitionTypes:
-    "识别类型是识别规则的输出目标,也是类型绑定的主体,建议先创建。",
-  recognitionRules:
-    "识别规则必须引用已存在的识别类型作为输出目标,可先创建识别类型。",
-  metadataPolicies: "元数据策略可独立创建,随后由类型绑定引用。",
-  namingPolicies: "命名策略可独立创建,随后由类型绑定引用。",
-  classificationPolicies:
-    "分类策略的规则会引用已配置的媒体库,可独立创建并由类型绑定引用。",
-  organizePolicies:
-    "整理策略可独立创建并由类型绑定引用;HardLink/SoftLink 不会静默降级为 Copy/Move。",
-};
+export function readRulesSection(
+  search: Record<string, unknown> | null | undefined,
+): Section {
+  const value = search?.["section"];
+  return isRuleFamily(value) ? value : "overview";
+}
+
+/** The bounded URL state for one rules section; Overview carries none. */
+export function rulesSectionSearch(
+  section: Section,
+): Record<string, string> | undefined {
+  return section === "overview" ? undefined : { section };
+}
 
 function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
   if (model.available) return null;
@@ -77,8 +82,79 @@ function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
           ? "当前没有可供运行时消费的 Active 规则。访问本页没有创建 Draft,也没有改变任何配置。"
           : "当前 Active 仍保持原状;本页没有执行 Provider、Storage、任务或配置写入。"}
       </p>
-      <Link to="/configuration">前往系统设置查看配置状态</Link>
+      <Link
+        to="/configuration"
+        search={settingsReturnSearch({ target: "rules" })}
+      >
+        前往系统设置查看配置状态
+      </Link>
     </section>
+  );
+}
+
+/**
+ * Readiness gaps become navigation: each gap is bound to the family the backend
+ * named, so an operator reaches the affected inventory instead of reading a
+ * dead-end message. The action is a pure section link and writes nothing.
+ */
+function ReadinessGaps({ model }: { readonly model: RulesWorkspaceModel }) {
+  if (model.readiness.gaps.length === 0) return null;
+  return (
+    <div className="mf-rules-gaps">
+      <h3>配置缺口</h3>
+      <ul>
+        {model.readiness.gaps.map((gap) => (
+          <li key={gap.family}>
+            <strong>{LABELS[gap.family]}</strong>:{gap.message} {gap.nextAction}{" "}
+            <Link
+              className="mf-rules-gap-action"
+              to="/rules"
+              search={rulesSectionSearch(gap.family)}
+              aria-label={`查看${LABELS[gap.family]}`}
+            >
+              查看{LABELS[gap.family]}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * The dependency-aware path through an empty or partial Active.
+ *
+ * It only walks families that already exist in the backend readiness model and
+ * links the ones that still have no Active object. No default business object is
+ * generated and no example is presented as Active truth.
+ */
+function OnboardingPath({ model }: { readonly model: RulesWorkspaceModel }) {
+  const missing = RULE_FAMILY_ONBOARDING_ORDER.filter(
+    (family) => model.overview.counts[family] === 0,
+  );
+  if (missing.length === 0) return null;
+  return (
+    <div className="mf-rules-onboarding">
+      <h3>按依赖顺序补齐</h3>
+      <p>
+        Active
+        已激活但尚未配置完整;以下分类当前没有对象,按依赖顺序逐个补齐即可,系统不会生成默认对象。
+      </p>
+      <ol>
+        {missing.map((family) => (
+          <li key={family}>
+            <Link
+              to="/rules"
+              search={rulesSectionSearch(family)}
+              aria-label={`查看${LABELS[family]}`}
+            >
+              {LABELS[family]}
+            </Link>
+            <span>{RULE_FAMILY_DEPENDENCY_GUIDANCE[family]}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -103,25 +179,22 @@ function Overview({ model }: { readonly model: RulesWorkspaceModel }) {
       <div className="mf-rules-summary-grid">
         {RULE_FAMILIES.map((family) => (
           <article key={family}>
-            <h3>{LABELS[family]}</h3>
+            <h3>
+              <Link
+                to="/rules"
+                search={rulesSectionSearch(family)}
+                aria-label={`查看${LABELS[family]}清单`}
+              >
+                {LABELS[family]}
+              </Link>
+            </h3>
             <strong>{model.overview.counts[family]}</strong>
             <span>{model.overview.enabledCounts[family]} 已启用</span>
           </article>
         ))}
       </div>
-      {model.readiness.gaps.length > 0 ? (
-        <div className="mf-rules-gaps">
-          <h3>配置缺口</h3>
-          <ul>
-            {model.readiness.gaps.map((gap) => (
-              <li key={gap.family}>
-                <strong>{LABELS[gap.family]}</strong>:{gap.message}{" "}
-                {gap.nextAction}
-              </li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
+      <ReadinessGaps model={model} />
+      <OnboardingPath model={model} />
     </section>
   );
 }
@@ -295,7 +368,7 @@ function Inventory({
           当前 Active 配置中未包含任何{LABELS[family]}。访问本页不会创建
           Draft,也没有改变任何配置。
         </p>
-        <p>{EMPTY_FAMILY_GUIDANCE[family]}</p>
+        <p>{RULE_FAMILY_DEPENDENCY_GUIDANCE[family]}</p>
         {authored && canManage ? (
           <div className="mf-actions">
             <button
@@ -477,7 +550,13 @@ function Inventory({
 
 export function RulesWorkspacePage() {
   const token = useAuthToken();
-  const [section, setSection] = useState<Section>("overview");
+  const navigate = useNavigate();
+  const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  // The URL search string is the single source of truth for the open section:
+  // a deep link, a tab click, browser Back/Forward, a refresh and an
+  // authentication continuation can never disagree about which inventory is
+  // shown. Malformed input resolves to the read-only Overview.
+  const section = readRulesSection(searchParams);
   const [search, setSearch] = useState("");
   const [enabled, setEnabled] = useState<"all" | "enabled" | "disabled">("all");
   const [drawer, setDrawer] = useState<RulesDrawerSession | null>(null);
@@ -489,6 +568,28 @@ export function RulesWorkspacePage() {
     enabled: token !== null,
     retry: false,
   });
+
+  // Leaving a family is a navigation, never a discard: an open create/copy
+  // drawer closes, and whatever the operator typed stays in the correctable
+  // session draft for that exact family, so the next explicit Add/Edit restores
+  // it. Clicking a tab never opens the drawer either.
+  const goToSection = (next: Section) => {
+    setDrawer(null);
+    setPending(null);
+    setNotice(null);
+    void navigate({
+      to: "/rules",
+      search: rulesSectionSearch(next),
+    });
+  };
+
+  // A correctable draft that belongs to a family other than the one on screen
+  // is stated explicitly, so navigating away never looks like it silently threw
+  // the input away.
+  const draftFamilies = RULE_FORM_FAMILIES.filter(
+    (family) => family !== section && readRuleDraft(family, null) !== undefined,
+  );
+
   return (
     <AuthorizedReadBoundary query={query} unavailableTitle="整理规则暂不可用">
       {({ data, isPending, isFetching, refresh }) => {
@@ -549,20 +650,38 @@ export function RulesWorkspacePage() {
                   查看并编辑识别类型到元数据、命名、分类和整理策略的完整关系。
                 </p>
               </div>
-              <button type="button" onClick={refresh} disabled={isFetching}>
-                {isFetching ? "刷新中..." : "刷新 Active"}
-              </button>
+              <div className="mf-actions">
+                <Link
+                  to="/configuration"
+                  search={settingsReturnSearch({
+                    target: "rules",
+                    ...(section === "overview" ? {} : { section }),
+                  })}
+                >
+                  前往系统设置
+                </Link>
+                <button type="button" onClick={refresh} disabled={isFetching}>
+                  {isFetching ? "刷新中..." : "刷新 Active"}
+                </button>
+              </div>
             </header>
             {notice !== null && (
               <p className="mf-rules-verified" role="status">
                 {notice}
               </p>
             )}
+            {draftFamilies.length > 0 && (
+              <p className="mf-rules-verified" role="status">
+                仍有未保存的输入保存在本次会话中:
+                {draftFamilies.map((item) => LABELS[item]).join("、")}
+                。再次打开对应的添加或编辑表单即可继续修正。
+              </p>
+            )}
             <nav className="mf-rules-tabs" aria-label="规则分类">
               <button
                 type="button"
                 aria-current={section === "overview" ? "page" : undefined}
-                onClick={() => setSection("overview")}
+                onClick={() => goToSection("overview")}
               >
                 概览
               </button>
@@ -571,7 +690,7 @@ export function RulesWorkspacePage() {
                   type="button"
                   key={familyName}
                   aria-current={section === familyName ? "page" : undefined}
-                  onClick={() => setSection(familyName)}
+                  onClick={() => goToSection(familyName)}
                 >
                   {LABELS[familyName]}
                 </button>

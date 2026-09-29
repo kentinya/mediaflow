@@ -128,6 +128,26 @@ describe("destination model", () => {
       expect(search).toBe("resourceLibraryId=resources");
     });
 
+    it("keeps only the allowlisted Rules family section", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/rules",
+          "section=recognitionTypes&token=secret&revision=sha256:abc",
+        ),
+      ).toBe("section=recognitionTypes");
+      // An unknown, credential-like or path-like section never survives a
+      // reconnect; the workspace then falls back to its read-only Overview.
+      for (const search of [
+        "section=not-a-family",
+        "section=../../storage",
+        "section=Bearer%20abc",
+        "section=sha256%3Aabcdef",
+        "token=secret",
+      ]) {
+        expect(allowlistedDestinationSearch("/rules", search)).toBeNull();
+      }
+    });
+
     it("returns null for non-library/files routes", () => {
       expect(allowlistedDestinationSearch("/dashboard", "q=test")).toBeNull();
       expect(

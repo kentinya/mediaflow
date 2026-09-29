@@ -14,9 +14,14 @@ import { createAppRouter } from "../src/routes/router";
 /**
  * Render the real route tree under the documented /ui-v2/ base path with a
  * fresh query cache per call. The router mounts asynchronously, so tests must
- * use `findBy*` queries before interacting with the rendered content.
+ * use `findBy*` queries before interacting with the rendered content. The
+ * router is returned so a test can assert the real URL/search state and drive
+ * browser Back/Forward through the history it owns.
  */
-export function renderApp(initialPath: string): { queryClient: QueryClient } {
+export function renderApp(initialPath: string): {
+  queryClient: QueryClient;
+  router: ReturnType<typeof createAppRouter>;
+} {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: {
@@ -34,7 +39,7 @@ export function renderApp(initialPath: string): { queryClient: QueryClient } {
       <RouterProvider router={router} />
     </AppProviders>,
   );
-  return { queryClient };
+  return { queryClient, router };
 }
 
 /**

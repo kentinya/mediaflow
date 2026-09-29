@@ -157,13 +157,25 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
     });
   };
 
+  /**
+   * The warning's own discard action. It is a distinct intent from `attemptClose`
+   * — which only arms the warning on the first click — so it forgets the
+   * correctable candidate directly instead of routing back through the arming
+   * logic.
+   */
+  const discardAndClose = () => {
+    clearRuleDraft(session.family, draftKey);
+    onClose();
+  };
+
   const attemptClose = () => {
     if (dirty && state.kind !== "saving") {
       if (!discardArmed) {
         setDiscardArmed(true);
         return;
       }
-      // An explicit discard is the only path that forgets the input.
+      // The second close intent is an explicit discard, so it forgets the
+      // candidate exactly like the warning's own discard action.
       clearRuleDraft(session.family, draftKey);
     }
     onClose();
@@ -274,7 +286,7 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
             <div className="mf-rules-discard" role="alert">
               <p>表单中有未保存的输入;关闭会丢弃这些修改。</p>
               <div className="mf-actions">
-                <button type="button" onClick={onClose}>
+                <button type="button" onClick={discardAndClose}>
                   放弃并关闭
                 </button>
                 <button type="button" onClick={() => setDiscardArmed(false)}>

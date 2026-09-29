@@ -1,4 +1,5 @@
 import { ApiReadError, type ApiReadErrorCategory } from "./api-errors";
+import type { RuleReadiness } from "../../entities/rules/rules-readiness";
 
 export interface ConfigurationStatus {
   readonly [key: string]: unknown;
@@ -11,7 +12,16 @@ export interface ConfigurationStatus {
   readonly canManageConfiguration?: boolean;
   readonly canActivateConfiguration?: boolean;
   readonly commandReadiness?: Record<string, unknown>;
+  /**
+   * The rule-family readiness derived server-side from the exact Active
+   * authority the rules workspace inventory reads. It stays `unknown` until the
+   * entity normalizer accepts it, so a malformed document can never be rendered
+   * as zero-count Active readiness.
+   */
+  readonly ruleReadiness?: unknown;
 }
+
+export type { RuleReadiness };
 
 /**
  * Bounded failure of one configuration read or write.

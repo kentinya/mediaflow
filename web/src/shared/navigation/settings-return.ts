@@ -1,17 +1,34 @@
-/** Bounded, same-application return context for native V2 Settings. */
+/**
+ * Bounded, same-application return context for native V2 Settings.
+ *
+ * Only allowlisted product destinations and their own bounded view state travel
+ * here. The rules destination carries at most one allowlisted family section,
+ * so a Rules handoff can return the operator to the exact inventory they left
+ * without turning the URL into an open redirect, a raw revision/digest carrier
+ * or a secret/token channel.
+ */
 
-export type SettingsReturnTarget = "storage" | "resource-files" | "media-files";
+import {
+  isRuleFamily,
+  type RuleFamily,
+} from "../../entities/rules/rules-workspace";
+
+export type SettingsReturnTarget =
+  "storage" | "resource-files" | "media-files" | "rules";
 
 export interface SettingsReturnContext {
   readonly target: SettingsReturnTarget;
   readonly libraryId?: string;
   readonly path?: string;
+  /** The originating allowlisted rules section, when the handoff left a family. */
+  readonly section?: RuleFamily;
 }
 
 const TARGET_PATHS: Readonly<Record<SettingsReturnTarget, string>> = {
   storage: "/storage",
   "resource-files": "/resourcelib/files",
   "media-files": "/medialib/files",
+  rules: "/rules",
 };
 const MAX_ID_LENGTH = 1024;
 const MAX_PATH_LENGTH = 4096;
@@ -49,6 +66,14 @@ export function settingsReturnSearch(
   context: SettingsReturnContext,
 ): Record<string, string> {
   const search: Record<string, string> = { returnTo: context.target };
+  if (context.target === "rules") {
+    // A rules handoff never carries a library identity or a physical path; it
+    // may carry exactly one allowlisted family section.
+    if (context.section !== undefined && isRuleFamily(context.section)) {
+      search["returnSection"] = context.section;
+    }
+    return search;
+  }
   if (context.libraryId && safeId(context.libraryId)) {
     search["returnLibraryId"] = context.libraryId;
   }
@@ -66,14 +91,29 @@ export function readSettingsReturnContext(
   if (
     target !== "storage" &&
     target !== "resource-files" &&
-    target !== "media-files"
+    target !== "media-files" &&
+    target !== "rules"
   ) {
     return null;
   }
   const libraryId = search["returnLibraryId"];
   const path = search["returnPath"];
+  const section = search["returnSection"];
   if (libraryId !== undefined && !safeId(libraryId)) return null;
   if (path !== undefined && !safePath(path)) return null;
+  if (target === "rules") {
+    // A rules return carries no library identity or path, and its optional
+    // section must be one of the allowlisted families: an unknown, oversized or
+    // credential-like value invalidates the whole context instead of being
+    // silently reinterpreted as a different destination.
+    if (libraryId !== undefined || path !== undefined) return null;
+    if (section !== undefined && !isRuleFamily(section)) return null;
+    return {
+      target,
+      ...(isRuleFamily(section) ? { section } : {}),
+    };
+  }
+  if (section !== undefined) return null;
   if (target === "storage" && (libraryId !== undefined || path !== undefined)) {
     return null;
   }
@@ -88,6 +128,12 @@ export function settingsReturnDestination(context: SettingsReturnContext): {
   readonly to: string;
   readonly search: Record<string, string>;
 } {
+  if (context.target === "rules") {
+    return {
+      to: TARGET_PATHS.rules,
+      search: context.section === undefined ? {} : { section: context.section },
+    };
+  }
   const search: Record<string, string> = {};
   if (context.libraryId) {
     search[

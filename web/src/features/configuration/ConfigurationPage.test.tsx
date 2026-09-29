@@ -827,3 +827,204 @@ describe("V2 configuration route", () => {
     ).toBeVisible();
   });
 });
+
+describe("V2 configuration rule readiness", () => {
+  const COUNTS = {
+    typeBindings: 1,
+    recognitionTypes: 2,
+    recognitionRules: 0,
+    metadataPolicies: 1,
+    namingPolicies: 1,
+    classificationPolicies: 1,
+    organizePolicies: 1,
+  };
+
+  const statusWith = (ruleReadiness: unknown) =>
+    vi.fn(async () =>
+      response({
+        authority: "MANAGED",
+        setupRequired: false,
+        emptyActive: false,
+        active: { revisionId: "active-2", version: 4, revisionSequence: 2 },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+        ruleReadiness,
+      }),
+    );
+
+  it("shows the same Active readiness as the rules workspace and links each family", async () => {
+    const fetchMock = statusWith({
+      available: true,
+      reason: null,
+      active: {
+        status: "ACTIVE",
+        revisionId: "active-2",
+        version: 4,
+        sequence: 2,
+      },
+      state: "PARTIAL",
+      gaps: [
+        {
+          family: "recognitionRules",
+          message: "没有识别规则产生识别类型。",
+          nextAction: "创建识别规则。",
+        },
+      ],
+      counts: COUNTS,
+      enabledCounts: COUNTS,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    expect(
+      await screen.findByRole("heading", { name: "整理规则就绪状态" }),
+    ).toBeVisible();
+    // The exact Active that the counts describe is named, and the state is the
+    // backend authority rather than a frontend re-derivation.
+    expect(screen.getByText("对应 Active 序号")).toBeVisible();
+    expect(screen.getByText("部分规则族尚未就绪")).toBeVisible();
+    // Each family reaches its own inventory, and the gap reaches the family the
+    // backend named.
+    expect(screen.getByRole("link", { name: "查看识别类型" })).toHaveAttribute(
+      "href",
+      "/ui-v2/rules?section=recognitionTypes",
+    );
+    const gapLink = screen.getAllByRole("link", {
+      name: "查看识别规则",
+    })[0]!;
+    expect(gapLink).toHaveAttribute(
+      "href",
+      "/ui-v2/rules?section=recognitionRules",
+    );
+    expect(screen.getByText("2 项 · 2 已启用")).toBeVisible();
+    // Reading readiness is a pure read.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps no-Active, unavailable and malformed distinct from empty readiness", async () => {
+    for (const [state, copy, counts] of [
+      ["NO_ACTIVE", "尚无 Active 配置", COUNTS],
+      ["UNAVAILABLE", "Active 规则不可读取", COUNTS],
+      ["MALFORMED", "Active 规则无法解析", COUNTS],
+    ] as const) {
+      cleanup();
+      vi.unstubAllGlobals();
+      vi.stubGlobal(
+        "fetch",
+        statusWith({
+          available: false,
+          reason: state.toLowerCase(),
+          active: null,
+          state,
+          gaps: [],
+          counts,
+          enabledCounts: counts,
+        }),
+      );
+      authStore.setToken("admin-token");
+      renderApp("/ui-v2/configuration");
+      await screen.findByRole("heading", { name: "整理规则就绪状态" });
+      // The unavailable states never render a family inventory as if it were
+      // the current Active readiness.
+      expect(screen.getAllByText(new RegExp(copy)).length).toBeGreaterThan(0);
+      expect(screen.queryByRole("link", { name: "查看识别类型" })).toBeNull();
+      expect(
+        screen.getByRole("link", { name: "打开整理规则工作区" }),
+      ).toBeVisible();
+    }
+  });
+
+  it("never presents a mixed-snapshot readiness as current", async () => {
+    vi.stubGlobal(
+      "fetch",
+      statusWith({
+        available: true,
+        reason: null,
+        // A readiness projection that names a different revision than the
+        // Active of this same status read is a mixed snapshot.
+        active: {
+          status: "ACTIVE",
+          revisionId: "active-9",
+          version: 9,
+          sequence: 9,
+        },
+        state: "READY",
+        gaps: [],
+        counts: COUNTS,
+        enabledCounts: COUNTS,
+      }),
+    );
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await screen.findByRole("heading", { name: "整理规则就绪状态" });
+    expect(screen.getByText("Active 已变更,需要刷新")).toBeVisible();
+    expect(screen.queryByText("规则图完整,运行时可直接消费")).toBeNull();
+  });
+
+  it("maps a malformed rule-readiness document to an explicit unavailable state", async () => {
+    vi.stubGlobal("fetch", statusWith({ state: "PROBABLY_FINE" }));
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await screen.findByRole("heading", { name: "整理规则就绪状态" });
+    expect(
+      screen.getByText(/后端未提供可解析的整理规则就绪证据/),
+    ).toBeVisible();
+    expect(screen.queryByRole("link", { name: "查看识别类型" })).toBeNull();
+  });
+
+  it("offers an explicit safe return to the originating rules family without auto-navigation", async () => {
+    vi.stubGlobal(
+      "fetch",
+      statusWith({
+        available: true,
+        reason: null,
+        active: {
+          status: "ACTIVE",
+          revisionId: "active-2",
+          version: 4,
+          sequence: 2,
+        },
+        state: "READY",
+        gaps: [],
+        counts: COUNTS,
+        enabledCounts: COUNTS,
+      }),
+    );
+    authStore.setToken("admin-token");
+    renderApp(
+      "/ui-v2/configuration?returnTo=rules&returnSection=classificationPolicies",
+    );
+    expect(await screen.findByText("来自其他页面")).toBeVisible();
+    // The explicit return carries the originating family section back.
+    expect(
+      screen.getByRole("link", { name: "返回整理规则 · 分类策略" }),
+    ).toHaveAttribute("href", "/ui-v2/rules?section=classificationPolicies");
+    // Settings stays on Settings: the return is offered, never automatic.
+    expect(screen.getByRole("heading", { name: "配置生命周期" })).toBeVisible();
+  });
+
+  it("refuses an unsafe return context instead of offering an open redirect", async () => {
+    vi.stubGlobal(
+      "fetch",
+      statusWith({
+        available: true,
+        reason: null,
+        active: {
+          status: "ACTIVE",
+          revisionId: "active-2",
+          version: 4,
+          sequence: 2,
+        },
+        state: "READY",
+        gaps: [],
+        counts: COUNTS,
+        enabledCounts: COUNTS,
+      }),
+    );
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration?returnTo=https%3A%2F%2Fevil.example");
+    await screen.findByRole("heading", { name: "配置生命周期" });
+    expect(screen.queryByText("来自其他页面")).toBeNull();
+    expect(document.body.textContent).not.toContain("evil.example");
+  });
+});
