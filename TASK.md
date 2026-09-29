@@ -152,13 +152,14 @@ images. Do not edit `config/alist.json`.
 - Correction: updated graph-family Web fixtures and empty-state regression coverage to reflect the now-authorable families.
 - Correction: enforced backend condition value shape/type compatibility for numeric, string and collection fields; the typed builder now filters operators and emits numeric scalars or typed collections instead of universal text values.
 - Correction: removed the obsolete raw-structure form helper reported by the B lint gate; the typed condition builder remains the only ordinary condition editor.
+- Correction: completed the frontend graph-family field allowlists, catalog-family typing and labels required by the TypeScript gate.
 
 ### Tests and Results
 
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 77 subtests).
 - Initial rerun had one flaky concurrent-save `rules_destination_check_failed` outcome; the affected concurrency test passed on immediate isolated rerun.
 - `.venv/bin/python -m unittest discover -s tests` — FAIL (previous run before this report included the Docker command): 1949 tests, 1 documentation assertion failure in `test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution`, 7 skipped, resource warnings only; not rerun after the report correction.
-- `npm --prefix web run typecheck` — PASS.
+- `npm --prefix web run typecheck` — PASS after completing graph-family mappings and catalog typing.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (2 files, 24 tests).
 - `npm --prefix web test -- --run` — FAIL / PRE-EXISTING / UNRELATED: 52 files passed, 782 tests passed, one existing `src/features/operations/AutomationRouter.test.tsx` loading/heading failure.
@@ -178,6 +179,7 @@ images. Do not edit `config/alist.json`.
 - Conditions remain provider-neutral and bounded by the existing runtime model; recursive typed Atomic/Logical controls submit numeric, scalar or collection values that are revalidated by the backend.
 - RecognitionType identity is carried by the binding reference and is never inferred from naming/classification/organize policy IDs.
 - Removed the unused legacy raw-structure helper instead of retaining a support JSON editor in the ordinary path.
+- Kept catalog typing explicit through a fixed five-family tuple so malformed or unsupported catalog families fail during response normalization.
 
 ### Remaining In-Slice Work
 
@@ -193,21 +195,23 @@ images. Do not edit `config/alist.json`.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ca48d2b0537e3c9f0d826e02a69c7ceb9a916a50
+Head SHA: 4115e3bcd81459e96b5aaef5d626d1473e009581
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..b7efc70beee3bdb32ed76ff8902a8cbdc2a8edbc
+Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..8bf61436f6f994d760ccd54744c885bf04cffcac
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The T4 frontend quality gate still fails on the checkpoint: `npm --prefix web run lint` reports
-  `web/src/features/rules/RulesObjectForm.tsx:324:9  'structure' is assigned a value but never
-  used (@typescript-eslint/no-unused-vars)`. This is in the Task's changed graph-authoring form and
-  means the required lint gate is not passing. Remove the obsolete helper (or use it only as a
-  bounded support view without restoring raw JSON as the ordinary condition editor), then rerun the
-  complete affected Web gates.
+- The required Web typecheck fails on the actual checkpoint. `npm --prefix web run typecheck` reports
+  `web/src/entities/rules/rules-form.ts:313` because the `Object.fromEntries` catalog projection is
+  not typed as the required five-family catalog record; this blocks the production TypeScript build
+  for the new graph selectors. It also reports `rules-form.ts:894` because the expanded
+  `RULE_FORM_FIELD_ALLOWLIST` is missing the newly supported `recognitionRules` and `typeBindings`
+  entries, and `RulesObjectForm.tsx:124` because `FAMILY_LABELS` is missing those same families.
+  These are current production-reachable Task changes, not unrelated test failures. Complete the
+  family mappings and catalog typing, then rerun typecheck, build, lint and the affected rules tests.
