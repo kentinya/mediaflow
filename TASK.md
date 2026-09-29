@@ -154,7 +154,7 @@ images. Do not edit `config/alist.json`.
 ### Tests and Results
 
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 76 subtests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (full suite completed; resource warnings only).
+- `.venv/bin/python -m unittest discover -s tests` — FAIL / PRE-EXISTING / UNRELATED: 1949 tests, 1 failure in `test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution` because this Task report does not yet include the Docker smoke command; 7 skipped, resource warnings only.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run build` — PASS.
 - `npm --prefix web test -- --run src/entities/rules/rules-workspace.test.ts src/features/rules/RulesWorkspacePage.test.tsx` — PASS (2 files, 24 tests).
@@ -166,7 +166,8 @@ images. Do not edit `config/alist.json`.
 - `.venv/bin/ruff check mediaflow tests scripts` — PASS.
 - `python3 scripts/check_governance.py` — PASS.
 - `git diff --check` — PASS.
-- Full T4 regression, Docker smoke and rules e2e — NOT RUN in this checkpoint.
+- `python3 scripts/docker_release_security_smoke_test.py` — UNAVAILABLE / NOT RUN: Docker smoke is outside this correction environment.
+- `npm --prefix web run test:e2e -- --grep 'rules'` — UNAVAILABLE / NOT RUN: no browser e2e execution available in this environment.
 
 ### Decisions
 
