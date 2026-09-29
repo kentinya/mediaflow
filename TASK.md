@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 41.2
 Parent Slice: 41
-Status: IN PROGRESS
+Status: FIX REQUIRED
 Task Base: 34dc6e35982c19fbbedb72aba0bc31c6353bc805
 Difficulty: High
 Test Level: T4
@@ -181,11 +181,21 @@ readiness/return integration. Do not edit the six supplied reference images or `
   refresh. RecognitionRule and type-binding authoring remain deferred as required by this Task.
 - Added focused backend and Web regression coverage for onboarding, validation, concurrency, impact,
   redaction, zero side effects and the RecognitionType identity invariant.
+- Correction loop: MetadataPolicy publication now fails closed when the effective Provider has no
+  approved credential environment variable; the prior Active remains authoritative with bounded
+  recovery evidence.
+- Correction loop: edit candidates are persisted in session-scoped browser storage, remain intact
+  through unknown-outcome Active verification unless explicitly discarded, and successful Save clears
+  them only after publication. Successful edit also refetches the shared Active inventory.
+- Correction loop: ClassificationPolicy rule controls now cover enabled, description, confidence,
+  category, subcategory and mediaTypes; OrganizePolicy controls cover hash limits and all source
+  cleanup limits/patterns.
 
 ### Tests and Results
 
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_configuration_objects.py tests/test_configuration_snapshot.py tests/test_configuration_successor_draft.py tests/test_configuration_naming.py tests/test_configuration_classification.py tests/test_configuration_organize.py tests/test_configuration_management.py tests/test_configuration_status.py` — PASS (206 tests, 219 subtests).
-- `.venv/bin/python -m unittest discover -s tests` — PASS (1948 tests, 7 skipped).
+- Correction rerun: `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py` — PASS (38 tests, 31 subtests), including missing Provider secret fail-closed.
+- Correction rerun: `.venv/bin/python -m unittest discover -s tests` — PASS (1949 tests, 7 skipped).
 - `npm --prefix web test -- --run` — PASS (53 test files, 783 tests; jsdom emits existing `scrollTo` diagnostics).
 - `npm --prefix web run build`, `npm --prefix web run typecheck`, `npm --prefix web run lint`, `npm --prefix web run format:check` — PASS.
 - `.venv/bin/python -m compileall -q mediaflow tests scripts`, `.venv/bin/ruff check ...`, `.venv/bin/ruff format --check ...`, `python3 scripts/check_governance.py`, `git diff --check` — PASS.
@@ -214,20 +224,53 @@ readiness/return integration. Do not edit the six supplied reference images or `
   not include the newly required dynamic rules editor route; the expectation was updated and the
   final full-suite rerun passed (53 files, 783 tests).
 - Docker and browser e2e gates are unavailable for the environment for the reasons recorded above.
+- B correction blockers were reproduced and addressed in the same Task; no unrelated refactor or
+  contract change was made.
 - No production credentials, external accounts, real media or Storage mutations were used.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 910eae93f7c854389bba9d339565b3f442da8b02
+Head SHA: PENDING
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: 34dc6e35982c19fbbedb72aba0bc31c6353bc805..067bef916ff48a6cf2cbd7a251a700b490177465
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- The required provider-secret failure is not enforced. In a legal production assembly with
+  `TMDB_ACCESS_TOKEN` and `TMDB_TOKEN` unset, the current command still publishes a MetadataPolicy
+  with `providerId: tmdb` as Active (reproduced with the Task test harness; result was `PUBLISHED
+  active`). `_validate_references` only checks the provider ID and the checked publication path does
+  not reject the unavailable credential. This violates Acceptance Criteria 3 and the bounded
+  provider-readiness failure required by RO-5/RO-7. Make the shared Save/applicability gate reject an
+  unavailable effective provider secret with object/stage/durable-state/next-action evidence, while
+  retaining the prior Active.
+- Full-page Edit does not preserve the correctable candidate across a browser refresh and can erase
+  it during recovery. `web/src/features/rules/rules-workspace-labels.ts` stores drafts only in a
+  module `Map`, so a real page refresh/reconnect loses them; `RulesEditPage.tsx` writes `{}` instead
+  of clearing only after explicit discard (including after successful Save and `reloadActive`), and
+  `reloadActive` replaces the form immediately after an unknown outcome. This violates the Task
+  scope/Acceptance requirement to preserve input across failed Save, refresh, navigation and stale or
+  unknown recovery. Use a refresh-safe session-scoped candidate lifecycle and keep the candidate until
+  the operator explicitly discards it or confirms the verified Active result.
+- The typed policy editors do not represent all current backend fields. `RulesObjectForm.tsx` exposes
+  only duplicate-detection mode, rollback enabled and cleanup mode for OrganizePolicy, omitting the
+  current size/threshold, cleanup-created-directories, max-parent, ignore-pattern and max-entry
+  fields; its ClassificationPolicy rule editor also omits current rule enabled/confidence/
+  description and result category/subcategory fields. Existing hidden values are merely preserved,
+  so an administrator cannot maintain them through this required V2 editor. This violates the typed
+  editor and current-field accuracy criteria. Add controls/round-trip validation for every current
+  field, with no invented fallback or silent value loss.
+- A successful full-page Edit does not refetch the server Active inventory/readiness. After
+  `editRuleObject` succeeds, `RulesEditPage.tsx` only installs the command response into local form
+  state; it never requests the authoritative inventory/readiness successor required by Acceptance
+  Criteria 2 and the post-Save test requirement. Refetch the shared Active projection/inventory and
+  readiness after known success, then show the refreshed result without requiring a manual V1 or
+  whole-document configuration step.
