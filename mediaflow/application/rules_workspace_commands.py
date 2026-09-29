@@ -335,6 +335,107 @@ class RulesWorkspaceCommandService:
             allow_active=True,
         )
 
+    def stage_preview_candidate(
+        self,
+        family: str,
+        candidate: Mapping[str, object],
+        *,
+        actor: str,
+        expected_revision_id: str,
+        expected_version: int,
+        expected_digest: str,
+        object_id: str | None,
+    ) -> ManagedConfigurationRevision:
+        """Persist one exact non-Active candidate for explicit preview only.
+
+        This deliberately reuses the same form allowlists, normalization,
+        reference validation and optimistic Active fence as Save, but stops
+        before whole-document validation and activation. The resulting Draft is
+        the immutable authority consumed by the requested analysis command.
+        """
+
+        spec = self._spec(family, "preview")
+        if not isinstance(candidate, Mapping):
+            raise self._invalid(
+                spec, "preview", f"The {spec.label} preview candidate must be an object"
+            )
+        if object_id is not None:
+            self._identifier(spec, object_id, "preview")
+            if candidate.get("id") != object_id:
+                raise RulesWorkspaceSaveError(
+                    "rules_id_immutable",
+                    f"{spec.label} ID cannot change during preview",
+                    status=400,
+                    object_kind=spec.family,
+                    object_id=object_id,
+                    stage="compose",
+                    durable_state="active_unchanged",
+                    side_effects="candidate_draft_only",
+                    next_action="keep the object ID and correct the preview candidate",
+                )
+
+        active = self._capture_active(spec, "preview")
+        self._assert_current_authority(
+            spec, active, expected_revision_id, expected_version, expected_digest
+        )
+        current = {
+            str(item["id"]): item
+            for item in self._objects._canonical_objects(active.document, spec.section)
+        }
+        stored = current.get(object_id) if object_id is not None else None
+        if object_id is not None and stored is None:
+            raise self._not_found(spec, object_id, "preview")
+        submitted_id = candidate.get("id")
+        if object_id is None and isinstance(submitted_id, str) and submitted_id in current:
+            raise RulesWorkspaceSaveError(
+                "rules_duplicate",
+                f"{spec.label} ID {submitted_id!r} already exists in the current Active",
+                status=409,
+                object_kind=spec.family,
+                object_id=submitted_id,
+                stage="compose",
+                durable_state="active_unchanged",
+                side_effects="none",
+                next_action="choose a different ID, or edit the existing object",
+            )
+        merged = copy.deepcopy(stored) if stored is not None else {}
+        for field in spec.form_fields:
+            if field in candidate:
+                merged[field] = copy.deepcopy(candidate[field])
+        unknown = set(candidate).difference(spec.form_fields)
+        if unknown:
+            raise self._invalid(
+                spec,
+                "preview",
+                f"{spec.label} preview candidate contains unsupported field {sorted(unknown)[0]!r}",
+            )
+        self._validate_form_fields(spec, merged)
+        composed = self._normalize_or_reject(spec, merged)
+        self._validate_references(spec, composed, active.document, object_id)
+
+        draft = self._managed.create_successor_draft(
+            actor=actor,
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        edited = self._objects.mutate(
+            draft.revision_id,
+            spec.kind,
+            object_id=object_id,
+            value=composed,
+            expected_version=draft.version,
+            actor=actor,
+            audit_action="rules_preview_candidate",
+            audit_metadata={
+                "surface": "rules",
+                "family": spec.family,
+                "candidate": copy.deepcopy(dict(composed)),
+            },
+        )
+        return self._managed.validate(edited.revision_id, actor=actor)
+
     def preview_classification(
         self,
         revision_id: str,
@@ -364,9 +465,12 @@ class RulesWorkspaceCommandService:
         expected_digest: str,
         actor: str,
         recognition_type: str,
+        resource_library_id: str,
+        synthetic_path: str,
+        sample: Mapping[str, object],
     ):
-        """Explain declared organize authority; never issue execution authority."""
-        return self._objects.organize_authority(
+        """Compose destination precheck and policy authority without execution."""
+        authority = self._objects.organize_authority(
             revision_id,
             expected_version=expected_version,
             expected_digest=expected_digest,
@@ -374,6 +478,79 @@ class RulesWorkspaceCommandService:
             recognition_type=recognition_type,
             allow_active=True,
         )
+        destination = self._objects.destination_precheck(
+            revision_id,
+            expected_version=expected_version,
+            expected_digest=expected_digest,
+            actor=actor,
+            recognition_type=recognition_type,
+            sample=sample,
+        )
+        authority_document = authority.document()
+        destination_document = destination.document()
+        authority_result = authority_document.get("result")
+        destination_result = destination_document.get("result")
+        result = dict(authority_result) if isinstance(authority_result, dict) else {}
+        result.update(
+            {
+                "source": {
+                    "resourceLibraryId": resource_library_id,
+                    "syntheticPath": synthetic_path,
+                },
+                "destination": destination_result,
+                "destinationStatus": destination_document["status"],
+                "destinationFailureCategory": destination_document.get("failureCategory"),
+                "executionAllowed": (
+                    authority_document["status"] == "completed"
+                    and destination_document["status"] == "completed"
+                    and isinstance(destination_result, dict)
+                    and destination_result.get("verdict") == "ready"
+                ),
+                "allowBlockReasons": self._organize_allow_block_reasons(
+                    authority_document, destination_document
+                ),
+                "executionAuthorityGranted": "none",
+            }
+        )
+        authority_document["result"] = result
+        authority_document["status"] = (
+            "completed"
+            if authority_document["status"] == "completed"
+            and destination_document["status"] == "completed"
+            else "failed"
+        )
+        authority_document["failureCategory"] = authority_document.get(
+            "failureCategory"
+        ) or destination_document.get("failureCategory")
+        authority_document["message"] = (
+            "Organize explanation composed policy authority and read-only destination precheck"
+        )
+        authority_document["nextAction"] = destination_document.get("nextAction") or (
+            "review the composed destination, capability and risk evidence before execution"
+        )
+        return authority_document
+
+    @staticmethod
+    def _organize_allow_block_reasons(
+        authority: Mapping[str, object], destination: Mapping[str, object]
+    ) -> list[str]:
+        reasons: list[str] = []
+        if authority.get("status") != "completed":
+            reasons.append(
+                f"organize policy authority failed: {authority.get('failureCategory') or 'unknown'}"
+            )
+        if destination.get("status") != "completed":
+            reasons.append(
+                f"destination precheck blocked: {destination.get('failureCategory') or 'unknown'}"
+            )
+        result = destination.get("result")
+        if isinstance(result, Mapping):
+            verdict = result.get("verdict")
+            if verdict not in {None, "ready"}:
+                reasons.append(f"destination verdict requires recovery: {verdict}")
+        if not reasons:
+            reasons.append("read-only checks passed; execution still requires separate authority")
+        return reasons
 
     def preview_strategy(
         self,
@@ -452,6 +629,16 @@ class RulesWorkspaceCommandService:
             }
             for item in self._objects._canonical_objects(active.document, "mediaLibraries")
         ]
+        resource_libraries = [
+            {
+                "id": _bounded(item.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
+                "name": _bounded(item.get("name"), 120),
+                "enabled": item.get("enabled", True) is not False,
+                "storageId": _bounded(item.get("storageId"), MAX_RULES_OBJECT_ID_LENGTH),
+                "rootPath": _bounded(item.get("rootPath"), 512),
+            }
+            for item in self._objects._canonical_objects(active.document, "resourceLibraries")
+        ]
         providers = [
             {
                 "providerId": provider_id,
@@ -506,6 +693,7 @@ class RulesWorkspaceCommandService:
             "active": active.summary(),
             "sideEffects": "none",
             "families": families,
+            "resourceLibraries": resource_libraries,
             "mediaLibraries": media_libraries,
             "metadataProviders": providers,
             "catalogs": catalogs,

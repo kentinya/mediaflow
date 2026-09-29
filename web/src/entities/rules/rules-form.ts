@@ -104,6 +104,7 @@ export interface RuleFormAuthority {
   /** The exact Active revision this authority was read from, as returned. */
   readonly active: Readonly<Record<string, unknown>>;
   readonly families: Readonly<Record<RuleFormFamily, RuleFormDefaults>>;
+  readonly resourceLibraries: readonly ResourceLibraryReference[];
   readonly mediaLibraries: readonly MediaLibraryReference[];
   readonly providers: readonly ProviderReference[];
   readonly catalogs: Readonly<
@@ -123,6 +124,10 @@ export interface RuleFormAuthority {
       readonly maximum: number;
     };
   };
+}
+
+export interface ResourceLibraryReference extends MediaLibraryReference {
+  readonly rootPath: string | null;
 }
 
 const FAMILY_VALUES: ReadonlySet<string> = new Set(RULE_FORM_FAMILIES);
@@ -286,6 +291,27 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
       "enums.logicalOperators",
     ),
   };
+  if (!Array.isArray(source.resourceLibraries)) {
+    throw new Error("invalid field: resourceLibraries");
+  }
+  const resourceLibraries = source.resourceLibraries.map((raw) => {
+    const entry = readRecord(raw, "resourceLibrary");
+    return {
+      id: normalizeBoundedText(entry.id, "resourceLibrary.id", 64),
+      name: normalizeBoundedText(entry.name, "resourceLibrary.name", 120),
+      enabled: normalizeBoolean(entry.enabled, "resourceLibrary.enabled"),
+      storageId: normalizeOptionalText(
+        entry.storageId,
+        "resourceLibrary.storageId",
+        64,
+      ),
+      rootPath: normalizeOptionalText(
+        entry.rootPath,
+        "resourceLibrary.rootPath",
+        512,
+      ),
+    } satisfies ResourceLibraryReference;
+  });
   if (!Array.isArray(source.mediaLibraries)) {
     throw new Error("invalid field: mediaLibraries");
   }
@@ -347,6 +373,7 @@ export function normalizeRuleFormAuthority(value: unknown): RuleFormAuthority {
   return {
     active: activeSource,
     families: normalizeFamilyAuthority(source.families),
+    resourceLibraries,
     mediaLibraries,
     providers,
     catalogs,

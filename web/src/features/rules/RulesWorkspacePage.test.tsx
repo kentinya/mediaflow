@@ -46,6 +46,18 @@ function stubRules(
       );
     if (url.endsWith("/operations/rules/form-authority"))
       return json(options.authority ?? formAuthorityPayload);
+    if (url.includes("/operations/rules/previews/"))
+      return json({
+        revisionId: "candidate-revision",
+        revisionVersion: 2,
+        revisionDigest: "b".repeat(64),
+        status: "completed",
+        stale: false,
+        result: { recognitionType: "movie" },
+        message: "candidate preview completed",
+        nextAction: "review the result",
+        failureCategory: null,
+      });
     if (url.includes("/operations/rules/objects/")) {
       if (url.endsWith("/copy")) return json(copyProjectionPayload);
       if (url.endsWith("/impact")) return json(editProjectionPayload);
@@ -171,6 +183,45 @@ describe("RulesWorkspacePage", () => {
     expect(
       await screen.findByText(/已发布为新的 Active,清单与就绪状态已刷新/),
     ).toBeVisible();
+  });
+
+  it("previews the exact create candidate without publishing it", async () => {
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "整理规则" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "识别类型" }));
+    await user.click(screen.getByRole("button", { name: "添加识别类型" }));
+    const dialog = await screen.findByRole("dialog", { name: "添加识别类型" });
+    await user.type(within(dialog).getByLabelText(/^ID/), "movie");
+    const name = within(dialog).getByLabelText(/^名称/);
+    await user.clear(name);
+    await user.type(name, "Movie Candidate");
+    await user.click(
+      within(dialog).getByRole("button", { name: "测试识别策略" }),
+    );
+    expect(
+      await within(dialog).findByText(/candidate preview completed/),
+    ).toBeVisible();
+    const preview = calls.find((call) =>
+      call.url.endsWith("/previews/strategy"),
+    );
+    expect(preview?.body).toMatchObject({
+      resourceLibraryId: "source",
+      candidate: {
+        family: "recognitionTypes",
+        objectId: null,
+        values: { id: "movie", name: "Movie Candidate" },
+      },
+    });
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "POST" &&
+          call.url.endsWith("/operations/rules/objects/recognitionTypes"),
+      ),
+    ).toBe(false);
   });
 
   it("a rejected save keeps the prior Active message and the correctable input", async () => {

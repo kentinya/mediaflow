@@ -30,14 +30,12 @@ import {
   fetchRuleEdit,
   fetchRuleFormAuthority,
   fetchRulesInventory,
-  runRulesPreview,
-  type RulesPreviewKind,
-  type RulesPreviewModel,
   type RulesCommandResult,
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { classifySaveFailure } from "./RulesObjectDrawer";
 import { RulesObjectForm, type FormValues } from "./RulesObjectForm";
+import { RulesPreviewPanel } from "./RulesPreviewPanel";
 import {
   readRuleDraft,
   RULE_DRAWER_LABELS,
@@ -80,28 +78,7 @@ export function RulesEditPage() {
     | { kind: "published"; message: string }
   >({ kind: "idle" });
   const [issues, setIssues] = useState<ReadonlyMap<string, string>>(new Map());
-  const [previewInput, setPreviewInput] = useState(
-    JSON.stringify(
-      {
-        title: "The Matrix",
-        mediaType: "movie",
-        recognitionType: "C",
-        year: 1999,
-        extension: "mkv",
-      },
-      null,
-      2,
-    ),
-  );
-  const [previewLiveMetadata, setPreviewLiveMetadata] = useState(false);
-  const [previewBusy, setPreviewBusy] = useState(false);
-  const [previewResults, setPreviewResults] = useState<
-    readonly {
-      kind: RulesPreviewKind;
-      outcome: RulesPreviewModel | null;
-      error: string | null;
-    }[]
-  >([]);
+  const [publicationEpoch, setPublicationEpoch] = useState(0);
 
   const validFamily = isRuleEditFamily(family);
 
@@ -249,70 +226,6 @@ export function RulesEditPage() {
 
   const typedFamily = family as RuleFormFamily;
 
-  const runPreview = async (kind: RulesPreviewKind) => {
-    if (
-      kind === "metadata" &&
-      previewLiveMetadata &&
-      !window.confirm("实时元数据测试会访问已配置 Provider。确认继续吗?")
-    )
-      return;
-    let sample: Record<string, unknown>;
-    try {
-      const parsed: unknown = JSON.parse(previewInput);
-      if (
-        parsed === null ||
-        typeof parsed !== "object" ||
-        Array.isArray(parsed)
-      )
-        throw new Error("样本必须是对象");
-      sample = parsed as Record<string, unknown>;
-    } catch (error) {
-      setPreviewResults((items) => [
-        ...items,
-        { kind, outcome: null, error: String(error) },
-      ]);
-      return;
-    }
-    const identity = authorityIdentity(projectionOutcome.model.active);
-    const base = { ...identity };
-    const library = authority.mediaLibraries[0]?.id;
-    const body: Record<string, unknown> =
-      kind === "strategy"
-        ? {
-            ...base,
-            resourceLibraryId: library ?? "",
-            syntheticPath: String(sample.path ?? "The Matrix (1999).mkv"),
-            liveMetadata: false,
-          }
-        : kind === "metadata"
-          ? {
-              ...base,
-              policyId: String(values.id ?? ""),
-              resourceLibraryId: library ?? "",
-              syntheticPath: String(sample.path ?? "The Matrix (1999).mkv"),
-              liveMetadata: previewLiveMetadata,
-            }
-          : kind === "naming" || kind === "classification"
-            ? { ...base, policyId: String(values.id ?? ""), sample }
-            : {
-                ...base,
-                recognitionType: String(sample.recognitionType ?? "C"),
-              };
-    setPreviewBusy(true);
-    const result = await runRulesPreview(token, kind, body);
-    setPreviewBusy(false);
-    if (result.ok)
-      setPreviewResults((items) => [
-        ...items,
-        { kind, outcome: result.model, error: null },
-      ]);
-    else
-      setPreviewResults((items) => [
-        ...items,
-        { kind, outcome: null, error: result.code },
-      ]);
-  };
-
   const save = async () => {
     const candidate = ruleCandidateFields(typedFamily, values);
     const problems = validateRuleCandidate(typedFamily, candidate, authority);
@@ -335,10 +248,17 @@ export function RulesEditPage() {
     );
     if (command.ok) {
       clearRuleDraft(typedFamily, objectId);
-      // Re-read the shared Active inventory/readiness projection after the
-      // publication. The edit page does not own a second inventory authority;
-      // this refresh confirms the new Active is what the workspace will show.
-      await fetchRulesInventory(token).catch(() => undefined);
+      // Re-read every authority used by this page after publication. Existing
+      // preview rows remain visibly stale, while an explicit rerun binds to the
+      // newly published Active instead of the authority captured on page load.
+      const [freshAuthority, freshProjection] = await Promise.all([
+        fetchRuleFormAuthority(token),
+        fetchRuleEdit(token, typedFamily, objectId),
+        fetchRulesInventory(token).catch(() => undefined),
+      ]);
+      if (freshAuthority.ok) setAuthority(freshAuthority.model);
+      if (freshProjection.ok)
+        setProjection({ subject, outcome: freshProjection });
       setState({
         kind: "published",
         message: "已发布为新的 Active;返回清单即可看到新对象,或继续编辑。",
@@ -349,6 +269,7 @@ export function RulesEditPage() {
         values: command.model.value as unknown as FormValues,
         dirty: false,
       });
+      setPublicationEpoch((value) => value + 1);
       return;
     }
     const failure = classifySaveFailure(command);
@@ -436,88 +357,14 @@ export function RulesEditPage() {
         disabled={state.kind === "saving"}
         onChange={change}
       />
-      <section
-        className="mf-rules-preview"
-        aria-labelledby="rules-preview-title"
-      >
-        <h2 id="rules-preview-title">测试与预览</h2>
-        <p>显式运行一次零突变测试;结果绑定当前 Active,过期后需重新运行。</p>
-        <label htmlFor="rules-preview-sample">样本 JSON</label>
-        <textarea
-          id="rules-preview-sample"
-          value={previewInput}
-          onChange={(event) => setPreviewInput(event.target.value)}
-          disabled={previewBusy}
-          rows={7}
-        />
-        <label>
-          <input
-            type="checkbox"
-            checked={previewLiveMetadata}
-            onChange={(event) => setPreviewLiveMetadata(event.target.checked)}
-            disabled={previewBusy}
-          />
-          允许实时 Metadata Provider 测试
-        </label>
-        <div className="mf-actions">
-          {(
-            [
-              "strategy",
-              "metadata",
-              "naming",
-              "classification",
-              "organize",
-            ] as const
-          ).map((kind) => (
-            <button
-              key={kind}
-              type="button"
-              onClick={() => void runPreview(kind)}
-              disabled={previewBusy}
-            >
-              {kind === "strategy"
-                ? "测试识别策略"
-                : kind === "metadata"
-                  ? "测试元数据策略"
-                  : kind === "naming"
-                    ? "预览命名"
-                    : kind === "classification"
-                      ? "预览分类"
-                      : "解释整理权限"}
-            </button>
-          ))}
-        </div>
-        {previewResults.map((item, index) => (
-          <article
-            key={`${item.kind}-${index}`}
-            className="mf-rules-preview-result"
-            aria-live="polite"
-          >
-            <h3>{item.kind} 结果</h3>
-            {item.error ? (
-              <p role="alert">
-                测试失败: {item.error}。当前 Active
-                未改变,可修正样本后重新显式运行。
-              </p>
-            ) : null}
-            {item.outcome ? (
-              <>
-                <p>
-                  状态: {item.outcome.status}。
-                  {item.outcome.stale
-                    ? "该结果已过期,请重新运行。"
-                    : "结果对应当前 revision。"}
-                </p>
-                {item.outcome.message ? <p>{item.outcome.message}</p> : null}
-                {item.outcome.nextAction ? (
-                  <p>下一步: {item.outcome.nextAction}</p>
-                ) : null}
-                <pre>{JSON.stringify(item.outcome.result ?? {}, null, 2)}</pre>
-              </>
-            ) : null}
-          </article>
-        ))}
-      </section>
+      <RulesPreviewPanel
+        token={token}
+        family={typedFamily}
+        objectId={objectId}
+        authority={authority}
+        values={values}
+        publicationEpoch={publicationEpoch}
+      />
       <div className="mf-rules-drawer-actions">
         <button
           type="button"

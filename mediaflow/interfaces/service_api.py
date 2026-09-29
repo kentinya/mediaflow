@@ -13330,6 +13330,7 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
+                "candidate",
                 "resourceLibraryId",
                 "syntheticPath",
                 "liveMetadata",
@@ -13338,6 +13339,7 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
+                "candidate",
                 "policyId",
                 "resourceLibraryId",
                 "syntheticPath",
@@ -13347,6 +13349,7 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
+                "candidate",
                 "policyId",
                 "sample",
             },
@@ -13354,6 +13357,7 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
+                "candidate",
                 "policyId",
                 "sample",
             },
@@ -13361,7 +13365,11 @@ class MediaFlowApi:
                 "expectedRevisionId",
                 "expectedVersion",
                 "expectedDigest",
+                "candidate",
                 "recognitionType",
+                "resourceLibraryId",
+                "syntheticPath",
+                "sample",
             },
         }
         if kind not in allowed:
@@ -13378,9 +13386,30 @@ class MediaFlowApi:
             raise ValueError("expectedVersion must be a positive integer")
         if not isinstance(digest, str) or not digest.strip():
             raise ValueError("expectedDigest must be a non-empty string")
-        if kind in {"naming", "classification"} and not isinstance(document["sample"], dict):
+        candidate = document["candidate"]
+        if not isinstance(candidate, dict) or set(candidate) != {"family", "objectId", "values"}:
+            raise ValueError("preview candidate requires family, objectId, and values")
+        if not isinstance(candidate["family"], str) or not isinstance(candidate["values"], dict):
+            raise ValueError("preview candidate family and values are required")
+        if candidate["objectId"] is not None and not isinstance(candidate["objectId"], str):
+            raise ValueError("preview candidate objectId must be text or null")
+        staged = self._rules_workspace.stage_preview_candidate(
+            candidate["family"],
+            candidate["values"],
+            actor=principal.principal_id,
+            expected_revision_id=revision_id,
+            expected_version=version,
+            expected_digest=digest,
+            object_id=candidate["objectId"],
+        )
+        revision_id = staged.revision_id
+        version = staged.version
+        digest = staged.digest
+        if kind in {"naming", "classification", "organize"} and not isinstance(
+            document["sample"], dict
+        ):
             raise ValueError("preview sample must be an object")
-        if kind in {"strategy", "metadata"}:
+        if kind in {"strategy", "metadata", "organize"}:
             if (
                 not isinstance(document["resourceLibraryId"], str)
                 or not document["resourceLibraryId"].strip()
@@ -13391,31 +13420,31 @@ class MediaFlowApi:
                 or not document["syntheticPath"].strip()
             ):
                 raise ValueError("syntheticPath must be a non-empty string")
-            if not isinstance(document["liveMetadata"], bool):
+            if kind != "organize" and not isinstance(document["liveMetadata"], bool):
                 raise ValueError("liveMetadata must be a boolean")
-            if kind == "metadata":
-                if not isinstance(document["policyId"], str) or not document["policyId"].strip():
-                    raise ValueError("policyId must be a non-empty string")
-                evidence = self._rules_workspace.preview_metadata(
-                    revision_id,
-                    expected_version=version,
-                    expected_digest=digest,
-                    actor=principal.principal_id,
-                    policy_id=document["policyId"],
-                    resource_library_id=document["resourceLibraryId"],
-                    synthetic_path=document["syntheticPath"],
-                    live_metadata=document["liveMetadata"],
-                )
-            else:
-                evidence = self._rules_workspace.preview_strategy(
-                    revision_id,
-                    expected_version=version,
-                    expected_digest=digest,
-                    actor=principal.principal_id,
-                    resource_library_id=document["resourceLibraryId"],
-                    synthetic_path=document["syntheticPath"],
-                    live_metadata=document["liveMetadata"],
-                )
+        if kind == "metadata":
+            if not isinstance(document["policyId"], str) or not document["policyId"].strip():
+                raise ValueError("policyId must be a non-empty string")
+            evidence = self._rules_workspace.preview_metadata(
+                revision_id,
+                expected_version=version,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                policy_id=document["policyId"],
+                resource_library_id=document["resourceLibraryId"],
+                synthetic_path=document["syntheticPath"],
+                live_metadata=document["liveMetadata"],
+            )
+        elif kind == "strategy":
+            evidence = self._rules_workspace.preview_strategy(
+                revision_id,
+                expected_version=version,
+                expected_digest=digest,
+                actor=principal.principal_id,
+                resource_library_id=document["resourceLibraryId"],
+                synthetic_path=document["syntheticPath"],
+                live_metadata=document["liveMetadata"],
+            )
         elif kind == "naming":
             evidence = self._rules_workspace.preview_naming(
                 revision_id,
@@ -13441,8 +13470,18 @@ class MediaFlowApi:
                 expected_digest=digest,
                 actor=principal.principal_id,
                 recognition_type=document["recognitionType"],
+                resource_library_id=document["resourceLibraryId"],
+                synthetic_path=document["syntheticPath"],
+                sample=document["sample"],
             )
-        return self._response(start_response, 200, evidence.document())
+        response_document = evidence if isinstance(evidence, dict) else evidence.document()
+        response_document["candidateState"] = "validated_non_active"
+        if kind in {"strategy", "metadata"} and isinstance(response_document.get("result"), dict):
+            response_document["result"]["source"] = {
+                "resourceLibraryId": document["resourceLibraryId"],
+                "syntheticPath": document["syntheticPath"],
+            }
+        return self._response(start_response, 200, response_document)
 
     def _rules_object_command(
         self,

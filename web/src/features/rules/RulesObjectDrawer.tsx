@@ -31,6 +31,7 @@ import {
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { RulesObjectForm, type FormValues } from "./RulesObjectForm";
+import { RulesPreviewPanel } from "./RulesPreviewPanel";
 import {
   clearRuleDraft,
   readRuleDraft,
@@ -327,6 +328,15 @@ export function RulesObjectDrawer({ session, onClose, onPublished }: Props) {
               onChange={change}
             />
           )}
+          {authority !== null && token !== null ? (
+            <RulesPreviewPanel
+              token={token}
+              family={session.family}
+              objectId={null}
+              authority={authority}
+              values={values}
+            />
+          ) : null}
         </div>
         <div className="mf-rules-drawer-actions">
           <button

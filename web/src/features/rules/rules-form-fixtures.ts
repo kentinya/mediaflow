@@ -261,6 +261,15 @@ export const formAuthorityPayload = {
       },
     },
   ],
+  resourceLibraries: [
+    {
+      id: "source",
+      name: "Incoming",
+      enabled: true,
+      storageId: "media-source",
+      rootPath: "/incoming",
+    },
+  ],
   mediaLibraries: [
     { id: "movies", name: "Movies", enabled: true, storageId: "media-target" },
     { id: "tv", name: "TV Shows", enabled: true, storageId: "media-target" },
