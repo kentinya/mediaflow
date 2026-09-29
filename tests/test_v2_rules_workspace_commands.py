@@ -364,7 +364,7 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         self.assertEqual(status, 200)
         counts = refreshed["overview"]["counts"]
         for family in RULE_FAMILIES:
-            self.assertEqual(counts[family], 1, family)
+            self.assertEqual(counts[family], 0 if family in {"recognitionRules", "typeBindings"} else 1, family)
         self.assertEqual(
             [item["id"] for item in refreshed["sections"]["recognitionTypes"]], ["movie"]
         )
@@ -409,7 +409,7 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         self.assertIn("C", [item["id"] for item in inventory["sections"]["recognitionTypes"]])
 
     def test_deferred_graph_families_are_not_authored_by_this_surface(self) -> None:
-        for family in ("recognitionRules", "typeBindings", "storages", "webhooks"):
+        for family in ("storages", "webhooks"):
             with self.subTest(family=family):
                 status, body = self.request(
                     "POST",
@@ -500,7 +500,7 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
 
     def test_unsupported_family_and_operation_are_rejected_explicitly(self) -> None:
         before = self.configuration.active()
-        for family in ("recognitionRules", "typeBindings", "storages", "bogus"):
+        for family in ("storages", "bogus"):
             with self.subTest(family=family):
                 with self.assertRaises(RulesWorkspaceSaveError) as caught:
                     self.save(family, {"id": "x", "name": "x"})
@@ -529,9 +529,9 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
                 self.assertIsNone(entry["blocker"])
         for family in ("typeBindings", "recognitionRules"):
             entry = actions[family]
-            self.assertFalse(entry["edit"])
-            self.assertFalse(entry["create"])
-            self.assertIn("later in-Slice unit", entry["blocker"])
+            self.assertTrue(entry["edit"])
+            self.assertTrue(entry["create"])
+            self.assertIsNone(entry["blocker"])
 
     # -- form authority from the actual domain ----------------------------
 
@@ -1238,6 +1238,8 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
         self.assertEqual(
             set(RULE_FAMILIES),
             {
+                "recognitionRules",
+                "typeBindings",
                 "recognitionTypes",
                 "metadataPolicies",
                 "namingPolicies",

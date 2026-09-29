@@ -6824,13 +6824,15 @@ class ConfigurationObjectService:
     # the application would reject (OrganizePolicy has no enable state) and never
     # implies a family is authored here when it is a later dependent unit.
     _RULE_WORKSPACE_FAMILIES = (
+        "recognitionRules",
+        "typeBindings",
         "recognitionTypes",
         "metadataPolicies",
         "namingPolicies",
         "classificationPolicies",
         "organizePolicies",
     )
-    _RULE_WORKSPACE_DEFERRED = "RecognitionRule and type-binding authoring is a later in-Slice unit"
+    _RULE_WORKSPACE_DEFERRED = "this rules family is not available in the current workspace"
 
     def _rules_actions(self, *, available: bool, reason: str | None = None) -> dict[str, object]:
         unavailability = None if available else (reason or "unavailable")

@@ -91,6 +91,8 @@ class _FamilySpec:
 
 
 RULE_FAMILIES: tuple[str, ...] = (
+    "recognitionRules",
+    "typeBindings",
     "recognitionTypes",
     "metadataPolicies",
     "namingPolicies",
@@ -99,6 +101,22 @@ RULE_FAMILIES: tuple[str, ...] = (
 )
 
 _FAMILY_SPECS: dict[str, _FamilySpec] = {
+    "recognitionRules": _FamilySpec(
+        family="recognitionRules",
+        kind=ConfigurationObjectKind.RECOGNITION_RULE,
+        section="recognitionRules",
+        label="RecognitionRule",
+        form_fields=frozenset({"id", "name", "description", "condition", "outputRecognitionType", "enabled", "priority", "score", "stopOnMatch"}),
+        supports_enabled=True,
+    ),
+    "typeBindings": _FamilySpec(
+        family="typeBindings",
+        kind=ConfigurationObjectKind.RECOGNITION_TYPE_POLICY,
+        section="recognitionTypePolicies",
+        label="RecognitionTypePolicy",
+        form_fields=frozenset({"id", "name", "description", "recognitionType", "metadataPolicy", "namingPolicy", "classificationPolicy", "organizePolicy", "enabled", "priority"}),
+        supports_enabled=True,
+    ),
     "recognitionTypes": _FamilySpec(
         family="recognitionTypes",
         kind=ConfigurationObjectKind.RECOGNITION_TYPE,
@@ -154,6 +172,14 @@ _NAMING_TEMPLATE_FIELDS = (
 # the domain models already apply when a field is omitted, so the workspace shows the
 # real backend default instead of an invented one.
 _FORM_DEFAULTS: dict[str, dict[str, object]] = {
+    "recognitionRules": {
+        "name": "", "description": "", "condition": {"operator": "always", "children": []},
+        "outputRecognitionType": "", "enabled": True, "priority": 0, "score": 1, "stopOnMatch": False,
+    },
+    "typeBindings": {
+        "name": "", "description": "", "recognitionType": "", "metadataPolicy": "",
+        "namingPolicy": "", "classificationPolicy": "", "organizePolicy": "", "enabled": True, "priority": 0,
+    },
     "recognitionTypes": {"name": "", "description": "", "enabled": True},
     "metadataPolicies": {
         "providerId": "tmdb",
@@ -1016,6 +1042,58 @@ class RulesWorkspaceCommandService:
         published Active configuration silently under-deliver downstream.
         """
 
+        if spec.family == "recognitionRules":
+            output = str(value.get("outputRecognitionType") or "")
+            types = {
+                str(item.get("id")): item
+                for item in self._objects._canonical_objects(document, "recognitionTypes")
+            }
+            target = types.get(output)
+            if target is None or target.get("enabled", True) is False:
+                raise RulesWorkspaceSaveError(
+                    "rules_reference_unavailable",
+                    f"RecognitionRule output RecognitionType {output!r} is missing or disabled",
+                    status=409, object_kind=spec.family,
+                    object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
+                    stage="reference", durable_state="active_preserved", side_effects="none",
+                    next_action="choose an enabled RecognitionType, then save again",
+                )
+            return
+        if spec.family == "typeBindings":
+            refs = {
+                "recognitionType": "recognitionTypes",
+                "metadataPolicy": "metadataPolicies",
+                "namingPolicy": "namingPolicies",
+                "classificationPolicy": "classificationPolicies",
+                "organizePolicy": "organizePolicies",
+            }
+            for field, section in refs.items():
+                catalog = {
+                    str(item.get("id")): item
+                    for item in self._objects._canonical_objects(document, section)
+                }
+                target = catalog.get(str(value.get(field)))
+                if target is None or (section != "organizePolicies" and target.get("enabled", True) is False):
+                    raise RulesWorkspaceSaveError(
+                        "rules_reference_unavailable",
+                        f"RecognitionTypePolicy {field} references a missing or disabled object",
+                        status=409, object_kind=spec.family,
+                        object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
+                        stage="reference", durable_state="active_preserved", side_effects="none",
+                        next_action=f"choose an enabled {field} reference, then save again",
+                    )
+            if value.get("enabled", True) is not False:
+                for item in self._objects._canonical_objects(document, "recognitionTypePolicies"):
+                    if str(item.get("id")) != str(value.get("id")) and item.get("enabled", True) is not False and str(item.get("recognitionType")) == str(value.get("recognitionType")):
+                        raise RulesWorkspaceSaveError(
+                            "rules_duplicate_enabled_binding",
+                            "only one enabled RecognitionTypePolicy may bind each RecognitionType",
+                            status=409, object_kind=spec.family,
+                            object_id=_bounded(value.get("id"), MAX_RULES_OBJECT_ID_LENGTH),
+                            stage="reference", durable_state="active_preserved", side_effects="none",
+                            next_action="disable or edit the existing binding, then save again",
+                        )
+            return
         if spec.family == "metadataPolicies":
             provider_id = str(value.get("providerId") or "")
             if provider_id not in SUPPORTED_METADATA_PROVIDER_IDS:

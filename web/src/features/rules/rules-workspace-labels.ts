@@ -15,6 +15,8 @@ import type {
 import type { RuleFamily } from "../../entities/rules/rules-workspace";
 
 export const RULE_DRAWER_LABELS: Readonly<Record<RuleFormFamily, string>> = {
+  recognitionRules: "识别规则",
+  typeBindings: "类型绑定",
   recognitionTypes: "识别类型",
   metadataPolicies: "元数据策略",
   namingPolicies: "命名策略",
