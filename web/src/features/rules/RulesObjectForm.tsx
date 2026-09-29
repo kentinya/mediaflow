@@ -55,6 +55,11 @@ function numberOf(value: RuleFormValue | undefined): string {
   return typeof value === "number" ? String(value) : "";
 }
 
+function structureOf(value: RuleFormValue | undefined): string {
+  if (value && typeof value === "object") return JSON.stringify(value, null, 2);
+  return typeof value === "string" ? value : "";
+}
+
 function listOf(value: unknown): readonly string[] {
   return Array.isArray(value) ? value.map((item) => String(item)) : [];
 }
@@ -68,6 +73,15 @@ const FAMILY_LABELS: Readonly<Record<RuleFormFamily, string>> = {
 };
 
 const FIELD_LABELS: Readonly<Record<string, string>> = {
+  outputRecognitionType: "输出识别类型",
+  recognitionType: "识别类型",
+  metadataPolicy: "元数据策略",
+  namingPolicy: "命名策略",
+  classificationPolicy: "分类策略",
+  organizePolicy: "整理策略",
+  condition: "匹配条件",
+  score: "匹配分数",
+  stopOnMatch: "命中后停止",
   id: "ID",
   name: "名称",
   description: "描述",
@@ -245,6 +259,32 @@ export function RulesObjectForm({
     </Field>
   );
 
+  const structure = (field: string, hint?: string) => (
+    <Field
+      key={field}
+      id={id(field)}
+      label={FIELD_LABELS[field] ?? field}
+      hint={hint}
+      error={issue(field)}
+      disabled={disabled}
+    >
+      <textarea
+        id={id(field)}
+        value={structureOf(values[field])}
+        disabled={disabled}
+        rows={6}
+        aria-invalid={issue(field) ? true : undefined}
+        onChange={(event) => {
+          try {
+            onChange(field, JSON.parse(event.target.value) as RuleFormValue);
+          } catch {
+            onChange(field, event.target.value);
+          }
+        }}
+      />
+    </Field>
+  );
+
   const body: ReactNode[] = [];
 
   if (family === "recognitionTypes") {
@@ -252,6 +292,35 @@ export function RulesObjectForm({
       text("id"),
       text("name"),
       text("description"),
+      checkbox("enabled"),
+    );
+  }
+
+  if (family === "recognitionRules") {
+    body.push(
+      text("id"),
+      text("name"),
+      text("description"),
+      text("outputRecognitionType", "必须引用一个已启用的识别类型。"),
+      number("priority", -1000000, 1000000),
+      number("score", 0, 1000000),
+      checkbox("stopOnMatch"),
+      checkbox("enabled"),
+      structure("condition", "条件树按 AtomicCondition / LogicalCondition 校验；示例: {\"type\":\"logical\",\"operator\":\"always\",\"children\":[]}"),
+    );
+  }
+
+  if (family === "typeBindings") {
+    body.push(
+      text("id"),
+      text("name"),
+      text("description"),
+      text("recognitionType", "一个识别类型只能有一个已启用绑定。"),
+      text("metadataPolicy"),
+      text("namingPolicy"),
+      text("classificationPolicy"),
+      text("organizePolicy"),
+      number("priority", -1000000, 1000000),
       checkbox("enabled"),
     );
   }

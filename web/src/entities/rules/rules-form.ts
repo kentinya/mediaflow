@@ -22,6 +22,8 @@ import {
 import type { RuleFamily } from "./rules-workspace";
 
 export const RULE_FORM_FAMILIES = [
+  "recognitionRules",
+  "typeBindings",
   "recognitionTypes",
   "metadataPolicies",
   "namingPolicies",
