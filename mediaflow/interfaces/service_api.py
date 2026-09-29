@@ -13350,7 +13350,7 @@ class MediaFlowApi:
                 "expectedVersion",
                 "expectedDigest",
                 "candidate",
-                "policyId",
+                "policySelection",
                 "sample",
             },
             "classification": {
@@ -13358,7 +13358,7 @@ class MediaFlowApi:
                 "expectedVersion",
                 "expectedDigest",
                 "candidate",
-                "policyId",
+                "policySelection",
                 "sample",
             },
             "organize": {
@@ -13409,6 +13409,28 @@ class MediaFlowApi:
             document["sample"], dict
         ):
             raise ValueError("preview sample must be an object")
+        policy_selection = None
+        if kind in {"naming", "classification"}:
+            policy_selection = document["policySelection"]
+            if not isinstance(policy_selection, dict):
+                raise ValueError("policySelection must be an object")
+            mode = policy_selection.get("mode")
+            if mode == "direct":
+                if (
+                    set(policy_selection) != {"mode", "policyId"}
+                    or not isinstance(policy_selection.get("policyId"), str)
+                    or not policy_selection["policyId"].strip()
+                ):
+                    raise ValueError("direct policySelection requires policyId")
+            elif mode == "binding":
+                if (
+                    set(policy_selection) != {"mode", "recognitionType"}
+                    or not isinstance(policy_selection.get("recognitionType"), str)
+                    or not policy_selection["recognitionType"].strip()
+                ):
+                    raise ValueError("binding policySelection requires recognitionType")
+            else:
+                raise ValueError("policySelection mode must be direct or binding")
         if kind in {"strategy", "metadata", "organize"}:
             if (
                 not isinstance(document["resourceLibraryId"], str)
@@ -13446,23 +13468,45 @@ class MediaFlowApi:
                 live_metadata=document["liveMetadata"],
             )
         elif kind == "naming":
-            evidence = self._rules_workspace.preview_naming(
-                revision_id,
-                expected_version=version,
-                expected_digest=digest,
-                actor=principal.principal_id,
-                policy_id=document["policyId"],
-                sample=document["sample"],
-            )
+            assert isinstance(policy_selection, dict)
+            if policy_selection["mode"] == "binding":
+                evidence = self._rules_workspace.preview_naming_for_type(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    recognition_type=policy_selection["recognitionType"],
+                    sample=document["sample"],
+                )
+            else:
+                evidence = self._rules_workspace.preview_naming(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    policy_id=policy_selection["policyId"],
+                    sample=document["sample"],
+                )
         elif kind == "classification":
-            evidence = self._rules_workspace.preview_classification(
-                revision_id,
-                expected_version=version,
-                expected_digest=digest,
-                actor=principal.principal_id,
-                policy_id=document["policyId"],
-                sample=document["sample"],
-            )
+            assert isinstance(policy_selection, dict)
+            if policy_selection["mode"] == "binding":
+                evidence = self._rules_workspace.preview_classification_for_type(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    recognition_type=policy_selection["recognitionType"],
+                    sample=document["sample"],
+                )
+            else:
+                evidence = self._rules_workspace.preview_classification(
+                    revision_id,
+                    expected_version=version,
+                    expected_digest=digest,
+                    actor=principal.principal_id,
+                    policy_id=policy_selection["policyId"],
+                    sample=document["sample"],
+                )
         else:
             evidence = self._rules_workspace.explain_organize(
                 revision_id,

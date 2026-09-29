@@ -124,6 +124,24 @@ const CLASSIFICATION_SAMPLE_FIELDS = new Set([
   "overview",
 ]);
 
+const PREVIEW_KINDS_BY_FAMILY: Readonly<
+  Record<RuleFormFamily, readonly RulesPreviewKind[]>
+> = {
+  recognitionRules: ["strategy"],
+  recognitionTypes: ["strategy", "naming", "classification", "organize"],
+  typeBindings: [
+    "strategy",
+    "metadata",
+    "naming",
+    "classification",
+    "organize",
+  ],
+  metadataPolicies: ["metadata"],
+  namingPolicies: ["naming"],
+  classificationPolicies: ["classification"],
+  organizePolicies: ["organize"],
+};
+
 function sampleForKind(
   kind: RulesPreviewKind,
   sample: Readonly<Record<string, unknown>>,
@@ -138,6 +156,27 @@ function sampleForKind(
   return Object.fromEntries(
     Object.entries(sample).filter(([key]) => allowed.has(key)),
   );
+}
+
+function policySelection(
+  family: RuleFormFamily,
+  kind: "naming" | "classification",
+  candidate: Readonly<Record<string, unknown>>,
+): Readonly<Record<string, string>> {
+  if (family === "recognitionTypes") {
+    return { mode: "binding", recognitionType: String(candidate.id ?? "") };
+  }
+  if (family === "typeBindings") {
+    return {
+      mode: "direct",
+      policyId: String(
+        candidate[
+          kind === "naming" ? "namingPolicy" : "classificationPolicy"
+        ] ?? "",
+      ),
+    };
+  }
+  return { mode: "direct", policyId: String(candidate.id ?? "") };
 }
 
 function compactList(value: string, maximum: number, label: string): string[] {
@@ -601,8 +640,20 @@ export function RulesPreviewPanel({
       ...identity,
       candidate: { family, objectId, values: submittedCandidate },
     };
-    const policyId = String(submittedCandidate.id ?? "");
-    const recognitionType = String(submittedSample.recognitionType ?? "C");
+    const metadataPolicyId = String(
+      family === "typeBindings"
+        ? (submittedCandidate.metadataPolicy ?? "")
+        : (submittedCandidate.id ?? ""),
+    );
+    const recognitionType = String(
+      family === "recognitionTypes"
+        ? (submittedCandidate.id ?? submittedSample.recognitionType ?? "C")
+        : family === "typeBindings"
+          ? (submittedCandidate.recognitionType ??
+            submittedSample.recognitionType ??
+            "C")
+          : (submittedSample.recognitionType ?? "C"),
+    );
     const boundedSample = sampleForKind(kind, submittedSample);
     const body: Record<string, unknown> =
       kind === "strategy"
@@ -615,13 +666,21 @@ export function RulesPreviewPanel({
         : kind === "metadata"
           ? {
               ...base,
-              policyId,
+              policyId: metadataPolicyId,
               resourceLibraryId: submittedLibrary,
               syntheticPath: submittedPath,
               liveMetadata: submittedLiveMetadata,
             }
           : kind === "naming" || kind === "classification"
-            ? { ...base, policyId, sample: boundedSample }
+            ? {
+                ...base,
+                policySelection: policySelection(
+                  family,
+                  kind,
+                  submittedCandidate,
+                ),
+                sample: boundedSample,
+              }
             : {
                 ...base,
                 recognitionType,
@@ -911,15 +970,7 @@ export function RulesPreviewPanel({
         允许实时 Metadata Provider 测试
       </label>
       <div className="mf-actions">
-        {(
-          [
-            "strategy",
-            "metadata",
-            "naming",
-            "classification",
-            "organize",
-          ] as const
-        ).map((kind) => (
+        {PREVIEW_KINDS_BY_FAMILY[family].map((kind) => (
           <button
             key={kind}
             type="button"
