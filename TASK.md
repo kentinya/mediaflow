@@ -151,10 +151,12 @@ images. Do not edit `config/alist.json`.
 - Correction: removed unsupported Type Binding `description`, exposed bounded enabled catalogs and condition enums from the backend, replaced free-text graph references with typed selectors, and replaced raw condition editing with recursive Atomic/Logical controls.
 - Correction: updated graph-family Web fixtures and empty-state regression coverage to reflect the now-authorable families.
 - Correction: enforced backend condition value shape/type compatibility for numeric, string and collection fields; the typed builder now filters operators and emits numeric scalars or typed collections instead of universal text values.
+- Correction: removed the obsolete raw-structure form helper reported by the B lint gate; the typed condition builder remains the only ordinary condition editor.
 
 ### Tests and Results
 
 - `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace.py tests/test_recognition.py` — PASS (62 tests, 77 subtests).
+- Initial rerun had one flaky concurrent-save `rules_destination_check_failed` outcome; the affected concurrency test passed on immediate isolated rerun.
 - `.venv/bin/python -m unittest discover -s tests` — FAIL (previous run before this report included the Docker command): 1949 tests, 1 documentation assertion failure in `test_release_security.ReleaseSecurityPolicyTests.test_release_quality_gate_commands_are_documented_for_task_execution`, 7 skipped, resource warnings only; not rerun after the report correction.
 - `npm --prefix web run typecheck` — PASS.
 - `npm --prefix web run build` — PASS.
@@ -175,6 +177,7 @@ images. Do not edit `config/alist.json`.
 - Reused `ConfigurationObjectService._normalize`, whole-document validation and `RulesWorkspaceCommandService._publish`; no second policy resolver or configuration authority was introduced.
 - Conditions remain provider-neutral and bounded by the existing runtime model; recursive typed Atomic/Logical controls submit numeric, scalar or collection values that are revalidated by the backend.
 - RecognitionType identity is carried by the binding reference and is never inferred from naming/classification/organize policy IDs.
+- Removed the unused legacy raw-structure helper instead of retaining a support JSON editor in the ordinary path.
 
 ### Remaining In-Slice Work
 
@@ -190,24 +193,21 @@ images. Do not edit `config/alist.json`.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 43c269abc7cacaddaf5ef1d149dc03bbf0d7dddc
+Head SHA: ca48d2b0537e3c9f0d826e02a69c7ceb9a916a50
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..cc930123cd853dd438feabe79d14e0559def1d58
+Reviewed: 361b03ba908b1f27d92b93a78781df8935aafaff..b7efc70beee3bdb32ed76ff8902a8cbdc2a8edbc
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- The typed RecognitionRule condition builder publishes incompatible value types. In the legal current
-  Active harness, saving a rule with `{field: "year", operator: "equals", value: "2024"}` succeeds
-  and publishes Active (`PUBLISHED active`), while the production `AtomicCondition` also accepts the
-  string for a numeric field; the recognition engine then compares an integer parsed year with the
-  string and the rule cannot match. The Web builder's value control is always a text input and does
-  not switch between numeric, collection, string or regex input based on the selected field/operator.
-  This violates Task AC-2 and RO-3's compatible field/operator/value requirement in a current user
-  journey. Make the builder emit the correct numeric/collection/scalar shape, constrain operators to
-  the selected field, and add backend validation so an incompatible condition cannot be published.
+- The T4 frontend quality gate still fails on the checkpoint: `npm --prefix web run lint` reports
+  `web/src/features/rules/RulesObjectForm.tsx:324:9  'structure' is assigned a value but never
+  used (@typescript-eslint/no-unused-vars)`. This is in the Task's changed graph-authoring form and
+  means the required lint gate is not passing. Remove the obsolete helper (or use it only as a
+  bounded support view without restoring raw JSON as the ordinary condition editor), then rerun the
+  complete affected Web gates.
