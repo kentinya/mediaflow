@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 41.5
 Parent Slice: 41
-Status: PLANNED
+Status: READY FOR B REVIEW
 Task Base: a670f9ea8c2456e24c3203d5be7d0dfb6b0f593e
 Difficulty: High
 Test Level: T4
@@ -150,10 +150,32 @@ Backend projection:
 
 - `mediaflow/interfaces/service_api.py` — `_rule_readiness_document` reduces the existing
   `active_rules_workspace` read to bounded counts/state/gaps plus the identity of the Active this
-  same status read reported. No new resolver, cache or write path.
+  same status read reported. No new resolver, cache or write path. *(Correction round 1
+  replaces this with the bound single-read projection; see below.)*
 - `tests/test_v2_settings_rule_readiness.py` (new) — cross-surface equality with the inventory
   read, boundedness/secret-free assertions, denied reads, no-Active, an unreadable Active, a later
   activation, and the shared browser fixture contract.
+
+Correction round 1 (B-review blocker fix, checkpoint `aa73be0`):
+
+- `mediaflow/application/configuration_objects.py` — the workspace read model is now derived by one
+  single-read projection (`_rules_workspace_from_active`) that takes the already-read Active
+  revision object; `active_rules_workspace` keeps its Task 41.1 contract (no revisionId on the
+  wire) by stripping the internal identity, and a new `active_rule_readiness()` returns the exact
+  same read's identity together with its counts/state/gaps. The unavailable/no-active/malformed
+  distinction is preserved exactly.
+- `mediaflow/interfaces/service_api.py` — `_rule_readiness_document` consumes that bound
+  projection directly instead of stamping the status read's identity onto a second Active read;
+  the now-unused bounded-counts helper is removed.
+- `web/src/features/configuration/ConfigurationPage.tsx` — `RuleReadinessPanel` treats the reverse
+  interleavings as mixed too and hides the stale counts and gaps whenever the two identities in one
+  status document disagree, showing only the explicit refresh-required state.
+- `tests/test_v2_settings_rule_readiness.py` — a regression reproduces the exact B-review timing
+  through the real SQLite managed configuration and production `MediaFlowApi`: a legal successor
+  revision is published between the status document's Active read and the readiness projection's
+  Active read.
+- `web/src/features/configuration/ConfigurationPage.test.tsx` — covers stale counts/gaps hidden
+  under the mixed state and the reverse identity mismatch.
 
 Browser journey:
 
@@ -193,9 +215,23 @@ Browser journey:
   established post-activation return for the other targets. No arbitrary URL, raw revision/digest,
   secret or token enters that navigation state.
 
+Correction round 1 (B-review blocker):
+
+- Settings rule readiness is now bound to one single Active read: `active_rule_readiness()`
+  derives the revision identity and the counts/state/gaps from the same in-memory
+  `ManagedConfigurationRevision` object, so two repository reads can never mix one revision's
+  identity with another's counts. The status document keeps reporting its own Active identity; when
+  the two identities inside one response disagree (a legal activation landing between the two
+  reads), the page detects the mixed snapshot, shows only `Active 已变更,需要刷新`, and presents
+  neither the stale counts nor the gaps as current. The reverse interleavings (readiness names an
+  Active the status read missed, or vice versa) are detected the same way. The public rules
+  inventory contract is unchanged — `revisionid` still never appears in that document.
+
 ### Tests and Results
 
 Test Level `T4`; every gate below was actually executed. Commands were run serially.
+
+Initial round (checkpoint `9021656`):
 
 - `npm --prefix web test -- --run src/features/rules/RulesWorkspacePage.test.tsx
   src/features/configuration/ConfigurationPage.test.tsx src/shared/navigation/settings-return.test.ts`
@@ -229,6 +265,40 @@ Test Level `T4`; every gate below was actually executed. Commands were run seria
   unstaged. A credential/secret scan over the added files found only throwaway e2e token literals
   that are already part of the existing fixture vocabulary.
 
+Correction round 1 (checkpoint `aa73be0`) — all gates re-executed:
+
+- `.venv/bin/python -m pytest -q tests/test_v2_settings_rule_readiness.py` — `PASS` (11 tests),
+  including the new `test_a_concurrent_activation_cannot_mix_identity_with_counts` regression that
+  reproduces the exact B-review interleaving (a legal successor activation published between the
+  status Active read and the readiness Active read) and proves the two identities in one response
+  differ while the counts provably belong to the readiness identity.
+- The B-review reproduction itself: re-running the interleaving against the production
+  `MediaFlowApi` and SQLite managed configuration, the response now carries two visibly different
+  revision identities (`status.active` = old, `ruleReadiness.active` = new) and the counts are
+  asserted equal to the projection derived from the exact named revision — the mixed snapshot can
+  no longer masquerade as one consistent snapshot, and the page's mixed-snapshot check fires.
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py
+  tests/test_configuration_status.py tests/test_configuration_management.py` — `PASS` (47 passed,
+  32 subtests); `tests/test_v2_rules_workspace.py` — `PASS` (19 tests), including the Task 41.1
+  contract that `revisionid` never appears in the inventory document.
+- `npm --prefix web test -- --run src/features/rules/RulesWorkspacePage.test.tsx
+  src/features/configuration/ConfigurationPage.test.tsx src/shared/navigation/settings-return.test.ts`
+  — `PASS` (3 files, 56 tests).
+- `npm --prefix web test -- --run` (full unit suite) — `PASS` (55 files, 812 tests).
+- `npm --prefix web run typecheck` — `PASS`; `npm --prefix web run lint` — `PASS`;
+  `npm --prefix web run format:check` — `PASS` (after targeted Prettier on the edited page);
+  `npm --prefix web run build` — `PASS` (Vite chunk-size warning only).
+- `npx playwright test tests/e2e/rules-readiness.spec.ts` — `PASS` (9 tests).
+- Full `npx playwright test` — 188 passed, 31 failed; the failing set is byte-identical to the
+  Task-Base reproduction recorded in the initial round (storage-management 28, deep-link 2,
+  dashboard 1): `FAIL / PRE-EXISTING / UNRELATED`, no new failure introduced.
+- `.venv/bin/python -m unittest discover -s tests` — `PASS` (2007 tests, `OK`, 7 skipped).
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — `PASS`;
+  `.venv/bin/ruff format --check .` — `PASS` (328 files); `.venv/bin/ruff check .` — `PASS`.
+- `python3 scripts/check_governance.py` — `PASS`; `git diff --check` — clean.
+- `python3 scripts/docker_release_security_smoke_test.py` — `PASS` ("Release-security smoke
+  acceptance passed"), run with a workspace-local `TMPDIR` as recorded in the initial round.
+
 ### Decisions
 
 - The section lives in the URL/search state rather than component state, which is what makes a deep
@@ -253,6 +323,22 @@ Test Level `T4`; every gate below was actually executed. Commands were run seria
   assertion initially read the fake's shared cross-worker mutation log instead of the page's own
   traffic.
 
+Correction round 1 decisions:
+
+- Chose "bind identity and counts to one single Active read" over "detect two reads and prompt
+  refresh" as the primary fix. Detection alone would still publish one identity with the other
+  read's counts; the bound projection removes the mixed snapshot at the source, and the identity
+  comparison remains as a second, frontend-side line of defence for the legal interleave that can
+  still occur between the status read and the readiness read.
+- The exact revision identity stays out of the public rules-inventory HTTP contract (Task 41.1
+  asserts `revisionid` never appears there) and is published only by the narrow
+  `active_rule_readiness` Settings projection. Both projections derive from the same
+  `_rules_workspace_from_active` single-read helper, so there is no second readiness derivation to
+  drift.
+- The unavailable/no-active/malformed state distinction is preserved exactly: the single-read
+  helper only derives from an in-memory revision object; each caller keeps its own read/error
+  mapping, so a failed repository read still yields `UNAVAILABLE` and not a false `NO_ACTIVE`.
+
 ### Remaining In-Slice Work
 
 Not Developer-owned judgement. Within this Task's scope nothing is knowingly left unfinished; the
@@ -270,18 +356,31 @@ screenshot copying were deliberately not done (Task non-goals).
 - The Docker smoke gate needed a workspace-local `TMPDIR` in this environment; that is a harness
   detail, recorded here so a rerun is not mistaken for a regression.
 
+Correction round 1 risks:
+
+- The mixed-snapshot detection is identity comparison inside one status document, so it covers the
+  B-review interleaving exactly; a same-revision read cannot be distinguished from a concurrent
+  activation of a revision whose ID the page has never seen — but that case is impossible under
+  the monotonic managed revision model (a new activation always produces a new revision ID).
+- The concurrency regression drives the interleaving through a repository wrapper around the real
+  `SQLiteConfigurationRepository` with a re-entrancy guard; it is deterministic but exercises the
+  timing by call counting rather than wall-clock scheduling, which is the honest deterministic
+  equivalent of the two-thread race B described.
+
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 90216562692ab52dd4c1bdc115d7ebf27eec6a67
+Head SHA: aa73be0ac5c7bf66ddbcfc89c83bc434197dae08
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
+Reviewed: a670f9ea8c2456e24c3203d5be7d0dfb6b0f593e..90216562692ab52dd4c1bdc115d7ebf27eec6a67
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: PENDING
+Next: SAME TASK FIX LOOP
 ```
+
+- P1 — Settings 的规则就绪数据没有绑定到它实际读取的 Active，违反本 Task 的“同一精确 Active 快照、并发变化不得显示混合就绪”和 Slice RO-7、Safety Invariant 6。`MediaFlowApi._configuration_status_document` 先读状态 Active，再通过 `active_rules_workspace()` 另读规则；`_rule_readiness_document` 却把第一次读取的 revision ID 填入第二次读取所得的数量与缺口。用当前 SQLite managed configuration、生产 `MediaFlowApi` 和合法的两次激活，在两次读之间发布含新增 RecognitionType 的版本，`GET /api/v1/configuration/status` 返回 HTTP 200：`status.active` 与 `ruleReadiness.active` 都是旧 revision ID，而 `ruleReadiness.counts.recognitionTypes` 已是新版的 4 项；页面的混合快照检查无法发现。请把身份与就绪投影绑定到同一次 Active 读取，或检测两次读取不一致并明确提示刷新；混合时不得展示数量/缺口为当前 Active。加入覆盖该合法并发时序的回归测试。
