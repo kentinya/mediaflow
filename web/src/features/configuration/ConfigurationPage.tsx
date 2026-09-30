@@ -280,14 +280,15 @@ function RuleReadinessPanel({
   /** The Active revision identity reported by this same status read. */
   readonly activeRevisionId: string | null;
 }) {
-  const currentActive = readiness.active?.revisionId ?? null;
+  const readinessActive = readiness.active?.revisionId ?? null;
   // A readiness projection that describes a different revision than the Active
-  // this status read reported is a mixed snapshot: it must not be shown as the
-  // current readiness of the Active above.
+  // this status read reported is a mixed snapshot — including the reverse
+  // cases (readiness names an Active the status read missed, or the status
+  // read names an Active the readiness projection did not see). It must not
+  // be shown as the current readiness of the Active above.
   const mixed =
-    currentActive !== null &&
-    activeRevisionId !== null &&
-    currentActive !== activeRevisionId;
+    readiness.available &&
+    (readinessActive ?? null) !== (activeRevisionId ?? null);
   return (
     <section className="mf-panel" aria-label="整理规则就绪状态">
       <h2>整理规则就绪状态</h2>
@@ -320,7 +321,7 @@ function RuleReadinessPanel({
           {RULE_READINESS_LABELS[readiness.state] ?? "暂不可用"}
           :当前没有可读取的 Active 规则就绪证据,也不代表规则图是空的。
         </p>
-      ) : (
+      ) : mixed ? null : (
         <ul className="mf-rule-readiness-list">
           {(Object.keys(RULE_FAMILY_LABELS) as RuleFamily[]).map((family) => (
             <li key={family}>
@@ -339,7 +340,7 @@ function RuleReadinessPanel({
           ))}
         </ul>
       )}
-      {readiness.gaps.length > 0 ? (
+      {!mixed && readiness.gaps.length > 0 ? (
         <div className="mf-rules-gaps">
           <h3>配置缺口</h3>
           <ul>
