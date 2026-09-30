@@ -743,8 +743,49 @@ publication. The previously planned Slice 34–36 migration boundaries remain re
 - **Recovery:** refresh the durable state, repair readiness, rerun a stale Preview, reauthorize the
   exact reviewed operation, repair/repreview/regrant Automation or use the delivery-specific
   recovery action. Media review, checkpoint continuation, Reprocess and failed-item/batch recovery
-  hand off honestly to an existing supported V1 destination; no new Review/Recovery page is part
-  of the current Slice.
+  hand off honestly to an existing supported V1 destination; the closed Slice 33 did not deliver
+  native task-linked Review/Recovery. Slice 42 targets that gap below; it is not yet implemented.
+
+### TARGET — V2 Operations and Tasks Workspace (Slice 42)
+
+- **Goal:** find and follow one admitted run, understand every file outcome, and complete safe
+  task-linked control/recovery in V2 without CLI commands, V1 fallback or internal-token handling.
+- **Entry:** shared-shell `操作与任务`, an existing Task/Job link, Files completion or an Automation
+  run. Follow `docs/pics/操作与任务.png` for composition/style only; names, counts, dates, paths,
+  posters, progress and ETA in the image are illustrative. Entry has a full list without selected
+  detail; explicit selection/deep link opens the right panel, full-screen on narrow layouts.
+- **Visible state:** server-filtered/searchable runs, authoritative scoped counts, operation kind,
+  historical source/target scope and trigger. Explicitly linked Job/Task records count once, including
+  queued/pre-Task failure; distinct occurrences/continuations remain traceable. Queue, stage, item
+  outcome and attention are separate facts. Unknown totals are indeterminate; partial/waiting/ignored
+  or uncertain outcomes are not success. Current Active cannot rewrite old scope labels.
+- **Action:** search by name/safe scope, filter status/kind/time, inspect detail/operation records,
+  export bounded secret-free results, or choose `新建整理任务`. Creation uses contextual live
+  ResourceLibrary file selection, existing exact Preview and explicit execution, then returns to
+  the selected admitted run. Reuse Files; do not make MediaLibrary an organizing source.
+- **Control:** use backend-advertised cooperative pause/cancel and native Continue for safely paused
+  supported asynchronous work. Show request versus acknowledgement and in-flight effects. Continue
+  queues only the remaining admitted safe scope with exact pin, ownership and applicable authority;
+  it does not acquire execution permission merely because a Task once had it.
+- **Success:** admission immediately becomes discoverable; independent item outcomes, operation
+  steps, result and linked attempts survive refresh/restart. A finished Job cannot hide a failed or
+  partial Task. Counts reconcile across pages, and unavailable data does not become zero.
+- **Failure:** explain missing/stale Worker, unavailable pin/dependency, permission denial, changed
+  source/Preview, stale decision, failed analysis, known partial effects and uncertain effects on
+  the affected run/item. Retain successful siblings and correctable input. Redact secrets/host roots.
+- **Recovery:** complete task-linked Recognition selection/ignore, Metadata candidate/correction/
+  ignore, Classification and conflict decisions using existing legal choices, followed by explicit
+  bounded analysis/Preview and separate execution intent where needed. Single and selected bounded
+  failed-analysis batches have independent accepted/refused outcomes. Original/continuation/results
+  remain linked; successful/ignored/unknown effects are not replayed. Unknown effects stay
+  investigation-only. Unknown submission first reads durable state; no automatic resubmission.
+
+Necessary durable Web continuation and task-scoped recovery are Required Outcomes, not cosmetic
+buttons over CLI-only behavior. A standalone global Review inbox, cross-task bulk review, history
+deletion/retention, unbounded whole-library organize, arbitrary historical Reprocess, Automation or
+Notifications redesign, universal rollback and V1 retirement remain outside this TARGET. Retired
+file-level retry/re-recognition/rematch/re-plan entry points remain retired. Existing CURRENT
+Operations behavior remains the delivered baseline until this journey passes acceptance.
 
 ### Migration coexistence and deferrals
 
@@ -769,6 +810,9 @@ publication. The previously planned Slice 34–36 migration boundaries remain re
   Provider switching and actual media execution from Rules remain outside the delivered workspace.
   Slice 40's historical deferrals are unchanged; Slice 41 delivers its organizing-policy migration
   portion without claiming the other deferred journeys have migrated.
+- **TARGET:** Slice 42 selects the reference-aligned task center and native task-scoped recovery/
+  continuation above. Global Review and other unselected migration work remain deferred; activation
+  does not claim the new journey is CURRENT.
 
 ## Files Journey Update — 2026-09-14
 

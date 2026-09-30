@@ -74,6 +74,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 39 — Storage Management Workspace (PASS / CLOSED)
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
     → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
+    → Slice 42 — V2 Operations and Tasks Workspace (ACTIVE; TARGET below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -484,6 +485,62 @@ Conflict/review decisions are persistence-only and do not execute media. The cur
 operator from a resolved conflict or review through exact-source re-analysis, continuation admission
 and the original Organize outcome. Successful siblings remain terminal and uncertain effects remain
 investigation-only.
+
+## TARGET — V2 Operations and Tasks Workspace (Slice 42)
+
+The existing Job/Task/TaskItem/Result, manual execution and recovery services remain execution
+authority. A shared Python application projection joins only explicit durable links into one
+operator-visible run. Pre-Task queued/failed admission and standalone Tasks stay visible; linked
+Job/Task is counted once, while separate Automation occurrences and recovery attempts retain their
+history. Queue completion cannot override Task/item outcome. This is a read model, not a new domain
+Task object, queue or lifecycle state machine.
+
+```text
+V2 Operations inventory / selected detail / records / task-linked recovery
+  -> typed authenticated query and command boundary
+  -> Python run projection + existing lifecycle / review / recovery admission
+  -> existing Job / Task / TaskItem / Result / audit / log repositories
+  -> explicit safe continuation -> resident Worker -> OrganizerExecutor
+```
+
+Repositories supply bounded deterministic text/safe-scope/status/kind/time queries and aggregate
+counts from the same authorized population and consistent read basis. Cursors bind query and
+authorization context. No browser merge of independently paged Tasks/Jobs, page-only counts or
+reading global logs to find one task. Additive persisted display/admission context and indexes are
+allowed when needed, with schema compatibility and legacy unavailable-evidence projections. Names
+and scopes derive from durable admission or the pinned snapshot, never silently from current Active.
+
+Progress is projected per work kind from durable evidence, independently of success rate. Unknown
+scan totals remain unknown; primary item counts reconcile, while scan errors and attachment steps
+remain separate. Waiting/ignored/uncertain items do not become successes. Details compose per-item
+plan/step/result/checkpoint and bounded linked logs/audit; result truth does not depend on logs.
+The existing secret-free result-package service remains export authority.
+
+Creation reuses live ResourceLibrary Files selection, exact intent/Preview and existing explicit
+manual execution admission, preserving contextual return to the selected run. FileIndex is not
+physical source authority; MediaLibrary is not a new organizing source. Existing routes/links remain
+compatible, and the shared shell/authentication boundary is unchanged.
+
+Extend durable queued continuation only as needed to make supported safely paused asynchronous
+work and task-linked recovery Web-completable. Reuse existing checkpoint/recovery/Worker ports and
+source revalidation, locks/leases/fences. Never shell out to CLI or run long continuation inside HTTP.
+Continue preserves exact remaining scope and pin, excludes successful/ignored/uncertain effects,
+and rechecks applicable current authority. Persisted `execute_authorized` is not sufficient to
+reissue consumed one-shot authority or bypass unattended-grant revocation. A changed plan or
+insufficient authority returns to native exact Preview and explicit execution intent.
+
+Task-linked Recognition/Metadata/Classification/conflict forms call existing decision services.
+Decision persistence is non-executing. Explicit bounded analysis and any later exact mutation
+admission remain separate authority boundaries even when safe non-mutating steps are composed.
+Mixed recovery batches preserve independent accepted/refused outcomes and link original item,
+decision, continuation, Preview/execution and Result. Unknown effects remain investigation-only;
+retired direct file retry/re-recognition/rematch/re-plan APIs stay retired.
+
+Bounded active-work polling and manual refresh are read-only; unknown mutation outcomes are queried
+before another explicit command. API/Web share permission/version/duplicate checks, redaction,
+readiness and safe recovery behavior. No additional scheduler, Worker supervisor, Provider, global
+Review inbox, history cleanup, universal rollback or automatic uncertain replay is introduced.
+These are TARGET changes under the active Contract, not CURRENT implementation claims.
 
 ## Manual organize
 

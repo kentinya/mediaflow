@@ -8,11 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 41 — **V2 Organizing Rules Workspace** — is PASS / CLOSED under
-[`SLICE.md`](../SLICE.md) at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and Implementation Head
-`8433319168272ecf7ccde017afc36525e8c62ea0` after A's 2026-09-30 final review. No implementation Task is
-active. The next legal action is A selects the next large Slice in a separate turn. Earlier
-closures remain unchanged; the ledger below records the compact delivery and deferral facts.
+V2 remains active on `main`; Slice 42 — **V2 Operations and Tasks Workspace** — is ACTIVE under
+[`SLICE.md`](../SLICE.md), with Base `ffee77348cebcb05e356c8111c5861ed64ca0388` and no Implementation
+Head or active implementation Task. B plans the first Task after the activation checkpoint.
+Slice 41 remains PASS / CLOSED at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and Implementation
+Head `8433319168272ecf7ccde017afc36525e8c62ea0` after A's 2026-09-30 final review; its full Contract
+and review remain in Git at the Slice 42 Base. Earlier closure-ledger entries remain unchanged;
+Slice 42 has no closure entry or product-completion claim.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`

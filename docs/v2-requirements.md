@@ -15,8 +15,10 @@ Most recently closed large Slice: Slice 41 — V2 Organizing Rules Workspace —
 Slice 41 Base: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
 Slice 41 Implementation Head: 8433319168272ecf7ccde017afc36525e8c62ea0
 Slice 41 A Final Review: PASS / CLOSED — 2026-09-30
-Current Contract: Slice 41 — PASS / CLOSED; no active implementation Task
-Next action: A SELECTS THE NEXT LARGE SLICE
+Current Contract: Slice 42 — V2 Operations and Tasks Workspace — ACTIVE
+Slice 42 Base: ffee77348cebcb05e356c8111c5861ed64ca0388
+Slice 42 Implementation Head: NOT SET; no active implementation Task
+Next action: B PLANS THE FIRST IMPLEMENTATION TASK AFTER THE ACTIVATION CHECKPOINT
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
@@ -36,7 +38,9 @@ implemented the native V2 organizing-rules workspace, typed graph/object editing
 analysis, checked one-Save publication and actionable recovery. Its six supplied page images describe
 business relationship and visual style, not actual production data or pixel-identical fixtures. The
 stable requirements below describe delivered boundaries and explicitly identified targets; Slice
-contracts own implementation scope and acceptance.
+contracts own implementation scope and acceptance. Slice 42 activates the Operations/task-center
+TARGET below, including task-scoped native recovery and safe Web continuation. Its reference is
+`docs/pics/操作与任务.png`; example data is not authority. These new outcomes are not yet delivered.
 
 The setup, empty-business configuration and resident-service requirements below are delivered Slice
 40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal
@@ -92,6 +96,23 @@ during migration; earlier closed Slice scope is unchanged.
 | V2-MEDIALIB-002 | MediaLibrary offers bounded common file maintenance without the media Organize journey. | Create Folder/Text, single Rename, Copy, Move, Delete and allowlisted text Edit share backend RBAC, kind-specific library confinement, capability/stale/conflict checks, explicit destructive intent, OrganizerExecutor mutation and durable per-item recovery. Equal IDs or reused evidence cannot exchange MediaLibrary and ResourceLibrary authority. |
 | V2-MEDIALIB-003 | Adding/editing/removing MediaLibrary configuration is a complete Web/API journey using actual managed runtime authority. | Page-local create/edit Save validates and atomically activates a successor; edit keeps ID immutable, preserves unexposed fields and rejects stale writers. Failures preserve Active and correctable input. Disabled libraries have a Web re-enable path; Storage/root edits and reference-protected removal never move or delete physical files. |
 | V2-MEDIALIB-004 | Files and MediaLibrary have distinct navigation identities while sharing suitable presentation and file-operation mechanisms. | Route changes preserve Files capabilities, Organize return context, authentication and other journeys. MediaLibrary follows its reference with type icons and without card statistics/placeholders, thumbnails or Organize actions; row sizes and bounded selection/operation summaries remain available. |
+
+## Operations and Tasks requirements — TARGET (Slice 42)
+
+These requirements extend the existing Operations foundation. They do not claim completion of the
+new task-center journey; CURRENT behavior and remaining gaps are documented in Architecture and
+Product Experience. Task-linked recovery is in scope; a standalone global Review inbox is not.
+
+| ID | Requirement | Acceptance meaning |
+|---|---|---|
+| V2-OPS-001 | One native V2 task center presents a reference-aligned inventory, summary, filters and selected-run detail/records. | Default entry has no open detail; selection/deep link opens it. Shared shell, narrow/keyboard use, bounded return context and existing Task/Job links work without hard-coded reference data. |
+| V2-OPS-002 | Unified runs preserve the distinct Job/Task/item/Result model while showing one explicitly linked admission/processing run once. | Pending/pre-Task failure and standalone Tasks are visible. Queue completion cannot overwrite the Task outcome. Automation occurrences and recovery attempts retain independent linked history; all existing command families remain discoverable. |
+| V2-OPS-003 | Search, status/kind/time filters, counts and paging are bounded and authoritative on the server. | Cards and filtered totals use one authorized population and consistent read basis; cursors bind to query/authorization context. Attention is a labelled overlapping facet. No frontend page-only totals, fabricated pages or unavailable-as-zero. |
+| V2-OPS-004 | Names/scopes and progress reflect durable historical evidence rather than current configuration or approximate UI inference. | Preserve admission/pinned context or label missing legacy evidence. Known item counts reconcile; unknown totals stay indeterminate; scan errors/attachment steps are separate; Preview, waiting, ignored and uncertain outcomes are not organize success. |
+| V2-OPS-005 | Task detail connects per-item explanations, durable operation/results, relevant audit/logs and secret-free JSON export. | Source/target, recognition/policies, completed steps, failure/effect certainty and next action remain independently inspectable. Logs supplement results; records and exports are task-scoped and clearly bounded. |
+| V2-OPS-006 | New manual organization completes through live ResourceLibrary file selection, exact Preview, explicit execution and the selected durable run. | Reuse Files authority and return context for single/bounded multiple files. MediaLibrary is not a new organize source; FileIndex cannot authorize physical selection. Stale/unknown admission never silently resubmits. |
+| V2-OPS-007 | Task controls and continuation are backend-authoritative, cooperative and Web-completable for supported paused asynchronous work. | Pause/cancel requests do not undo effects or interrupt in-flight calls. Continue queues the exact remaining safe scope with pins/fences and current authority; no CLI fallback, consumed-token reissue, revoked-grant bypass or successful/uncertain replay. |
+| V2-OPS-008 | Task-linked decisions and single/bounded failed-analysis recovery complete in native V2 with per-item safety. | Recognition, Metadata, Classification and conflict decisions use existing gates; saving decisions does not execute. Exact analysis/Preview and separate execution intent link back to the original item. Mixed selections preserve accepted/refused outcomes; uncertain mutation stays investigation-only and retired retry APIs stay retired. |
 
 ## Authority and evolution
 
