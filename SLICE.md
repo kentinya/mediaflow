@@ -9,13 +9,13 @@ fallback for the ordinary journey.
 Slice ID: 41
 Name: V2 Organizing Rules Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
-Implementation Head: NOT SET
+Implementation Head: 8433319168272ecf7ccde017afc36525e8c62ea0
 Contract Revision: 2026-09-28 — A default-page/create-drawer correction authorized by the user
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS THE FIRST COHERENT IMPLEMENTATION TASK AFTER THIS CONTRACT CHECKPOINT
+Next Action: A FINAL REVIEW
 ```
 
 ## Authority and sequencing
@@ -445,7 +445,146 @@ polish, optional visual tuning, extra sample data or P2 cleanup is not a reason 
 
 ## Closure Packet
 
-Not yet prepared. B owns this section after all Required Outcomes are satisfied.
+Slice: 41 — V2 Organizing Rules Workspace
+Base SHA: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
+Head SHA: 8433319168272ecf7ccde017afc36525e8c62ea0
+
+Required Outcomes:
+- RO-1 COMPLETE — Shared-shell Rules destination, eight sections, reference-aligned full-width
+  inventories, Add-only create drawers, explicit full-page Edit, narrow/keyboard operation and
+  identity-preserving deep-link/refresh/reconnect.
+- RO-2 COMPLETE — Exact-Active one-Save successor composition, automatic validation/checks/atomic
+  activation, distinct unsaved/failed candidates, explicit lifecycle commands and unknown-outcome
+  verification without automatic replay.
+- RO-3 COMPLETE — Typed RecognitionType and nested RecognitionRule authoring, backend resolution
+  semantics, real references and bounded exact-candidate Strategy Test evidence.
+- RO-4 COMPLETE — One enabled type binding with four validated downstream references; direct
+  resolver, published runtime, Strategy Test, bound previews, Files and Automation retain C under
+  A Naming/Classification/Organize reuse.
+- RO-5 COMPLETE — Current Metadata, Movie/TV Naming, Classification and Organize fields are
+  exposed through typed forms; copy, applicable state changes and reference-protected removal
+  publish checked successors without media effects.
+- RO-6 COMPLETE — Exact-candidate Strategy/Metadata tests, Naming/Classification previews and
+  Organize authority/destination explanation; independent result rows, visible staleness, bounded
+  errors, explicit live-test intent and zero Storage mutation/execution authority.
+- RO-7 COMPLETE — Shared managed normalization, applicability, RBAC, concurrency, audit and
+  checked activation remain Python authority; runtime consumers and Settings use the same Active
+  semantics and originating-family handoff. V1 compatibility remains available.
+- RO-8 COMPLETE — Empty/partial guidance, distinct invalid/unavailable/stale/permission/reference
+  states, preserved correctable input, explicit verification/reread/refresh and truthful failed
+  impact reads without fabricated references or delete requests.
+
+Required Surfaces:
+- COMPLETE — Native /ui-v2/rules in the shared shell and discoverable 整理规则 destination.
+- COMPLETE — Full-width inventories, accessible narrow layouts, Add-only drawers and full-page Edit.
+- COMPLETE — Typed entity/query/mutation boundaries for exact revision and all eight sections.
+- COMPLETE — Shared authenticated inventory/detail/lifecycle/impact/test/preview behavior and
+  page-level Save-and-Activate composition for all seven managed object families.
+- COMPLETE — Settings readiness, empty/unconfigured handoff and safe originating-family return.
+- COMPLETE — V1 compatibility; the ordinary completed Rules journey requires neither V1 nor
+  whole-document JSON authoring.
+
+Implemented:
+- Native typed Rules management and the complete recognition-to-policy graph journey over the
+  existing managed configuration and policy engines.
+- Exact-candidate analysis, checked one-Save publication, actionable recovery and Settings handoff.
+- Backend-legal object identity across lifecycle/API/Web/static entry, including file-like dotted
+  IDs; truthful unavailable reference evidence during concurrent management.
+- Complexity reassessment after the earlier multi-round corrections: the six coherent Tasks reuse
+  one managed publication boundary and the existing engines. No second resolver, executor,
+  configuration authority or broader architecture change is needed for the completed journey.
+
+Tasks completed:
+- 41.1 — Read-only workspace and actionable inventories (59ce2b1).
+- 41.2 — Typed foundations and checked one-Save publication (6075bb0).
+- 41.3 — RecognitionRule and type-binding graph authoring (4115e3b).
+- 41.4 — Exact-candidate tests/previews and preserved C identity (5b542cb).
+- 41.5 — Readiness and Settings return journey (4ad2a21).
+- 41.6 — Object identity and truthful impact recovery (8433319; B PASS).
+
+Final Tests:
+- B independently ran the following against the corrected implementation on 2026-09-30; no
+  production code changed during verification. Python 3.13.5. Packaging checkout
+  3cf39346d2aa4a55d829137f9efc1487b3575696 differs from the Implementation Head only in TASK.md.
+- .venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py
+  tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace_previews.py
+  tests/test_v2_ui.py tests/test_api_security.py — PASS: 126 tests, 114 subtests, 0 skips.
+- .venv/bin/python -m unittest discover -s tests — PASS: 2015 tests, 7 skips, 370.621 seconds.
+  The seven skips are the dedicated real OpenList/SMB/S3 matrices and isolated Local/OpenList/SMB/S3
+  endurance profiles; those environments/confirmations are absent. They are unavailable acceptance
+  runs, not PASS. Offline/local regression includes configuration, recognition, metadata,
+  naming/classification, activation/reference/security, Files/Automation C-identity and migration.
+- npm --prefix web test -- --run — PASS: 55 files, 825 tests, 0 skips. Includes the focused model,
+  API, form, inventory/Edit, navigation, Settings and recovery regressions.
+- npm --prefix web run test:e2e -- tests/e2e/rules-readiness.spec.ts
+  tests/e2e/rules-identity.spec.ts — PASS: 14 tests, 0 skips (10 readiness, 4 identity).
+- python3 scripts/rules_identity_browser_proof.py — PASS against real Python API/static serving
+  with temporary legal Local/SQLite: identity journey ok, four browser mutation requests, static
+  boundary ok; accepted character/suffix refresh and concurrent-remove impact recovery included.
+- python3 /tmp/mediaflow-b-slice41-preview-proof.py — PASS: additional real built-artifact browser
+  proof, using the committed identity harness plus B's bounded binding-preview assertions. All
+  five strategy/metadata/naming/classification/organize requests returned HTTP 200/completed;
+  previews left Active unchanged, C selected A Naming/Classification, edit made every result stale,
+  and binding Save returned 200 and published a successor. Offline Provider mode only.
+- npm --prefix web run typecheck; npm --prefix web run lint; npm --prefix web run format:check;
+  npm --prefix web run build — all PASS.
+- .venv/bin/python -m compileall -q mediaflow tests scripts;
+  .venv/bin/ruff format --check .; .venv/bin/ruff check . — all PASS (329 formatted files).
+- .venv/bin/python -m pip check; .venv/bin/mediaflow --config config/strategy.example.json config
+  validate; .venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate —
+  all PASS. Forbidden runtime dependency audit of mediaflow/ and pyproject.toml — PASS.
+- .venv/bin/python -m pip wheel . --no-deps -w /tmp/mediaflow-b-slice41-wheel;
+  .venv/bin/python scripts/wheel_smoke_test.py
+  /tmp/mediaflow-b-slice41-wheel/mediaflow-2.0.0.dev0-py3-none-any.whl — PASS: isolated installed-wheel
+  configuration/CLI, backup, lease-protected restore, verification and migration rehearsal;
+  current schema 39, no migration required.
+- python3 scripts/docker_release_security_smoke_test.py — PASS from the clean committed checkout:
+  candidate image/Compose, four services, non-root/mounts, V1/V2 serving and headers, RBAC denial,
+  checked Active, resident Worker manual Organize, export/log/SQLite secret-canary scans and
+  unsupported-host refusal. TMPDIR used an isolated repository-local directory visible to Docker;
+  the harness was unchanged and temporary resources were cleaned.
+- python3 scripts/check_governance.py; git diff --check;
+  git diff --check 77f4d93..8433319 — PASS. Full Slice Base..Head manifest: 55 files; correction
+  range/private-file/frozen-scope audit — PASS.
+- git diff --exit-code 5c8aeb4..8433319 -- the six Contract reference-image paths — PASS. Exact-byte
+  SHA-256 comparisons against each image's original admission commit and the working tree — PASS.
+
+Safety Evidence:
+- Existing/new API regressions prove read/navigation/copy/impact has no Draft/Provider/Task/Job/
+  Storage mutation; bounded Test/Preview stages non-Active evidence only. The production browser
+  proves refresh/reconnect does not replay Save and failed impact/reread does not issue Delete.
+- Publication/permission/concurrency/reference/failed and unknown outcome suites preserve one
+  backend authority, immutable Active, historical pins, previous Active and no uncertain replay.
+- Explicit C-identity matrices pass through resolver, published runtime, exact-candidate analysis,
+  Files manual Organize and Automation. The real browser independently shows C with A policies.
+- Analysis does not grant execution authority; OrganizerExecutor remains the only Storage mutator.
+  Organize capabilities, overwrite/delete/cleanup permission and no silent link fallback remain
+  enforced by the existing engines and their full regressions.
+- No dependency files or private configuration entered implementation. config/alist.json remains
+  ignored/untracked/unstaged; Docker canary scans pass for image/API/Web/export/log/durable evidence.
+- All six supplied reference images were admitted before implementation and remain exact-byte
+  unchanged. Four pre-existing untracked user images were preserved and not included.
+
+Known Non-blocking Issues:
+- P2 — Advisory production main chunk size: 993.83 kB (249.88 kB gzip); build succeeds.
+- P3 — Passing test runs emit existing SQLite ResourceWarning and jsdom scrollTo notices. No
+  assertion was removed, weakened or skipped to conceal these notices.
+
+Explicitly Deferred:
+- UNCHANGED — Every item in the Contract's Explicitly Deferred / Excluded section remains deferred;
+  no Provider switching/new providers/secret store, Review/Recovery redesign, media execution from
+  Rules, new rule operators/naming/classification domains, bulk/diff/rollback, V1 retirement/auth
+  redesign, reference regeneration or unrelated workspace/deployment work was added.
+
+Documentation Reconciliation Needed:
+- A to reconcile Slice 41's Rules sections from TARGET to CURRENT in docs/product-experience.md and
+  docs/architecture.md, and factual delivery/traceability wording in docs/v2-requirements.md.
+- A to reconcile the Chinese specification's stale current-development metadata and applicable
+  README/configuration guidance to the delivered native Rules journey, preserving V1 scope.
+- Only after A Final Review PASS: reconcile docs/roadmap.md and docs/progress.md with Slice closure.
+  This packet does not close the Slice, alter Roadmap status or select the next Slice.
+
+Decision: SLICE READY FOR A REVIEW
 
 ## A Final Review
 
