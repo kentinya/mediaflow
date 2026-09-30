@@ -76,6 +76,57 @@ describe("destination model", () => {
     ).toBeUndefined();
   });
 
+  it("resolves rules edit routes carrying every backend-legal object ID", () => {
+    // The rules edit route is bound to the backend rules identifier contract:
+    // `+`, `@`, internal spaces and dots must all resolve to the same
+    // destination without coercion, while other dynamic destinations keep the
+    // generic URI-safe grammar.
+    for (const objectId of [
+      "proof+type",
+      "proof@type",
+      "proof type",
+      "proof.type",
+      "movie",
+      "a".repeat(64),
+    ]) {
+      const encoded = encodeURIComponent(objectId);
+      expect(
+        destinationForPath(`/rules/edit/recognitionTypes/${encoded}`)?.id,
+        objectId,
+      ).toBe("rules-edit");
+      expect(isDestinationPath(`/rules/edit/recognitionTypes/${encoded}`)).toBe(
+        true,
+      );
+    }
+    // Unencoded internal space still resolves: the browser decodes it before
+    // the router sees it.
+    expect(
+      destinationForPath("/rules/edit/recognitionTypes/proof type")?.id,
+    ).toBe("rules-edit");
+  });
+
+  it("keeps the rules edit route allowlist narrow", () => {
+    // The navigation model carries the route shape and identity grammar; the
+    // page guard (isRuleFormFamily) remains the family authority. Unsupported
+    // depth and unsafe/oversized identity shapes stay outside the contract.
+    expect(isDestinationPath("/rules/edit/recognitionTypes")).toBe(false);
+    expect(isDestinationPath("/rules/edit/recognitionTypes/a/b")).toBe(false);
+    expect(
+      isDestinationPath(`/rules/edit/recognitionTypes/${"a".repeat(65)}`),
+    ).toBe(false);
+    expect(isDestinationPath("/rules/edit/recognitionTypes/..")).toBe(false);
+    // Malformed percent-encoding fails closed.
+    expect(isDestinationPath("/rules/edit/recognitionTypes/proof%2")).toBe(
+      false,
+    );
+    // Other dynamic destinations keep rejecting the same characters.
+    expect(isDestinationPath("/operations/tasks/proof+type")).toBe(false);
+    expect(isDestinationPath("/operations/tasks/proof type")).toBe(false);
+    expect(isDestinationPath("/operations/tasks/proof@type")).toBe(false);
+    // Ordinary task IDs keep working.
+    expect(isDestinationPath("/operations/tasks/task-1")).toBe(true);
+  });
+
   it("derives a unique path allowlist from the destinations contract", () => {
     expect(destinationPaths).toEqual(destinations.map((item) => item.path));
     expect(new Set(destinationPaths).size).toBe(destinations.length);

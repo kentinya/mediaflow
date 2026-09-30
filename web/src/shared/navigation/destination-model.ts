@@ -479,6 +479,24 @@ const destinationPathSet: ReadonlySet<string> = new Set(allDestinationPaths);
  */
 const INSTANCE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
+/**
+ * The backend rules identifier contract, mirrored exactly so a rules edit deep
+ * link carries the identity the rules command authority accepts (`+`, `@`,
+ * internal spaces and dots, bounded at 64). Only the rules edit route consumes
+ * it; every other dynamic destination keeps the generic URI-safe grammar
+ * above. A slash can never occur inside a segment because the value is split
+ * on `/` before this check runs, and control characters stay excluded.
+ */
+const RULES_ID_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9_.:@+ -]{0,63}$/;
+
+function segmentValidator(destinationPath: DestinationPath) {
+  // Only the rules edit route is bound to the backend rules identifier
+  // contract; all other dynamic destinations keep the generic grammar.
+  return destinationPath === "/rules/edit/$family/$objectId"
+    ? RULES_ID_SEGMENT
+    : INSTANCE_SEGMENT;
+}
+
 function dynamicInstancePath(value: string): Destination | undefined {
   for (const destination of childDestinations) {
     const prefix = destination.dynamicPrefix;
@@ -495,13 +513,25 @@ function dynamicInstancePath(value: string): Destination | undefined {
     if (rest.length === 0 || rest.startsWith("$")) {
       continue;
     }
+    const segmentPattern = segmentValidator(destination.path);
     const segments = rest.split("/");
     if (
       segments.length !== declared ||
-      segments.some(
-        (segment) =>
-          segment === "" || segment === ".." || !INSTANCE_SEGMENT.test(segment),
-      )
+      segments.some((segment) => {
+        if (segment === "" || segment === "..") return true;
+        // A deep-link segment arrives percent-encoded. The grammar check runs
+        // on the decoded identity so an encoded `+`/space/dot matches the same
+        // contract as SPA navigation; malformed encoding fails closed.
+        let decoded = segment;
+        if (segment.includes("%")) {
+          try {
+            decoded = decodeURIComponent(segment);
+          } catch {
+            return true;
+          }
+        }
+        return !segmentPattern.test(decoded);
+      })
     ) {
       continue;
     }

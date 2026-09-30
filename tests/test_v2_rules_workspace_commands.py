@@ -32,6 +32,7 @@ from mediaflow.application.configuration_snapshot import ManagedConfigurationSer
 from mediaflow.application.rules_workspace_commands import (
     RULE_FAMILIES,
     RulesWorkspaceCommandService,
+    rules_family_section,
 )
 from mediaflow.domain.configuration_management import (
     ConfigurationVersionConflict,
@@ -1269,6 +1270,244 @@ class RulesWorkspaceCommandTests(unittest.TestCase):
             ),
             sorted(RULE_FAMILIES),
         )
+
+    # -- object identity grammar across all seven families ----------------
+
+    def test_every_backend_legal_id_character_round_trips_through_the_api(self) -> None:
+        """IDs the backend command authority already accepts (`+`, `@`, internal
+        space, dot, ordinary, and the 64-character bound) must survive publish,
+        edit read, name-only edit, copy candidate, disable/enable and
+        reference-protected removal through the real API routes unchanged."""
+
+        self._activate_baseline(empty_rule_families(example_document()))
+        # A 64-character ID exercises the existing boundary on the route; the
+        # dependent rule/binding below reference it, so it is published once and
+        # kept. The other four families each run a full publish/edit/copy/
+        # toggle/remove lifecycle with a special-character ID.
+        long_id = "a" * 64
+        object_ids = {
+            "recognitionTypes": long_id,
+            "metadataPolicies": "policy.2",
+            "namingPolicies": "naming+type",
+            "classificationPolicies": "class@type 2",
+            "organizePolicies": "org.type+2",
+        }
+        dependent_ids = {
+            "recognitionRules": "rule@type",
+            "typeBindings": "bind type",
+        }
+
+        def value_for(family: str, object_id: str) -> dict[str, object]:
+            if family == "recognitionRules":
+                return {
+                    "id": object_id,
+                    "name": "N",
+                    "condition": {"operator": "always", "children": []},
+                    "outputRecognitionType": long_id,
+                    "priority": 1,
+                    "score": 1,
+                    "enabled": True,
+                }
+            if family == "typeBindings":
+                return {
+                    "id": object_id,
+                    "recognitionType": long_id,
+                    "metadataPolicy": "policy.2",
+                    "namingPolicy": "naming+type",
+                    "classificationPolicy": "class@type 2",
+                    "organizePolicy": "org.type+2",
+                    "enabled": True,
+                }
+            if family == "metadataPolicies":
+                return {
+                    "id": object_id,
+                    "name": "N",
+                    "providerId": "tmdb",
+                    "mediaType": "movie",
+                    "enabled": True,
+                }
+            if family == "classificationPolicies":
+                return {
+                    "id": object_id,
+                    "name": "N",
+                    "enabled": True,
+                    "rules": [
+                        {
+                            "id": "any",
+                            "conditions": {"mediaType": ["movie"]},
+                            "result": {
+                                "mediaLibraryId": "movies",
+                                "library": "Movies",
+                                "path": ["Feature"],
+                            },
+                        }
+                    ],
+                }
+            if family == "organizePolicies":
+                return {"id": object_id, "operation": "MOVE", "conflictStrategy": "skip"}
+            return {"id": object_id, "name": "N", "enabled": True}
+
+        def run_lifecycle(family: str, object_id: str) -> None:
+            value = value_for(family, object_id)
+
+            status, saved = self.request(
+                "POST",
+                f"{BASE}/objects/{family}",
+                {"object": value, **self.wire_authority()},
+            )
+            self.assertEqual(status, 200, (family, object_id, saved))
+            self.assertEqual(saved["object"]["id"], object_id)
+            self.assertEqual(
+                [
+                    item["id"]
+                    for item in self.active_section(rules_family_section(family))
+                    if item["id"] == object_id
+                ],
+                [object_id],
+            )
+
+            # Reopen for edit: the identity is returned unchanged.
+            status, projection = self.request("GET", f"{BASE}/objects/{family}/{object_id}")
+            self.assertEqual(status, 200, (family, object_id))
+            self.assertEqual(projection["object"]["id"], object_id)
+
+            # Name-only edit keeps the ID immutable and publishes a successor.
+            edited = {**projection["object"]}
+            if "name" in edited:
+                edited["name"] = f"{edited['name']} edited"
+            status, published = self.request(
+                "PUT",
+                f"{BASE}/objects/{family}/{object_id}",
+                {"object": edited, **self.wire_authority()},
+            )
+            self.assertEqual(status, 200, (family, object_id, published))
+            self.assertEqual(published["object"]["id"], object_id)
+
+            # Copy allocates a new backend-selected ID from the special one.
+            status, candidate = self.request("GET", f"{BASE}/objects/{family}/{object_id}/copy")
+            self.assertEqual(status, 200, (family, object_id))
+            self.assertNotEqual(candidate["object"]["id"], object_id)
+            self.assertEqual(candidate["source"]["id"], object_id)
+
+            # Toggle publishes a successor when the family supports it.
+            if family != "organizePolicies":
+                status, toggled = self.request(
+                    "POST",
+                    f"{BASE}/objects/{family}/{object_id}/state/disable",
+                    {"enabled": False, **self.wire_authority()},
+                )
+                self.assertEqual(status, 200, (family, object_id))
+                self.assertIs(toggled["object"]["enabled"], False)
+
+            # Impact read reflects real references.
+            status, impact = self.request("GET", f"{BASE}/objects/{family}/{object_id}/impact")
+            self.assertEqual(status, 200, (family, object_id))
+
+            # Unreferenced removal publishes one checked successor.
+            status, removed = self.request(
+                "DELETE",
+                f"{BASE}/objects/{family}/{object_id}",
+                self.wire_authority(),
+            )
+            self.assertEqual(status, 200, (family, object_id, removed))
+            self.assertFalse(
+                any(
+                    item["id"] == object_id
+                    for item in self.active_section(rules_family_section(family))
+                ),
+            )
+            for adapter in self.adapters.values():
+                self.assertEqual(adapter.mutations, [], adapter.storage_id)
+
+        def publish_only(family: str, object_id: str) -> None:
+            status, saved = self.request(
+                "POST",
+                f"{BASE}/objects/{family}",
+                {"object": value_for(family, object_id), **self.wire_authority()},
+            )
+            self.assertEqual(status, 200, (family, object_id, saved))
+
+        for family, object_id in object_ids.items():
+            with self.subTest(family=family, object_id=object_id):
+                # The 64-character recognition type must stay published: the
+                # dependent rule and binding below reference it.
+                if family == "recognitionTypes":
+                    publish_only(family, object_id)
+                    continue
+                run_lifecycle(family, object_id)
+        # The dependent families reference the four policies, whose lifecycles
+        # above removed them. Publish fresh copies for the reference chain,
+        # then run the rule and binding through the same lifecycle. The rule's
+        # Save evidence requires an enabled binding that resolves every
+        # downstream policy, so the binding is republished enabled before the
+        # rule's lifecycle runs.
+        for family in (
+            "metadataPolicies",
+            "namingPolicies",
+            "classificationPolicies",
+            "organizePolicies",
+        ):
+            publish_only(family, object_ids[family])
+        # The rule's Save evidence requires an enabled binding that resolves
+        # every downstream policy; the binding's own lifecycle then removes it
+        # and republishes it, so its lifecycle runs first and the rule runs
+        # against a freshly published enabled binding.
+        with self.subTest(family="typeBindings", object_id=dependent_ids["typeBindings"]):
+            run_lifecycle("typeBindings", dependent_ids["typeBindings"])
+        publish_only("typeBindings", dependent_ids["typeBindings"])
+        with self.subTest(family="recognitionRules", object_id=dependent_ids["recognitionRules"]):
+            run_lifecycle("recognitionRules", dependent_ids["recognitionRules"])
+
+    def test_backend_legal_id_lifecycle_leaves_media_history_and_secrets_untouched(self) -> None:
+        self._activate_baseline(empty_rule_families(example_document()))
+        object_id = "proof+type"
+        status, _ = self.request(
+            "POST",
+            f"{BASE}/objects/recognitionTypes",
+            {
+                "object": {"id": object_id, "name": "N", "enabled": True},
+                **self.wire_authority(),
+            },
+        )
+        self.assertEqual(status, 200)
+        revisions_before = len(self.config_repo.list_revisions(limit=200))
+        status, impact = self.request("GET", f"{BASE}/objects/recognitionTypes/{object_id}/impact")
+        self.assertEqual(status, 200)
+        self.assertFalse(impact["references"]["removalBlocked"])
+        self.assert_no_secret_value(impact, where="special-id impact")
+        status, _ = self.request(
+            "DELETE", f"{BASE}/objects/recognitionTypes/{object_id}", self.wire_authority()
+        )
+        self.assertEqual(status, 200)
+        self.assertGreater(len(self.config_repo.list_revisions(limit=200)), revisions_before)
+        self.assertEqual(self.provider_calls, [])
+        self.assertEqual(len(self.runtime_repository.list_tasks(limit=50)), 0)
+
+    def test_invalid_identity_shapes_still_fail_closed_without_publishing(self) -> None:
+        before = self.configuration.active()
+        cases = [
+            ("slash traversal", "proof/type"),
+            ("leading separator", "/proof"),
+            ("oversized", "a" * 65),
+            ("empty", ""),
+        ]
+        for label, object_id in cases:
+            with self.subTest(case=label):
+                status, body = self.request(
+                    "POST",
+                    f"{BASE}/objects/recognitionTypes",
+                    {
+                        "object": {"id": object_id, "name": "N", "enabled": True},
+                        **self.wire_authority(),
+                    },
+                )
+                self.assertEqual(status, 400, (label, body))
+                self.assertIn(
+                    body["error"]["code"], {"rules_invalid_request", "rules_invalid_field"}
+                )
+                # A route that splits on "/" can never address a slash-bearing
+                # object; the application guard is the second fence.
+                self.assert_active_unchanged(before)
 
 
 if __name__ == "__main__":

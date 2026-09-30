@@ -6482,6 +6482,15 @@ const RULES_FIXTURE = JSON.parse(
   ),
 );
 
+const RULES_FORM_AUTHORITY = JSON.parse(
+  await readFile(
+    fileURLToPath(
+      new URL("./fixtures/rules-form-authority.json", import.meta.url),
+    ),
+    "utf8",
+  ),
+);
+
 const RULES_STATES = new Map();
 
 function rulesState(session) {
@@ -6513,14 +6522,18 @@ function rulesState(session) {
 /** The Active identity the fake currently reports, after any advance. */
 function currentRuleActive(state) {
   const base = RULES_FIXTURE.ruleReadiness.active;
-  return state.advance === 0
-    ? base
-    : {
-        ...base,
-        revisionId: `${RULES_FIXTURE.activeRevisionId}-${state.advance + 1}`,
-        version: base.version + state.advance,
-        sequence: base.sequence + state.advance,
-      };
+  const next =
+    state.advance === 0
+      ? base
+      : {
+          ...base,
+          revisionId: `${RULES_FIXTURE.activeRevisionId}-${state.advance + 1}`,
+          version: base.version + state.advance,
+          sequence: base.sequence + state.advance,
+        };
+  // The exact Active summary the real backend publishes: identity, sequence
+  // and digest, so every browser command composes against a full authority.
+  return { ...next, digest: next.digest ?? "e2e-rules-active-digest" };
 }
 
 /**
@@ -6553,11 +6566,27 @@ function rulesInventoryDocument(state, token, searchParams) {
   const enabled =
     enabledParam === "true" ? true : enabledParam === "false" ? false : null;
   const needle = query.trim().toLowerCase();
+  // Lifecycle objects published through the Task 41.6 object routes are part
+  // of the same Active: the inventory reflects them alongside the fixture
+  // rows, exactly like the backend's one Active document.
+  const lifecycleSummaries = (name) => {
+    const items = state.objects?.get(name);
+    if (!items) return [];
+    return [...items.entries()].map(([objectId, value]) => ({
+      id: objectId,
+      name: String(value?.name ?? objectId),
+      description: "",
+      enabled: value?.enabled !== false,
+      summary: "published through the identity lifecycle",
+      references: { incoming: 0, impact: "unreferenced" },
+    }));
+  };
   const sections = {};
   for (const [name, items] of Object.entries(state.sections)) {
+    const merged = [...items, ...lifecycleSummaries(name)];
     const selected = family === null || family === name;
     sections[name] = selected
-      ? items.filter((item) => {
+      ? merged.filter((item) => {
           const matchesText =
             needle.length === 0 ||
             [item.id, item.name, item.description, item.summary].some((value) =>
@@ -6569,6 +6598,13 @@ function rulesInventoryDocument(state, token, searchParams) {
       : [];
   }
   const active = currentRuleActive(state);
+  const counts = { ...state.counts };
+  const enabledCounts = { ...state.enabledCounts };
+  for (const [name, items] of Object.entries(sections)) {
+    if (!(name in counts)) continue;
+    counts[name] = items.length;
+    enabledCounts[name] = items.filter((item) => item.enabled).length;
+  }
   return {
     ...RULES_FIXTURE.inventory,
     available: state.available,
@@ -6580,8 +6616,8 @@ function rulesInventoryDocument(state, token, searchParams) {
     readiness: { state: state.state, gaps: state.gaps },
     overview: {
       ...RULES_FIXTURE.inventory.overview,
-      counts: state.counts,
-      enabledCounts: state.enabledCounts,
+      counts,
+      enabledCounts,
     },
     sections,
     filters: { family, query, enabled },
@@ -7386,6 +7422,338 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 200, configurationStatusDocument(rules, token));
+    return;
+  }
+
+  // V2 rules form authority (Slice 41, Task 41.6): the exact document the real
+  // Python API publishes, captured into
+  // web/tests/fixtures/rules-form-authority.json (identity fields pinned to
+  // the fixture's own constant), so the browser Save journey cannot drift
+  // from the backend field authority.
+  if (url.pathname === "/api/v1/operations/rules/form-authority") {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
+    if (LIMITED_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (!READABLE_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    const state = rulesState(session);
+    const active = currentRuleActive(state);
+    sendJson(res, 200, {
+      ...RULES_FORM_AUTHORITY,
+      active,
+    });
+    return;
+  }
+
+  // V2 rules object identity lifecycle (Slice 41, Task 41.6): the same
+  // /api/v1/operations/rules/objects/* contract the real backend serves, with
+  // the real backend identifier grammar. The fake keeps one per-session map of
+  // objects per family so create → edit → copy → toggle → remove run through
+  // exact-Active authority exactly like the Python API. Identity-bearing
+  // segments arrive percent-encoded; they are decoded once, validated against
+  // the backend grammar, and never re-encoded into a different identity.
+  const RULES_OBJECT_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@+ -]{0,63}$/;
+  const RULES_OBJECT_FAMILIES = new Set([
+    "recognitionRules",
+    "typeBindings",
+    "recognitionTypes",
+    "metadataPolicies",
+    "namingPolicies",
+    "classificationPolicies",
+    "organizePolicies",
+  ]);
+  const rulesObjectsMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/rules\/objects\/([^/]+)(?:\/([^/]+)(?:\/(copy|impact|state\/(?:enable|disable)))?)?$/,
+  );
+  if (rulesObjectsMatch) {
+    const decodeSegment = (segment) => {
+      try {
+        return decodeURIComponent(segment);
+      } catch {
+        return null;
+      }
+    };
+    const family = decodeSegment(rulesObjectsMatch[1]);
+    const suffix = rulesObjectsMatch[3];
+    const state = rulesState(session);
+    const active = currentRuleActive(state);
+    const authorityOk = () => {
+      if (LIMITED_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) return 401;
+      if (!VIEWER_TOKENS.has(token)) return 403;
+      return null;
+    };
+    const respond = (status, payload) => {
+      sendJson(res, status, payload);
+    };
+    const familyObjects = () => {
+      if (!state.objects) state.objects = new Map();
+      let items = state.objects.get(family);
+      if (!items) {
+        items = new Map();
+        state.objects.set(family, items);
+      }
+      return items;
+    };
+
+    // Collection create: POST /objects/{family}
+    if (rulesObjectsMatch[2] === undefined) {
+      const denied = authorityOk();
+      if (denied !== null) {
+        respond(denied, {
+          error: { code: denied === 401 ? "unauthorized" : "forbidden" },
+        });
+        return;
+      }
+      if (req.method !== "POST") {
+        respond(405, { error: { code: "method_not_allowed" } });
+        return;
+      }
+      const body = await readBoundedJsonBody(req, res).then(
+        (parsed) => parsed.document,
+      );
+      const object = body?.object;
+      const objectId = typeof object?.id === "string" ? object.id : null;
+      if (
+        !object ||
+        typeof object !== "object" ||
+        objectId === null ||
+        !RULES_OBJECT_ID.test(objectId) ||
+        body.expectedRevisionId !== active.revisionId ||
+        body.expectedVersion !== active.version
+      ) {
+        respond(400, { error: { code: "rules_invalid_request" } });
+        return;
+      }
+      if (familyObjects().has(objectId)) {
+        respond(409, { error: { code: "rules_duplicate" } });
+        return;
+      }
+      familyObjects().set(objectId, { ...object });
+      RECORDED_MUTATIONS.push({
+        method: "POST",
+        objectType: "rules_object",
+        path: `/api/v1/operations/rules/objects/${family}`,
+      });
+      state.advance += 1;
+      respond(200, {
+        family,
+        action: "save",
+        object: { ...object },
+        removed: null,
+        active: currentRuleActive(state),
+        sideEffects: "configuration_only",
+      });
+      return;
+    }
+
+    const objectId = decodeSegment(rulesObjectsMatch[2]);
+    if (
+      !RULES_OBJECT_FAMILIES.has(family) ||
+      objectId === null ||
+      !RULES_OBJECT_ID.test(objectId)
+    ) {
+      respond(400, { error: { code: "rules_invalid_request" } });
+      return;
+    }
+    const stored = familyObjects().get(objectId);
+
+    // Copy/impact reads: GET /objects/{family}/{id}/{copy|impact}
+    if (suffix === "copy" || suffix === "impact") {
+      if (req.method !== "GET") {
+        respond(405, { error: { code: "method_not_allowed" } });
+        return;
+      }
+      if (LIMITED_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+        respond(401, { error: { code: "unauthorized" } });
+        return;
+      }
+      if (!READABLE_TOKENS.has(token)) {
+        respond(401, { error: { code: "unauthorized" } });
+        return;
+      }
+      if (!stored) {
+        respond(404, {
+          error: {
+            code: "not_found",
+            details: { durableState: "active_unchanged", sideEffects: "none" },
+          },
+        });
+        return;
+      }
+      if (suffix === "impact") {
+        sendJson(res, 200, {
+          family,
+          object: { id: objectId, name: stored.name ?? objectId },
+          references: {
+            total: 0,
+            items: [],
+            truncated: false,
+            removalBlocked: false,
+          },
+          active,
+          sideEffects: "none",
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        family,
+        object: { ...stored, id: `${objectId}-copy-1` },
+        source: { id: objectId, name: stored.name ?? objectId },
+        active,
+        sideEffects: "none",
+      });
+      return;
+    }
+
+    // State change: POST /objects/{family}/{id}/state/{enable|disable}
+    if (suffix && suffix.startsWith("state/")) {
+      const denied = authorityOk();
+      if (denied !== null) {
+        respond(denied, {
+          error: { code: denied === 401 ? "unauthorized" : "forbidden" },
+        });
+        return;
+      }
+      if (req.method !== "POST") {
+        respond(405, { error: { code: "method_not_allowed" } });
+        return;
+      }
+      const body = await readBoundedJsonBody(req, res).then(
+        (parsed) => parsed.document,
+      );
+      const enabled = suffix === "state/enable";
+      if (!stored || body?.enabled !== enabled) {
+        respond(stored ? 400 : 404, {
+          error: { code: stored ? "rules_invalid_request" : "not_found" },
+        });
+        return;
+      }
+      stored.enabled = enabled;
+      RECORDED_MUTATIONS.push({
+        method: "POST",
+        objectType: "rules_object_state",
+        path: `/api/v1/operations/rules/objects/${family}/${encodeURIComponent(objectId)}/state/${enabled ? "enable" : "disable"}`,
+      });
+      state.advance += 1;
+      respond(200, {
+        family,
+        action: "state",
+        object: { ...stored },
+        removed: null,
+        active: currentRuleActive(state),
+        sideEffects: "configuration_only",
+      });
+      return;
+    }
+
+    // One object: GET projection / PUT edit / DELETE remove
+    if (req.method === "GET") {
+      if (LIMITED_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+        respond(401, { error: { code: "unauthorized" } });
+        return;
+      }
+      if (!READABLE_TOKENS.has(token)) {
+        respond(401, { error: { code: "unauthorized" } });
+        return;
+      }
+      if (!stored) {
+        respond(404, {
+          error: {
+            code: "not_found",
+            details: { durableState: "active_unchanged", sideEffects: "none" },
+          },
+        });
+        return;
+      }
+      sendJson(res, 200, {
+        family,
+        object: { ...stored, id: objectId },
+        references: {
+          total: 0,
+          items: [],
+          truncated: false,
+          removalBlocked: false,
+        },
+        active,
+        sideEffects: "none",
+      });
+      return;
+    }
+    const denied = authorityOk();
+    if (denied !== null) {
+      respond(denied, {
+        error: { code: denied === 401 ? "unauthorized" : "forbidden" },
+      });
+      return;
+    }
+    if (req.method === "PUT") {
+      const body = await readBoundedJsonBody(req, res).then(
+        (parsed) => parsed.document,
+      );
+      const object = body?.object;
+      if (!stored || object?.id !== objectId) {
+        respond(stored ? 400 : 404, {
+          error: { code: stored ? "rules_invalid_request" : "not_found" },
+        });
+        return;
+      }
+      familyObjects().set(objectId, { ...object });
+      RECORDED_MUTATIONS.push({
+        method: "PUT",
+        objectType: "rules_object",
+        path: `/api/v1/operations/rules/objects/${family}/${encodeURIComponent(objectId)}`,
+      });
+      state.advance += 1;
+      respond(200, {
+        family,
+        action: "save",
+        object: { ...object },
+        removed: null,
+        active: currentRuleActive(state),
+        sideEffects: "configuration_only",
+      });
+      return;
+    }
+    if (req.method === "DELETE") {
+      const body = await readBoundedJsonBody(req, res).then(
+        (parsed) => parsed.document,
+      );
+      if (!stored) {
+        respond(404, { error: { code: "not_found" } });
+        return;
+      }
+      if (
+        body?.expectedRevisionId !== active.revisionId ||
+        body?.expectedVersion !== active.version
+      ) {
+        respond(400, { error: { code: "rules_invalid_request" } });
+        return;
+      }
+      familyObjects().delete(objectId);
+      RECORDED_MUTATIONS.push({
+        method: "DELETE",
+        objectType: "rules_object",
+        path: `/api/v1/operations/rules/objects/${family}/${encodeURIComponent(objectId)}`,
+      });
+      state.advance += 1;
+      respond(200, {
+        family,
+        action: "remove",
+        object: null,
+        removed: { id: objectId },
+        active: currentRuleActive(state),
+        sideEffects: "configuration_only",
+      });
+      return;
+    }
+    respond(405, { error: { code: "method_not_allowed" } });
     return;
   }
 
@@ -13426,6 +13794,8 @@ const server = createServer(async (req, res) => {
           : [],
       setupDraft: null,
       published: null,
+      // Per-session object lifecycle state for the Task 41.6 identity proof.
+      objects: new Map(),
     });
     res.setHeader(
       "Set-Cookie",
@@ -13685,13 +14055,35 @@ const server = createServer(async (req, res) => {
   }
   if (url.pathname.startsWith("/ui-v2/")) {
     const relative = url.pathname.slice("/ui-v2/".length);
+    // The same narrow rules-edit exception the production Python boundary
+    // serves: a legal dotted identity on the allowlisted rules edit route is
+    // operator data, not an asset filename, so a refresh receives the entry
+    // document. Every other dotted path stays a 404 (Task 41.6).
+    const rulesEditMatch = url.pathname.match(
+      /^\/ui-v2\/rules\/edit\/(recognitionRules|typeBindings|recognitionTypes|metadataPolicies|namingPolicies|classificationPolicies|organizePolicies)\/([^/]+)$/,
+    );
+    const decodedRulesId = rulesEditMatch
+      ? (() => {
+          try {
+            return decodeURIComponent(rulesEditMatch[2]);
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+    const isRulesEditEntry =
+      decodedRulesId !== null &&
+      /^[A-Za-z0-9][A-Za-z0-9_.:@+ -]{0,63}$/.test(decodedRulesId) &&
+      !/\.(bak|backup|env|sh|py|yaml|yml|toml|md|js|mjs|css|json|map|svg|txt|html|ico|webmanifest|woff2)$/i.test(
+        decodedRulesId,
+      );
     const hasFileSuffix = Boolean(extname(relative));
     const body = await readArtifact(relative);
     if (body !== null && Object.hasOwn(CONTENT_TYPES, extname(relative))) {
       sendFile(res, body, CONTENT_TYPES[extname(relative)]);
       return;
     }
-    if (hasFileSuffix) {
+    if (hasFileSuffix && !isRulesEditEntry) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("not found");
       return;
