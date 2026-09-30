@@ -9,13 +9,13 @@ fallback for the ordinary journey.
 Slice ID: 41
 Name: V2 Organizing Rules Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: READY FOR A REVIEW
+Status: PASS / CLOSED
 Base SHA: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
 Implementation Head: 8433319168272ecf7ccde017afc36525e8c62ea0
 Contract Revision: 2026-09-28 — A default-page/create-drawer correction authorized by the user
 Risk: High
 Final Test Level: T4
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 ## Authority and sequencing
@@ -588,7 +588,102 @@ Decision: SLICE READY FOR A REVIEW
 
 ## A Final Review
 
-Not yet conducted. A will review the complete immutable range
-`8a6a15597bab2fd10673db84d73a5bbc1d455ad8..Implementation Head`, Required Outcomes, operator
-journey, reference interpretation, failures/recovery, architecture/safety and Slice-final evidence
-before deciding `PASS`, `FIX REQUIRED` or `PARTIAL / RESCOPE`.
+```text
+Reviewed Range: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8..8433319168272ecf7ccde017afc36525e8c62ea0
+Decision: PASS
+P0/P1 Blockers: None
+Closure Reconciliation: COMPLETE — 2026-09-30
+Next Action: A SELECTS THE NEXT LARGE SLICE
+```
+
+Review authority: the user explicitly reassigned the reviewing agent from B to A for this final
+review. This is the disclosed exception to the normal A/B separation in
+`docs/development-workflow.md` §2. The implementation was authored by Developer; this review
+reexamined the complete Slice range and actual production boundaries rather than accepting Task PASS.
+
+Required Outcomes and surfaces:
+- RO-1 / workspace surfaces — COMPLETE: shared-shell entry and all eight sections, full-width
+  inventories, explicit Add/Copy candidates and full-page Edit; typed forms, bounded narrow/keyboard
+  operation, exact identity deep links, authenticated refresh and correctable input.
+- RO-2 / publication surface — COMPLETE: focused exact-Active successor, whole-document validation,
+  applicable evidence, pre-publication runtime preparation and atomic checked activation; explicit
+  lifecycle intent, prior Active on rejection and state verification without uncertain replay.
+- RO-3 / recognition surface — COMPLETE: production nested condition/value validation and existing
+  priority/score/stop/ambiguity semantics, actual references and exact-candidate Strategy Test.
+- RO-4 / binding surface — COMPLETE: one enabled binding, four validated downstream references and
+  independent C identity under A policy reuse in resolver/runtime, Files/Automation and previews.
+- RO-5 / downstream surfaces — COMPLETE: current Metadata, Movie/TV Naming, Classification and
+  Organize fields, copy/applicable enable state and reference-protected removal. Configuration
+  removal changes no media or historical pins; policy editing grants no execution authority.
+- RO-6 / analysis surfaces — COMPLETE: exact non-Active candidate Strategy/Metadata tests and
+  Naming/Classification/Organize explanations, independent result rows, visible edit staleness,
+  bounded provider intent/failures and zero Storage mutation.
+- RO-7 / integration surfaces — COMPLETE: shared Python normalization, permissions, concurrency,
+  applicability, audit and publication; native Settings handoff/readiness, V1/API/CLI coexistence
+  and immutable Active/pinned runtime consumers.
+- RO-8 / recovery surfaces — COMPLETE: intentional empty/partial guidance, named invalid,
+  unavailable, stale, permission and reference states; failed impact reads never fabricate counts
+  or permit Delete, and preserved input plus explicit verification/reread completes recovery.
+
+Safety and architecture:
+- The 55-file Base..Head manifest introduces the Rules presentation/composition boundary over the
+  existing managed authority and policy engines. No second resolver, configuration authority,
+  scheduler, executor, new Provider or Deferred dependency was introduced.
+- Existing Scanner/Parser/Recognition/Metadata/Naming/Classification/Planner and execution code
+  remain analysis/mutation separated. Runtime preparation happens before the Active pointer change;
+  backend permissions, checked evidence, exact optimistic fencing and historical pins remain intact.
+- Read/navigation creates no Draft, Provider request or work. Explicit previews persist non-Active
+  evidence only, issue no execution authority and use read-only Storage guards where needed.
+- No silent overwrite/delete/link fallback, FFmpeg/FFprobe dependency or private configuration
+  entered the range. `config/alist.json` remains ignored and untracked. All six reference images
+  match their original admitted bytes; four unrelated untracked images remain outside checkpoints.
+
+Validation assessment:
+- B's actual retained full-run logs agree with its packet: Python 2015 tests with 7 explicitly
+  unavailable external/endurance profiles; Web 825 tests; Wheel/schema-39 rehearsal and Docker
+  release-security PASS. Post-Implementation-Head commits change only handoff documentation.
+- A reran the six focused Python suites named below: first run 136 passed / 1 failed / 114 subtests
+  passed; unchanged confirmation run 137 passed / 114 subtests passed, no skips. The initial failure
+  is retained below and is not relabelled PASS.
+  Command: `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace.py
+  tests/test_v2_rules_workspace_commands.py tests/test_v2_rules_workspace_previews.py
+  tests/test_v2_settings_rule_readiness.py tests/test_v2_ui.py tests/test_api_security.py`.
+- A reran focused Rules/Settings/navigation Web tests: 8 files, 105 tests PASS, no skips, using
+  `npm --prefix web test -- --run src/entities/rules src/features/rules
+  src/shared/api/rules-workspace-api.test.ts src/features/configuration/ConfigurationPage.test.tsx
+  src/shared/navigation`.
+- A reran `npm --prefix web run test:e2e -- tests/e2e/rules-readiness.spec.ts
+  tests/e2e/rules-identity.spec.ts`: 14 PASS, no skips.
+- A reran `python3 scripts/rules_identity_browser_proof.py`: real Python-served identity/lifecycle,
+  suffix-bearing refresh and failed-impact recovery PASS. A also reran the retained B preview probe:
+  all five requests HTTP 200/completed, C stays C with A Naming/Classification, Active unchanged
+  during analysis, every result stale after edit, binding Save publishes a successor.
+- Governance, complete-range whitespace/private/dependency/manifest and unchanged-image checks
+  PASS. Full regression/packaging evidence was inspected, not redundantly rerun after doc-only edits.
+
+Known Non-blocking Issues:
+- P2 — The direct-service concurrency test intermittently rejects the safe losing outcome
+  `rules_destination_check_failed` because its allowed-error assertion omits that category.
+  In the observed failure, the immutable-successor, published-count and Active assertions passed;
+  the failure occurred only at the allowed-error assertion. The shared bounded read-only gate can
+  refuse overlapping checks, while the production API serializes Rules publication under its
+  runtime-binding lock. The unchanged isolated rerun, 8 observer-only repetitions and full focused
+  confirmation passed. No lost update, mixed publication or current user-journey failure was shown;
+  the initial run did not record the underlying destination failure category. No test was edited,
+  assertion relaxed or skip added. This test-quality issue does not create another Task or Slice.
+- Existing advisory main-chunk size and passing SQLite/jsdom notices remain non-blocking as listed
+  in the Closure Packet. Real external services/endurance remain UNAVAILABLE, not accepted by proxy.
+
+Closure Reconciliation:
+- `SLICE.md` records PASS / CLOSED with the same Base and Implementation Head; the B Closure Packet
+  remains historical evidence. `TASK.md` has no active Task and hands next selection to A.
+- `docs/roadmap.md` closes Slice 41; `docs/progress.md` records one compact Base/Head/date/delivery/
+  deferral ledger entry and updates its current pointer.
+- `docs/product-experience.md` and `docs/architecture.md` reconcile native Rules from TARGET to
+  CURRENT, actual shared command/static/runtime boundaries and current coexistence.
+- `docs/v2-requirements.md` and the Chinese specification reconcile current development facts;
+  stable requirement IDs/meanings and the released V1 baseline are unchanged.
+- README and configuration guidance identify the delivered Rules route, typed editing, one Save,
+  exact-candidate analysis and recovery. Every original Explicitly Deferred item remains excluded.
+
+No next Slice is selected in this closure action.

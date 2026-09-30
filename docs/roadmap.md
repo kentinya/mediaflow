@@ -26,7 +26,7 @@ only in [the development workflow](development-workflow.md).
 | 38 — MediaLibrary Files Workspace and Route Separation | Replace the Library landing with reference-aligned MediaLibrary live browsing, atomic library create/edit/remove and bounded common file management without Organize, card statistics or thumbnails; separate MediaLibrary and ResourceLibrary routes while preserving and extending the Files journey with checked ResourceLibrary/MediaLibrary editing | PASS / CLOSED | 37 and existing MediaLibrary/managed-configuration/Storage foundations |
 | 39 — Storage Management Workspace | Deliver the V2 Storage management journey from the supplied reference: bounded provider inventory and references, typed Local/SMB/OpenList/S3/R2 configuration, page-local checked Active Add/Edit/copy/enable/disable/remove, and zero-mutation Connection/Read diagnostics; complete the existing admitted-transfer Worker handoff across first activation/configuration changes, with truthful health and waiting-state recovery | PASS / CLOSED | 38 and existing managed-configuration/Storage foundations |
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
-| 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | ACTIVE | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
+| 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 
 ## Current boundary
 
@@ -54,8 +54,8 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 ## V2 program boundary
 
 V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 and
-37–40 are closed historical capabilities. Slice 41 is ACTIVE for the native V2 organizing-rules
-workspace selected by A on 2026-09-28 from the six user-supplied business/style references. Those
+37–41 are closed capabilities. Slice 41 is PASS / CLOSED after A's 2026-09-30 final review of the
+native V2 organizing-rules workspace selected from six user-supplied business/style references. Those
 images define relationship, composition and visual language rather than actual production data or
 pixel-identical fixtures. Slice 39 delivered the V2 Storage management
 workspace, reusing the existing managed-configuration and Storage foundations, together with
@@ -98,16 +98,20 @@ daily-operations journey across actionable Dashboard state, Tasks/Jobs, bounded 
 Web-native exact manual Organize, scheduled Automation and Notification delivery. The accepted Head
 includes both post-closure P1 corrections: the first restores the typed Manual Organize Preview safety
 projection and separate destructive confirmations; the second restores Worker reconstruction of the
-exact pinned source authority and fail-closed pre-mutation revalidation. Slice 40 is the most
-recently closed large Slice at Base `d814b7c1c6819e79271245a1126f53aca6aeaf69` and Implementation
+exact pinned source authority and fail-closed pre-mutation revalidation. Slice 40 closed at Base
+`d814b7c1c6819e79271245a1126f53aca6aeaf69` and Implementation
 Head `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7`. It delivered native V2 Settings, a legal empty
 business Active, conditional publication checks, command-specific readiness and resident service
 adoption without mandatory media mounts or process restart. Mandatory media-business onboarding,
-wholesale policy-page migration and V1 retirement remained deferred at closure. Slice 41 now owns
-the organizing-rule portion of that migration: `/ui-v2/rules`, the complete RecognitionType policy
-graph, typed policy forms, exact-revision tests/previews and one-click Save with automatic checked
-activation using existing Python authority. Metadata Provider switching, Review/Recovery migration, actual media execution
-from the rules page, V1 retirement and unrelated configuration redesign remain outside Slice 41.
+wholesale policy-page migration and V1 retirement remained deferred at that closure. Slice 41 is
+now the most recently closed large Slice at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and
+Implementation Head `8433319168272ecf7ccde017afc36525e8c62ea0`. It delivered `/ui-v2/rules`, the
+complete RecognitionType
+policy graph, typed policy forms, reference-safe lifecycle, exact-candidate tests/previews,
+one-Save checked activation and Settings readiness/recovery using existing Python authority.
+Metadata Provider switching, Review/Recovery migration, actual media execution from Rules, V1
+retirement and unrelated configuration redesign remain deferred. A selects the next large Slice in
+a separate turn; none is activated by this closure.
 This Roadmap does not retain the retired Slice 34–36 program rows.
 
 ## Roadmap rules
@@ -121,8 +125,9 @@ This Roadmap does not retain the retired Slice 34–36 program rows.
   route/navigation integration. Closed Slice 39 delivered Storage management and its necessary
   shared shell integration. Closed Slice 40 delivered Settings/empty-baseline startup and resident
   service configuration adoption; existing Files, MediaLibrary and other journeys remain protected.
-- Active Slice 41 owns the V2 organizing-rules workspace and may not absorb actual media execution,
-  Provider switching, Review/Recovery migration, V1 cutover or unrelated page redesign.
+- Closed Slice 41 delivered the V2 organizing-rules workspace; actual media execution from Rules,
+  Provider switching, Review/Recovery migration, V1 cutover and unrelated page redesign remain
+  outside its accepted boundary.
 - Task PASS, fixes, test counts, probes, rejected SHAs and review narratives never enter this file.
 - Safety, product and architecture requirements remain authoritative even when omitted from this
   compact prioritization view.

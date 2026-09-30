@@ -73,7 +73,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 38 — MediaLibrary Files Workspace and Route Separation (PASS / CLOSED)
     → Slice 39 — Storage Management Workspace (PASS / CLOSED)
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
-    → Slice 41 — V2 Organizing Rules Workspace (ACTIVE; TARGET below)
+    → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -340,10 +340,10 @@ actual no-Active→empty Active→configured operation without resident process 
 controlled scheduling/delivery and transfer regression. This capability does not remove V1 or migrate
 every policy/Review/Recovery workspace.
 
-## TARGET — V2 organizing rules workspace (Slice 41)
+## CURRENT — V2 organizing rules workspace (Slice 41)
 
-Slice 41 adds one native V2 presentation/composition layer over the existing managed configuration
-and policy engines. It does not introduce new domain ownership. The intended authority path is:
+Slice 41 delivers one native V2 presentation/composition layer over the existing managed
+configuration and policy engines. It does not introduce new domain ownership. The authority path is:
 
 ```text
 /ui-v2/rules explicit Save
@@ -368,10 +368,11 @@ validates the complete document, runs applicable checks and atomically activates
 does not perform separate Save-Draft, Validate or Activate actions. Entry/read/search/filter/
 navigation creates no Draft or work.
 
-An explicit Test/Preview may stage a bounded page-scoped candidate and exact evidence so existing
-revision-bound engines remain reusable. That state is visibly non-Active and cannot include unrelated
-general-configuration Draft changes. Save may reuse current evidence only when it still matches the
-exact candidate; otherwise the backend reruns the applicable check before activation.
+An explicit Test/Preview stages a bounded page-scoped candidate and exact evidence through
+`RulesWorkspaceCommandService.stage_preview_candidate`, so existing revision-bound engines remain
+reusable. That state is visibly non-Active and excludes unrelated general-configuration Draft
+changes. Save constructs its own focused successor and runs the shared applicable evidence before
+checked activation; preview success does not grant publication or execution authority.
 
 The workspace exposes Overview, RecognitionTypePolicy bindings, Recognition Types, Recognition
 Rules, Metadata Policies, Naming Policies, Classification Policies and Organize Policies. The six
@@ -396,12 +397,14 @@ Production domain semantics remain unchanged:
   authority.
 
 Existing generic `/api/v1/configuration/revisions/.../objects/...` routes and application services
-remain the source for object lifecycle. Slice 41 may add bounded rule-workspace projections or
-one page-level Save-and-Activate composition command to avoid leaking whole-document protocols to
-the browser, but those adapters must delegate to the same permission, schema, normalization,
-reference, audit, exact-version, validation and activation services. The Save candidate is based on
-the current Active and may not silently publish unrelated changes from another general-configuration
-Draft. V1 and V2 may coexist without schema or semantic forks.
+remain the source for object lifecycle. `/api/v1/operations/rules/*` adds bounded inventory, form,
+object/impact/copy projections, exact-candidate analysis and page-level checked publication.
+`RulesWorkspaceCommandService` composes the shared `ConfigurationObjectService` and
+`ManagedConfigurationService` normalization, reference, audit, exact-version, validation and
+activation services. The API enforces READ or configuration-management/activation permissions,
+serializes publication under its runtime-binding lock and prepares successor consumers before the
+atomic pointer change. Save starts from the observed exact Active and never publishes unrelated
+changes from another general-configuration Draft. V1 and V2 coexist without schema or semantic forks.
 
 Preview/test results are evidence, not runtime state. They are internally bound to the exact
 revision/version/digest, become stale after relevant edits and remain bounded and secret-free.
@@ -424,7 +427,11 @@ navigation and refresh do not. Existing-object Edit is an explicit full-page sta
 presentation remains complete and preserves focus, unsaved-state protection and safe deep links.
 The Python backend remains authoritative for RBAC, policy decisions, Active identity and every
 mutation boundary. `OrganizerExecutor` remains the sole Storage mutator, and this workspace performs
-no Storage mutation.
+no Storage mutation. Correctable form values use tab-scoped browser storage; tokens and Active
+publication authority remain outside it. Backend-legal Rules IDs share one grammar across typed
+API/navigation and Python static entry. Only the exact allowlisted edit route treats a file-like
+final ID as identity data; unknown dotted assets and traversal still fail closed. Failed impact
+reads remain unavailable evidence rather than fabricated reference counts.
 
 ## Persistence
 
@@ -432,7 +439,7 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `34`, configuration-management schema `10` and
+The implementation currently declares runtime schema `39`, configuration-management schema `10` and
 managed document schema `1`. These are compatibility markers, not feature statuses.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
@@ -527,9 +534,11 @@ schedules, notifications, logs, dashboard, security audit and system status rout
 at the shared service boundary; 401/403 behavior and Web/API projections are tested together.
 
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
-Python application. V2 currently exposes Dashboard, Library and the Operations route family for
-Tasks, Jobs, manual Scan/Preview/Organize, Automation and Notifications; Review/Recovery and general
-Configuration remain explicit migration landings. Both UIs use the shared `/api/v1/*` application
+Python application. V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
+Settings, Rules and the Operations route family for Tasks, Jobs, manual Scan/Preview/Organize,
+Automation and Notifications. Review/Recovery remains an explicit migration handoff; Advanced JSON
+and the general configuration lifecycle remain support/compatibility surfaces. Both UIs use the
+shared `/api/v1/*` application
 authority. The browser holds the API token only in memory and does not provide built-in account
 login.
 

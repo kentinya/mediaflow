@@ -268,7 +268,12 @@ must become readable after the correction without a database edit, delete/recrea
 - **Recovery:** correct the named policy or reference and rerun the exact-revision preview/check.
   Unsupported operations never silently fall back to another operation.
 
-### TARGET — V2 organizing rules workspace (Slice 41)
+### CURRENT — V2 organizing rules workspace (Slice 41)
+
+Slice 41 delivers this native Web journey over the existing managed configuration and policy
+engines. The ordinary path uses typed forms; V1 and Advanced JSON remain compatibility/support
+surfaces. Create/copy input is kept within the browser tab for correction and refresh; credentials
+and publication authority never become browser-persisted form state.
 
 - **Goal:** maintain and understand the complete rule graph from RecognitionRule through
   RecognitionType and its Metadata/Naming/Classification/Organize binding, then click one `保存`
@@ -659,8 +664,9 @@ current Files workspace defined by [`file-page-visual-spec.md`](file-page-visual
 post-closure correction also aligned formal `library/path` destination semantics with the local
 CLI and removed the direct browser Upload/Download vertical. Closed Slice 38 delivered the separate
 MediaLibrary journey; Slice 39 delivered Storage management and transfer continuity; Slice 40
-delivered native Settings, empty-business activation and resident configuration adoption. The
-previously planned Slice 34–36 migration boundaries remain retired.
+delivered native Settings, empty-business activation and resident configuration adoption. Slice 41
+delivered the native organizing-rules graph journey, exact-candidate analysis and one-Save checked
+publication. The previously planned Slice 34–36 migration boundaries remain retired.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -755,9 +761,14 @@ previously planned Slice 34–36 migration boundaries remain retired.
   `/api/v1/*` authority into actionable Dashboard, Task/Job, bounded Scan/Preview, Web-native exact
   manual Organize, Automation and Notification journeys while preserving backend RBAC, immutable
   binding, fencing, explicit destructive intent and OrganizerExecutor-only mutation.
-- **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Review/Recovery
-  and wholesale policy-workspace migration remain outside Slice 40. The CURRENT Settings/empty-
-  baseline journey above does not claim those deferred workspaces have migrated.
+- **CURRENT V2 RULES:** the Rules workspace completes typed recognition/type-binding and downstream
+  policy management, reference-safe lifecycle, exact-candidate tests/previews and automatic checked
+  publication over the same Python authority. Settings shows corresponding rule-family readiness
+  and returns explicitly to the originating family.
+- **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Review/Recovery,
+  Provider switching and actual media execution from Rules remain outside the delivered workspace.
+  Slice 40's historical deferrals are unchanged; Slice 41 delivers its organizing-policy migration
+  portion without claiming the other deferred journeys have migrated.
 
 ## Files Journey Update — 2026-09-14
 

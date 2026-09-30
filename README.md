@@ -703,6 +703,20 @@ operation history remains compatible.
 
 ## Current capabilities
 
+V2 `整理规则` at `/ui-v2/rules` provides native typed management for RecognitionTypes, nested
+RecognitionRules, type-policy bindings and Metadata/Naming/Classification/Organize policies. Each
+family opens as a full-width Active inventory; explicit Add/Copy opens a candidate drawer and Edit
+opens a refresh-safe page with immutable ID. One `保存` composes an exact-Active successor, validates
+it, runs applicable checks and atomically activates it. Failed Save retains the previous Active and
+correctable input; unknown outcomes require state verification before another explicit attempt.
+
+Explicit Strategy/Metadata tests and Naming/Classification/Organize previews use exact non-Active
+candidates, explain results and become stale after editing. Offline tests make no Provider call;
+live Metadata access requires explicit intent. Reads, Save and analysis start no media work, and
+analysis never mutates Storage or grants execution authority. Settings links readiness gaps to the
+corresponding rule family. V1 and Advanced JSON remain support/compatibility paths; Provider
+switching, Review/Recovery migration and media execution from Rules remain deferred.
+
 The managed Configuration view/API supports guided Local/SMB/OpenList/AWS S3/Cloudflare R2/generic
 S3-compatible Storage setup, Storage Browser/path selection, read-only Storage checks, Recognition Strategy Test,
 MetadataPolicy offline/live tests and candidate confirmation, plus same-Provider Metadata correction
