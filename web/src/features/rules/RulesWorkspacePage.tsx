@@ -24,13 +24,14 @@ import {
 } from "../../entities/rules/rules-workspace";
 import {
   RULE_FORM_FAMILIES,
+  ruleFailureCopy,
+  ruleImpactFailureCopy,
   type RuleFormFamily,
 } from "../../entities/rules/rules-form";
 import {
   RulesObjectDrawer,
   type RulesDrawerSession,
 } from "./RulesObjectDrawer";
-import { ruleFailureCopy } from "../../entities/rules/rules-form";
 import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { readRuleDraft } from "./rules-workspace-labels";
 
@@ -227,6 +228,14 @@ interface PendingListCommand {
     }[];
   };
   readonly loadingImpact?: boolean;
+  /**
+   * The impact read itself failed (stale inventory after a concurrent
+   * removal, a denied permission, a transport failure, …). This is distinct
+   * from a successful zero-reference read: no reference evidence exists, so
+   * deletion stays unavailable and the recovery path is an explicit refresh
+   * or reread, never a fabricated reference claim.
+   */
+  readonly impactFailed?: string;
 }
 
 function Inventory({
@@ -363,11 +372,17 @@ function Inventory({
               ? {
                   ...current,
                   loadingImpact: false,
-                  impact: { total: 0, removalBlocked: true, items: [] },
+                  // No reference evidence exists: this is a failed read, not a
+                  // successful zero-reference result. Deletion stays
+                  // unavailable and the recovery is an explicit refresh or
+                  // reread; the failure text below explains the stale
+                  // inventory instead of inventing dependents.
+                  impact: undefined,
+                  impactFailed: ruleImpactFailureCopy(outcome.code),
                 }
               : current,
           );
-          setFailure(ruleFailureCopy(outcome.code));
+          setFailure(ruleImpactFailureCopy(outcome.code));
         }
       },
     );
@@ -431,21 +446,33 @@ function Inventory({
               ? `确认${pending.enabled ? "启用" : "停用"}${LABELS[pending.family]} ${pending.objectId}?这会发布一个新的 Active。`
               : pending.loadingImpact
                 ? "正在读取该对象的真实引用影响..."
-                : pending.impact?.removalBlocked
-                  ? `该对象仍被 ${pending.impact.total} 处引用,不能移除;必须先处理:${
-                      pending.impact.items
-                        .map(
-                          (item) =>
-                            `${item.label || item.id} (${item.section})`,
-                        )
-                        .join("、") || "见服务端引用证据"
-                    }。`
-                  : `确认移除${LABELS[pending.family]} ${pending.objectId}?当前没有任何引用;这会发布不含该对象的新 Active,媒体文件不受影响。`}
+                : pending.impactFailed !== undefined
+                  ? `无法读取该对象的引用影响:${pending.impactFailed} 清单可能已过期(例如该对象已被其他管理员移除),本次未做任何修改。请先刷新清单或重新读取引用影响,再决定是否移除。`
+                  : pending.impact?.removalBlocked
+                    ? `该对象仍被 ${pending.impact.total} 处引用,不能移除;必须先处理:${
+                        pending.impact.items
+                          .map(
+                            (item) =>
+                              `${item.label || item.id} (${item.section})`,
+                          )
+                          .join("、") || "见服务端引用证据"
+                      }。`
+                    : `确认移除${LABELS[pending.family]} ${pending.objectId}?当前没有任何引用;这会发布不含该对象的新 Active,媒体文件不受影响。`}
           </p>
           <div className="mf-actions">
-            {pending.kind === "remove" && pending.impact?.removalBlocked ? (
-              <button type="button" onClick={() => setPending(null)}>
-                返回
+            {pending.kind === "remove" &&
+            (pending.impact?.removalBlocked ||
+              pending.impactFailed !== undefined) ? (
+              <button
+                type="button"
+                onClick={() => {
+                  // Recovery is an explicit re-read of the current reference
+                  // evidence for the same object; it never mutates anything.
+                  setPending(null);
+                  requestRemove(pending.objectId);
+                }}
+              >
+                重新读取引用影响
               </button>
             ) : (
               <button

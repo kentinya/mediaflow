@@ -95,7 +95,16 @@ test.describe("Rules object identity", () => {
     page,
   }) => {
     await resetRules(page, "?empty=1");
-    await seedRecognitionType(page, "proof.type");
+    // File-like shapes are legal backend identities too: the static serving
+    // boundary must treat them as operator data, not artifact requests.
+    for (const objectId of [
+      "proof.type",
+      "proof.js",
+      "proof.env",
+      "proof.type.bak",
+    ]) {
+      await seedRecognitionType(page, objectId);
+    }
     await page.goto("/ui-v2/rules/edit/recognitionTypes/proof.type");
     await connectAs(page);
     // The built artifact served by the same boundary as production delivers
@@ -126,6 +135,18 @@ test.describe("Rules object identity", () => {
     ).toBeVisible();
     expect(page.url()).toContain("/rules/edit/recognitionTypes/proof.type");
     await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    // Every file-like identity refreshes into the same exact editor. Each
+    // direct entry is a fresh document, so the boundary continuation connects
+    // first and returns to the same identity-bearing route.
+    for (const objectId of ["proof.js", "proof.env", "proof.type.bak"]) {
+      await page.goto(`/ui-v2/rules/edit/recognitionTypes/${objectId}`);
+      await connectAs(page);
+      await expect(page.getByRole("heading", { name: objectId })).toBeVisible();
+      await page.reload();
+      await connectAs(page);
+      await expect(page.getByRole("heading", { name: objectId })).toBeVisible();
+    }
   });
 
   test("plus, at, space and dot IDs open for edit through SPA navigation", async ({
@@ -249,5 +270,67 @@ test.describe("Rules object identity", () => {
     for (const entry of writes) {
       expect(entry).toMatch(/rules\/objects/);
     }
+  });
+
+  test("a stale row's failed impact read never fabricates reference evidence", async ({
+    page,
+  }) => {
+    // B's repro against the real serving boundary: another authorized client
+    // removes the object while this inventory is open. The row remains until
+    // a refresh; its Remove action reads the actual impact, which answers 404
+    // for the missing object. The confirmation must present a failed read
+    // with a reread recovery — never "0 references, cannot remove" — and the
+    // browser must issue no mutation.
+    await resetRules(page, "?empty=1");
+    await seedRecognitionType(page, "proof.js");
+    await page.goto("/ui-v2/rules?section=recognitionTypes");
+    await connectAs(page);
+    await expect(
+      page.getByRole("heading", { name: "识别类型", exact: true }),
+    ).toBeVisible();
+    await expect(page.getByRole("row", { name: /proof\.js/ })).toBeVisible();
+
+    // A second authorized client removes the same unreferenced object with
+    // the exact current Active authority, exactly like the real journey.
+    const authority = await page.request.get(
+      "/api/v1/operations/rules/form-authority",
+      { headers: { Authorization: `Bearer ${VIEWER_TOKEN}` } },
+    );
+    const document = (await authority.json()) as {
+      active: { revisionId: string; version: number; digest: string };
+    };
+    const removal = await page.request.delete(
+      "/api/v1/operations/rules/objects/recognitionTypes/proof.js",
+      {
+        headers: { Authorization: `Bearer ${VIEWER_TOKEN}` },
+        data: {
+          expectedRevisionId: document.active.revisionId,
+          expectedVersion: document.active.version,
+          expectedDigest: document.active.digest,
+        },
+      },
+    );
+    expect(removal.status()).toBe(200);
+
+    // This browser's row is now stale; its impact read fails with 404.
+    await page
+      .getByRole("row", { name: /proof\.js/ })
+      .getByRole("button", { name: "移除" })
+      .click();
+    await expect(page.getByText(/无法读取该对象的引用影响/)).toBeVisible();
+    await expect(page.getByText(/该对象仍被 .* 处引用/)).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "重新读取引用影响" }),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "确认移除" })).toHaveCount(0);
+
+    // The reread answers with the same truthful evidence: the object is gone.
+    await page.getByRole("button", { name: "重新读取引用影响" }).click();
+    await expect(
+      page
+        .getByText(/该对象已不在当前 Active 中|无法读取该对象的引用影响/)
+        .first(),
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "确认移除" })).toHaveCount(0);
   });
 });

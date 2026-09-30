@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.parse import unquote
 
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
@@ -29,7 +30,10 @@ def request(api, path: str, method: str = "GET"):
     headers = []
     environ = {
         "REQUEST_METHOD": method,
-        "PATH_INFO": path,
+        # WSGI servers expose PATH_INFO after percent-decoding the request
+        # path; model that here so encoded spaces/slashes exercise the same
+        # boundary as production.
+        "PATH_INFO": unquote(path),
         "QUERY_STRING": "",
         "CONTENT_LENGTH": "0",
         "REMOTE_ADDR": "127.0.0.1",
@@ -159,7 +163,12 @@ class V2UiStaticTests(unittest.TestCase):
         empty.mkdir()
         with patch.dict(os.environ, {"MEDIAFLOW_UI_V2_ASSET_ROOT": str(empty)}):
             reset_v2_ui_cache()
-            for path in ("/ui-v2", "/ui-v2/", "/ui-v2/dashboard"):
+            for path in (
+                "/ui-v2",
+                "/ui-v2/",
+                "/ui-v2/dashboard",
+                "/ui-v2/rules/edit/recognitionTypes/proof.js",
+            ):
                 status, _, _ = request(self.api, path)
                 self.assertEqual(status, 404)
             status, _, _ = request(self.api, "/ui-v2/assets/index-abc123.js")
@@ -190,13 +199,22 @@ class V2UiStaticTests(unittest.TestCase):
         self.assertEqual(status, 404)
 
     def test_rules_edit_routes_with_legal_dotted_ids_receive_the_entry_document(self) -> None:
-        """The backend rules identity contract accepts a bounded dot, so a
-        refresh of a legal dotted-ID edit route must serve the SPA entry
-        document instead of being misread as an unknown asset file."""
+        """The backend rules identity contract accepts bounded IDs containing
+        dots — including file-like shapes such as ``proof.js``, ``proof.env``
+        or ``proof.type.bak`` that the backend legally publishes — so a refresh
+        of any such edit route must serve the SPA entry document instead of
+        being misread as an unknown asset file."""
 
         for path in (
             "/ui-v2/rules/edit/recognitionTypes/proof.type",
             "/ui-v2/rules/edit/namingPolicies/season.01",
+            "/ui-v2/rules/edit/recognitionTypes/proof.js",
+            "/ui-v2/rules/edit/recognitionTypes/proof.env",
+            "/ui-v2/rules/edit/recognitionTypes/proof.type.bak",
+            "/ui-v2/rules/edit/recognitionTypes/proof+type",
+            "/ui-v2/rules/edit/recognitionTypes/proof%40type",
+            "/ui-v2/rules/edit/recognitionTypes/proof%20type",
+            f"/ui-v2/rules/edit/recognitionTypes/{'a' * 64}",
         ):
             status, headers, body = request(self.api, path)
             self.assertEqual(status, 200, path)
@@ -205,27 +223,37 @@ class V2UiStaticTests(unittest.TestCase):
 
     def test_rules_edit_route_allowlist_stays_narrow(self) -> None:
         """Only the supported rules edit shape falls back to the entry doc;
-        unknown families, deeper routes, non-rules dotted assets and traversal
-        keep failing closed."""
+        unknown families, non-rules dotted assets and traversal keep failing
+        closed. The identity segment is never second-guessed by its suffix."""
 
         for path in (
             "/ui-v2/rules/edit/notAFamily/proof.type",
+            "/ui-v2/rules/edit/notAFamily/ordinary-id",
             "/ui-v2/rules/other/recognitionTypes/proof.type",
-            "/ui-v2/rules/edit/recognitionTypes/proof.type.bak",
+            "/ui-v2/rules/edit/recognitionTypes/proof!.js",
+            "/ui-v2/rules/edit/recognitionTypes/-invalid.js",
+            "/ui-v2/rules/edit/recognitionTypes/bad%ZZ.js",
+            "/ui-v2/rules/edit/recognitionTypes/proof%2Ftype.js",
+            "/ui-v2/rules/edit/recognitionTypes/proof%5Ctype.js",
+            f"/ui-v2/rules/edit/recognitionTypes/{'a' * 65}",
             "/ui-v2/../../etc/passwd",
             "/ui-v2/notes.md",
+            "/ui-v2/rules/edit/notAFamily/proof.type.bak",
         ):
             status, _, _ = request(self.api, path)
             self.assertEqual(status, 404, path)
         # A missing family segment is generic SPA fallthrough (existing
-        # behavior), never an identity-bearing route; and a deeper dotted
-        # final segment is refused rather than served as an asset or the
-        # entry document.
+        # behavior), never an identity-bearing route; a deeper dotted final
+        # segment is refused rather than served as an asset or the entry
+        # document; and a deeper extensionless route stays generic fallthrough.
         status, _, body = request(self.api, "/ui-v2/rules/edit/recognitionTypes")
         self.assertEqual(status, 200)
         self.assertEqual(body, INDEX_BYTES)
         status, _, _ = request(self.api, "/ui-v2/rules/edit/recognitionTypes/proof.type/extra.js")
         self.assertEqual(status, 404)
+        status, _, body = request(self.api, "/ui-v2/rules/edit/recognitionTypes/proof.type/extra")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, INDEX_BYTES)
         (self.root / "notes.md").write_bytes(b"private note")
         status, _, _ = request(self.api, "/ui-v2/notes.md")
         self.assertEqual(status, 404)
