@@ -303,6 +303,129 @@ class SettingsRuleReadinessTests(unittest.TestCase):
             self.assertTrue(gap["message"])
             self.assertTrue(gap["nextAction"])
 
+    def test_a_concurrent_activation_cannot_mix_identity_with_counts(self) -> None:
+        """Regression for the Task 41.5 B-review blocker.
+
+        The B review reproduced this legal concurrency timing: the status
+        document reads Active once, then the readiness projection reads Active
+        again through the workspace inventory. When a second activation lands
+        between the two reads, the old code stamped the *first* read's revision
+        identity onto the *second* read's counts, so the response reported the
+        old revisionId together with the new (larger) recognitionTypes count and
+        the page's mixed-snapshot check could not fire.
+
+        The fix binds the identity and the counts/state/gaps to one single
+        Active read inside ``active_rule_readiness``. This test drives the exact
+        interleaving through a repository wrapper that publishes a new revision
+        between the status read and the readiness read, with the real SQLite
+        managed configuration and the production ``MediaFlowApi``.
+        """
+
+        activation_landed = False
+        activating = False
+        # One status request performs three Active reads in order: the status
+        # document itself, the command-readiness projection, then the
+        # rule-readiness projection. The B-review interleaving publishes the
+        # successor before the third read, so `status.active` is still the old
+        # revision while the readiness projection derives from the new one.
+        active_read_calls = 0
+        original_activate = self.configuration.activate
+
+        repository = self.configuration_repository
+        inner_get = repository.get_active_revision
+        original_active = self.configuration.active()
+
+        def get_active_revision():
+            nonlocal activation_landed
+            nonlocal activating
+            nonlocal active_read_calls
+            active_read_calls += 1
+            if active_read_calls == 3 and not activation_landed and not activating:
+                # Publish one legal successor revision exactly between the
+                # status Active read and the readiness Active read. The
+                # re-entrancy guard keeps the activation's own internal reads
+                # (import/validate/activate) from recursing into the wrapper.
+                activating = True
+                try:
+                    doc = copy.deepcopy(original_active.document)
+                    doc["recognitionTypes"] = [
+                        *doc["recognitionTypes"],
+                        {"id": "interleaved", "name": "Interleaved"},
+                    ]
+                    draft = self.configuration.import_draft(doc, actor="concurrent")
+                    validated = self.configuration.validate(draft.revision_id, actor="concurrent")
+                    original_activate(
+                        validated.revision_id,
+                        expected_version=validated.version,
+                        actor="concurrent",
+                    )
+                finally:
+                    activating = False
+                activation_landed = True
+            return inner_get()
+
+        repository.get_active_revision = get_active_revision
+        status_code, document = request(self.api, STATUS_ROUTE)
+        self.assertEqual(status_code, 200)
+        self.assertTrue(activation_landed)
+
+        status_active = document["active"]
+        readiness = document["ruleReadiness"]
+        # The status document reported the *old* Active; the readiness
+        # projection read *after* the activation, so its identity is the new
+        # revision. The two identities disagree — which is exactly the mixed
+        # snapshot the frontend must detect instead of silently presenting.
+        self.assertIsNotNone(status_active)
+        self.assertIsNotNone(readiness["active"])
+        self.assertNotEqual(
+            readiness["active"]["revisionId"],
+            status_active["revisionId"],
+        )
+        self.assertGreater(
+            readiness["active"]["sequence"],
+            status_active["revisionSequence"],
+        )
+        # The counts are the new revision's counts and belong to the readiness
+        # identity they are bound to: the interleaved RecognitionType is
+        # present, so this can no longer be stamped onto the old identity.
+        self.assertEqual(
+            readiness["active"]["revisionId"],
+            self.configuration.active().revision_id,
+        )
+        self.assertGreater(readiness["counts"]["recognitionTypes"], 0)
+
+        # The identity now provably describes the same read the counts came
+        # from: re-reading the same revision and re-deriving the projection
+        # from that exact revision reproduces the same counts.
+        pinned = self.configuration.require(readiness["active"]["revisionId"])
+        from mediaflow.application.configuration_objects import ConfigurationObjectService
+
+        service = ConfigurationObjectService(self.configuration)
+        projection = service._rules_workspace_from_active(pinned, include_sections=False)
+        self.assertEqual(
+            projection["overview"]["counts"],
+            readiness["counts"],
+        )
+        self.assertEqual(
+            projection["overview"]["enabledCounts"],
+            readiness["enabledCounts"],
+        )
+        self.assertEqual(
+            projection["readiness"]["gaps"],
+            readiness["gaps"],
+        )
+        self.assertEqual(
+            projection["active"]["identity"]["revisionId"],
+            readiness["active"]["revisionId"],
+        )
+
+        # The frontend contract can detect the mismatch from this document
+        # alone: the two revision identities inside one response differ.
+        self.assertNotEqual(
+            readiness["active"]["revisionId"],
+            (status_active or {}).get("revisionId"),
+        )
+
 
 class RulesReadinessFixtureContractTests(unittest.TestCase):
     """The shared cross-boundary fixture the browser fake serves.

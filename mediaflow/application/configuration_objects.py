@@ -6990,6 +6990,150 @@ class ConfigurationObjectService:
     ) -> dict[str, object]:
         """Return one complete, secret-free read model from the exact Active revision."""
 
+        try:
+            active = self._managed.active()
+        except Exception:
+            return self._rules_unavailable(family=family, query=query, enabled=enabled)
+        if active is None:
+            return self._rules_no_active(family=family, query=query, enabled=enabled)
+        document = self._rules_workspace_from_active(
+            active,
+            family=family,
+            query=query,
+            enabled=enabled,
+        )
+        document_active = document.get("active")
+        # The public inventory keeps its Task 41.1 contract: no revisionId
+        # crosses this HTTP boundary. The exact identity is published only by
+        # the narrow ``active_rule_readiness`` Settings projection, which is
+        # derived from the same single in-memory Active object.
+        if isinstance(document_active, dict):
+            document = {
+                **document,
+                "active": {
+                    key: value for key, value in document_active.items() if key != "identity"
+                },
+            }
+        return document
+
+    def active_rule_readiness(self) -> dict[str, object]:
+        """Return the Settings readiness projection bound to one Active read.
+
+        The identity and the counts/state/gaps are derived from the same
+        immutable Active revision object held in memory for this call, so a
+        concurrent activation that lands between two repository reads can never
+        produce a mixed snapshot whose revision identity describes one revision
+        while the counts describe another. The revision identity itself stays
+        out of the rules-inventory contract (Task 41.1) and is only published
+        through this narrow Settings projection.
+        """
+
+        try:
+            active = self._managed.active()
+        except Exception:
+            return {
+                "available": False,
+                "reason": "unavailable",
+                "active": None,
+                "state": "UNAVAILABLE",
+                "gaps": [],
+                "counts": {key: 0 for key in self._RULE_FAMILIES},
+                "enabledCounts": {key: 0 for key in self._RULE_FAMILIES},
+            }
+        if active is None:
+            return {
+                "available": False,
+                "reason": "no_active",
+                "active": None,
+                "state": "NO_ACTIVE",
+                "gaps": [],
+                "counts": {key: 0 for key in self._RULE_FAMILIES},
+                "enabledCounts": {key: 0 for key in self._RULE_FAMILIES},
+            }
+        document = self._rules_workspace_from_active(active, include_sections=False)
+        if not document.get("available"):
+            reason = document.get("reason")
+            readiness = document.get("readiness")
+            readiness = readiness if isinstance(readiness, dict) else {}
+            return {
+                "available": False,
+                "reason": reason if reason in {"no_active", "malformed"} else "unavailable",
+                "active": None,
+                "state": readiness.get("state", "UNAVAILABLE"),
+                "gaps": [],
+                "counts": {key: 0 for key in self._RULE_FAMILIES},
+                "enabledCounts": {key: 0 for key in self._RULE_FAMILIES},
+            }
+        document_active = document.get("active")
+        document_active = document_active if isinstance(document_active, dict) else {}
+        readiness = document.get("readiness")
+        readiness = readiness if isinstance(readiness, dict) else {}
+        overview = document.get("overview")
+        overview = overview if isinstance(overview, dict) else {}
+        identity = document_active.get("identity")
+        return {
+            "available": True,
+            "reason": None,
+            "active": identity if isinstance(identity, dict) else None,
+            "state": readiness.get("state", "UNAVAILABLE"),
+            "gaps": list(readiness.get("gaps") or []),
+            "counts": dict(overview.get("counts") or {}),
+            "enabledCounts": dict(overview.get("enabledCounts") or {}),
+        }
+
+    def _rules_unavailable(
+        self,
+        *,
+        family: str | None = None,
+        query: str = "",
+        enabled: bool | None = None,
+    ) -> dict[str, object]:
+        return {
+            "available": False,
+            "reason": "unavailable",
+            "active": None,
+            "readiness": {"state": "UNAVAILABLE", "gaps": []},
+            "overview": {
+                "relationship": [],
+                "counts": {key: 0 for key in self._RULE_FAMILIES},
+                "enabledCounts": {key: 0 for key in self._RULE_FAMILIES},
+            },
+            "sections": {key: [] for key in self._RULE_FAMILIES},
+            "actions": self._rules_actions(available=False, reason="unavailable"),
+            "filters": {"family": family, "query": query, "enabled": enabled},
+        }
+
+    def _rules_no_active(
+        self,
+        *,
+        family: str | None = None,
+        query: str = "",
+        enabled: bool | None = None,
+    ) -> dict[str, object]:
+        return {
+            **self._rules_unavailable(family=family, query=query, enabled=enabled),
+            "reason": "no_active",
+            "actions": self._rules_actions(available=False, reason="no_active"),
+            "readiness": {"state": "NO_ACTIVE", "gaps": []},
+        }
+
+    def _rules_workspace_from_active(
+        self,
+        active: ManagedConfigurationRevision,
+        *,
+        family: str | None = None,
+        query: str = "",
+        enabled: bool | None = None,
+        include_sections: bool = True,
+    ) -> dict[str, object]:
+        """Derive the workspace read model from one in-memory Active revision.
+
+        ``active`` is the single repository read the caller already performed.
+        Every projection below — identity, counts, gaps, sections — is derived
+        from this one immutable object, so two repository reads can never mix
+        one revision's identity with another's counts.
+        """
+
         unavailable: dict[str, object] = {
             "available": False,
             "reason": "unavailable",
@@ -7004,17 +7148,6 @@ class ConfigurationObjectService:
             "actions": self._rules_actions(available=False, reason="unavailable"),
             "filters": {"family": family, "query": query, "enabled": enabled},
         }
-        try:
-            active = self._managed.active()
-        except Exception:
-            return unavailable
-        if active is None:
-            return {
-                **unavailable,
-                "reason": "no_active",
-                "actions": self._rules_actions(available=False, reason="no_active"),
-                "readiness": {"state": "NO_ACTIVE", "gaps": []},
-            }
         try:
             self._managed.verify_integrity(active)
             raw = {
@@ -7228,6 +7361,18 @@ class ConfigurationObjectService:
                 "status": "ACTIVE",
                 "version": active.version,
                 "sequence": active.revision_sequence or active.version,
+                # The exact revision identity stays inside this internal
+                # projection only. The public rules inventory keeps its Task
+                # 41.1 contract (no revisionId on the wire); the narrow
+                # Settings readiness projection publishes it via
+                # ``active_rule_readiness`` so identity and counts always
+                # describe the same in-memory Active object.
+                "identity": {
+                    "status": "ACTIVE",
+                    "revisionId": active.revision_id,
+                    "version": active.version,
+                    "sequence": active.revision_sequence or active.version,
+                },
             },
             "readiness": {
                 "state": "READY" if not gaps else "PARTIAL" if any(counts.values()) else "EMPTY",
@@ -7246,7 +7391,7 @@ class ConfigurationObjectService:
                 "counts": counts,
                 "enabledCounts": enabled_counts,
             },
-            "sections": sections,
+            "sections": sections if include_sections else {key: [] for key in self._RULE_FAMILIES},
             "actions": self._rules_actions(available=True),
             "filters": {"family": family, "query": query, "enabled": enabled},
         }

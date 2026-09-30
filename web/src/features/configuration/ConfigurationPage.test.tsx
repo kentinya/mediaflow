@@ -934,7 +934,7 @@ describe("V2 configuration rule readiness", () => {
     }
   });
 
-  it("never presents a mixed-snapshot readiness as current", async () => {
+  it("never presents a mixed-snapshot readiness as current and hides its counts", async () => {
     vi.stubGlobal(
       "fetch",
       statusWith({
@@ -949,7 +949,13 @@ describe("V2 configuration rule readiness", () => {
           sequence: 9,
         },
         state: "READY",
-        gaps: [],
+        gaps: [
+          {
+            family: "recognitionRules",
+            message: "没有识别规则产生识别类型。",
+            nextAction: "创建识别规则。",
+          },
+        ],
         counts: COUNTS,
         enabledCounts: COUNTS,
       }),
@@ -959,6 +965,70 @@ describe("V2 configuration rule readiness", () => {
     await screen.findByRole("heading", { name: "整理规则就绪状态" });
     expect(screen.getByText("Active 已变更,需要刷新")).toBeVisible();
     expect(screen.queryByText("规则图完整,运行时可直接消费")).toBeNull();
+    // The stale counts and gaps are never presented as the current readiness:
+    // no family inventory, no counts text and no gap links survive the
+    // mixed-snapshot detection.
+    expect(screen.queryByRole("link", { name: "查看识别类型" })).toBeNull();
+    expect(screen.queryByText("2 项 · 2 已启用")).toBeNull();
+    expect(screen.queryByRole("link", { name: "查看识别规则" })).toBeNull();
+    expect(screen.queryByText("配置缺口")).toBeNull();
+  });
+
+  it("treats a readiness Active the status read missed as a mixed snapshot", async () => {
+    // Reverse interleaving: the readiness projection saw an Active that this
+    // status read no longer reports (e.g. it read before a concurrent
+    // activation was undone or before the authority became unavailable).
+    vi.stubGlobal(
+      "fetch",
+      statusWith({
+        available: true,
+        reason: null,
+        active: {
+          status: "ACTIVE",
+          revisionId: "active-9",
+          version: 9,
+          sequence: 9,
+        },
+        state: "READY",
+        gaps: [],
+        counts: COUNTS,
+        enabledCounts: COUNTS,
+      }),
+    );
+    // Force the status document to report no Active at all while readiness
+    // still names one: the two identities disagree, so the panel must refuse
+    // to present the counts as current.
+    const fetchMock = vi.fn(async () =>
+      response({
+        authority: "MANAGED",
+        setupRequired: false,
+        emptyActive: false,
+        active: null,
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+        ruleReadiness: {
+          available: true,
+          reason: null,
+          active: {
+            status: "ACTIVE",
+            revisionId: "active-9",
+            version: 9,
+            sequence: 9,
+          },
+          state: "READY",
+          gaps: [],
+          counts: COUNTS,
+          enabledCounts: COUNTS,
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    renderApp("/ui-v2/configuration");
+    await screen.findByRole("heading", { name: "整理规则就绪状态" });
+    expect(screen.getByText("Active 已变更,需要刷新")).toBeVisible();
+    expect(screen.queryByRole("link", { name: "查看识别类型" })).toBeNull();
+    expect(screen.queryByText("2 项 · 2 已启用")).toBeNull();
   });
 
   it("maps a malformed rule-readiness document to an explicit unavailable state", async () => {
