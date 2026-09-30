@@ -6499,6 +6499,11 @@ function rulesState(session) {
       gaps: RULES_FIXTURE.ruleReadiness.gaps,
       available: true,
       reason: null,
+      // The no-Active first-setup lifecycle: `setupDraft` is created by
+      // POST /api/v1/configuration/drafts/first, validated and activated by
+      // the revision routes, and activation publishes the fixture Active.
+      setupDraft: null,
+      published: null,
     };
     RULES_STATES.set(key, value);
   }
@@ -6591,17 +6596,51 @@ function rulesInventoryDocument(state, token, searchParams) {
 function configurationStatusDocument(state, token) {
   const readiness = currentRuleReadiness(state);
   const active = readiness.active;
+  // A no-Active instance reports the truthful management-bootstrap setup
+  // state, exactly like the real `ManagedConfigurationService.status_document()`:
+  // first setup is required, and the first-Draft lifecycle routes serve it
+  // below so the Settings journey can prove the originating-family return.
+  if (active === null) {
+    return {
+      authority: "MANAGEMENT_BOOTSTRAP",
+      active: null,
+      lastKnownActive: null,
+      health: "SETUP_REQUIRED",
+      managementReady: true,
+      setupRequired: true,
+      runtimeConfigured: false,
+      runtimeReady: false,
+      workflowAvailable: false,
+      businessState: "NO_ACTIVE",
+      emptyActive: false,
+      recoveryRequired: false,
+      unavailableReason: null,
+      revisions: state.setupDraft ? [rulesSetupRevisionSummary(state)] : [],
+      managedActivation: false,
+      setupDraft: state.setupDraft
+        ? {
+            revisionId: state.setupDraft.revisionId,
+            version: state.setupDraft.version,
+          }
+        : null,
+      setupBlockers: [],
+      nextAction: state.setupDraft
+        ? "open and resume the existing setup Draft, complete guided setup, validate it, and activate it"
+        : "create the first setup Draft, then complete guided setup",
+      bootstrapMode: "MANAGEMENT_ONLY",
+      canManageConfiguration: VIEWER_TOKENS.has(token),
+      canActivateConfiguration: VIEWER_TOKENS.has(token),
+      ruleReadiness: readiness,
+    };
+  }
   return {
     authority: "MANAGED",
-    active:
-      active === null
-        ? null
-        : {
-            revisionId: active.revisionId,
-            version: active.version,
-            revisionSequence: active.sequence,
-            status: "active",
-          },
+    active: {
+      revisionId: active.revisionId,
+      version: active.version,
+      revisionSequence: active.sequence,
+      status: "active",
+    },
     lastKnownActive: null,
     health: "HEALTHY",
     managementReady: true,
@@ -6622,6 +6661,16 @@ function configurationStatusDocument(state, token) {
     canManageConfiguration: VIEWER_TOKENS.has(token),
     canActivateConfiguration: VIEWER_TOKENS.has(token),
     ruleReadiness: readiness,
+  };
+}
+
+/** The bounded summary of the fake's first-setup Draft lifecycle. */
+function rulesSetupRevisionSummary(state) {
+  return {
+    revisionId: state.setupDraft.revisionId,
+    version: state.setupDraft.version,
+    status: state.setupDraft.validated ? "validated" : "draft",
+    createdAt: "2026-01-01T00:00:00Z",
   };
 }
 
@@ -13375,6 +13424,8 @@ const server = createServer(async (req, res) => {
               },
             ]
           : [],
+      setupDraft: null,
+      published: null,
     });
     res.setHeader(
       "Set-Cookie",
@@ -13399,6 +13450,197 @@ const server = createServer(async (req, res) => {
 
   if (url.pathname === "/__test__/mutations" && req.method === "GET") {
     sendJson(res, 200, { items: RECORDED_MUTATIONS });
+    return;
+  }
+
+  // No-Active first-setup lifecycle (Task 41.5 correction): the same routes
+  // the real backend serves, bound to the fake's rules state so the browser
+  // journey can prove the originating-family return through an actual
+  // create-first-Draft → validate → checked-activate publication. Every write
+  // is permission-gated, explicit, and recorded as a mutation.
+  if (url.pathname === "/api/v1/configuration/drafts/first") {
+    if (req.method !== "POST") {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const state = rulesState(session);
+    if (state.available || state.setupDraft !== null) {
+      sendJson(res, 409, {
+        error: {
+          code: "configuration_first_draft_conflict",
+          details: {
+            durableState: "setup_draft_preserved",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction: "resume the existing setup Draft, then validate it",
+          },
+        },
+      });
+      return;
+    }
+    state.setupDraft = {
+      revisionId: "rules-setup-draft-e2e",
+      version: 1,
+      validated: false,
+    };
+    RECORDED_MUTATIONS.push({
+      method: "POST",
+      objectType: "configuration_first_draft",
+      path: url.pathname,
+    });
+    sendJson(res, 201, {
+      ...rulesSetupRevisionSummary(state),
+      created: true,
+      nextAction:
+        "open the setup Draft and complete guided setup before validation and activation",
+    });
+    return;
+  }
+  const rulesSetupRevisionMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)$/,
+  );
+  if (rulesSetupRevisionMatch && req.method === "GET") {
+    const state = rulesState(session);
+    const revisionId = rulesSetupRevisionMatch[1];
+    const draft = state.setupDraft;
+    if (draft && draft.revisionId === revisionId) {
+      sendJson(res, 200, {
+        ...rulesSetupRevisionSummary(state),
+        document: {},
+      });
+      return;
+    }
+    // The published revision stays readable after activation, so the page's
+    // post-publication inspect answers from the exact published snapshot.
+    if (state.published && state.published.revisionId === revisionId) {
+      sendJson(res, 200, {
+        revisionId,
+        version: state.published.version,
+        status: "validated",
+        document: {},
+      });
+      return;
+    }
+    sendJson(res, 404, { error: { code: "not_found" } });
+    return;
+  }
+  const rulesSetupValidateMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/validate$/,
+  );
+  if (rulesSetupValidateMatch && req.method === "POST") {
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const state = rulesState(session);
+    if (
+      !state.setupDraft ||
+      state.setupDraft.revisionId !== rulesSetupValidateMatch[1]
+    ) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    state.setupDraft.version += 1;
+    state.setupDraft.validated = true;
+    RECORDED_MUTATIONS.push({
+      method: "POST",
+      objectType: "configuration_validate_draft",
+      path: url.pathname,
+    });
+    sendJson(res, 200, rulesSetupRevisionSummary(state));
+    return;
+  }
+  const rulesSetupActivateMatch = url.pathname.match(
+    /^\/api\/v1\/configuration\/revisions\/([^/]+)\/activate$/,
+  );
+  if (rulesSetupActivateMatch && req.method === "POST") {
+    const parsed = await readBoundedJsonBody(req, res);
+    if (!parsed.ok) return;
+    if (!KNOWN_TOKENS.has(token) || EXPIRED_TOKENS.has(token)) {
+      sendJson(res, 401, { error: { code: "unauthorized" } });
+      return;
+    }
+    if (!VIEWER_TOKENS.has(token)) {
+      sendJson(res, 403, { error: { code: "forbidden" } });
+      return;
+    }
+    const state = rulesState(session);
+    const draft = state.setupDraft;
+    if (
+      !draft ||
+      draft.revisionId !== rulesSetupActivateMatch[1] ||
+      !draft.validated
+    ) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    const expectedVersion = parsed.document?.expectedVersion;
+    if (
+      typeof expectedVersion !== "number" ||
+      expectedVersion !== draft.version
+    ) {
+      sendJson(res, 409, { error: { code: "configuration_version_conflict" } });
+      return;
+    }
+    // Activation publishes the fixture Active and clears the setup state, so
+    // the next status read reports the managed authority with its readiness.
+    // The published revision itself stays readable, exactly like the real
+    // managed configuration: the activation answer is inspectable afterwards.
+    state.available = true;
+    state.reason = null;
+    state.state = RULES_FIXTURE.ruleReadiness.state;
+    state.counts = RULES_FIXTURE.ruleReadiness.counts;
+    state.enabledCounts = RULES_FIXTURE.ruleReadiness.enabledCounts;
+    state.gaps = RULES_FIXTURE.ruleReadiness.gaps;
+    state.advance = 0;
+    state.published = { ...draft, validated: true };
+    state.setupDraft = null;
+    RECORDED_MUTATIONS.push({
+      method: "POST",
+      objectType: "configuration_activate",
+      path: url.pathname,
+    });
+    sendJson(res, 200, { ...currentRuleActive(state), activated: true });
+    return;
+  }
+  if (url.pathname === "/api/v1/system/settings" && req.method === "GET") {
+    const state = rulesState(session);
+    const requested = url.searchParams.get("revisionId");
+    const draft = state.setupDraft;
+    if (draft && draft.revisionId === requested) {
+      sendJson(res, 200, {
+        isActive: false,
+        revisionId: draft.revisionId,
+        revisionVersion: draft.version,
+        draftVersion: draft.version,
+        sections: {},
+      });
+      return;
+    }
+    // After activation the settings projection describes the Active revision.
+    if (state.published && state.published.revisionId === requested) {
+      sendJson(res, 200, {
+        isActive: true,
+        revisionId: requested,
+        revisionVersion: state.published.version,
+        draftVersion: state.published.version,
+        sections: {},
+      });
+      return;
+    }
+    sendJson(res, 404, { error: { code: "not_found" } });
     return;
   }
 

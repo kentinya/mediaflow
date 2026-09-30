@@ -1073,6 +1073,59 @@ describe("V2 configuration rule readiness", () => {
     expect(screen.getByRole("heading", { name: "配置生命周期" })).toBeVisible();
   });
 
+  it("returns a rules handoff to its originating family after the first activation", async () => {
+    // The no-Active family deep link → Settings handoff must survive the whole
+    // first-setup journey: after checked activation the automatic return lands
+    // on the exact originating family, not the Overview.
+    const calls: Array<{ input: string; init?: RequestInit }> = [];
+    const fetchMock = vi.fn(async (input: string, init?: RequestInit) => {
+      calls.push({ input, init });
+      if (init?.method === "POST" && input.endsWith("/activate"))
+        return response({ revisionId: "draft-1", version: 3 });
+      if (input.includes("/revisions/draft-1"))
+        return response({ revisionId: "draft-1", version: 2, document: {} });
+      if (input.includes("/system/settings"))
+        return response({
+          isActive: init?.method === undefined,
+          revisionId: "draft-1",
+          revisionVersion: 3,
+          draftVersion: 3,
+          sections: {},
+        });
+      if (input.includes("storage-management/inventory"))
+        return response({ error: { code: "configuration_unavailable" } }, 503);
+      return response({
+        authority: "MANAGEMENT_BOOTSTRAP",
+        setupRequired: true,
+        setupDraft: { revisionId: "draft-1", version: 2 },
+        canManageConfiguration: true,
+        canActivateConfiguration: true,
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    authStore.setToken("admin-token");
+    const { router } = renderApp(
+      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "恢复 Draft" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "checked-activate" }),
+    );
+    // The first activation automatically returns to the originating family.
+    await waitFor(() => expect(router.state.location.pathname).toBe("/rules"));
+    expect(router.state.location.search).toEqual({
+      section: "metadataPolicies",
+    });
+    // The activation still used the checked (expected-version) contract.
+    const activation = calls.find(
+      (call) =>
+        call.input.endsWith("/activate") && call.init?.method === "POST",
+    );
+    expect(activation).toBeDefined();
+  });
+
   it("refuses an unsafe return context instead of offering an open redirect", async () => {
     vi.stubGlobal(
       "fetch",
