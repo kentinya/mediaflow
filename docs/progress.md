@@ -8,11 +8,11 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 40 — **V2 Settings and Empty-Baseline Startup** — is PASS / CLOSED
-under [`SLICE.md`](../SLICE.md) at Base `d814b7c1c6819e79271245a1126f53aca6aeaf69` and
-Implementation Head `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7` after A's 2026-09-28 final review.
-The next legal action is A selects the next large Slice. Earlier Slice 37–39 closures remain
-unchanged. This pointer summarizes current development; the ledger below records closed Slices.
+V2 remains active on `main`; Slice 41 — **V2 Organizing Rules Workspace** — is PASS / CLOSED under
+[`SLICE.md`](../SLICE.md) at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and Implementation Head
+`8433319168272ecf7ccde017afc36525e8c62ea0` after A's 2026-09-30 final review. No implementation Task is
+active. The next legal action is A selects the next large Slice in a separate turn. Earlier
+closures remain unchanged; the ledger below records the compact delivery and deferral facts.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`
@@ -36,7 +36,7 @@ legacy tests that asserted FileIndex-driven staleness were removed or converted 
 current-source fixtures. This maintenance does not reopen Slice 33 or create an active Task. The next
 legal action at that historical checkpoint was A selecting the next large Slice.
 
-## Most Recently Closed Slice
+## Closed Slice summaries
 
 V1 release baseline: `1.0.0`. V2 program package: `2.0.0.dev0`.
 
@@ -324,6 +324,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 41 — V2 Organizing Rules Workspace | PASS / CLOSED | `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` | `8433319168272ecf7ccde017afc36525e8c62ea0` | A Final Review PASS / CLOSED — 2026-09-30 | Native V2 Rules graph workspace, typed editors, reference-safe lifecycle, exact-candidate zero-mutation analysis, one-Save checked publication and Settings readiness/recovery with preserved RecognitionType identity | Provider switching/new providers, Review/Recovery redesign, media execution from Rules, new rule/naming/classification domains, bulk/diff/rollback, V1 retirement/auth redesign and other unchanged Contract deferrals |
 | 40 — V2 Settings and Empty-Baseline Startup | PASS / CLOSED | `d814b7c1c6819e79271245a1126f53aca6aeaf69` | `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7` | A Final Review PASS / CLOSED — 2026-09-28 | Native V2 Settings and first-Draft lifecycle, legal empty-business Active, conditional publication, incremental successors, command readiness, media-free startup and resident service adoption without restart | Wholesale policy/Recognition/Review/Recovery migration, V1 cutover, generated onboarding defaults, new identity/Secret Store/deployment mutation, scheduler/queue redesign, new providers/commands and automatic uncertain replay |
 | 39 — Storage Management Workspace | PASS / CLOSED | `d02539e49d5c99c3e3c0c70de5e994e42824a18e` | `f458646d3dac280b118a511c60ec53a5d3075d67` | A Final Review PASS / CLOSED — 2026-09-27 | V2 Storage management workspace, typed checked lifecycle, zero-mutation diagnostics, provider-root/setup recovery, resident ResourceLibrary/MediaLibrary transfer continuity and truthful Worker readiness/waiting recovery | Mutation-based Storage probes, general Configuration/native V2 setup migration, new providers/Secret Store integration, new file commands, scheduler redesign, automatic uncertain replay and new identity/session systems |
 | 38 — MediaLibrary Files Workspace and Route Separation | PASS / CLOSED | `9e801ae4485bc95d714a8902bf45bf37896fbc2a` | `7d4503e45dc3aa79628ed0d98e887167e1e7c529` | A Final Review PASS / CLOSED — 2026-09-25 | Separate MediaLibrary and ResourceLibrary Files routes, live MediaLibrary browsing, bounded common maintenance and transfer recovery, reference-aligned presentation, and symmetric exact-Active page-local library editing with checked atomic activation | Card statistics/capacity/placeholders, thumbnails, MediaLibrary Scan/Preview/Organize, browser Upload/Download, cross-kind direct transfers, transfer Replace mode, ID migration, broad configuration redesign, V1 cutover, universal rollback and automatic uncertain replay |

@@ -11,18 +11,16 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 40 — V2 Settings and Empty-Baseline Startup — PASS / CLOSED
-Slice 40 Base: d814b7c1c6819e79271245a1126f53aca6aeaf69
-Slice 40 Implementation Head: 7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7
-Slice 40 A Final Review: PASS / CLOSED — 2026-09-28
-Current Contract: Slice 41 — V2 Organizing Rules Workspace — ACTIVE
+Most recently closed large Slice: Slice 41 — V2 Organizing Rules Workspace — PASS / CLOSED
 Slice 41 Base: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
-Slice 41 Implementation Head: not yet set
-Next action: checkpoint the A-owned Contract and Roadmap, then B plans the first coherent Task
+Slice 41 Implementation Head: 8433319168272ecf7ccde017afc36525e8c62ea0
+Slice 41 A Final Review: PASS / CLOSED — 2026-09-30
+Current Contract: Slice 41 — PASS / CLOSED; no active implementation Task
+Next action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32, 33 and 37–40 are closed; Slice 41 is active. Slice 37
+product requirements. Slices 30, 31, 32, 33 and 37–41 are closed. Slice 37
 replaced the prior V2 shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
 are retired from the current Roadmap; their historical references remain historical and do not change
 the stable requirements layer. The stable common-file-management target retains its broader future
@@ -33,8 +31,9 @@ page-local editing requirements through its reviewed implementation head. Slice 
 the Storage management workspace, provider-root/setup recovery and admitted-transfer Worker
 continuity/readiness through its reviewed implementation head. Slice 40 has implemented native V2
 Settings, legal empty-business activation, conditional configuration applicability, command-specific
-readiness and resident-service adoption without mandatory media mounts or restart. Slice 41 is the
-active TARGET for the native V2 organizing-rules workspace. Its six supplied page images describe
+readiness and resident-service adoption without mandatory media mounts or restart. Slice 41 has
+implemented the native V2 organizing-rules workspace, typed graph/object editing, exact-candidate
+analysis, checked one-Save publication and actionable recovery. Its six supplied page images describe
 business relationship and visual style, not actual production data or pixel-identical fixtures. The
 stable requirements below describe delivered boundaries and explicitly identified targets; Slice
 contracts own implementation scope and acceptance.

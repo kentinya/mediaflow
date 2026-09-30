@@ -3,12 +3,12 @@
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
 Parent Slice: 41 — V2 Organizing Rules Workspace
-Next Action: A FINAL REVIEW
+Next Action: A SELECTS THE NEXT LARGE SLICE
 ```
 
-Task 41.6 passed B review. All Slice Required Outcomes and Required Surfaces are satisfied; the
-Slice-level validation and Closure Packet are in [SLICE.md](SLICE.md). A owns final acceptance and
-closure. No next Task is planned.
+Slice 41 is PASS / CLOSED after A's 2026-09-30 final review of its complete Base..Implementation
+Head. The unchanged B review and Closure Packet remain in Git and [SLICE.md](SLICE.md). No next
+Slice or implementation Task has been selected; A selects the next large Slice in a separate turn.
 
 ## B Review Result
 

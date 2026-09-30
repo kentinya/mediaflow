@@ -105,10 +105,10 @@ runtime-load error rejects the save and keeps the previous Active runtime author
 ResourceLibrary must not be shown as saved when the activation command fails. The general
 Configuration page retains its explicit Draft/Validate/Activate journey.
 
-### Active Slice target: page-local library editing
+### Current page-local library editing
 
-Slice 38 extends the same convenience boundary to focused editing of an existing ResourceLibrary or
-MediaLibrary from its browse card. This is target behavior until its active Task passes review.
+Slice 38 delivered the same convenience boundary for focused editing of an existing ResourceLibrary
+or MediaLibrary from its browse card.
 The edit form reads one exact Active object, keeps its ID immutable and may change only name,
 enabled state, Storage binding and the kind-specific relative root. The application must merge
 those fields into the complete existing object so scan/policy/directory-creation fields not exposed
@@ -162,8 +162,9 @@ The canonical managed document and object service preserve references and optimi
 The object service provides create, copy, edit, enable, disable and delete actions where applicable.
 It rejects unknown fields, validates IDs and references, records bounded redacted audits, shows
 reference impact, and blocks deletion while an object is referenced. A valid unreferenced object can
-be deleted; the reference check is not a blanket refusal of all deletion. Every change is applied to
-the Draft and returns that revision to `Draft`.
+be deleted; the reference check is not a blanket refusal of all deletion. Generic object edits apply
+to the Draft and return it to `Draft`. Focused business-page commands, including Rules Save, compose
+those edits with validation and checked atomic activation.
 
 The current Web Configuration page leads with the exact Active identity and the explicit action to
 create a successor Draft. Typed cards and forms cover Local, SMB, OpenList, AWS S3, Cloudflare R2 and
@@ -180,6 +181,34 @@ System Settings use the same managed configuration authority. The Settings surfa
 Active revision and its consumption evidence, creates a successor Draft when Active values are
 edited, validates typed values and preserves bootstrap-owned and restart-required boundaries. It
 fails closed instead of presenting settings from another snapshot as consumed Active state.
+
+## Native V2 organizing-rules management
+
+Open `整理规则` at `/ui-v2/rules` to manage the complete RecognitionType policy graph through typed
+forms. Overview and seven rule-family inventories read the actual immutable Active; navigation,
+search, filtering and refresh create no Draft. Explicit Add/Copy opens a candidate, while Edit uses
+a full-page deep route and keeps object ID immutable. Empty/partial guidance identifies missing
+dependencies without generating policies. Settings provides first empty activation if no Active
+exists and returns to the originating rule family on explicit intent.
+
+One `保存`, or a confirmed lifecycle action, composes the focused successor from the exact Active
+observed by the form, runs complete graph validation and applicable read-only evidence, prepares
+runtime consumers and atomically publishes the successor. There is no separate ordinary
+Save-Draft/Validate/Activate step. Reference-protected removal deletes no media, historical snapshot
+or Result; copy defaults disabled only for object kinds supporting enabled state.
+
+Tests/previews explicitly stage an exact non-Active candidate. Nested recognition conditions and
+binding selection use the production engines; C remains C under A policy reuse. Naming and
+Classification produce safe components/MediaLibrary-relative destinations, and Organize explanation
+confers no execution authority. Offline tests do not call Providers; explicit live Metadata tests
+use the configured TMDB abstraction. No analysis mutates Storage or starts media work.
+
+Known Save rejection preserves prior Active and correctable input. Read current authority before
+reapplying a stale change; verify unknown outcomes before another explicit submission. Failed
+reference-impact reads remain unavailable evidence and require reread/refresh before removal.
+Correctable browser-tab form values do not become Active, credentials or execution authority. V1
+configuration lifecycle and CLI remain compatible; whole-document JSON is unnecessary for the
+ordinary delivered Rules journey.
 
 ## Storage configuration model
 
