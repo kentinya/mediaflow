@@ -65,7 +65,13 @@ export function rulesSectionSearch(
   return section === "overview" ? undefined : { section };
 }
 
-function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
+function Availability({
+  model,
+  section,
+}: {
+  readonly model: RulesWorkspaceModel;
+  readonly section: Section;
+}) {
   if (model.available) return null;
   const noActive = model.reason === "no_active";
   return (
@@ -82,9 +88,16 @@ function Availability({ model }: { readonly model: RulesWorkspaceModel }) {
           ? "当前没有可供运行时消费的 Active 规则。访问本页没有创建 Draft,也没有改变任何配置。"
           : "当前 Active 仍保持原状;本页没有执行 Provider、Storage、任务或配置写入。"}
       </p>
+      {/* The unavailable/first-setup branch uses the same allowlisted return
+          contract as the normal header link: the originating family survives
+          the handoff, so first-Active setup or the explicit return lands back
+          on the exact inventory the operator left. */}
       <Link
         to="/configuration"
-        search={settingsReturnSearch({ target: "rules" })}
+        search={settingsReturnSearch({
+          target: "rules",
+          ...(section === "overview" ? {} : { section }),
+        })}
       >
         前往系统设置查看配置状态
       </Link>
@@ -599,7 +612,8 @@ export function RulesWorkspacePage() {
               正在读取 Active 规则...
             </div>
           );
-        if (!data.available) return <Availability model={data} />;
+        if (!data.available)
+          return <Availability model={data} section={section} />;
         const family = section === "overview" ? null : section;
         const items =
           family === null

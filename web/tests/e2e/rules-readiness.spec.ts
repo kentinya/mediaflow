@@ -258,6 +258,81 @@ test.describe("Rules readiness and Settings handoff", () => {
     expect(page.url()).toContain("section=classificationPolicies");
   });
 
+  test("a no-Active family deep link keeps its family through setup and return", async ({
+    page,
+  }) => {
+    // The B-review blocker journey: a family deep link on a no-Active
+    // instance must keep its originating family through the Settings handoff,
+    // through the first-activation publication, and back to the exact family
+    // inventory.
+    await resetRules(page, "?noActive=1");
+    const traffic = recordApiTraffic(page);
+    await page.goto("/ui-v2/rules?section=metadataPolicies");
+    await connectAs(page);
+
+    // The no-Active state renders on the deep-linked family, and the Settings
+    // handoff carries the originating family — no Overview fallback.
+    await expect(
+      page.getByRole("heading", { name: "尚无 Active 配置" }),
+    ).toBeVisible();
+    const settingsLink = page.getByRole("link", {
+      name: "前往系统设置查看配置状态",
+    });
+    await expect(settingsLink).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+    );
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+
+    // The handoff reaches Settings and the explicit return carries the family.
+    await settingsLink.click();
+    await expect(
+      page.getByRole("heading", { name: "配置生命周期" }),
+    ).toBeVisible();
+    expect(page.url()).toContain("returnSection=metadataPolicies");
+    const returnLink = page.getByRole("link", {
+      name: "返回整理规则 · 元数据策略",
+    });
+    await expect(returnLink).toHaveAttribute(
+      "href",
+      "/ui-v2/rules?section=metadataPolicies",
+    );
+
+    // First setup through the real lifecycle: create, validate, activate.
+    await page.getByRole("button", { name: "创建首个 Draft" }).click();
+    await expect(
+      page.getByRole("button", { name: "恢复 Draft" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "恢复 Draft" }).click();
+    await page.getByRole("button", { name: "验证 Draft" }).click();
+    await expect
+      .poll(() =>
+        page.getByRole("button", { name: "checked-activate" }).isEnabled(),
+      )
+      .toBe(true);
+    await page.getByRole("button", { name: "checked-activate" }).click();
+
+    // The automatic return lands on the originating family inventory, now
+    // backed by the published Active.
+    await expect(
+      page.getByRole("heading", { name: "元数据策略", exact: true }),
+    ).toBeVisible();
+    expect(page.url()).toContain("section=metadataPolicies");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    // The only writes in the whole journey are the explicit first-setup
+    // lifecycle commands the operator pressed on Settings; the rules surface
+    // itself (deep link, handoff, return) issued reads exclusively, and no
+    // Provider, Storage, Task, Job or rule-object mutation occurred.
+    const writes = traffic
+      .filter((entry) => !entry.startsWith("GET "))
+      .map((entry) => new URL(entry.split(" ")[1]!).pathname);
+    expect(writes).toEqual([
+      "/api/v1/configuration/drafts/first",
+      "/api/v1/configuration/revisions/rules-setup-draft-e2e/validate",
+      "/api/v1/configuration/revisions/rules-setup-draft-e2e/activate",
+    ]);
+  });
+
   test("a publication between two Settings reads is observed instead of shown stale", async ({
     page,
   }) => {

@@ -592,6 +592,118 @@ describe("RulesWorkspacePage", () => {
     expect(screen.queryByRole("button", { name: /^添加/ })).toBeNull();
   });
 
+  it("keeps the originating family in the no-Active handoff and its return", async () => {
+    // The no-Active recovery branch uses the same allowlisted return contract
+    // as the normal header link: a family deep link that reaches Settings
+    // during first setup must survive the handoff, and the Settings return —
+    // after a first activation or as an explicit action — lands back on that
+    // exact family instead of dropping to the Overview.
+    const emptyCounts = Object.fromEntries(
+      Object.keys(rulesPayload.sections).map((key) => [key, 0]),
+    );
+    stubRules({
+      inventory: {
+        ...rulesPayload,
+        available: false,
+        reason: "no_active",
+        active: null,
+        canManage: false,
+        actions: Object.fromEntries(
+          Object.keys(rulesPayload.actions).map((key) => [
+            key,
+            {
+              create: false,
+              edit: false,
+              copy: false,
+              toggle: false,
+              remove: false,
+              blocker: "unavailable",
+            },
+          ]),
+        ),
+        readiness: { state: "NO_ACTIVE", gaps: [] },
+        overview: {
+          relationship: [],
+          counts: emptyCounts,
+          enabledCounts: emptyCounts,
+        },
+        sections: Object.fromEntries(
+          Object.keys(rulesPayload.sections).map((key) => [key, []]),
+        ),
+      },
+    });
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=metadataPolicies");
+    expect(
+      await screen.findByRole("heading", { name: "尚无 Active 配置" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "前往系统设置查看配置状态" }),
+    ).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+    );
+    // The family route never opens the editor even without an Active.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^添加/ })).toBeNull();
+  });
+
+  it("keeps the originating family in the no-Active handoff and its return", async () => {
+    // The no-Active recovery branch uses the same allowlisted return contract
+    // as the normal header link: a family deep link that reaches Settings
+    // during first setup must survive the handoff, and the Settings return —
+    // after a first activation or as an explicit action — lands back on that
+    // exact family instead of dropping to the Overview.
+    const emptyCounts = Object.fromEntries(
+      Object.keys(rulesPayload.sections).map((key) => [key, 0]),
+    );
+    stubRules({
+      inventory: {
+        ...rulesPayload,
+        available: false,
+        reason: "no_active",
+        active: null,
+        canManage: false,
+        actions: Object.fromEntries(
+          Object.keys(rulesPayload.actions).map((key) => [
+            key,
+            {
+              create: false,
+              edit: false,
+              copy: false,
+              toggle: false,
+              remove: false,
+              blocker: "unavailable",
+            },
+          ]),
+        ),
+        readiness: { state: "NO_ACTIVE", gaps: [] },
+        overview: {
+          relationship: [],
+          counts: emptyCounts,
+          enabledCounts: emptyCounts,
+        },
+        sections: Object.fromEntries(
+          Object.keys(rulesPayload.sections).map((key) => [key, []]),
+        ),
+      },
+    });
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules?section=metadataPolicies");
+    expect(
+      await screen.findByRole("heading", { name: "尚无 Active 配置" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "前往系统设置查看配置状态" }),
+    ).toHaveAttribute(
+      "href",
+      "/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies",
+    );
+    // The family route never opens the editor even without an Active.
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("button", { name: /^添加/ })).toBeNull();
+  });
+
   it("keeps malformed recovery bounded and keyboard reachable", async () => {
     const { mock } = stubRules({
       inventory: { ...rulesPayload, sections: {} },
