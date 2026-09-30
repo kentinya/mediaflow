@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchJobList,
+  fetchRunInventory,
+  fetchRunOverview,
   fetchTaskDetail,
   fetchTaskList,
   jobListUrl,
   mutateLifecycle,
   executeOrganizePreview,
+  runInventoryUrl,
   taskDetailUrl,
   taskListUrl,
 } from "./api-client";
@@ -383,6 +386,127 @@ describe("operations reads", () => {
       failure: expect.objectContaining({ kind: "not_found" }),
     });
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("unified run inventory reads", () => {
+  function runDocument(overrides: Record<string, unknown> = {}) {
+    return {
+      run_kind: "task",
+      run_id: "task-1",
+      command: "scan",
+      command_label: "扫描",
+      recognized_command: true,
+      status: "completed",
+      trigger: "manual",
+      created_at: "2026-08-22T12:00:00+00:00",
+      updated_at: "2026-08-22T12:06:00+00:00",
+      job_id: null,
+      task_id: "task-1",
+      schedule_id: null,
+      definition_id: null,
+      source_scope: "Movies",
+      library_kind: "resource",
+      total_items: 2,
+      completed_items: 2,
+      failed_items: 0,
+      pause_requested: false,
+      attention: false,
+      configuration_snapshot_id: "snap-1",
+      worker_id: null,
+      sideEffects: "none",
+      ...overrides,
+    };
+  }
+
+  function pageDocument(overrides: Record<string, unknown> = {}) {
+    return {
+      items: [runDocument()],
+      limit: 20,
+      status: null,
+      command: null,
+      q: null,
+      from: null,
+      to: null,
+      total: 1,
+      truncated: false,
+      status_counts: { completed: 1 },
+      attention_count: 0,
+      population: "unified job/task run inventory",
+      sideEffects: "none",
+      previous_cursor: null,
+      next_cursor: null,
+      ...overrides,
+    };
+  }
+
+  it("builds the bounded inventory URL from the submitted filters only", () => {
+    expect(
+      runInventoryUrl({
+        status: "failed",
+        command: "scan",
+        q: "电影",
+        from: "2026-08-01T00:00:00Z",
+        limit: 20,
+        cursor: "c1",
+      }),
+    ).toBe(
+      "/api/v1/operations/runs?status=failed&command=scan&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1",
+    );
+    expect(runInventoryUrl({})).toBe("/api/v1/operations/runs");
+  });
+
+  it("normalizes a bounded inventory page with counts", async () => {
+    stubFetch(async () =>
+      jsonResponse(
+        pageDocument({
+          status_counts: { failed: 2, running: 1 },
+          attention_count: 2,
+          total: 3,
+        }),
+      ),
+    );
+    const result = await fetchRunInventory("token", { status: "failed" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.model.total).toBe(3);
+    expect(result.model.attentionCount).toBe(2);
+    expect(result.model.items[0]!.runId).toBe("task-1");
+  });
+
+  it("maps a rejected filter to the bounded rejected read without rendering it", async () => {
+    stubFetch(async () =>
+      jsonResponse({ error: { code: "invalid_request" } }, 400),
+    );
+    const result = await fetchRunInventory("token", {
+      status: "bogus" as never,
+    });
+    expect(result).toEqual({
+      ok: false,
+      failure: expect.objectContaining({ kind: "rejected" }),
+    });
+  });
+
+  it("raises the typed unauthorized and malformed boundary errors", async () => {
+    stubFetch(async () => jsonResponse({ error: {} }, 401));
+    await expect(fetchRunInventory("token")).rejects.toBeInstanceOf(
+      OperationsApiError,
+    );
+    stubFetch(async () => jsonResponse({ items: "everything" }));
+    await expect(fetchRunInventory("token")).rejects.toBeInstanceOf(
+      OperationsApiError,
+    );
+  });
+
+  it("normalizes the run overview and refuses an unsafe identity", async () => {
+    stubFetch(async () => jsonResponse(runDocument()));
+    const result = await fetchRunOverview("token", "task-1");
+    expect(result.ok).toBe(true);
+    const refused = await fetchRunOverview("token", "a/../b");
+    expect(refused).toEqual({
+      ok: false,
+      failure: expect.objectContaining({ kind: "not_found" }),
+    });
   });
 });
 

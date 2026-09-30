@@ -4005,3 +4005,81 @@ button.mf-grid-button {
   border-bottom: 1px solid #edf0f4;
   padding-bottom: 0.35rem;
 }
+
+/* --- Unified Operations run inventory (Slice 42 RO-1/RO-2) --- */
+.mf-operations-inventory .mf-run-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mf-operations-inventory .mf-run-filter-bar label {
+  color: var(--muted);
+}
+.mf-operations-inventory .mf-run-filter-bar input,
+.mf-operations-inventory .mf-run-filter-bar select {
+  max-width: 220px;
+}
+.mf-card-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mf-card-button:disabled {
+  cursor: default;
+  color: inherit;
+}
+.mf-card-button:hover:not(:disabled),
+.mf-card-button:focus-visible {
+  color: var(--accent);
+}
+.mf-run-table-wrap table {
+  width: 100%;
+}
+.mf-run-select {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+  text-align: left;
+}
+.mf-run-select:hover,
+.mf-run-select:focus-visible {
+  text-decoration: underline;
+}
+.mf-run-identity {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.mf-run-kind {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.mf-run-attention {
+  font-weight: 600;
+}
+.mf-run-selected,
+tr[aria-selected="true"] {
+  background: rgba(31, 95, 191, 0.06);
+}
+.mf-run-detail {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-top: 12px;
+  background: var(--panel);
+}
+@media (max-width: 720px) {
+  .mf-run-detail {
+    margin-top: 16px;
+  }
+}

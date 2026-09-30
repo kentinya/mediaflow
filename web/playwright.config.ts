@@ -4,6 +4,10 @@ import { defineConfig } from "@playwright/test";
 // fake API served by one Node process; it never touches production services.
 export default defineConfig({
   testDir: "./tests/e2e",
+  // The isolated real-Python browser spec runs only under
+  // playwright.python.config.ts, which starts the Python harness instead of
+  // the Node fake; the fake-path suite must never pick it up.
+  testIgnore: "**/operations-inventory.python.spec.ts",
   fullyParallel: true,
   forbidOnly: true,
   reporter: [["list"]],

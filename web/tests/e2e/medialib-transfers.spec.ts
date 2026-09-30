@@ -330,7 +330,9 @@ test("a paused media transfer is resumed from Operations and continues once", as
     .getByRole("button", { name: "后台跟踪" })
     .click();
   await page.getByRole("link", { name: "Operations", exact: true }).click();
-  await page.getByRole("link", { name: "Tasks", exact: true }).first().click();
+  // The unified inventory landing keeps the Task-list journey reachable with
+  // its Chinese workspace label; the detail route below is unchanged.
+  await page.getByRole("link", { name: "任务列表", exact: true }).click();
   await page.getByRole("link", { name: taskId }).click();
   await expect(
     page.getByRole("heading", { name: `Task ${taskId}` }),

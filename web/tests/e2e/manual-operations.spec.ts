@@ -244,18 +244,16 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   await page.goto("/ui-v2/operations");
   await connect(page, VIEWER_TOKEN);
 
+  // The unified inventory landing keeps the manual journey discoverable with
+  // its Chinese business presentation.
   await expect(
-    page.getByRole("heading", { name: "Operations", exact: true }),
+    page.getByRole("heading", { name: "操作与任务", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "Manual operations" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Start bounded Scan" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "Run zero-mutation Preview" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
+    0,
+  );
 
   const scope = page.getByLabel("ResourceLibrary scope");
   await expect(scope).toBeVisible();
@@ -263,11 +261,9 @@ test("Operations landing offers no manual action before a scope is chosen", asyn
   await expect(scope.locator('option[value="resources"]')).toHaveCount(1);
   await scope.selectOption("resources");
 
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Start bounded Scan" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("link", { name: "Run zero-mutation Preview" }),
+    page.getByRole("link", { name: "运行零变更预览" }),
   ).toBeVisible();
 
   // The chosen scope is the exact bounded scope sent to the backend.
@@ -411,22 +407,16 @@ test("Read-only principal sees no manual action and the backend reason", async (
   // that the retired Library landing no longer exists.
   await page.goto("/ui-v2/operations");
   await connect(page, READ_ONLY_TOKEN);
-  await expect(
-    page.getByRole("heading", { name: "Manual operations" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "手动操作" })).toBeVisible();
 
   await page.getByLabel("ResourceLibrary scope").selectOption("resources");
   // A read-only principal is never offered an actionable control; the backend
   // reason explains why instead of rendering a dead button.
-  await expect(
-    page.getByRole("link", { name: "Start bounded Scan" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByRole("link", { name: "Run zero-mutation Preview" }),
-  ).toHaveCount(0);
-  await expect(
-    page.getByText(/No manual action is available for this scope:/),
-  ).toBeVisible();
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "运行零变更预览" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText(/此范围没有后端公告的手动操作/)).toBeVisible();
 });
 
 test("Unknown Scan record renders the bounded not-found state inside the shell", async ({

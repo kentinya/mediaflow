@@ -67,6 +67,29 @@ const TERMINAL_TASK_STATUSES = new Set([
   "cancelled",
 ]);
 const CANCELLABLE_TASK_STATUSES = new Set(["pending", "running", "paused"]);
+const ATTENTION_RUN_STATUSES = [
+  "pending",
+  "paused",
+  "partial_success",
+  "failed",
+  "waiting",
+];
+const SAFE_RUN_TIME_FILTER =
+  /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|\+00:00)?)?$/;
+const RUN_COMMAND_LABELS = {
+  scan: "扫描",
+  preview: "预览",
+  organize: "整理",
+  manual_organize: "手动整理",
+  retry: "重试",
+  "retry-failed": "失败项重试",
+  "metadata-correction-continuation": "元数据修正",
+  "recovery-continuation": "恢复继续",
+  "file-metadata-correction": "文件元数据修正",
+  files_direct_command: "文件维护",
+  files_delete: "文件删除",
+  files_transfer: "文件传输",
+};
 const KNOWN_JOB_STATUSES = new Set([
   "pending",
   "running",
@@ -7759,8 +7782,12 @@ const server = createServer(async (req, res) => {
 
   // The V2 Operations workspace reads the bounded /api/v1/operations/* alias;
   // the fake mirrors the authoritative Python contract by serving the same
-  // bounded documents for both spellings.
-  if (url.pathname.startsWith("/api/v1/operations/")) {
+  // bounded documents for both spellings. The unified run inventory keeps its
+  // own namespace: it is a distinct read family, not an alias of /api/v1/runs.
+  if (
+    url.pathname.startsWith("/api/v1/operations/") &&
+    !url.pathname.startsWith("/api/v1/operations/runs")
+  ) {
     url.pathname = url.pathname.replace("/api/v1/operations/", "/api/v1/");
   }
 
@@ -10505,6 +10532,129 @@ const server = createServer(async (req, res) => {
     return `status=${status ?? "all"};command=${command ?? "all"}`;
   }
 
+  function runScope(status, command, q, from, to) {
+    return [
+      `status=${status ?? "all"}`,
+      `command=${command ?? "all"}`,
+      `q=${q ?? ""}`,
+      `from=${from ?? ""}`,
+      `to=${to ?? ""}`,
+    ].join(";");
+  }
+
+  function runCommandLabel(command) {
+    if (typeof command !== "string" || command.length === 0) return null;
+    if (command.startsWith("media_")) {
+      const base = command.slice("media_".length).split(":", 1)[0];
+      const label = RUN_COMMAND_LABELS[base];
+      return label === undefined ? null : `媒体库${label}`;
+    }
+    return RUN_COMMAND_LABELS[command.split(":", 1)[0]] ?? null;
+  }
+
+  function libraryKindOfCommand(command) {
+    return typeof command === "string" && command.startsWith("media_")
+      ? "media"
+      : "resource";
+  }
+
+  /**
+   * The deduplicated run population over the same FAKE_TASKS/FAKE_JOBS the
+   * Task/Job lists read. A Task with any linked Job appears once through its
+   * admission with the Job's identity preserved; a linked Task's own state
+   * outranks the Job admission outcome; a paused Task stays paused.
+   */
+  function buildRunInventory() {
+    const linkedTaskIds = new Set(
+      FAKE_JOBS.map((job) => job.task_id).filter(Boolean),
+    );
+    const runs = [];
+    for (const job of FAKE_JOBS) {
+      const linked = job.task_id
+        ? FAKE_TASKS.find((task) => task.task_id === job.task_id)
+        : undefined;
+      let status;
+      if (linked && linked.status === "paused") {
+        status = "paused";
+      } else if (linked && !TERMINAL_TASK_STATUSES.has(linked.status)) {
+        status = linked.status;
+      } else if (job.status === "pending" || job.status === "running") {
+        status = job.status;
+      } else if (linked) {
+        status = linked.status;
+      } else {
+        status = job.status;
+      }
+      runs.push({
+        run_kind: "job",
+        run_id: job.job_id,
+        command: job.command,
+        command_label: runCommandLabel(job.command),
+        recognized_command: runCommandLabel(job.command) !== null,
+        status,
+        trigger:
+          job.definition_id || job.schedule_id ? "scheduled" : "automation",
+        created_at: job.created_at,
+        updated_at: job.updated_at,
+        job_id: job.job_id,
+        task_id: job.task_id ?? null,
+        schedule_id: job.schedule_id ?? null,
+        definition_id: job.definition_id ?? null,
+        source_scope: linked?.scope_path ?? job.source_scope ?? null,
+        library_kind: libraryKindOfCommand(job.command),
+        total_items: linked?.total_items ?? null,
+        completed_items: linked?.completed_items ?? null,
+        failed_items: linked?.failed_items ?? null,
+        pause_requested: linked?.pause_requested ?? false,
+        configuration_snapshot_id: job.configuration_snapshot_id ?? null,
+        worker_id: job.worker_id ?? null,
+        sideEffects: "none",
+      });
+    }
+    for (const task of FAKE_TASKS) {
+      if (linkedTaskIds.has(task.task_id)) {
+        continue;
+      }
+      runs.push({
+        run_kind: "task",
+        run_id: task.task_id,
+        command: task.command,
+        command_label: runCommandLabel(task.command),
+        recognized_command: runCommandLabel(task.command) !== null,
+        status: task.status,
+        trigger: "manual",
+        created_at: task.created_at,
+        updated_at: task.updated_at,
+        job_id: null,
+        task_id: task.task_id,
+        schedule_id: null,
+        definition_id: null,
+        source_scope: task.scope_path ?? null,
+        library_kind: libraryKindOfCommand(task.command),
+        total_items: task.total_items,
+        completed_items: task.completed_items,
+        failed_items: task.failed_items,
+        pause_requested: task.pause_requested,
+        configuration_snapshot_id: task.configuration_snapshot_id ?? null,
+        worker_id: null,
+        sideEffects: "none",
+      });
+    }
+    return runs.sort((left, right) =>
+      left.created_at === right.created_at
+        ? right.run_id.localeCompare(left.run_id)
+        : right.created_at.localeCompare(left.created_at),
+    );
+  }
+
+  function runRunDocument(run) {
+    const attention = ATTENTION_RUN_STATUSES.includes(run.status);
+    return {
+      ...run,
+      attention,
+    };
+  }
+
   function encodeCollectionCursor(kind, scope, index) {
     return Buffer.from(
       JSON.stringify({ index, kind, scope, version: 2 }),
@@ -11378,6 +11528,145 @@ const server = createServer(async (req, res) => {
       activeSnapshotId: "snap-1",
       expectedRuntimeSchemaVersion: 33,
     });
+    return;
+  }
+
+  // --- V2 unified run inventory (Slice 42 RO-1/RO-2) ---
+  //
+  // The fake mirrors the authoritative Python `/api/v1/operations/runs`
+  // contract: one deduplicated Job/Task population, server-side
+  // text/status/kind/time filters, a filter-bound cursor, and page/total/
+  // status-partitions from one consistent read basis. The fake derives the
+  // population from the same FAKE_TASKS/FAKE_JOBS the Task/Job lists read,
+  // so the inventory can never disagree with the deeper detail surfaces.
+  const runsMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/runs\/([^/]+)$/,
+  );
+  if (url.pathname === "/api/v1/operations/runs" && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const rawStatus = url.searchParams.get("status");
+    const status =
+      rawStatus === null || rawStatus === "" || rawStatus === "all"
+        ? null
+        : rawStatus;
+    if (status !== null && !KNOWN_TASK_STATUSES.has(status)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawCommand = url.searchParams.get("command");
+    const command =
+      rawCommand === null || rawCommand === "" || rawCommand === "all"
+        ? null
+        : rawCommand;
+    if (command !== null && !SAFE_COMMAND_FILTER.test(command)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawQ = url.searchParams.get("q");
+    const q = rawQ === null || rawQ.trim() === "" ? null : rawQ;
+    if (q !== null && q.length > 128) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
+    if (from !== null && from !== "" && !SAFE_RUN_TIME_FILTER.test(from)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    if (to !== null && to !== "" && !SAFE_RUN_TIME_FILTER.test(to)) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawLimit = url.searchParams.get("limit");
+    const limit = rawLimit === null ? 20 : Number(rawLimit);
+    if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const scope = runScope(status, command, q, from, to);
+    const rawCursor = url.searchParams.get("cursor");
+    let offset = null;
+    if (rawCursor !== null && rawCursor !== "") {
+      offset = decodeCollectionCursor(rawCursor, "operations_runs", scope);
+      if (offset === null) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+    }
+    const population = buildRunInventory();
+    let filtered = population;
+    if (status !== null) {
+      filtered = filtered.filter((run) => run.status === status);
+    }
+    if (command !== null) {
+      const family = `${command}:`;
+      filtered = filtered.filter(
+        (run) => run.command === command || run.command.startsWith(family),
+      );
+    }
+    if (q !== null) {
+      const needle = q.toLowerCase();
+      filtered = filtered.filter(
+        (run) =>
+          run.run_id.toLowerCase().includes(needle) ||
+          (run.source_scope ?? "").toLowerCase().includes(needle),
+      );
+    }
+    if (from !== null && from !== "") {
+      filtered = filtered.filter((run) => run.created_at >= from);
+    }
+    if (to !== null && to !== "") {
+      filtered = filtered.filter((run) => run.created_at <= to);
+    }
+    const page = collectionPage(filtered, limit, offset);
+    const statusCounts = {};
+    let attentionCount = 0;
+    for (const run of filtered) {
+      statusCounts[run.status] = (statusCounts[run.status] ?? 0) + 1;
+    }
+    for (const attentionStatus of ATTENTION_RUN_STATUSES) {
+      attentionCount += statusCounts[attentionStatus] ?? 0;
+    }
+    sendJson(res, 200, {
+      items: page.page.map((run) => runRunDocument(run)),
+      limit,
+      status,
+      command,
+      q,
+      from,
+      to,
+      total: filtered.length,
+      truncated: page.next !== null,
+      status_counts: statusCounts,
+      attention_count: attentionCount,
+      population:
+        "unified job/task run inventory, deduplicated by explicit task linkage",
+      sideEffects: "none",
+      previous_cursor:
+        page.previous === null
+          ? null
+          : encodeCollectionCursor("operations_runs", scope, page.previous),
+      next_cursor:
+        page.next === null
+          ? null
+          : encodeCollectionCursor("operations_runs", scope, page.next),
+    });
+    return;
+  }
+  if (runsMatch && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const runId = decodeURIComponent(runsMatch[1]);
+    const run = buildRunInventory().find((item) => item.run_id === runId);
+    if (!run) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, runRunDocument(run));
     return;
   }
 

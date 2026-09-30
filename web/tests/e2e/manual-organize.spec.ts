@@ -257,12 +257,16 @@ test.describe("manual organize journey", () => {
   }) => {
     await page.goto("/ui-v2/operations");
     await connect(page, READ_ONLY_TOKEN);
+    // The unified inventory landing renders with its Chinese business heading.
     await expect(
-      page.getByRole("heading", { name: "Operations", exact: true }),
+      page.getByRole("heading", { name: "操作与任务", exact: true }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("link", { name: "Prepare manual organize" }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("link", { name: "准备手动整理" })).toHaveCount(
+      0,
+    );
+    await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(
+      0,
+    );
   });
 
   test("unauthenticated deep entry returns to the connection boundary", async ({

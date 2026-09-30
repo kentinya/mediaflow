@@ -82,6 +82,12 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
           : null,
     };
     calls.push(call);
+    // The unified run inventory landing composes a run-inventory read beside
+    // the manual journeys; an empty inventory page keeps those tests focused
+    // on the manual surfaces without pretending the endpoint is absent.
+    if (call.url.startsWith("/api/v1/operations/runs")) {
+      return jsonResponse(runInventoryPageDocument(), 200);
+    }
     const response = respond(call);
     if (response !== undefined) {
       return response;
@@ -89,6 +95,28 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
     return jsonResponse({ error: { code: "not_found" } }, 404);
   });
   return { calls };
+}
+
+/** The bounded empty inventory page the landing reads first. */
+function runInventoryPageDocument(): Json {
+  return {
+    items: [],
+    limit: 20,
+    status: null,
+    command: null,
+    q: null,
+    from: null,
+    to: null,
+    total: 0,
+    truncated: false,
+    status_counts: {},
+    attention_count: 0,
+    population:
+      "unified job/task run inventory, deduplicated by explicit task linkage",
+    sideEffects: "none",
+    previous_cursor: null,
+    next_cursor: null,
+  };
 }
 
 afterEach(() => {
@@ -126,24 +154,22 @@ describe("Operations manual Scan/Preview journeys", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "Manual operations" });
-    expect(
-      screen.queryByRole("link", { name: "Start bounded Scan" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("link", { name: "Run zero-mutation Preview" }),
-    ).toBeNull();
+    await screen.findByRole("heading", { name: "手动操作" });
+    // Before an exact scope is chosen, the discovery document advertises no
+    // actionable Scan/Preview control.
+    expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "运行零变更预览" })).toBeNull();
 
     await user.selectOptions(
       await screen.findByLabelText("ResourceLibrary scope"),
       "library",
     );
+    // The exact backend-advertised scope opens the Scan/Preview entries and
+    // the matrix read carries the exact submitted scope.
     expect(
-      await screen.findByRole("link", { name: "Start bounded Scan" }),
+      await screen.findByRole("link", { name: "发起受限扫描" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Run zero-mutation Preview" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "运行零变更预览" })).toBeVisible();
     await waitFor(() =>
       expect(
         calls.some(
@@ -586,11 +612,9 @@ describe("Operations manual Scan/Preview journeys", () => {
     // The Operations workspace owns the manual ResourceLibrary actions now
     // that the retired Library landing no longer exists.
     expect(
-      await screen.findByRole("link", { name: "Start bounded Scan" }),
+      await screen.findByRole("link", { name: "发起受限扫描" }),
     ).toBeVisible();
-    expect(
-      screen.getByRole("link", { name: "Run zero-mutation Preview" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "运行零变更预览" })).toBeVisible();
     expect(
       calls.some(
         (call) =>
@@ -632,7 +656,7 @@ describe("Operations manual Scan/Preview journeys", () => {
     const user = userEvent.setup();
     renderApp("/ui-v2/operations");
 
-    await screen.findByRole("heading", { name: "Manual operations" });
+    await screen.findByRole("heading", { name: "手动操作" });
     await user.selectOptions(
       await screen.findByLabelText("ResourceLibrary scope"),
       "library",
@@ -640,16 +664,10 @@ describe("Operations manual Scan/Preview journeys", () => {
     // The backend reason replaces the unadvertised control instead of a dead
     // button, and no Scan/Preview action is offered for this exact scope.
     expect(
-      await screen.findByText(
-        /No manual action is available for this scope: the FileIndex source is not a verified/,
-      ),
+      await screen.findByText(/此范围没有后端公告的手动操作/),
     ).toBeVisible();
-    expect(
-      screen.queryByRole("link", { name: "Start bounded Scan" }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("link", { name: "Run zero-mutation Preview" }),
-    ).toBeNull();
+    expect(screen.queryByRole("link", { name: "发起受限扫描" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "运行零变更预览" })).toBeNull();
   });
 
   it("keeps the shell recovery path when the action matrix is unavailable", async () => {
