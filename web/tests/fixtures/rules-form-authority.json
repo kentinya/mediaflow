@@ -1,0 +1,422 @@
+{
+  "active": {
+    "activatedAt": "2026-01-01T00:00:00+00:00",
+    "createdAt": "2026-01-01T00:00:00+00:00",
+    "digest": "e2e-rules-active-digest",
+    "revisionId": "rules-active-rev-e2e-001",
+    "revisionSequence": 1,
+    "schemaVersion": 1,
+    "status": "active",
+    "updatedAt": "2026-01-01T00:00:00+00:00",
+    "validatedAt": "2026-01-01T00:00:00+00:00",
+    "validationErrors": [],
+    "version": 1
+  },
+  "catalogs": {
+    "classificationPolicies": [],
+    "metadataPolicies": [],
+    "namingPolicies": [],
+    "organizePolicies": [],
+    "recognitionTypes": []
+  },
+  "enums": {
+    "classificationConditions": [
+      "mediaType",
+      "mediaTypes",
+      "genres",
+      "countries",
+      "languages",
+      "yearMin",
+      "yearMax",
+      "canonicalYear",
+      "keywords"
+    ],
+    "cleanupModes": ["none", "empty", "ignorable"],
+    "conditionFields": [
+      "filename",
+      "path",
+      "directory",
+      "extension",
+      "title_candidate",
+      "year",
+      "season",
+      "episode",
+      "resolution_tag",
+      "source_tag",
+      "video_codec_tag",
+      "audio_codec_tag",
+      "audio_channels_tag",
+      "hdr_tag",
+      "version_tag",
+      "release_group",
+      "language_tag",
+      "resource_library_id"
+    ],
+    "conditionOperators": [
+      "equals",
+      "not_equals",
+      "contains",
+      "not_contains",
+      "starts_with",
+      "ends_with",
+      "in",
+      "not_in",
+      "regex",
+      "greater_than",
+      "greater_than_or_equal",
+      "less_than",
+      "less_than_or_equal",
+      "between",
+      "contains_any",
+      "contains_all"
+    ],
+    "conflictStrategies": ["skip", "overwrite", "rename", "manual"],
+    "hashModes": ["none", "fast", "full"],
+    "logicalOperators": ["and", "or", "not", "always"],
+    "mediaQueryTypes": ["movie", "tv", "auto", "none"],
+    "mediaTypes": ["movie", "tv"],
+    "missingVariableStrategies": ["error", "empty", "omit_token"],
+    "namingMediaTypeModes": ["auto", "movie", "tv"],
+    "namingTemplates": [
+      "directoryTemplate",
+      "filenameTemplate",
+      "seriesDirectoryTemplate",
+      "seasonDirectoryTemplate",
+      "episodeFilenameTemplate",
+      "multiEpisodeFileTemplate"
+    ],
+    "namingVariables": [
+      "title",
+      "original_title",
+      "year",
+      "season",
+      "episode",
+      "episodes",
+      "episode_range",
+      "episode_title",
+      "provider",
+      "provider_id",
+      "resolution",
+      "source",
+      "video_codec",
+      "audio",
+      "audio_codec",
+      "audio_channels",
+      "hdr",
+      "version",
+      "release_group",
+      "ext"
+    ],
+    "numericNamingVariables": ["year", "season", "episode"],
+    "organizeOperations": ["move", "copy", "hard_link", "soft_link"]
+  },
+  "families": [
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "defaults": {
+        "condition": {
+          "children": [],
+          "operator": "always"
+        },
+        "description": "",
+        "enabled": true,
+        "name": "",
+        "outputRecognitionType": "",
+        "priority": 0,
+        "score": 1,
+        "stopOnMatch": false
+      },
+      "family": "recognitionRules",
+      "fields": [
+        "condition",
+        "description",
+        "enabled",
+        "id",
+        "name",
+        "outputRecognitionType",
+        "priority",
+        "score",
+        "stopOnMatch"
+      ],
+      "kind": "recognition_rule",
+      "label": "RecognitionRule",
+      "supportsEnabled": true
+    },
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "defaults": {
+        "classificationPolicy": "",
+        "enabled": true,
+        "metadataPolicy": "",
+        "name": "",
+        "namingPolicy": "",
+        "organizePolicy": "",
+        "priority": 0,
+        "recognitionType": ""
+      },
+      "family": "typeBindings",
+      "fields": [
+        "classificationPolicy",
+        "enabled",
+        "id",
+        "metadataPolicy",
+        "name",
+        "namingPolicy",
+        "organizePolicy",
+        "priority",
+        "recognitionType"
+      ],
+      "kind": "recognition_type_policy",
+      "label": "RecognitionTypePolicy",
+      "supportsEnabled": true
+    },
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "defaults": {
+        "description": "",
+        "enabled": true,
+        "name": ""
+      },
+      "family": "recognitionTypes",
+      "fields": ["description", "enabled", "id", "name"],
+      "kind": "recognition_type",
+      "label": "RecognitionType",
+      "supportsEnabled": true
+    },
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "defaults": {
+        "automaticThreshold": 90,
+        "confirmationThreshold": 70,
+        "enabled": true,
+        "language": "zh-CN",
+        "maxCandidateEnrichments": 2,
+        "maxCandidates": 20,
+        "maxProviderRequests": 6,
+        "maxSearchPages": 2,
+        "mediaQueryType": "auto",
+        "mediaType": "movie",
+        "minimumScoreGap": 5,
+        "providerId": "tmdb",
+        "region": null,
+        "retryCount": 2,
+        "timeout": 10
+      },
+      "family": "metadataPolicies",
+      "fields": [
+        "automaticThreshold",
+        "confirmationThreshold",
+        "enabled",
+        "id",
+        "language",
+        "maxCandidateEnrichments",
+        "maxCandidates",
+        "maxProviderRequests",
+        "maxSearchPages",
+        "mediaQueryType",
+        "mediaType",
+        "minimumScoreGap",
+        "name",
+        "providerId",
+        "region",
+        "retryCount",
+        "timeout"
+      ],
+      "kind": "metadata_policy",
+      "label": "MetadataPolicy",
+      "supportsEnabled": true
+    },
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "defaults": {
+        "description": "",
+        "directoryTemplate": "{title} ({year})",
+        "enabled": true,
+        "episodeFilenameTemplate": "{title} - S{season:02}E{episode:02} - {episode_title}.{ext}",
+        "filenameTemplate": "{title} ({year}).{ext}",
+        "maxComponentLength": 200,
+        "mediaTypeMode": "auto",
+        "missingVariableStrategy": "omit_token",
+        "multiEpisodeFileTemplate": "{title} - S{season:02}{episodes}.{ext}",
+        "name": "",
+        "seasonDirectoryTemplate": "Season {season:02}",
+        "seriesDirectoryTemplate": "{title} ({year})"
+      },
+      "family": "namingPolicies",
+      "fields": [
+        "description",
+        "directoryTemplate",
+        "enabled",
+        "episodeFilenameTemplate",
+        "filenameTemplate",
+        "id",
+        "maxComponentLength",
+        "mediaTypeMode",
+        "missingVariableStrategy",
+        "multiEpisodeFileTemplate",
+        "name",
+        "seasonDirectoryTemplate",
+        "seriesDirectoryTemplate"
+      ],
+      "kind": "naming_policy",
+      "label": "NamingPolicy",
+      "supportsEnabled": true
+    },
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": true
+      },
+      "defaults": {
+        "description": "",
+        "enabled": true,
+        "name": "",
+        "priority": 0,
+        "rules": []
+      },
+      "family": "classificationPolicies",
+      "fields": ["description", "enabled", "id", "name", "priority", "rules"],
+      "kind": "classification_policy",
+      "label": "ClassificationPolicy",
+      "supportsEnabled": true
+    },
+    {
+      "actions": {
+        "copy": true,
+        "create": true,
+        "edit": true,
+        "remove": true,
+        "toggle": false
+      },
+      "defaults": {
+        "attachments": {
+          "artwork": true,
+          "enabled": false,
+          "nfo": true,
+          "otherSameStem": false,
+          "subtitles": true,
+          "trailers": true
+        },
+        "conflictStrategy": "manual",
+        "duplicateDetection": {
+          "chunkSize": 1048576,
+          "fastSampleBytes": 1048576,
+          "fullMaxFileSize": 1099511627776,
+          "mode": "none"
+        },
+        "operation": "move",
+        "overwrite": false,
+        "rollback": {
+          "cleanupCreatedDirectories": true,
+          "enabled": false
+        },
+        "sourceDirectoryCleanup": {
+          "ignorePatterns": [],
+          "maxEntries": 100,
+          "maxParentDirectories": 1,
+          "mode": "none"
+        }
+      },
+      "family": "organizePolicies",
+      "fields": [
+        "attachments",
+        "conflictStrategy",
+        "duplicateDetection",
+        "id",
+        "operation",
+        "overwrite",
+        "rollback",
+        "sourceDirectoryCleanup"
+      ],
+      "kind": "organize_policy",
+      "label": "OrganizePolicy",
+      "supportsEnabled": false
+    }
+  ],
+  "limits": {
+    "classificationRuleConditions": 64,
+    "classificationRules": {
+      "maximum": 128,
+      "minimum": 1
+    },
+    "description": 1000,
+    "maxComponentLength": {
+      "maximum": 255,
+      "minimum": 8
+    },
+    "name": 120,
+    "objectId": 64
+  },
+  "mediaLibraries": [
+    {
+      "enabled": true,
+      "id": "movies",
+      "name": "Movies",
+      "storageId": "media-target"
+    },
+    {
+      "enabled": true,
+      "id": "tv",
+      "name": "TV Shows",
+      "storageId": "media-target"
+    }
+  ],
+  "metadataProviders": [
+    {
+      "providerId": "tmdb",
+      "secretReadiness": [
+        {
+          "field": "TMDB_ACCESS_TOKEN",
+          "state": "SET"
+        },
+        {
+          "field": "TMDB_TOKEN",
+          "state": "UNSET"
+        }
+      ]
+    }
+  ],
+  "resourceLibraries": [
+    {
+      "enabled": true,
+      "id": "source",
+      "name": "Unified media source",
+      "rootPath": null,
+      "storageId": "source-storage"
+    }
+  ],
+  "sideEffects": "none"
+}

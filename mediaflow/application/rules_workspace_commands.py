@@ -106,6 +106,32 @@ RULE_FAMILIES: tuple[str, ...] = (
     "organizePolicies",
 )
 
+
+def rules_family_section(family: str) -> str:
+    """The Active document section one rules family reads and writes.
+
+    ``typeBindings`` is the operator-facing family name; its persisted section
+    is ``recognitionTypePolicies``. Every consumer that resolves a published
+    object from a revision document must go through this mapping so the API
+    projection can never read a section that does not exist.
+    """
+
+    spec = _FAMILY_SPECS.get(family)
+    if spec is None:
+        raise RulesWorkspaceSaveError(
+            "rules_family_unsupported",
+            f"{family!r} is not a rules-workspace object family",
+            status=400,
+            object_kind=family,
+            stage="read",
+            durable_state="active_unchanged",
+            side_effects="none",
+            retry_safe=True,
+            next_action=f"choose one of {', '.join(RULE_FAMILIES)}",
+        )
+    return spec.section
+
+
 _FAMILY_SPECS: dict[str, _FamilySpec] = {
     "recognitionRules": _FamilySpec(
         family="recognitionRules",

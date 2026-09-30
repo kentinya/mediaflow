@@ -189,6 +189,47 @@ class V2UiStaticTests(unittest.TestCase):
         status, _, _ = request(self.api, "/ui-v2/ui/app.js")
         self.assertEqual(status, 404)
 
+    def test_rules_edit_routes_with_legal_dotted_ids_receive_the_entry_document(self) -> None:
+        """The backend rules identity contract accepts a bounded dot, so a
+        refresh of a legal dotted-ID edit route must serve the SPA entry
+        document instead of being misread as an unknown asset file."""
+
+        for path in (
+            "/ui-v2/rules/edit/recognitionTypes/proof.type",
+            "/ui-v2/rules/edit/namingPolicies/season.01",
+        ):
+            status, headers, body = request(self.api, path)
+            self.assertEqual(status, 200, path)
+            self.assertEqual(headers["Content-Type"], "text/html; charset=utf-8", path)
+            self.assertEqual(body, INDEX_BYTES, path)
+
+    def test_rules_edit_route_allowlist_stays_narrow(self) -> None:
+        """Only the supported rules edit shape falls back to the entry doc;
+        unknown families, deeper routes, non-rules dotted assets and traversal
+        keep failing closed."""
+
+        for path in (
+            "/ui-v2/rules/edit/notAFamily/proof.type",
+            "/ui-v2/rules/other/recognitionTypes/proof.type",
+            "/ui-v2/rules/edit/recognitionTypes/proof.type.bak",
+            "/ui-v2/../../etc/passwd",
+            "/ui-v2/notes.md",
+        ):
+            status, _, _ = request(self.api, path)
+            self.assertEqual(status, 404, path)
+        # A missing family segment is generic SPA fallthrough (existing
+        # behavior), never an identity-bearing route; and a deeper dotted
+        # final segment is refused rather than served as an asset or the
+        # entry document.
+        status, _, body = request(self.api, "/ui-v2/rules/edit/recognitionTypes")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, INDEX_BYTES)
+        status, _, _ = request(self.api, "/ui-v2/rules/edit/recognitionTypes/proof.type/extra.js")
+        self.assertEqual(status, 404)
+        (self.root / "notes.md").write_bytes(b"private note")
+        status, _, _ = request(self.api, "/ui-v2/notes.md")
+        self.assertEqual(status, 404)
+
     def test_v2_ui_never_touched_persistent_storage_or_api_state(self) -> None:
         # The repository explodes on any attribute access: a 200 static
         # response proves serving never reaches repositories or Storage, and

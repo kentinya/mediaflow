@@ -85,6 +85,7 @@ from mediaflow.application.rules_workspace_commands import (
 )
 from mediaflow.application.rules_workspace_commands import (
     RulesWorkspaceCommandService,
+    rules_family_section,
 )
 from mediaflow.application.storage_browser import (
     RuntimeFilesBrowserService,
@@ -13887,7 +13888,13 @@ class MediaFlowApi:
     ):
         """One bounded Save document so the page can refresh from the successor it published."""
 
-        published = self._configuration_objects._canonical_objects(revision.document, family)
+        # The response projection resolves the published object through the
+        # family's persisted section: the operator-facing `typeBindings` family
+        # is stored under `recognitionTypePolicies`, so reading the family name
+        # as a section would fail every successful binding Save.
+        published = self._configuration_objects._canonical_objects(
+            revision.document, rules_family_section(family)
+        )
         item = next(
             (value for value in published if str(value.get("id")) == str(subject_id)),
             None,

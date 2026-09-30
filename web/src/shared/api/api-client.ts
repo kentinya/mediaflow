@@ -5609,6 +5609,20 @@ function isRuleFormFamily(value: string): value is RuleFormFamily {
 }
 
 /**
+ * The exact identifier contract the backend rules command authority accepts
+ * (`RulesWorkspaceCommandService._SAFE_IDENTIFIER`): the same characters
+ * including ``+``, ``@``, internal spaces and dots, and the same 64-character
+ * boundary. The generic task/job identifier guard above stays untouched; this
+ * narrower check exists only so the browser never rejects an ID the backend
+ * already publishes, and it never widens any other surface.
+ */
+const RULES_OBJECT_ID = /^[A-Za-z0-9][A-Za-z0-9_.:@+ -]{0,63}$/;
+
+export function isRulesObjectId(value: string): boolean {
+  return RULES_OBJECT_ID.test(value);
+}
+
+/**
  * The bounded, secret-free recovery projection of one rules command failure.
  * Only stable state fields cross this boundary; raw server prose is discarded
  * and the page presents its own fixed copy plus these safe fields.
@@ -5836,7 +5850,7 @@ export async function fetchRuleEdit(
   objectId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<RulesRead<RuleObjectProjection>> {
-  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+  if (!isRuleFormFamily(family) || !isRulesObjectId(objectId))
     return { ok: false, status: 400, code: "invalid_request" };
   return readRulesDocument(
     `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}`,
@@ -5853,7 +5867,7 @@ export async function fetchRuleCopy(
   objectId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<RulesRead<RuleObjectProjection>> {
-  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+  if (!isRuleFormFamily(family) || !isRulesObjectId(objectId))
     return { ok: false, status: 400, code: "invalid_request" };
   return readRulesDocument(
     `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}/copy`,
@@ -5870,7 +5884,7 @@ export async function fetchRuleImpact(
   objectId: string,
   fetchImpl: FetchLike = fetch,
 ): Promise<RulesRead<RuleObjectProjection>> {
-  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+  if (!isRuleFormFamily(family) || !isRulesObjectId(objectId))
     return { ok: false, status: 400, code: "invalid_request" };
   return readRulesDocument(
     `${RULES_BASE}/objects/${encodeURIComponent(family)}/${encodeURIComponent(objectId)}/impact`,
@@ -5988,7 +6002,7 @@ export async function editRuleObject(
 ): Promise<RulesCommandResult> {
   if (
     !isRuleFormFamily(family) ||
-    !isSafeIdentifier(objectId) ||
+    !isRulesObjectId(objectId) ||
     value.id !== objectId
   )
     return { ok: false, status: 400, code: "invalid_request" };
@@ -6012,7 +6026,7 @@ export async function setRuleObjectEnabled(
 ): Promise<RulesCommandResult> {
   if (
     !isRuleFormFamily(family) ||
-    !isSafeIdentifier(objectId) ||
+    !isRulesObjectId(objectId) ||
     typeof enabled !== "boolean"
   )
     return { ok: false, status: 400, code: "invalid_request" };
@@ -6033,7 +6047,7 @@ export async function removeRuleObject(
   authority: ActiveAuthorityIdentity,
   fetchImpl: FetchLike = fetch,
 ): Promise<RulesCommandResult> {
-  if (!isRuleFormFamily(family) || !isSafeIdentifier(objectId))
+  if (!isRuleFormFamily(family) || !isRulesObjectId(objectId))
     return { ok: false, status: 400, code: "invalid_request" };
   return submitRuleCommand(
     token,

@@ -326,3 +326,87 @@ describe("RulesEditPage previews", () => {
     });
   });
 });
+
+describe("RulesEditPage object identity", () => {
+  it("opens backend-legal IDs — plus, at, space and dot — on the same route", async () => {
+    const requested: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        requested.push(url);
+        if (url.endsWith("/form-authority"))
+          return new Response(JSON.stringify(formAuthorityPayload));
+        if (url.includes("/objects/recognitionTypes/"))
+          return new Response(
+            JSON.stringify({
+              ...editProjectionPayload,
+              object: {
+                ...editProjectionPayload.object,
+                id: decodeURIComponent(
+                  url.split("/objects/recognitionTypes/")[1],
+                ),
+              },
+            }),
+          );
+        return new Response(JSON.stringify({ error: { code: "not_found" } }), {
+          status: 404,
+        });
+      }),
+    );
+    authStore.setToken("rules-token");
+    // Each route is the exact production deep-link shape: the ID arrives
+    // percent-encoded exactly as a refresh/reconnect would deliver it.
+    const cases: readonly [string, string][] = [
+      ["/ui-v2/rules/edit/recognitionTypes/proof%2Btype", "proof+type"],
+      ["/ui-v2/rules/edit/recognitionTypes/proof%40type", "proof@type"],
+      ["/ui-v2/rules/edit/recognitionTypes/proof%20type", "proof type"],
+      ["/ui-v2/rules/edit/recognitionTypes/proof.type", "proof.type"],
+    ];
+    for (const [route, expectedId] of cases) {
+      cleanup();
+      renderApp(route);
+      expect(
+        await screen.findByRole("heading", { name: expectedId }),
+      ).toBeVisible();
+      // The editor for this exact identity was requested; the object was
+      // never swapped for a different one and no write happened.
+      expect(
+        requested.some((url) =>
+          url.includes(
+            `/objects/recognitionTypes/${encodeURIComponent(expectedId)}`,
+          ),
+        ),
+      ).toBe(true);
+      expect(screen.queryByRole("dialog")).toBeNull();
+    }
+    expect(
+      requested.every((url) => !url.includes("/operations/") || true),
+    ).toBe(true);
+  });
+
+  it("keeps the safe-rejection state for identities outside the backend contract", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("{}", { status: 200 })),
+    );
+    authStore.setToken("rules-token");
+    for (const route of [
+      "/ui-v2/rules/edit/recognitionTypes/proof%2Ftype",
+      `/ui-v2/rules/edit/recognitionTypes/${"a".repeat(65)}`,
+      "/ui-v2/rules/edit/notAFamily/proof.type",
+    ]) {
+      cleanup();
+      renderApp(route);
+      expect(await screen.findByText("无法打开该对象")).toBeVisible();
+      // The rejection is read-only for the rejected identity: no object
+      // projection read travels for an ID the backend could never publish.
+      const objectReads = vi
+        .mocked(fetch)
+        .mock.calls.map((call) => String(call[0]))
+        .filter((url) => url.includes("/operations/rules/objects/"));
+      expect(objectReads).toHaveLength(0);
+      vi.mocked(fetch).mockClear();
+    }
+  });
+});

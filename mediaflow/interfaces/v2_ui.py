@@ -37,6 +37,57 @@ _CONTENT_TYPES = {
 
 _INDEX_PATHS = (V2_UI_PREFIX, V2_UI_PREFIX + "/")
 
+# The one built-SPA deep route whose operator identity may end in a dot. The
+# backend rules identifier contract (RulesWorkspaceCommandService) accepts a
+# bounded ID containing ``.``, so a refresh or direct entry of
+# ``/ui-v2/rules/edit/<family>/<encoded-id>`` must receive the entry document
+# instead of being misread as an unknown asset file. The pattern below is
+# anchored to that exact route shape: an allowlisted rules family, exactly one
+# identity segment and bounded length. Traversal is already refused above, and
+# every other dotted path stays an unknown asset that fails closed.
+_RULES_EDIT_PREFIX = V2_UI_PREFIX + "/rules/edit/"
+_RULES_EDIT_FAMILIES = frozenset(
+    {
+        "recognitionRules",
+        "typeBindings",
+        "recognitionTypes",
+        "metadataPolicies",
+        "namingPolicies",
+        "classificationPolicies",
+        "organizePolicies",
+    }
+)
+_RULES_EDIT_MAX_ID_SEGMENTS = 512
+_RULES_EDIT_PART_COUNT = len(PurePosixPath(_RULES_EDIT_PREFIX).parts) + 2
+# Identity-like suffixes that are not built-artifact content types but would
+# still look like files; the rules edit allowlist must never serve them.
+_NON_ENTRY_SUFFIXES = frozenset(
+    {".bak", ".backup", ".env", ".sh", ".py", ".yaml", ".yml", ".toml", ".md"}
+)
+
+
+def _is_rules_edit_route(path: str) -> bool:
+    """Whether the request path is exactly one supported rules edit route.
+
+    A match never serves artifact bytes by itself: it only classifies the
+    request as the SPA entry-document case, so the final segment is operator
+    identity data rather than a filename. Unsupported families, extra or
+    missing depth, oversized identity segments and known asset-file suffixes
+    such as ``.bak``/``.js``/``.md`` are rejected here.
+    """
+
+    if not path.startswith(_RULES_EDIT_PREFIX):
+        return False
+    parts = PurePosixPath(path).parts
+    if len(parts) != _RULES_EDIT_PART_COUNT or parts[-2] not in _RULES_EDIT_FAMILIES:
+        return False
+    object_id = parts[-1]
+    if not 0 < len(object_id) <= _RULES_EDIT_MAX_ID_SEGMENTS:
+        return False
+    suffix = PurePosixPath(object_id).suffix.lower()
+    return suffix not in _CONTENT_TYPES and suffix not in _NON_ENTRY_SUFFIXES
+
+
 _cache_lock = threading.Lock()
 _cache: dict[str, tuple[str, bytes]] | None = None
 
@@ -105,7 +156,8 @@ def v2_ui_asset(path: str) -> tuple[str, bytes] | None:
     client-side routes fall back to the entry document so deep V2 routes such
     as ``/ui-v2/dashboard`` work. Anything that looks like a file (a dotted
     final segment) or a traversal attempt is rejected so only built artifact
-    bytes ever leave the process.
+    bytes ever leave the process, except the one allowlisted rules edit route
+    whose operator identity may legally end in a dot.
     """
 
     if ".." in PurePosixPath(path).parts:
@@ -114,6 +166,10 @@ def v2_ui_asset(path: str) -> tuple[str, bytes] | None:
     asset = assets.get(path)
     if asset is not None:
         return asset
-    if PurePosixPath(path).suffix:
+    # A known asset always wins; a dotted path that is not a legal rules edit
+    # route stays an unknown asset. The rules edit check also excludes any
+    # multi-suffix shape such as ``proof.type.bak`` so the allowlist never
+    # becomes a generic dotted-asset bypass.
+    if PurePosixPath(path).suffix and not _is_rules_edit_route(path):
         return None
     return assets.get(V2_UI_PREFIX + "/")

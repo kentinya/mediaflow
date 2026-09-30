@@ -30,6 +30,7 @@ import {
   fetchRuleEdit,
   fetchRuleFormAuthority,
   fetchRulesInventory,
+  isRulesObjectId,
   type RulesCommandResult,
 } from "../../shared/api/api-client";
 import { useAuthToken } from "../../shared/api/auth-context";
@@ -53,6 +54,10 @@ export function isRuleEditFamily(value: string): value is RuleFormFamily {
 export function RulesEditPage() {
   // Route identity carries the editing subject, so refresh / deep link /
   // reconnect all resolve to this same object without borrowed list state.
+  // The route segment must match the backend rules identifier contract exactly
+  // (the same characters and 64-character bound the command authority
+  // enforces), so an ID the backend publishes — including ``+``, ``@``,
+  // internal spaces and dots — opens the same object everywhere.
   const { family = "", objectId = "" } = useParams({ strict: false }) as {
     family?: string;
     objectId?: string;
@@ -173,12 +178,12 @@ export function RulesEditPage() {
     [dirty, family, objectId, validFamily],
   );
 
-  if (!validFamily || !/^[A-Za-z0-9._:-]{1,256}$/.test(objectId)) {
+  if (!validFamily || !isRulesObjectId(objectId)) {
     return (
       <section className="mf-rules-state" role="alert">
         <h2>无法打开该对象</h2>
         <p>
-          编辑路由的分类或对象 ID 不符合受支持的形态;Active 未发生任何变化。
+          编辑路由的分类或对象 ID 不符合后端规则身份契约;Active 未发生任何变化。
         </p>
         <Link to="/rules">{RULE_RETURN_TO_LABEL}</Link>
       </section>
