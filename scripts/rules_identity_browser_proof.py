@@ -143,6 +143,96 @@ try {
   await expect(page.getByRole('heading', { name: 'proof.type' })).toBeVisible();
   expect(page.url()).toContain('/rules/edit/recognitionTypes/proof.type');
 
+  // -- all accepted identity characters survive refresh and reconnect -------
+  // These identities exercise the published backend grammar through the
+  // production route: plus, at, internal space, ordinary dots and dotted
+  // suffixes that resemble artifact filenames.
+  const otherLegalIds = ['proof+type', 'proof@type', 'proof type'];
+  const fileLikeIds = ['proof.js', 'proof.env', 'proof.type.bak'];
+  for (const objectId of [...otherLegalIds, ...fileLikeIds]) {
+    const authorityRead = await page.request.get(
+      BASE + '/api/v1/operations/rules/form-authority',
+      { headers: { Authorization: 'Bearer ' + TOKEN } },
+    );
+    if (!authorityRead.ok()) {
+      throw new Error('authority read failed: ' + authorityRead.status());
+    }
+    const authority = (await authorityRead.json()).active;
+    const seedUrl = BASE + '/api/v1/operations/rules/objects/recognitionTypes';
+    const seed = await page.request.post(seedUrl, {
+      headers: { Authorization: 'Bearer ' + TOKEN },
+      data: {
+        object: { id: objectId, name: '文件形对象 ' + objectId, enabled: true },
+        expectedRevisionId: authority.revisionId,
+        expectedVersion: authority.revisionSequence ?? authority.version,
+        expectedDigest: authority.digest,
+      },
+    });
+    if (!seed.ok()) throw new Error('seed ' + objectId + ' failed: ' + seed.status());
+    const encodedId = encodeURIComponent(objectId);
+    await page.goto(BASE + '/ui-v2/rules/edit/recognitionTypes/' + encodedId);
+    await connect(page);
+    await expect(page.getByRole('heading', { name: objectId })).toBeVisible();
+    await page.reload();
+    await connect(page);
+    await expect(page.getByRole('heading', { name: objectId })).toBeVisible();
+    expect(new URL(page.url()).pathname).toBe(
+      '/ui-v2/rules/edit/recognitionTypes/' + encodedId,
+    );
+  }
+
+  // -- a stale row's failed impact read never fabricates reference evidence --
+  // Open the inventory FIRST so the row is rendered from the pre-removal
+  // Active, then remove the object out-of-band: the row stays stale exactly
+  // like a concurrent-management failure. The stale row's Remove reads the
+  // real impact and gets 404. The confirmation must present a failed read
+  // with a reread recovery, never "0 references, cannot remove", and the
+  // browser must issue no mutation.
+  await page.goto(BASE + '/ui-v2/rules?section=recognitionTypes');
+  await connect(page);
+  await expect(page.getByRole('heading', { name: '识别类型', exact: true })).toBeVisible();
+  const staleRow = page.getByRole('row', { name: new RegExp(fileLikeIds[0].replace('.', '\\.')) });
+  await expect(staleRow).toBeVisible();
+  const staleAuthority = await page.request.get(
+    BASE + '/api/v1/operations/rules/form-authority',
+    { headers: { Authorization: 'Bearer ' + TOKEN } },
+  );
+  if (!staleAuthority.ok()) {
+    throw new Error('authority read failed: ' + staleAuthority.status());
+  }
+  const staleAuthorityDocument = (await staleAuthority.json()).active;
+  const staleRemovalUrl =
+    BASE +
+    '/api/v1/operations/rules/objects/recognitionTypes/' +
+    encodeURIComponent(fileLikeIds[0]);
+  const staleRemoval = await page.request.delete(staleRemovalUrl, {
+    headers: { Authorization: 'Bearer ' + TOKEN },
+    data: {
+      expectedRevisionId: staleAuthorityDocument.revisionId,
+      expectedVersion: staleAuthorityDocument.revisionSequence ?? staleAuthorityDocument.version,
+      expectedDigest: staleAuthorityDocument.digest,
+    },
+  });
+  if (!staleRemoval.ok()) {
+    throw new Error('stale removal failed: ' + staleRemoval.status());
+  }
+  const writesBeforeFailedImpact = writes.length;
+  await staleRow.getByRole('button', { name: '移除' }).click();
+  await expect(page.getByText(/无法读取该对象的引用影响/)).toBeVisible();
+  await expect(page.getByText(/该对象仍被 .* 处引用/)).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '重新读取引用影响' })).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认移除' })).toHaveCount(0);
+  await page.getByRole('button', { name: '重新读取引用影响' }).click();
+  await expect(
+    page
+      .getByText(/该对象已不在当前 Active 中|无法读取该对象的引用影响/)
+      .first(),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: '确认移除' })).toHaveCount(0);
+  if (writes.length !== writesBeforeFailedImpact) {
+    throw new Error('failed impact read triggered a mutation request');
+  }
+
   // The token never persists outside memory.
   const stores = await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]));
   if (stores.includes(TOKEN)) throw new Error('token persisted to web storage');
@@ -161,18 +251,33 @@ const BASE = process.env.MF_PROOF_BASE;
 const browser = await chromium.launch({ headless: true });
 try {
   const context = await browser.newContext();
-  // Over raw HTTP the legal dotted edit route must serve the built entry
-  // document (SPA refresh), while unknown dotted assets and traversal stay
+  // Over raw HTTP every legal identity character (plus, at, space and dots,
+  // including file-like proof.js / proof.env / proof.type.bak) must serve the
+  // built entry document, while unknown dotted assets and traversal stay
   // fail-closed 404 — proved against the real Python serving boundary.
-  const entry = await context.request.get(BASE + '/ui-v2/rules/edit/recognitionTypes/proof.type');
-  if (entry.status() !== 200) throw new Error('dotted edit route returned ' + entry.status());
-  const contentType = entry.headers()['content-type'] ?? '';
-  if (!contentType.includes('text/html')) {
-    throw new Error('dotted edit route served ' + contentType);
-  }
-  const body = await entry.text();
-  if (!body.includes('<div id="root">') && !body.includes('script')) {
-    throw new Error('dotted edit route did not serve the entry document');
+  for (const objectId of [
+    'proof.type',
+    'proof+type',
+    'proof@type',
+    'proof type',
+    'proof.js',
+    'proof.env',
+    'proof.type.bak',
+  ]) {
+    const entry = await context.request.get(
+      BASE + '/ui-v2/rules/edit/recognitionTypes/' + encodeURIComponent(objectId),
+    );
+    if (entry.status() !== 200) {
+      throw new Error('edit route ' + objectId + ' returned ' + entry.status());
+    }
+    const contentType = entry.headers()['content-type'] ?? '';
+    if (!contentType.includes('text/html')) {
+      throw new Error('edit route ' + objectId + ' served ' + contentType);
+    }
+    const body = await entry.text();
+    if (!body.includes('<div id="root">') && !body.includes('script')) {
+      throw new Error('edit route ' + objectId + ' did not serve the entry document');
+    }
   }
   const missing = await context.request.get(BASE + '/ui-v2/missing-asset-abc123.js');
   if (missing.status() !== 404) throw new Error('unknown asset returned ' + missing.status());

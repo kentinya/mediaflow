@@ -14056,34 +14056,49 @@ const server = createServer(async (req, res) => {
   if (url.pathname.startsWith("/ui-v2/")) {
     const relative = url.pathname.slice("/ui-v2/".length);
     // The same narrow rules-edit exception the production Python boundary
-    // serves: a legal dotted identity on the allowlisted rules edit route is
-    // operator data, not an asset filename, so a refresh receives the entry
-    // document. Every other dotted path stays a 404 (Task 41.6).
-    const rulesEditMatch = url.pathname.match(
+    // serves: the identity segment of the allowlisted rules edit route is
+    // operator data published by the backend (dots included, file-like shapes
+    // such as proof.js / proof.env / proof.type.bak included), never a request
+    // for artifact files, so a refresh receives the entry document. Every
+    // other dotted path outside that route stays a 404 (Task 41.6).
+    let decodedPathname = url.pathname;
+    try {
+      decodedPathname = decodeURIComponent(url.pathname);
+    } catch {
+      // Keep malformed percent escapes in the path so the identity grammar
+      // below rejects them just as the production WSGI route does.
+    }
+    const rulesEditShape = decodedPathname.match(
+      /^\/ui-v2\/rules\/edit\/([^/]+)\/([^/]+)$/,
+    );
+    const rulesEditMatch = decodedPathname.match(
       /^\/ui-v2\/rules\/edit\/(recognitionRules|typeBindings|recognitionTypes|metadataPolicies|namingPolicies|classificationPolicies|organizePolicies)\/([^/]+)$/,
     );
-    const decodedRulesId = rulesEditMatch
-      ? (() => {
-          try {
-            return decodeURIComponent(rulesEditMatch[2]);
-          } catch {
-            return null;
-          }
-        })()
-      : null;
     const isRulesEditEntry =
-      decodedRulesId !== null &&
-      /^[A-Za-z0-9][A-Za-z0-9_.:@+ -]{0,63}$/.test(decodedRulesId) &&
-      !/\.(bak|backup|env|sh|py|yaml|yml|toml|md|js|mjs|css|json|map|svg|txt|html|ico|webmanifest|woff2)$/i.test(
-        decodedRulesId,
-      );
+      rulesEditMatch !== null &&
+      /^[A-Za-z0-9][A-Za-z0-9_.:@+ -]{0,63}$/.test(rulesEditMatch[2]);
+    if (rulesEditShape) {
+      if (!isRulesEditEntry) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("not found");
+        return;
+      }
+      const index = await readArtifact("index.html");
+      if (index === null) {
+        res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+        res.end("V2 artifact is not built; run npm --prefix web run build");
+        return;
+      }
+      sendFile(res, index, CONTENT_TYPES[".html"]);
+      return;
+    }
     const hasFileSuffix = Boolean(extname(relative));
     const body = await readArtifact(relative);
     if (body !== null && Object.hasOwn(CONTENT_TYPES, extname(relative))) {
       sendFile(res, body, CONTENT_TYPES[extname(relative)]);
       return;
     }
-    if (hasFileSuffix && !isRulesEditEntry) {
+    if (hasFileSuffix) {
       res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("not found");
       return;

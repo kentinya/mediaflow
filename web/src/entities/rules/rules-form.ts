@@ -788,6 +788,10 @@ export function ruleFailureCopy(code: string): string {
     rules_duplicate: "该 ID 已存在于当前 Active,请改用新的稳定 ID。",
     rules_id_immutable: "对象 ID 不可更改,请保持原 ID 只修改可编辑字段。",
     rules_object_not_found: "该对象已不在当前 Active 中,请刷新清单后重试。",
+    // The object projection/impact read routes answer a LookupError with the
+    // generic 404 code: the object is no longer in the current Active (for
+    // example another administrator removed it while this inventory was open).
+    not_found: "该对象已不在当前 Active 中,请刷新清单后重试。",
     rules_object_referenced: "该对象仍被引用,无法移除;请先处理列出的依赖对象。",
     rules_reference_unavailable:
       "引用了本服务未配置的 Provider 或媒体库,请修正引用。",
@@ -810,6 +814,19 @@ export function ruleFailureCopy(code: string): string {
     malformed_response: "响应无法解析,请先核实当前 Active 再决定下一步。",
   };
   return known[code] ?? "保存失败,请检查输入后重试;旧 Active 保持不变。";
+}
+
+/** Human label for an unavailable reference-impact read, never a write outcome. */
+export function ruleImpactFailureCopy(code: string): string {
+  const known: Readonly<Record<string, string>> = {
+    not_found: "该对象已不在当前 Active 中,请刷新清单后重试。",
+    rules_object_not_found: "该对象已不在当前 Active 中,请刷新清单后重试。",
+    forbidden: "当前身份没有读取该对象引用影响的权限。",
+    unauthorized: "当前会话已失效,请重新连接后读取引用影响。",
+    transport_unavailable: "无法连接 API,引用影响尚未确认。",
+    malformed_response: "引用影响响应无法解析,请重新读取。",
+  };
+  return known[code] ?? "引用影响读取失败,请重新读取。";
 }
 
 // ---------------------------------------------------------------------------

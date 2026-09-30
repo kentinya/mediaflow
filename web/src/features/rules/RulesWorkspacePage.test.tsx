@@ -444,6 +444,142 @@ describe("RulesWorkspacePage", () => {
     expect(calls.some((call) => call.method === "DELETE")).toBe(false);
   });
 
+  it("a failed impact read never becomes reference evidence and offers a reread", async () => {
+    // B's repro: the row is stale — another administrator removed the object
+    // while this inventory was open. The production impact read answers 404
+    // with code `not_found`; the confirmation group must present a failed
+    // read (never "0 references, cannot remove"), keep deletion unavailable,
+    // and offer the explicit reread recovery.
+    const { calls } = stubRules();
+    authStore.setToken("rules-token");
+    renderApp("/ui-v2/rules");
+    await screen.findByRole("heading", { name: "整理规则" });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "识别类型" }));
+    const row = await screen.findByRole("row", { name: /Special/ });
+    calls.length = 0;
+    // The object is gone from the current Active: the production impact read
+    // answers 404 with code `not_found` exactly like the real API.
+    const fetchMock = vi.mocked(fetch);
+    const previous = fetchMock.getMockImplementation();
+    fetchMock.mockImplementationOnce(async (input, init) => {
+      const url = String(input);
+      calls.push({
+        method: (init?.method ?? "GET").toUpperCase(),
+        url,
+        body:
+          typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+      });
+      if (url.endsWith("/objects/recognitionTypes/C/impact")) {
+        return new Response(
+          JSON.stringify({
+            error: {
+              code: "not_found",
+              details: {
+                durableState: "active_unchanged",
+                sideEffects: "none",
+                nextAction:
+                  "refresh the Active rules inventory and choose an existing object",
+              },
+            },
+          }),
+          { status: 404, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return previous?.(input, init) as Promise<Response>;
+    });
+    await user.click(within(row).getByRole("button", { name: "移除" }));
+    expect(await screen.findByText(/无法读取该对象的引用影响/)).toBeVisible();
+    expect(
+      calls.some(
+        (call) =>
+          call.method === "GET" &&
+          call.url.endsWith("/objects/recognitionTypes/C/impact"),
+      ),
+    ).toBe(true);
+    // The failed read is its own bounded state: no invented references, no
+    // fabricated blocker count, and no delete command travels.
+    expect(screen.queryByText(/该对象仍被 .* 处引用/)).toBeNull();
+    expect(screen.queryByText(/确认移除识别类型 C/)).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "重新读取引用影响" }),
+    ).toBeVisible();
+    expect(screen.queryByRole("button", { name: "确认移除" })).toBeNull();
+    expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+
+    // The explicit reread asks the backend again and renders whatever
+    // evidence actually comes back — here the stub's referenced projection —
+    // so the operator always acts on current evidence, never the failed read.
+    calls.length = 0;
+    await user.click(screen.getByRole("button", { name: "重新读取引用影响" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.method === "GET" &&
+            call.url.endsWith("/objects/recognitionTypes/C/impact"),
+        ),
+      ).toBe(true),
+    );
+    expect(
+      await screen.findByText(/该对象仍被 2 处引用,不能移除/),
+    ).toBeVisible();
+    expect(screen.queryByText(/无法读取该对象的引用影响/)).toBeNull();
+  });
+
+  it("permission and transport impact-read failures also stay failed reads", async () => {
+    // A permission denial (403 forbidden) and a transport failure are the
+    // same class of unavailable evidence: deletion stays unavailable and the
+    // recovery is a reread, never a fabricated reference claim.
+    for (const outcome of ["forbidden", "transport"] as const) {
+      const { calls } = stubRules();
+      authStore.setToken("rules-token");
+      renderApp("/ui-v2/rules");
+      await screen.findByRole("heading", { name: "整理规则" });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole("button", { name: "识别类型" }));
+      const row = await screen.findByRole("row", { name: /Special/ });
+      const fetchMock = vi.mocked(fetch);
+      const previous = fetchMock.getMockImplementation();
+      fetchMock.mockImplementationOnce(async (input, init) => {
+        const url = String(input);
+        calls.push({
+          method: (init?.method ?? "GET").toUpperCase(),
+          url,
+          body:
+            typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
+        });
+        if (url.endsWith("/impact")) {
+          if (outcome === "forbidden") {
+            return new Response(
+              JSON.stringify({ error: { code: "forbidden" } }),
+              { status: 403, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          throw new TypeError("network down");
+        }
+        return previous?.(input, init) as Promise<Response>;
+      });
+      await user.click(within(row).getByRole("button", { name: "移除" }));
+      expect(await screen.findByText(/无法读取该对象的引用影响/)).toBeVisible();
+      expect(screen.queryByText(/该对象仍被 .* 处引用/)).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "重新读取引用影响" }),
+      ).toBeVisible();
+      expect(screen.queryByRole("button", { name: "确认移除" })).toBeNull();
+      expect(calls.some((call) => call.method === "DELETE")).toBe(false);
+      if (outcome === "transport") {
+        expect(screen.getAllByText(/引用影响尚未确认/).length).toBeGreaterThan(
+          0,
+        );
+        expect(screen.queryByText(/保存结果未确认/)).toBeNull();
+      }
+      cleanup();
+      authStore.clearToken();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("a read-only principal sees no write controls but keeps the full inventory", async () => {
     const { calls } = stubRules({
       inventory: { ...rulesPayload, canManage: false },
