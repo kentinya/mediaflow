@@ -648,6 +648,40 @@ export function allowlistedDestinationSearch(
     );
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
+  if (path === "/operations") {
+    // The unified run inventory carries only its bounded submitted filter
+    // state and the selected run identity through authentication
+    // continuation; a filter token that does not match the backend grammar
+    // (including anything credential-like or free-form) is dropped.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setFilterToken(
+      allowed,
+      "status",
+      current.get("status"),
+      STATUS_FILTER_TOKEN,
+    );
+    setFilterToken(
+      allowed,
+      "command",
+      current.get("command"),
+      COMMAND_FILTER_TOKEN,
+    );
+    setSafe(allowed, "q", current.get("q"));
+    setSafe(allowed, "from", current.get("from"));
+    setSafe(allowed, "to", current.get("to"));
+    setSafe(allowed, "run", current.get("run"));
+    // The manual Scan/Preview scope selector carries one closed scope kind and
+    // one bounded configured library identity, exactly like the retired
+    // landing did. The pair is kept only together, so a scope kind that does
+    // not name a ResourceLibrary drops its library identity with it.
+    const scopeKind = current.get("scopeKind");
+    if (scopeKind !== null && scopeKind === "resourceLibrary") {
+      allowed.set("scopeKind", scopeKind);
+      setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
+    }
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
   if (path === "/rules") {
     // The rules workspace section is a closed allowlist of business families.
     // Anything else (including a raw revision/digest, secret or arbitrary URL)

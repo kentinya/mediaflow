@@ -29,7 +29,7 @@ async function openOperations(page: Page) {
 
 async function openTaskList(page: Page) {
   await openOperations(page);
-  await page.getByRole("link", { name: "Tasks", exact: true }).first().click();
+  await page.getByRole("link", { name: "任务列表", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
   await expect(
     page.getByRole("heading", { name: "Tasks", exact: true }),
@@ -38,7 +38,7 @@ async function openTaskList(page: Page) {
 
 async function openJobList(page: Page) {
   await openOperations(page);
-  await page.getByRole("link", { name: "Jobs", exact: true }).first().click();
+  await page.getByRole("link", { name: "作业列表", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/jobs$/);
   await expect(
     page.getByRole("heading", { name: "Jobs", exact: true }),
@@ -61,22 +61,36 @@ async function openJobDetail(page: Page, jobId: string) {
   ).toBeVisible();
 }
 
-test("Operations landing shows Worker readiness and workspace links", async ({
+test("操作与任务 inventory shows the run list, cards and workspace links", async ({
   page,
 }) => {
   await connect(page);
   await openOperations(page);
 
   await expect(
-    page.getByRole("heading", { name: "Worker readiness" }),
+    page.getByRole("heading", { name: "操作与任务", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText(/Worker ready/)).toBeVisible();
+  // Real data renders with Chinese business labels.
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByText("扫描").first()).toBeVisible();
+  // Worker readiness and the manual scope journey stay discoverable.
   await expect(
-    page.getByRole("link", { name: "Tasks", exact: true }).first(),
+    page.getByRole("heading", { name: "Worker 就绪" }),
   ).toBeVisible();
+  await expect(page.getByText(/Worker 就绪 — 1 个活跃 Worker/)).toBeVisible();
+  // No manual action before an exact scope is chosen, then advertised links.
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toHaveCount(0);
+  await page.getByLabel("ResourceLibrary scope").selectOption("resources");
+  await expect(page.getByRole("link", { name: "发起受限扫描" })).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "Jobs", exact: true }).first(),
+    page.getByRole("link", { name: "运行零变更预览" }),
   ).toBeVisible();
+  // Existing workspace navigation stays usable from the landing.
+  await expect(
+    page.getByRole("link", { name: "任务列表", exact: true }),
+  ).toBeVisible();
+  // Entry has no selection: the detail panel is closed.
+  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
 });
 
 test("the submitted Operations filter is reflected in the URL and survives reconnect", async ({
@@ -109,7 +123,7 @@ test("a reload drops the memory-only token and returns to the connection boundar
   page,
 }) => {
   await connect(page);
-  await openTaskList(page);
+  await openOperations(page);
   await page.reload();
   await expect(page.getByLabel("API token")).toBeVisible();
   const html = await page.content();
@@ -398,7 +412,7 @@ test("the 媒体库 entry and Operations workspace cross-link without a retired 
   // The shared shell keeps the Operations workspace reachable from any page.
   await page.getByRole("link", { name: "Operations", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations$/);
-  await page.getByRole("link", { name: "Tasks", exact: true }).click();
+  await page.getByRole("link", { name: "任务列表", exact: true }).click();
   await expect(page).toHaveURL(/\/ui-v2\/operations\/tasks$/);
 });
 
@@ -445,4 +459,65 @@ test("dropping credential-like Operations search state on reconnect", async ({
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
   expect(consoleMessages.join("\n")).not.toContain(VIEWER_TOKEN);
+});
+
+test("inventory count card applies its server filter and the run overview opens and closes", async ({
+  page,
+}) => {
+  await connect(page);
+  await openOperations(page);
+
+  // Real data renders with truthful cards; the attention card is explicitly
+  // labelled as an overlapping facet, never a separate terminal state.
+  await expect(page.getByRole("table")).toBeVisible();
+  const attentionCard = page.getByRole("button", {
+    name: /需要关注（与状态计数重叠，不是独立终态）/,
+  });
+  await expect(attentionCard).toBeVisible();
+  await expect(page.getByRole("button", { name: /失败/ })).toBeVisible();
+
+  // Card click applies the status filter to the same server-side population.
+  await page.getByRole("button", { name: /^1\s*失败/ }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?status=failed$/);
+  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+  await expect(page.getByRole("row", { name: /job-001/ })).toHaveCount(0);
+
+  // Selecting a run opens the bounded overview with durable facts only.
+  await page
+    .getByRole("row", { name: /job-005/ })
+    .getByRole("button", { name: /job-005/ })
+    .first()
+    .click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  await expect(detail.getByText(/失败/).first()).toBeVisible();
+  await expect(detail.getByText("触发方式")).toBeVisible();
+  // Deeper evidence links to the exact existing Task detail route.
+  await expect(detail.getByText("打开 Task 详情")).toBeVisible();
+
+  // Closing the detail returns to the same filtered list context.
+  await detail.getByRole("button", { name: "关闭详情" }).click();
+  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+});
+
+test("an unauthenticated deep entry reconnects to the selected run overview", async ({
+  page,
+}) => {
+  await page.goto("/ui-v2/operations?status=failed&run=job-005");
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  // The bounded filter and the selection both survive the continuation.
+  await expect(page).toHaveURL(/\/ui-v2\/operations\?/);
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).toHaveURL(/run=job-005/);
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  await expect(detail.getByText(/失败/).first()).toBeVisible();
+  // A failed read never means zero runs: the filtered table still shows data.
+  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+  const html = await page.content();
+  expect(html).not.toContain(VIEWER_TOKEN);
 });

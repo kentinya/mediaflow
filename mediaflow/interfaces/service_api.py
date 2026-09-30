@@ -152,6 +152,11 @@ from mediaflow.domain.notification import (
     NotificationDeliveryConflict,
     NotificationDeliveryStatus,
 )
+from mediaflow.domain.operations_run import (
+    ATTENTION_RUN_STATUSES,
+    OperationsRunStatus,
+    known_command_label,
+)
 from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.package_exchange import (
     MAX_CONFIGURATION_PACKAGE_BYTES,
@@ -1428,6 +1433,17 @@ class MediaFlowApi:
         ]
         management_readiness_route = parts == ["api", "v1", "management", "readiness"]
         task_read_route = parts[:3] == ["api", "v1", "tasks"] and method == "GET"
+        # The unified run inventory reads durable repository rows only: it
+        # resolves no configuration, so a missing or unreadable current Active
+        # must never hide historical runs.  Like the Task read it shares the
+        # same durable basis, it skips the Active refresh entirely instead of
+        # failing closed on a route that needs no binding.
+        operations_runs_read_route = (
+            len(parts) >= 4
+            and parts[:3] == ["api", "v1", "operations"]
+            and parts[3] == "runs"
+            and method == "GET"
+        )
         worker_route = parts[:3] == ["api", "v1", "workers"]
         resource_library_save_route = (
             parts == ["api", "v1", "resource-libraries"] and method == "POST"
@@ -1445,6 +1461,7 @@ class MediaFlowApi:
             and not automation_definition_route
             and not task_read_route
             and not worker_route
+            and not operations_runs_read_route
         ):
             # Transfer observation is a durable read of an already-admitted
             # task.  Keep the last published binding so a missing current
@@ -2822,6 +2839,10 @@ class MediaFlowApi:
             "POST",
         }:
             return self._storage_operations_projection(
+                parts, method, environ, start_response, principal
+            )
+        if parts[:4] == ["api", "v1", "operations", "runs"]:
+            return self._operations_runs_projection(
                 parts, method, environ, start_response, principal
             )
         if parts[:4] == ["api", "v1", "operations", "rules"]:
@@ -12406,6 +12427,322 @@ class MediaFlowApi:
                 else principal.principal_id
             ),
         )
+
+    # -- Unified Operations run inventory (Slice 42 RO-1/RO-2) ------------
+
+    _RUNS_STATUS_FILTER_VALUES = frozenset(value.value for value in OperationsRunStatus)
+    _RUNS_TIME_FILTER = re.compile(r"\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|\+00:00)?)?")
+
+    def _operations_runs_projection(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """Dispatch the bounded unified run inventory (RO-1/RO-2, read-only).
+
+        The inventory reads one deduplicated population of Jobs and Tasks
+        through their explicit persisted relationships.  Every read is
+        side-effect-free: no admission, no Provider call, no Storage access
+        and no display backfill.  A run's overview is served from the same
+        repository projection; deeper per-item evidence stays on the existing
+        Task/Job detail routes, which remain the authoritative sources.
+        """
+
+        if method != "GET":
+            return self._error(start_response, 405, "method_not_allowed", "GET required")
+        self._require(principal, ApiPermission.READ)
+        if len(parts) == 4:
+            return self._operations_runs_page(environ, start_response, principal)
+        if len(parts) == 5:
+            return self._operations_run_overview(parts[4], start_response, principal)
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    @classmethod
+    def _operations_runs_query(cls, environ: dict, principal_id: str) -> dict[str, object]:
+        """Bounded inventory filter state plus its filter-bound cursor.
+
+        The submitted filters, the cursor kind and the principal identity are
+        part of the cursor scope, so a cursor minted for one filter state or
+        one principal is refused as soon as either differs: no cross-principal
+        or cross-filter cursor replay.
+        """
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"limit", "cursor", "status", "command", "q", "from", "to"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError(
+                "operations runs query accepts limit, cursor, status, command, q, from, and to once"
+            )
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["50"])[0], "run")
+        raw_status = values.get("status", [""])[0]
+        if raw_status in {"", "all"}:
+            status = None
+        elif raw_status in cls._RUNS_STATUS_FILTER_VALUES:
+            status = raw_status
+        else:
+            raise ValueError("operations run status filter is invalid")
+        raw_command = values.get("command", [""])[0]
+        command = None if raw_command in {"", "all"} else raw_command
+        if command is not None and not _TASK_COMMAND_FILTER.fullmatch(command):
+            raise ValueError("operations run command filter is invalid")
+        raw_search = values.get("q", [""])[0].strip()
+        if len(raw_search) > 128:
+            raise ValueError("operations run search text is too long")
+        search = raw_search or None
+        created_after = cls._run_time_filter(values.get("from", [""])[0], "from")
+        created_before = cls._run_time_filter(values.get("to", [""])[0], "to")
+        scope = cls._operations_runs_scope(
+            principal_id=principal_id,
+            status=status,
+            command=command,
+            search=search,
+            created_after=created_after,
+            created_before=created_before,
+        )
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(
+                raw_cursor[0],
+                "operations_runs",
+                expected_scope=scope,
+            )
+            if raw_cursor and raw_cursor[0]
+            else None
+        )
+        return {
+            "limit": limit,
+            "cursor": cursor,
+            "status": status,
+            "command": command,
+            "search": search,
+            "created_after": created_after,
+            "created_before": created_before,
+            "scope": scope,
+        }
+
+    @staticmethod
+    def _run_time_filter(raw: str, field: str) -> datetime | None:
+        """Parse one bounded creation-time boundary.
+
+        Only UTC ISO-8601 forms are accepted; anything else is a rejected
+        filter value rather than an ignored one, so a silent filter mismatch
+        can never look like an empty population.
+        """
+
+        if raw in {"", "all"}:
+            return None
+        # parse_qs has already decoded the query string, so a literal "+"
+        # arrived as a space; restore the UTC designator before validating.
+        raw = raw.replace(" 00:00", "+00:00").replace(" ", "+")
+        if not MediaFlowApi._RUNS_TIME_FILTER.fullmatch(raw):
+            raise ValueError(f"operations run {field} filter is invalid")
+        normalized = raw.replace("Z", "+00:00")
+        if "T" not in normalized:
+            normalized = normalized.replace("+00:00", "") + "T00:00:00+00:00"
+        elif not normalized.endswith("+00:00"):
+            normalized += "+00:00"
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError as error:
+            raise ValueError(f"operations run {field} filter is invalid") from error
+        if parsed.utcoffset() != timedelta(0):
+            raise ValueError(f"operations run {field} filter must use UTC")
+        return parsed
+
+    @staticmethod
+    def _operations_runs_scope(
+        *,
+        principal_id: str,
+        status: str | None,
+        command: str | None,
+        search: str | None,
+        created_after: datetime | None,
+        created_before: datetime | None,
+    ) -> str:
+        """Deterministic cursor scope binding filters and the reading principal.
+
+        The principal identity is part of the digested scope, so a cursor
+        minted by one API principal is refused for another: a cross-principal
+        replay recovers as an invalid cursor, never as a silently different
+        page.  The digest hides the identity from the cursor payload itself.
+        """
+
+        parts = [
+            f"principal={principal_id}",
+            f"status={status or 'all'}",
+            f"command={command or 'all'}",
+            f"q={search or ''}",
+            f"from={created_after.isoformat() if created_after else ''}",
+            f"to={created_before.isoformat() if created_before else ''}",
+        ]
+        return ";".join(parts)
+
+    def _operations_runs_page(
+        self,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """One bounded inventory page with truthful counts (AC-T2)."""
+
+        query = self._operations_runs_query(environ, principal.principal_id)
+        repository = self._repository
+        if repository is None or not callable(getattr(repository, "operations_runs_page", None)):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "unified run inventory is unavailable for this runtime",
+            )
+        # The cursor direction determines the page window: a forward cursor
+        # consumes `limit+1` rows so `has_next` stays exact, and a backward
+        # cursor keeps the last `limit` rows of the returned window.
+        cursor: DecodedCursor | None = query["cursor"]
+        limit: int = query["limit"]
+        if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
+            # A backward cursor keeps the newest `limit` rows strictly after
+            # the boundary, so a previous page's shape matches the forward
+            # one; `has_previous` claims another older page only when the
+            # boundary itself had a full window behind it.
+            page, _total, counts = repository.operations_runs_page(
+                limit=limit,
+                before=cursor.position,
+                status=query["status"],
+                command=query["command"],
+                search=query["search"],
+                created_after=query["created_after"],
+                created_before=query["created_before"],
+            )
+            has_previous = False
+            has_next = bool(page)
+        else:
+            page, _total, counts = repository.operations_runs_page(
+                limit=limit + 1,
+                after=cursor.position if cursor else None,
+                status=query["status"],
+                command=query["command"],
+                search=query["search"],
+                created_after=query["created_after"],
+                created_before=query["created_before"],
+            )
+            has_next = len(page) > limit
+            has_previous = bool(cursor and page)
+            page = page[:limit]
+        scope: str = query["scope"]
+        # The attention count is the overlapping facet over the same filtered
+        # population — never a mutually exclusive terminal state.
+        attention_count = sum(
+            count
+            for value, count in counts.items()
+            if value in {item.value for item in ATTENTION_RUN_STATUSES}
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "items": [self._operations_run_document(item) for item in page],
+                "limit": limit,
+                "status": query["status"],
+                "command": query["command"],
+                "q": query["search"],
+                "from": (query["created_after"].isoformat() if query["created_after"] else None),
+                "to": (query["created_before"].isoformat() if query["created_before"] else None),
+                "total": _total,
+                "truncated": has_next,
+                "status_counts": counts,
+                "attention_count": attention_count,
+                "population": (
+                    "unified job/task run inventory, deduplicated by explicit task linkage"
+                ),
+                "sideEffects": "none",
+                "previous_cursor": self._run_page_cursor(
+                    page, has_previous, CursorDirection.PREVIOUS, scope
+                ),
+                "next_cursor": self._run_page_cursor(page, has_next, CursorDirection.NEXT, scope),
+            },
+        )
+
+    def _operations_run_overview(
+        self, run_id: str, start_response: Callable, principal: ResolvedApiPrincipal
+    ):
+        """One selected run's bounded overview (RO-1 selection journey)."""
+
+        repository = self._repository
+        if repository is None or not callable(getattr(repository, "operations_runs_page", None)):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "unified run inventory is unavailable for this runtime",
+            )
+        page, _total, _counts = repository.operations_runs_page(limit=100)
+        overview = next((item for item in page if item.run_id == run_id), None)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        return self._response(
+            start_response,
+            200,
+            self._operations_run_document(overview),
+        )
+
+    @staticmethod
+    def _run_page_cursor(
+        page: tuple,
+        available: bool,
+        direction: CursorDirection,
+        scope: str,
+    ) -> str | None:
+        if not available or not page:
+            return None
+        record = page[0] if direction is CursorDirection.PREVIOUS else page[-1]
+        return encode_cursor(
+            "operations_runs",
+            record.created_at,
+            record.run_id,
+            direction,
+            scope=scope,
+        )
+
+    def _operations_run_document(self, overview) -> dict[str, object]:
+        """One bounded, secret-free inventory/overview run document.
+
+        The raw scope path is never published: only the bounded relative
+        scope identity survives redaction, and an unknown legacy command gets
+        an honest ``recognizedCommand: false`` label rather than a guessed
+        business meaning.
+        """
+
+        command = overview.command
+        label = known_command_label(command) if command else None
+        document: dict[str, object] = {
+            "run_kind": overview.run_kind,
+            "run_id": overview.run_id,
+            "command": command,
+            "command_label": label,
+            "recognized_command": overview.recognized_command and label is not None,
+            "status": overview.status.value,
+            "trigger": overview.trigger.value,
+            "created_at": overview.created_at.isoformat(),
+            "updated_at": overview.updated_at.isoformat(),
+            "job_id": overview.job_id,
+            "task_id": overview.task_id,
+            "schedule_id": overview.schedule_id,
+            "definition_id": overview.definition_id,
+            "source_scope": bounded_identity_path(overview.source_scope),
+            "library_kind": overview.library_kind.value if overview.library_kind else None,
+            "total_items": overview.total_items,
+            "completed_items": overview.completed_items,
+            "failed_items": overview.failed_items,
+            "pause_requested": overview.pause_requested,
+            "attention": overview.attention,
+            "configuration_snapshot_id": overview.configuration_snapshot_id,
+            "worker_id": overview.worker_id,
+            "sideEffects": "none",
+        }
+        return redact_manual_value(document)
 
     def _automation_operations_projection(
         self,

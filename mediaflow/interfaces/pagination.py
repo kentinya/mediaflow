@@ -16,16 +16,9 @@ _KINDS = frozenset(
     {
         "tasks",
         "jobs",
+        "operations_runs",
         "task_items",
         "task_results",
-        "notification_deliveries",
-        "schedule_audit",
-        "automation_definition_occurrences",
-        "operational_logs",
-    }
-)
-_SCOPED_KINDS = frozenset(
-    {
         "notification_deliveries",
         "schedule_audit",
         "automation_definition_occurrences",
@@ -36,8 +29,19 @@ _SCOPED_KINDS = frozenset(
 # and Job collections accept filters, so a page cursor must be invalidated as
 # soon as the filter state it was minted for changes.  Cursors without a scope
 # stay decodable for callers that submit no filter state, which keeps the
-# pre-existing collection contract usable.
+# pre-existing collection contract usable.  The unified Operations run
+# inventory always binds its full filter scope (including the principal), so
+# its cursors are scoped without the unscoped fallback.
 _OPTIONALLY_SCOPED_KINDS = frozenset({"tasks", "jobs"})
+_SCOPED_KINDS = frozenset(
+    {
+        "notification_deliveries",
+        "schedule_audit",
+        "automation_definition_occurrences",
+        "operational_logs",
+        "operations_runs",
+    }
+)
 MAX_CURSOR_LENGTH = 512
 
 

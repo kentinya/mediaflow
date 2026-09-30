@@ -52,6 +52,7 @@ from mediaflow.domain.dashboard import (
     DashboardTaskCounts,
     RecentOperationalFailure,
 )
+from mediaflow.domain.direct_files import LibraryKind
 from mediaflow.domain.execution_authorization import (
     ExecutionAuthorization,
     ExecutionAuthorizationAudit,
@@ -143,6 +144,12 @@ from mediaflow.domain.notification import (
     NotificationDeliveryStatus,
     NotificationEventType,
 )
+from mediaflow.domain.operations_run import (
+    OperationsRunOverview,
+    OperationsRunStatus,
+    OperationsRunTrigger,
+    known_command_label,
+)
 from mediaflow.domain.processing_checkpoint import (
     CheckpointAudit,
     CheckpointBlocker,
@@ -182,6 +189,7 @@ from mediaflow.domain.resident_services import (
 from mediaflow.domain.scanner import FileChange, FileScanStatus
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
+    MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     TRANSFER_MUTATION_IN_FLIGHT,
     ConfirmationStatus,
     ConflictConfirmation,
@@ -232,7 +240,12 @@ from mediaflow.infrastructure.file_index_schema import (
 # is still exactly releasable by its owning Task but never by a generation.
 # Schema 39 binds notification deliveries to their original target digest;
 # legacy deliveries retain unknown authority and cannot be claimed automatically.
-SCHEMA_VERSION = 39
+# Schema 40 adds the read-supporting indexes of the unified Operations run
+# inventory: the explicit ``automation_jobs.task_id`` linkage index and the
+# Task status/created ordering index.  It is purely additive — no column, row,
+# pin, link or authority value is rewritten — and the inventory itself stays a
+# read projection with no new execution authority.
+SCHEMA_VERSION = 40
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -328,6 +341,40 @@ def _command_family_pattern(command: str) -> str:
 
     escaped = command.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"{escaped}:%"
+
+
+def _run_search_pattern(search: str) -> str:
+    """Build the escaped LIKE pattern matching one safe text search value."""
+
+    return search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+_JOB_RUN_STATUS_MAP = {
+    "pending": OperationsRunStatus.PENDING,
+    "running": OperationsRunStatus.RUNNING,
+    "completed": OperationsRunStatus.COMPLETED,
+    "failed": OperationsRunStatus.FAILED,
+    "cancelled": OperationsRunStatus.CANCELLED,
+}
+
+_TASK_RUN_STATUS_MAP = {
+    "pending": OperationsRunStatus.PENDING,
+    "running": OperationsRunStatus.RUNNING,
+    "paused": OperationsRunStatus.PAUSED,
+    "completed": OperationsRunStatus.COMPLETED,
+    "partial_success": OperationsRunStatus.PARTIAL_SUCCESS,
+    "failed": OperationsRunStatus.FAILED,
+    "cancelled": OperationsRunStatus.CANCELLED,
+}
+
+_RUN_TERMINAL_STATUSES = frozenset(
+    {
+        OperationsRunStatus.COMPLETED,
+        OperationsRunStatus.PARTIAL_SUCCESS,
+        OperationsRunStatus.FAILED,
+        OperationsRunStatus.CANCELLED,
+    }
+)
 
 
 def _validated_webhook_id_filter(
@@ -4645,6 +4692,309 @@ class SQLiteTaskRepository:
             rows = self._connection.execute(query, parameters).fetchall()
         values = tuple(self._job(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
+
+    # -- Unified Operations run inventory (Slice 42 RO-1/RO-2) ------------
+
+    _RUN_QUERY_SELECT = """
+        SELECT 'job' AS run_kind, jobs.job_id AS anchor_id, jobs.created_at AS sort_at,
+               jobs.task_id AS linked_task_id, NULL AS transfer_task_id,
+               jobs.schedule_id, jobs.definition_id, jobs.source_scope,
+               jobs.resource_library_id, jobs.worker_id, jobs.status AS job_status
+        FROM automation_jobs jobs
+        UNION ALL
+        SELECT 'task' AS run_kind, tasks.task_id AS anchor_id, tasks.created_at AS sort_at,
+               NULL AS linked_task_id, NULL AS transfer_task_id,
+               NULL AS schedule_id, NULL AS definition_id,
+               tasks.scope_path AS source_scope, NULL AS resource_library_id,
+               NULL AS worker_id, NULL AS job_status
+        FROM tasks tasks
+        WHERE NOT EXISTS (
+            SELECT 1 FROM automation_jobs linked_jobs
+            WHERE linked_jobs.task_id = tasks.task_id
+        )
+    """
+
+    @staticmethod
+    def _run_query_clauses(
+        *,
+        status: str | None,
+        command: str | None,
+        search: str | None,
+        created_after: datetime | None,
+        created_before: datetime | None,
+    ) -> tuple[list[str], list[object]]:
+        """Bounded WHERE clauses shared by the page and the count queries.
+
+        Every clause binds to a real persisted column of the unified
+        population; nothing infers a link or a label from free-form data.
+        """
+
+        clauses: list[str] = []
+        parameters: list[object] = []
+        if status is not None:
+            clauses.append("derived_status = ?")
+            parameters.append(status)
+        if command is not None:
+            clauses.append("(effective_command = ? OR effective_command LIKE ? ESCAPE '\\')")
+            parameters.extend((command, _command_family_pattern(command)))
+        if search is not None:
+            clauses.append("run_search LIKE ? ESCAPE '\\'")
+            parameters.append(f"%{_run_search_pattern(search)}%")
+        if created_after is not None:
+            clauses.append("sort_at >= ?")
+            parameters.append(created_after.isoformat())
+        if created_before is not None:
+            clauses.append("sort_at <= ?")
+            parameters.append(created_before.isoformat())
+        return clauses, parameters
+
+    def _run_query_document(self) -> str:
+        """One derived, deduplicated run population as a subquery.
+
+        The join is the explicit persisted ``automation_jobs.task_id`` only:
+        a Task with any linked Job disappears from the standalone branch and
+        appears once through its admission, so a Job acquiring a Task never
+        changes the run's identity, count or anchor ID.  Job-derived display
+        evidence (scope, worker, schedule/definition, trigger) survives the
+        linkage through the same row.  ``derived_status`` is computed from the
+        exact evidence columns with the same precedence as
+        :func:`mediaflow.domain.operations_run.derive_run_status`, so the
+        page and the status partitions share one read basis.
+        """
+
+        media_prefix = f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}%"
+        return f"""
+            SELECT runs.*,
+                   task_status.status AS linked_task_status,
+                   COALESCE(task_status.command, runs.anchor_command) AS effective_command,
+                   CASE
+                       WHEN task_status.command IS NOT NULL THEN 'task'
+                       ELSE runs.run_kind
+                   END AS evidence_kind,
+                   CASE
+                       WHEN task_status.command LIKE '{media_prefix}' THEN 'media'
+                       WHEN runs.resource_library_id LIKE 'media:%' THEN 'media'
+                       -- An aggregate's kind is also proven by any persisted
+                       -- item identity: a manual organize Task itself carries
+                       -- no kind in its command, but its items do.
+                       WHEN EXISTS (
+                           SELECT 1 FROM task_items kind_items
+                           WHERE kind_items.task_id = COALESCE(
+                               runs.linked_task_id, runs.transfer_task_id, runs.anchor_id
+                           )
+                           AND kind_items.resource_library_id LIKE 'media:%'
+                       ) THEN 'media'
+                       ELSE 'resource'
+                   END AS library_kind,
+                   task_status.total_items, task_status.completed_items,
+                   task_status.failed_items, task_status.pause_requested,
+                   task_status.configuration_snapshot_id,
+                   -- The bounded historical scope: prefer the exact work scope
+                   -- the Task itself persisted, then the Job's recorded
+                   -- admission scope.  Neither value is ever backfilled from
+                   -- the current Active.  The derived column is named
+                   -- ``effective_scope`` because ``runs.*`` already carries the
+                   -- Job branch's raw ``source_scope``.
+                   COALESCE(NULLIF(task_status.scope_path, ''), NULLIF(runs.source_scope, ''))
+                       AS effective_scope,
+                   COALESCE(task_status.updated_at, runs.job_updated_at, runs.sort_at)
+                       AS updated_at,
+                   CASE
+                       WHEN task_status.status = 'paused' THEN 'paused'
+                       WHEN task_status.status = 'pending' THEN 'pending'
+                       WHEN task_status.status = 'running' THEN 'running'
+                       WHEN runs.job_status = 'pending' THEN 'pending'
+                       WHEN runs.job_status = 'running' THEN 'running'
+                       WHEN task_status.status IN (
+                           'completed', 'partial_success', 'failed', 'cancelled'
+                       ) THEN task_status.status
+                       WHEN runs.job_status IN ('completed', 'failed', 'cancelled') THEN
+                           runs.job_status
+                       ELSE 'unknown'
+                   END AS derived_status,
+                   -- The bounded search text: the run's own identity plus the
+                   -- recorded admission scope.  Only persisted evidence enters
+                   -- this expression, so a search never matches a value that a
+                   -- run does not actually carry.
+                   COALESCE(runs.anchor_id, '') || ' ' ||
+                       COALESCE(NULLIF(task_status.scope_path, ''), NULLIF(runs.source_scope, ''))
+                           AS run_search
+            FROM (
+                SELECT job_rows.*,
+                       jobs.command AS anchor_command,
+                       jobs.updated_at AS job_updated_at
+                FROM ({self._RUN_QUERY_SELECT}) job_rows
+                LEFT JOIN automation_jobs jobs ON jobs.job_id = job_rows.anchor_id
+                       AND job_rows.run_kind = 'job'
+            ) runs
+            LEFT JOIN tasks task_status ON task_status.task_id = COALESCE(
+                runs.linked_task_id, runs.transfer_task_id, runs.anchor_id
+            )
+        """
+
+    def list_operations_runs(
+        self,
+        *,
+        limit: int | None = None,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+        status: str | None = None,
+        command: str | None = None,
+        search: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> tuple[OperationsRunOverview, ...]:
+        """One bounded, deterministic page of the unified run population.
+
+        Same population, filters and order as
+        :meth:`operations_runs_page`: use that method when the page plus its
+        filtered total and status partitions must come from one consistent
+        read basis.
+        """
+
+        page, _total, _counts = self.operations_runs_page(
+            limit=limit,
+            after=after,
+            before=before,
+            status=status,
+            command=command,
+            search=search,
+            created_after=created_after,
+            created_before=created_before,
+        )
+        return page
+
+    def operations_runs_page(
+        self,
+        *,
+        limit: int = 50,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+        status: str | None = None,
+        command: str | None = None,
+        search: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+    ) -> tuple[tuple[OperationsRunOverview, ...], int, dict[str, int]]:
+        """Page, filtered total and status counts from one consistent basis.
+
+        The filtered total and the partitioned status counts are computed
+        inside one SQLite read of the same WHERE shape as the page, so a
+        concurrent Job→Task linkage or state change cannot make the page and
+        its counts disagree beyond one statement boundary.  No Python-side
+        loading of the whole population and no per-row pin resolution.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("operations run page limit must be between 1 and 100")
+        if search is not None:
+            search = search.strip()
+            if not search:
+                search = None
+            elif len(search) > 128:
+                raise ValueError("operations run search text is too long")
+        reverse = before is not None
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        document = self._run_query_document()
+        clauses, parameters = self._run_query_clauses(
+            status=status,
+            command=command,
+            search=search,
+            created_after=created_after,
+            created_before=created_before,
+        )
+        # The directional page cursor binds the same sort key the page orders
+        # by: a next cursor keeps rows strictly after the boundary going
+        # newest-first, and a previous cursor keeps rows strictly before it
+        # going oldest-first.  The ID tiebreak keeps equal timestamps
+        # deterministic in both directions.
+        if after is not None:
+            timestamp = after[0].isoformat()
+            clauses.append("(sort_at < ? OR (sort_at = ? AND anchor_id < ?))")
+            parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            clauses.append("(sort_at > ? OR (sort_at = ? AND anchor_id > ?))")
+            parameters.extend((timestamp, timestamp, before[1]))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        order = "sort_at ASC, anchor_id ASC" if reverse else "sort_at DESC, anchor_id DESC"
+        page_sql = f"SELECT * FROM ({document}) {where} ORDER BY {order} LIMIT ?"
+        with self._lock:
+            # One connection/lock acquisition carries the page, the filtered
+            # total and every status count: one consistent read basis.
+            rows = self._connection.execute(page_sql, (*parameters, limit)).fetchall()
+            count_sql = f"SELECT COUNT(*) AS total FROM ({document}) {where}"
+            total = int(self._connection.execute(count_sql, parameters).fetchone()["total"])
+            status_sql = (
+                f"SELECT derived_status, COUNT(*) AS value_count FROM ({document}) {where}"
+                " GROUP BY derived_status"
+            )
+            counts = {
+                str(row["derived_status"]): int(row["value_count"])
+                for row in self._connection.execute(status_sql, parameters).fetchall()
+            }
+        values = tuple(self._operations_run_overview(row) for row in rows)
+        return values, total, counts
+
+    def _operations_run_overview(self, row: sqlite3.Row) -> OperationsRunOverview:
+        """One bounded inventory row from the joined population document."""
+
+        run_kind = str(row["run_kind"])
+        anchor_id = str(row["anchor_id"])
+        task_id_value = row["linked_task_id"] or row["transfer_task_id"]
+        task_id = (
+            str(row["anchor_id"])
+            if run_kind == "task"
+            else (str(task_id_value) if task_id_value else None)
+        )
+        job_id = anchor_id if run_kind == "job" else None
+        derived_status = OperationsRunStatus(row["derived_status"])
+        command = row["effective_command"] or row["anchor_command"]
+        schedule_id = row["schedule_id"]
+        definition_id = row["definition_id"]
+        if definition_id or schedule_id:
+            trigger = OperationsRunTrigger.SCHEDULED
+        elif job_id is not None:
+            trigger = OperationsRunTrigger.AUTOMATION
+        else:
+            trigger = OperationsRunTrigger.MANUAL
+        library_value = row["library_kind"]
+        library_kind = (
+            LibraryKind(library_value) if library_value in {"media", "resource"} else None
+        )
+        created_at = datetime.fromisoformat(row["sort_at"])
+        updated_raw = row["updated_at"]
+        updated_at = datetime.fromisoformat(updated_raw) if updated_raw else created_at
+        source_scope = (
+            str(row["effective_scope"]) if row["effective_scope"] not in {None, ""} else None
+        )
+        total_items = row["total_items"]
+        return OperationsRunOverview(
+            run_kind=run_kind,
+            run_id=anchor_id,
+            command=str(command) if command else None,
+            command_label=known_command_label(str(command) if command else None),
+            recognized_command=bool(command),
+            status=derived_status,
+            trigger=trigger,
+            created_at=created_at,
+            updated_at=updated_at,
+            job_id=job_id,
+            task_id=task_id,
+            schedule_id=str(schedule_id) if schedule_id else None,
+            definition_id=str(definition_id) if definition_id else None,
+            source_scope=source_scope,
+            library_kind=library_kind,
+            total_items=total_items,
+            completed_items=row["completed_items"],
+            failed_items=row["failed_items"],
+            pause_requested=bool(row["pause_requested"]),
+            configuration_snapshot_id=(
+                str(row["configuration_snapshot_id"]) if row["configuration_snapshot_id"] else None
+            ),
+            worker_id=(str(row["worker_id"]) if row["worker_id"] not in {None, ""} else None),
+        )
 
     def claim_next_job(
         self,
@@ -9921,6 +10271,8 @@ class SQLiteTaskRepository:
                     scope_path TEXT, item_limit INTEGER,
                     configuration_snapshot_id TEXT, configuration_snapshot_digest TEXT
                 );
+                CREATE INDEX IF NOT EXISTS tasks_status_created
+                    ON tasks(status, created_at, task_id);
                 CREATE TABLE IF NOT EXISTS task_items (
                     item_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, storage_id TEXT NOT NULL,
                     resource_library_id TEXT NOT NULL, source_path TEXT NOT NULL,
@@ -10502,6 +10854,8 @@ class SQLiteTaskRepository:
                 );
                 CREATE INDEX IF NOT EXISTS automation_jobs_status_created
                     ON automation_jobs(status, created_at, job_id);
+                CREATE INDEX IF NOT EXISTS automation_jobs_task_id
+                    ON automation_jobs(task_id);
                 CREATE TABLE IF NOT EXISTS processing_workers (
                     worker_id TEXT PRIMARY KEY,
                     label TEXT NOT NULL,
@@ -10691,6 +11045,13 @@ class SQLiteTaskRepository:
                 )
             if "scope_path" not in task_columns:
                 self._connection.execute("ALTER TABLE tasks ADD COLUMN scope_path TEXT")
+            # Schema 40: the unified Operations run inventory reads task rows
+            # ordered and filtered by their durable admission scope.  The index
+            # is created after the additive column migration so a legacy table
+            # receives the column first; everything stays additive.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS tasks_scope_path ON tasks(scope_path)"
+            )
             if "item_limit" not in task_columns:
                 self._connection.execute("ALTER TABLE tasks ADD COLUMN item_limit INTEGER")
             if "configuration_snapshot_id" not in task_columns:

@@ -688,6 +688,14 @@ import {
   type WorkerListModel,
 } from "../../entities/operations/worker";
 import {
+  normalizeRunInventoryPage,
+  normalizeRunOverview,
+  RUN_STATUSES,
+  type RunInventoryPage,
+  type RunStatus,
+  type RunSummary,
+} from "../../entities/operations/run";
+import {
   normalizeLifecycleProjection,
   type LifecycleActionName,
   type LifecycleProjection,
@@ -1221,6 +1229,128 @@ export async function fetchWorkerReadiness(
     throw new OperationsApiError("malformed");
   }
 }
+
+// --- Unified run inventory (Slice 42 RO-1/RO-2) ---
+
+export interface RunInventoryQueryOptions {
+  readonly status?: RunStatus | null;
+  readonly command?: string | null;
+  readonly q?: string | null;
+  readonly from?: string | null;
+  readonly to?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export function runInventoryUrl(options: RunInventoryQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.status) params.set("status", options.status);
+  if (options.command) params.set("command", options.command);
+  if (options.q) params.set("q", options.q);
+  if (options.from) params.set("from", options.from);
+  if (options.to) params.set("to", options.to);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `/api/v1/operations/runs${qs ? `?${qs}` : ""}`;
+}
+
+export type RunInventoryRead =
+  | { readonly ok: true; readonly model: RunInventoryPage }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchRunInventory(
+  token: string | null,
+  options: RunInventoryQueryOptions = {},
+  fetchImpl: FetchLike = fetch,
+): Promise<RunInventoryRead> {
+  let response: Response;
+  try {
+    response = await fetchImpl(runInventoryUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeRunInventoryPage(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type RunOverviewRead =
+  | { readonly ok: true; readonly model: RunSummary }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+export async function fetchRunOverview(
+  token: string | null,
+  runId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunOverviewRead> {
+  if (!isSafeIdentifier(runId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/runs/${encodeURIComponent(runId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeRunOverview(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+/** The bounded run-inventory status filter values the backend accepts. */
+export const RUN_FILTER_VALUES = {
+  statuses: RUN_STATUSES,
+} as const;
 
 // --- Worker list ---
 

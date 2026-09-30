@@ -206,6 +206,32 @@ describe("destination model", () => {
       ).toBeNull();
     });
 
+    it("keeps only the submitted run-inventory filters and selection", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "status=failed&q=%E7%94%B5%E5%BD%B1&run=job-001&token=secret",
+        ),
+      ).toBe("status=failed&q=%E7%94%B5%E5%BD%B1&run=job-001");
+      // The manual scope selector keeps one closed scope kind and one bounded
+      // library identity.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "scopeKind=resourceLibrary&resourceLibraryId=resources",
+        ),
+      ).toBe("scopeKind=resourceLibrary&resourceLibraryId=resources");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "scopeKind=storage&resourceLibraryId=../escape",
+        ),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch("/operations", "authorization=Bearer%20x"),
+      ).toBeNull();
+    });
+
     it("returns null when no allowed keys are present", () => {
       expect(
         allowlistedDestinationSearch(
