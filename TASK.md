@@ -6,7 +6,7 @@ the current [Slice Contract](SLICE.md).
 ```text
 Task ID: 41.5
 Parent Slice: 41
-Status: READY FOR B REVIEW
+Status: FIX REQUIRED
 Task Base: a670f9ea8c2456e24c3203d5be7d0dfb6b0f593e
 Difficulty: High
 Test Level: T4
@@ -156,6 +156,38 @@ Backend projection:
   read, boundedness/secret-free assertions, denied reads, no-Active, an unreadable Active, a later
   activation, and the shared browser fixture contract.
 
+Correction round 2 (B-review blocker fix — no-Active originating-family return):
+
+- `web/src/features/rules/RulesWorkspacePage.tsx` — the `Availability` component now receives the
+  validated open section and passes it through `settingsReturnSearch`, so the unavailable/
+  first-setup branch's Settings handoff carries `returnTo=rules` + `returnSection=<family>` exactly
+  like the normal header link. The allowlisted validation and the Settings return contract are
+  unchanged and still reject illegal sections and arbitrary return addresses.
+- `web/src/features/rules/RulesWorkspacePage.test.tsx` — new regression:
+  `keeps the originating family in the no-Active handoff and its return` verifies that the
+  no-Active deep link on `?section=metadataPolicies` renders the recovery branch (no drawer, no
+  create action) with the Settings href carrying `returnSection=metadataPolicies`.
+- `web/src/features/configuration/ConfigurationPage.test.tsx` — new regression:
+  `returns a rules handoff to its originating family after the first activation` drives the full
+  first-setup journey (resume Draft → checked-activate) from a
+  `returnTo=rules&returnSection=metadataPolicies` entry and asserts the automatic return lands on
+  `/rules` with `section=metadataPolicies` via the checked (expected-version) activation contract.
+- `web/tests/e2e/rules-readiness.spec.ts` — new journey `a no-Active family deep link keeps its
+  family through setup and return`: deep link → Settings handoff (href carries `returnSection`) →
+  explicit safe-return href verified → create first Draft → validate → checked-activate →
+  automatic return to `/ui-v2/rules?section=metadataPolicies` rendering the published family
+  inventory; also asserts the only writes in the journey are the three explicit lifecycle
+  commands (no rule-object, Provider, Storage, Task or Job mutations) and that the rules surface
+  itself issues reads only.
+- `web/tests/fake-server.mjs` — no-Active support so the browser journey mirrors the real
+  management-bootstrap lifecycle: `configurationStatusDocument` now reports the truthful
+  `MANAGEMENT_BOOTSTRAP` / `SETUP_REQUIRED` state when no Active exists, and permission-gated
+  first-Draft lifecycle routes were added bound to the per-session rules state
+  (`POST /api/v1/configuration/drafts/first`, `GET /api/v1/configuration/revisions/:id`,
+  `POST .../validate`, `POST .../activate` with expected-version conflict, and
+  `GET /api/v1/system/settings?revisionId=`), with the published revision remaining readable
+  after activation and every write recorded in the safe bounded-mutation log.
+
 Correction round 1 (B-review blocker fix, checkpoint `aa73be0`):
 
 - `mediaflow/application/configuration_objects.py` — the workspace read model is now derived by one
@@ -265,6 +297,48 @@ Initial round (checkpoint `9021656`):
   unstaged. A credential/secret scan over the added files found only throwaway e2e token literals
   that are already part of the existing fixture vocabulary.
 
+Correction round 2 (this checkpoint) — all gates re-executed:
+
+- B-review reproduction (`/ui-v2/rules?section=metadataPolicies` on a no-Active deployment →
+  Settings → first activation): fixed and covered end-to-end. The Settings handoff href is now
+  `/ui-v2/configuration?returnTo=rules&returnSection=metadataPolicies`, the explicit return href
+  is `/ui-v2/rules?section=metadataPolicies`, and after "创建首个 Draft → 验证 Draft →
+  checked-activate" the automatic return lands on `/ui-v2/rules?section=metadataPolicies`
+  rendering the published family inventory. Illegal sections and arbitrary external return
+  addresses remain rejected (existing allowlist tests unchanged and still passing).
+- `npm --prefix web test -- --run src/features/rules/RulesWorkspacePage.test.tsx
+  src/features/configuration/ConfigurationPage.test.tsx src/shared/navigation/settings-return.test.ts`
+  — `PASS` (3 files, 58 tests), including the two new correction-round-2 regressions.
+- `npm --prefix web test -- --run` (full unit suite) — `PASS` (55 files, 814 tests).
+- `npm --prefix web run typecheck` — `PASS`; `npm --prefix web run lint` — `PASS`;
+  `npm --prefix web run format:check` — `PASS` (after targeted Prettier on the edited files);
+  `npm --prefix web run build` — `PASS` (Vite chunk-size warning only).
+- `npx playwright test tests/e2e/rules-readiness.spec.ts` — `PASS` (10 tests, including the new
+  no-Active family deep link → Settings → first activation → originating-family return journey).
+- Full `npx playwright test` — 189 passed, 31 failed; the failing set is the same pre-existing
+  set recorded in the initial round (storage-management 28, deep-link 2, dashboard 1 — the
+  Storage inventory document rejected by the client model, and migration-placeholder
+  expectations): `FAIL / PRE-EXISTING / UNRELATED`, no new failure introduced.
+- `.venv/bin/python -m pytest -q tests/test_v2_rules_workspace_commands.py
+  tests/test_configuration_status.py tests/test_configuration_management.py
+  tests/test_v2_settings_rule_readiness.py tests/test_v2_rules_workspace.py` — `PASS`
+  (67 passed, 32 subtests). No backend code changed in this round; backend behavior and
+  contracts are untouched.
+- `.venv/bin/python -m unittest discover -s tests` — `PASS` (2007 tests, `OK`, 7 skipped; run
+  twice consecutively, both clean). One earlier run showed `FAILED (failures=1)` with no `FAIL:`
+  entry captured before the pipe truncated the detail; the two subsequent complete runs passed
+  with identical test counts and clean summaries, so the single failure was not reproducible
+  across three full executions. Flagged below as a risk for B to weigh.
+- `.venv/bin/python -m compileall -q mediaflow tests scripts` — `PASS`;
+  `.venv/bin/ruff format --check .` — `PASS` (328 files); `.venv/bin/ruff check .` — `PASS`.
+- `python3 scripts/check_governance.py` — `PASS`; `git diff --check` — clean.
+- `python3 scripts/docker_release_security_smoke_test.py` — `PASS` ("Release-security smoke
+  acceptance passed"), run with a workspace-local `TMPDIR` as recorded in the initial round.
+- Base..Head scope and private-file audit: `git status` shows only this Task's files plus the
+  four pre-existing untracked `docs/pics/*.png`; `config/alist.json` remains absent, ignored and
+  untracked. No credentials, real tokens or private paths in the diff — the only token literals
+  are the existing throwaway e2e fixture tokens.
+
 Correction round 1 (checkpoint `aa73be0`) — all gates re-executed:
 
 - `.venv/bin/python -m pytest -q tests/test_v2_settings_rule_readiness.py` — `PASS` (11 tests),
@@ -323,6 +397,23 @@ Correction round 1 (checkpoint `aa73be0`) — all gates re-executed:
   assertion initially read the fake's shared cross-worker mutation log instead of the page's own
   traffic.
 
+Correction round 2 decisions:
+
+- Fixed the blocker at its root rather than adding a parallel path: the `Availability` component
+  now consumes the same validated `readRulesSection` value the page already computes and flows it
+  through the same `settingsReturnSearch` allowlist used by the normal header link. There is no
+  second return-context builder to drift, the allowlisted validation is exercised identically,
+  and an Overview visit (or any invalid section) still hands off without a section.
+- The Settings side needed no change: `readSettingsReturnContext`/`settingsReturnDestination`
+  already accept an optional validated rules `section`, so once the handoff carries it, both the
+  explicit return banner and the post-activation automatic return restore the exact family.
+- To make the B-review journey executable in the browser proof, the fake's no-Active status now
+  reports the truthful management-bootstrap setup state and serves the same first-Draft lifecycle
+  routes the real backend publishes (`drafts/first`, revision read, validate, checked-activate
+  with expected-version conflict, system settings), permission-gated and recorded in the bounded
+  mutation log. This mirrors the real `ManagedConfigurationService.status_document()` semantics
+  rather than inventing a second contract.
+
 Correction round 1 decisions:
 
 - Chose "bind identity and counts to one single Active read" over "detect two reads and prompt
@@ -356,6 +447,18 @@ screenshot copying were deliberately not done (Task non-goals).
 - The Docker smoke gate needed a workspace-local `TMPDIR` in this environment; that is a harness
   detail, recorded here so a rerun is not mistaken for a regression.
 
+Correction round 2 risks:
+
+- One full `.venv/bin/python -m unittest discover -s tests` run in this round reported
+  `FAILED (failures=1)` without the failing test's name surviving the output; no backend code
+  changed in this round and two subsequent complete runs passed with identical counts
+  (2007 tests, `OK`, 7 skipped). The intermittent failure appears unrelated to this Task's
+  frontend-only changes, but B should weigh this when reviewing; I did not classify it myself as
+  pre-existing.
+- The fake-server setup lifecycle is test-only scaffolding (`/api/v1/configuration/drafts/first`
+  etc. bound to the per-session rules state); it changes no real backend contract and the
+  fixture-contract test still asserts the fake's readiness documents against the real API.
+
 Correction round 1 risks:
 
 - The mixed-snapshot detection is identity comparison inside one status document, so it covers the
@@ -371,16 +474,30 @@ Correction round 1 risks:
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: aa73be0ac5c7bf66ddbcfc89c83bc434197dae08
+Head SHA: 4ad2a2105d5caa12aff4e082d64311098850a555
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: a670f9ea8c2456e24c3203d5be7d0dfb6b0f593e..90216562692ab52dd4c1bdc115d7ebf27eec6a67
+Reviewed: a670f9ea8c2456e24c3203d5be7d0dfb6b0f593e..aa73be0ac5c7bf66ddbcfc89c83bc434197dae08
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- P1 — Settings 的规则就绪数据没有绑定到它实际读取的 Active，违反本 Task 的“同一精确 Active 快照、并发变化不得显示混合就绪”和 Slice RO-7、Safety Invariant 6。`MediaFlowApi._configuration_status_document` 先读状态 Active，再通过 `active_rules_workspace()` 另读规则；`_rule_readiness_document` 却把第一次读取的 revision ID 填入第二次读取所得的数量与缺口。用当前 SQLite managed configuration、生产 `MediaFlowApi` 和合法的两次激活，在两次读之间发布含新增 RecognitionType 的版本，`GET /api/v1/configuration/status` 返回 HTTP 200：`status.active` 与 `ruleReadiness.active` 都是旧 revision ID，而 `ruleReadiness.counts.recognitionTypes` 已是新版的 4 项；页面的混合快照检查无法发现。请把身份与就绪投影绑定到同一次 Active 读取，或检测两次读取不一致并明确提示刷新；混合时不得展示数量/缺口为当前 Active。加入覆盖该合法并发时序的回归测试。
+- P1 — 无 Active 的 Rules → Settings → Rules 恢复路径丢失来源规则族，违反本 Task
+  Acceptance Criteria 第 4 条（包括首次设置/激活的来源 family 返回）和 Slice Required
+  Surface 的 originating rules location。`RulesWorkspacePage.tsx:602` 在不可用状态直接
+  返回 `Availability`，但该组件的 Settings 链接（第 87 行）仅带 `returnTo=rules`，
+  没有传递已由 `readRulesSection` 校验的 section。B 使用当前构建的 V2 页面、生产
+  `MediaFlowApi`、真实 SQLite 仓储及合法 management-only/no-Active 部署，通过
+  Playwright Chromium 打开 `/ui-v2/rules?section=metadataPolicies`，连接管理员身份并
+  点击“前往系统设置查看配置状态”：实际 href 为
+  `/ui-v2/configuration?returnTo=rules`；Settings 的返回 href 为 `/ui-v2/rules`，
+  返回 URL 的 `section=metadataPolicies` 已丢失。使用完整的合法 minimal management
+  bootstrap 再执行“创建首个 Draft → 验证 Draft → checked-activate”，激活成功后实际
+  自动返回 `/ui-v2/rules` 的概览，仍未恢复原来的 `metadataPolicies` family。
+  请让不可用/首次设置分支复用现有 allowlisted section 与 Settings return contract，
+  保留来源 family；补上无 Active 的 family deep link → Settings → 首次激活/显式返回
+  的回归旅程，并继续拒绝非法 section 和任意外部返回地址。
