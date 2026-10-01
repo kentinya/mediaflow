@@ -112,6 +112,7 @@ from mediaflow.domain.manual_safety import (
     redact_evidence_text,
     redact_manual_text,
     redact_manual_value,
+    searchable_identity_text,
 )
 from mediaflow.domain.manual_scan import (
     ManualScanItemOutcome,
@@ -359,6 +360,22 @@ def _run_search_pattern(search: str) -> str:
     return search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
+def _run_search_identity(value: object) -> str | None:
+    """The one persisted value the run inventory may put into search text.
+
+    Registered on every runtime connection as ``mf_run_search_text``.  The
+    run document feeds each raw identity it would otherwise concatenate —
+    anchor ID, historical source/target scope and the bounded display
+    context — through this scalar function, which returns only the exact
+    publicly published form of the value (and ``None`` when the public
+    projection would replace it with the redaction marker).  Search,
+    filtered totals and status partitions therefore can never match text
+    the API hides, no matter which producer or legacy row wrote the column.
+    """
+
+    return searchable_identity_text(value)
+
+
 def _sql_string(value: str) -> str:
     """Quote one trusted, already-validated SQL string literal."""
 
@@ -495,6 +512,12 @@ class SQLiteTaskRepository:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._connection = sqlite3.connect(str(self._path), check_same_thread=False)
         self._connection.row_factory = sqlite3.Row
+        # The run-inventory document builds its searchable text through this
+        # deterministic scalar function, so every connection that can answer
+        # a run query publishes exactly the same searchable evidence rules.
+        self._connection.create_function(
+            "mf_run_search_text", 1, _run_search_identity, deterministic=True
+        )
         self._lock = threading.RLock()
         if not read_only:
             self._initialize()
@@ -4882,9 +4905,14 @@ class SQLiteTaskRepository:
         the run's own identity, its effective historical scope, the bounded
         display context a shared producer recorded at admission (business
         labels, source/target scope) and the same Chinese business label the
-        API publishes.  A legacy row without display evidence simply
-        contributes nothing to the search text — it is never backfilled from
-        the current Active configuration.
+        API publishes.  Every identity value is passed through the registered
+        ``mf_run_search_text`` scalar first, so search text is exactly the
+        publicly published form of each value: a scope/label the API projects
+        as the redaction marker contributes nothing, and a substring search —
+        from any principal — can never match text the public projection
+        hides.  A legacy row without display evidence simply contributes
+        nothing to the search text — it is never backfilled from the current
+        Active configuration.
         """
 
         media_prefix = f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}%"
@@ -4914,16 +4942,23 @@ class SQLiteTaskRepository:
                    task_status.total_items, task_status.completed_items,
                    task_status.failed_items, task_status.pause_requested,
                    task_status.configuration_snapshot_id,
-                   -- The bounded historical scope: prefer the exact work scope
-                   -- the Task itself persisted, then the display context the
-                   -- admitting producer recorded, then the Job's recorded
-                   -- admission scope.  None of these values is ever
+                   -- The bounded historical scope: prefer the business
+                   -- identity the admitting producer recorded inside the
+                   -- admission transaction (library display name plus the
+                   -- reviewed scope — durable evidence, never a read-time
+                   -- Active lookup), then the exact work scope the Task
+                   -- itself persisted, then the Job's recorded admission
+                   -- scope.  Ordering the admission-written display first
+                   -- keeps the searchable business name inside the
+                   -- published identity, so repository search and the
+                   -- public projection can never disagree about what this
+                   -- run is called.  None of these values is ever
                    -- backfilled from the current Active.  The derived column
                    -- is named ``effective_scope`` because ``runs.*`` already
                    -- carries the Job branch's raw ``source_scope``.
                    COALESCE(
-                       NULLIF(task_status.scope_path, ''),
                        NULLIF(display.source_scope, ''),
+                       NULLIF(task_status.scope_path, ''),
                        NULLIF(runs.source_scope, '')
                    ) AS effective_scope,
                    -- The bounded historical destination scope recorded with
@@ -4965,9 +5000,10 @@ class SQLiteTaskRepository:
         label_sql = command_label_sql("projected.effective_command")
         return f"""
             SELECT projected.*,
-                   COALESCE(projected.anchor_id, '') || ' ' ||
-                       COALESCE(projected.effective_scope, '') || ' ' ||
-                       COALESCE(projected.display_search, '') || ' ' ||
+                   COALESCE(mf_run_search_text(projected.anchor_id), '') || ' ' ||
+                       COALESCE(mf_run_search_text(projected.effective_scope), '') || ' ' ||
+                       COALESCE(mf_run_search_text(projected.effective_target_scope), '') || ' ' ||
+                       COALESCE(mf_run_search_text(projected.display_search), '') || ' ' ||
                        COALESCE({label_sql}, '') AS run_search
             FROM ( {document} ) projected
         """
@@ -8658,6 +8694,8 @@ class SQLiteTaskRepository:
         task: PersistentTask,
         items: tuple[PersistentTaskItem, ...],
         transfer: PersistentFilesTransfer,
+        *,
+        display: RunDisplayContext | None = None,
     ) -> None:
         """Atomically persist one admitted transfer and its durable authority.
 
@@ -8665,6 +8703,11 @@ class SQLiteTaskRepository:
         transfer authority and the claimable transfer row commit in one
         transaction, so no admitted transfer can exist without its Task, and
         no Task can be returned as admitted without its Worker authority.
+        When the admitting producer supplies bounded display evidence, the
+        ``operations_run_display`` row commits inside this same transaction:
+        a newly admitted transfer always carries its historical business
+        identity (source/destination library names and reviewed scopes) for
+        the unified Operations run inventory.
         """
 
         with self._lock, self._connection:
@@ -8678,6 +8721,8 @@ class SQLiteTaskRepository:
                     item = self._bind_item_to_current_occurrence(item)
                     self._connection.execute(_TASK_ITEM_INSERT, self._item_values(item))
                 self._insert_files_transfer_locked(transfer)
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, task.created_at)
                 self._connection.commit()
             except BaseException:
                 self._connection.rollback()

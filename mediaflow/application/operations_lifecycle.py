@@ -35,7 +35,15 @@ from mediaflow.domain.automation import (
 )
 from mediaflow.domain.direct_files import split_library_identity
 from mediaflow.domain.failure import failure_document
-from mediaflow.domain.manual_safety import redact_manual_text
+from mediaflow.domain.manual_safety import (
+    bounded_identity_path as _domain_bounded_identity_path,
+)
+from mediaflow.domain.manual_safety import (
+    contains_evidence_path_shape as _contains_evidence_path_shape,
+)
+from mediaflow.domain.manual_safety import (
+    redact_manual_text,
+)
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
@@ -106,19 +114,10 @@ _UNCERTAIN_CERTAINTY = "attempted_unverified"
 _VERIFIED_CERTAINTY = "verified_complete"
 _MAX_BOUNDED_TEXT = 512
 
-# Absolute host/adapter paths, UNC roots and scheme endpoints in durable
-# evidence text would expose the deployment's host or adapter layout, so the
-# bounded projection fails closed on these shapes.  The shapes are open-ended
-# (POSIX directories without a dotted file name, Windows adapter roots, any
-# ``scheme://`` endpoint, UNC roots), so detection is deliberately broader
-# than any single spelling and the whole field is replaced: a false positive
-# only costs benign detail, while a false negative would leak a host value.
-_EVIDENCE_PATH_SHAPES = (
-    re.compile(r"[A-Za-z][A-Za-z0-9+.\-]*://"),
-    re.compile(r"(?:^|[\s(\[\"'])/[^\s\"']"),
-    re.compile(r"\b[A-Za-z]:[\\/]"),
-    re.compile(r"\\\\"),
-)
+# The forbidden host/adapter path shapes live in
+# ``mediaflow.domain.manual_safety`` next to :func:`bounded_identity_path`,
+# so the published identity form and the persistence search boundary share
+# one definition of a safe, Storage-relative value.
 
 # A content fingerprint/digest is a raw evidence identity: it is never an
 # operator-facing value, and a persisted plan can carry one inside otherwise
@@ -353,12 +352,6 @@ def bounded_failure_document(value: str | None) -> dict[str, object] | None:
     }
 
 
-def _contains_evidence_path_shape(text: str) -> bool:
-    """Whether bounded evidence text still contains a forbidden host shape."""
-
-    return any(pattern.search(text) is not None for pattern in _EVIDENCE_PATH_SHAPES)
-
-
 def _contains_evidence_digest_shape(text: str) -> bool:
     """Whether text still carries a fingerprint/digest identity shape."""
 
@@ -555,30 +548,12 @@ def _bounded_operator_document(value: object, *, guard_routes: bool = True) -> o
 def _bounded_identity_path(value: object | None) -> str | None:
     """Project a persisted Storage-relative identity or fail closed.
 
-    The Operations projection assumes source/destination identities are
-    Storage-relative, but a legacy or externally written row can hold an
-    absolute host/adapter root, a UNC root, a private endpoint or a
-    credential-shaped value in the same column.  Only a provably relative
-    identity is published; anything else is replaced with the bounded
-    redaction marker.
+    Thin application-side name for the shared domain rule: the Operations
+    API publishes through exactly the same function the run-inventory search
+    boundary uses, so published text and searchable text can never disagree.
     """
 
-    if not isinstance(value, str):
-        return "[redacted-path]" if value is not None else None
-    text = value.strip()
-    segments = text.replace("\\", "/").split("/")
-    if (
-        not text
-        or len(text) > _MAX_BOUNDED_TEXT
-        or text.startswith(("/", "\\", "~"))
-        or re.match(r"^[A-Za-z]:", text) is not None
-        or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", text) is not None
-        or ".." in segments
-        or redact_manual_text(text) != text
-        or _contains_evidence_path_shape(text)
-    ):
-        return "[redacted-path]"
-    return text
+    return _domain_bounded_identity_path(value)
 
 
 def task_operator_document(task: PersistentTask) -> dict[str, object]:
