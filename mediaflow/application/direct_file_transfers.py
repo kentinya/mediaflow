@@ -76,6 +76,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
+    RunDisplayContext,
     TaskItemStatus,
     direct_command_task_command,
 )
@@ -753,8 +754,52 @@ class DirectFileTransferService:
             created_at=now,
             updated_at=now,
         )
-        self._direct.tasks.repository.admit_files_transfer(task, items, transfer)
+        self._direct.tasks.repository.admit_files_transfer(
+            task,
+            items,
+            transfer,
+            display=self._run_display_context(
+                source_library=self._direct.library(manifest.source_resource_library_id),
+                destination_library=self._direct.library(manifest.destination_resource_library_id),
+                manifest=manifest,
+                source_scope=task.scope_path,
+            ),
+        )
         return _queued_document(task, manifest, items)
+
+    def _run_display_context(
+        self,
+        *,
+        source_library: ResourceLibrary | MediaLibrary,
+        destination_library: ResourceLibrary | MediaLibrary,
+        manifest: TransferManifest,
+        source_scope: str | None,
+    ) -> RunDisplayContext:
+        """The bounded business identity of one admitted transfer.
+
+        Display/search evidence only, resolved from the exact pinned runtime
+        whose manifest digest admission just verified — never from a
+        read-time Active lookup.  The configured library display names and
+        the reviewed relative scopes travel together so an operator can find
+        this run by the source library they selected or by the destination
+        directory they chose, and so the run overview can identify the
+        target.  Absolute host roots are never part of it, an unknown value
+        stays unavailable, and the public projection redacts — while the
+        inventory search refuses — anything that is not a provably safe
+        relative identity.  Nothing here changes selection, authorization,
+        claim or execution behaviour, and it adds no command.
+        """
+
+        source_name = str(getattr(source_library, "name", "") or "").strip()
+        destination_name = str(getattr(destination_library, "name", "") or "").strip()
+        relative_source = _display_relative_scope(source_scope)
+        relative_destination = _display_relative_scope(manifest.destination_directory)
+        labels = tuple(name for name in (source_name, destination_name) if name)
+        return RunDisplayContext(
+            source_scope=_join_display_scope(source_name, relative_source),
+            target_scope=_join_display_scope(destination_name, relative_destination),
+            labels=labels,
+        )
 
     def run_claimed_transfer(
         self,
@@ -4310,6 +4355,34 @@ def _admitted_item(
 
 def _item_full_path(manifest: TransferManifest, relative: str) -> str:
     return f"{manifest.source_root}/{relative}" if manifest.source_root else relative
+
+
+def _display_relative_scope(value: object) -> str | None:
+    """One reviewed path usable as display evidence: provably relative only.
+
+    A legacy or externally written value that looks like a host root, a
+    drive/UNC path or a traversal simply contributes nothing — display
+    evidence is optional context and can never fail or widen an admission.
+    """
+
+    text = str(value or "").strip()
+    if (
+        not text
+        or text.startswith(("/", "\\", "~"))
+        or "\\" in text
+        or (len(text) > 1 and text[1] == ":")
+        or any(segment in {"", ".", ".."} for segment in text.split("/"))
+    ):
+        return None
+    return text
+
+
+def _join_display_scope(name: str, relative: str | None) -> str | None:
+    """``Library name/relative scope``, or whichever of the two is known."""
+
+    if name and relative:
+        return f"{name}/{relative}"
+    return name or relative or None
 
 
 def _queued_document(

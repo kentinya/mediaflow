@@ -1519,12 +1519,14 @@ class ScanDisplayEvidenceTests(_InventoryApiTestCase):
     legacy-missing.
     """
 
-    def _service(self) -> tuple[ManualScanService, InMemoryFileIndexRepository]:
+    def _service(
+        self, *, library_name: str = "Library"
+    ) -> tuple[ManualScanService, InMemoryFileIndexRepository]:
         storage = FakeStorage("source")
         storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
         storage.add_file("sibling.mkv", 11, NOW - timedelta(hours=2))
         index = InMemoryFileIndexRepository()
-        library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+        library = ResourceLibrary("library", library_name, "source", "", exclude_rules=())
         StorageScanner({"source": storage}, index, clock=lambda: NOW).scan(library)
         service = ManualScanService(
             self.repository,
@@ -1589,6 +1591,56 @@ class ScanDisplayEvidenceTests(_InventoryApiTestCase):
         self.assertEqual(1, found["total"])
         self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
 
+    def test_credential_shaped_library_name_is_redacted_and_unsearchable(self) -> None:
+        """A reader can never probe content the public projection hides.
+
+        The admitted Scan really records the credential-shaped library name
+        as durable display evidence, but the public projection replaces it
+        with the bounded marker — so server-side search, its filtered total
+        and the status/attention counts must contribute nothing for any
+        substring of the hidden text either, while the visible business
+        label keeps finding the run.
+        """
+
+        sentinel = "Archive api_key=INVENTORYPROBE-SECRET"
+        service, _index = self._service(library_name=sentinel)
+        admitted = service.admit_document(
+            {
+                "scopeKind": "resource_library",
+                "resourceLibraryId": "library",
+                "mode": "full",
+            }
+        )
+        run = self._run_document(admitted.task_id)
+        self.assertEqual("[redacted-path]", run["source_scope"])
+        for needle in (
+            sentinel,
+            "INVENTORYPROBE-SECRET",
+            "INVENTORYPROBE",
+            "api_key=INVENTORYPROBE",
+            "Archive",
+        ):
+            with self.subTest(needle=needle):
+                code, found, _ = request(
+                    self.api, "GET", "/api/v1/operations/runs", query=f"q={needle}"
+                )
+                self.assertEqual(200, code)
+                self.assertEqual(0, found["total"], found)
+                self.assertEqual({}, found["status_counts"])
+                self.assertEqual(0, found["attention_count"])
+                self.assertNotIn("INVENTORYPROBE", json.dumps(found["items"]))
+        # Only hidden text is excluded — the row itself stays discoverable
+        # through its visible business label.
+        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=扫描")
+        self.assertEqual(200, code)
+        self.assertEqual(1, found["total"])
+        self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
+        # The selected-run overview publishes the same redacted identity.
+        code, overview, _ = request(self.api, "GET", f"/api/v1/operations/runs/{admitted.task_id}")
+        self.assertEqual(200, code)
+        self.assertEqual("[redacted-path]", overview["source_scope"])
+        self.assertNotIn("INVENTORYPROBE", json.dumps(overview))
+
 
 class ManualOrganizeDisplayEvidenceTests(_JourneyFixtureMixin, unittest.TestCase):
     """A newly admitted manual Organize run carries its full business identity.
@@ -1638,6 +1690,97 @@ class ManualOrganizeDisplayEvidenceTests(_JourneyFixtureMixin, unittest.TestCase
             self.assertEqual(run["source_scope"], overview["source_scope"])
             self.assertEqual(run["target_scope"], overview["target_scope"])
             self.assertEqual(run["command_label"], overview["command_label"])
+
+
+class LegacyScopeSearchRedactionTests(_InventoryApiTestCase):
+    """The raw scope fallbacks follow the same public-evidence search rule.
+
+    A legacy Task ``scope_path`` or Job ``source_scope`` can hold a host
+    root, a private endpoint or a credential-shaped value.  The public
+    projection replaces it with the bounded marker, so repository search,
+    its filtered total and the status/attention partitions must contribute
+    nothing for that text — exactly the rule the admission-written display
+    evidence follows (AC-T3 / RO-2, RO-7, Safety Invariant 8).
+    """
+
+    def test_hidden_legacy_scope_is_published_redacted_and_never_matched(self) -> None:
+        self.repository.create_task(
+            task("hostile-scope-task", command="scan", rank=0, scope_path="/srv/private-host/root")
+        )
+        self.repository.create_task(
+            task(
+                "credential-scope-task",
+                command="preview",
+                rank=1,
+                scope_path="Archive api_key=LEGACY-SECRET",
+            )
+        )
+        self.repository.create_job(
+            job("endpoint-scope-job", rank=2, source_scope="https://private.example/root")
+        )
+        _code, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        by_id = {item["run_id"]: item for item in page["items"]}
+        for run_id in ("hostile-scope-task", "credential-scope-task", "endpoint-scope-job"):
+            with self.subTest(run_id=run_id):
+                self.assertEqual("[redacted-path]", by_id[run_id]["source_scope"])
+        rendered = json.dumps(page)
+        for forbidden in ("private-host", "LEGACY-SECRET", "private.example"):
+            self.assertNotIn(forbidden, rendered)
+        for needle in ("private-host", "LEGACY-SECRET", "INVENTORYPROBE", "private.example", "srv"):
+            with self.subTest(needle=needle):
+                code, found, _ = request(
+                    self.api, "GET", "/api/v1/operations/runs", query=f"q={needle}"
+                )
+                self.assertEqual(200, code)
+                self.assertEqual(0, found["total"], found)
+                self.assertEqual({}, found["status_counts"])
+                self.assertEqual(0, found["attention_count"])
+                self.assertNotIn("LEGACY-SECRET", json.dumps(found["items"]))
+        # Safe neighbours stay searchable: the guard hides text, not rows.
+        code, found, _ = request(
+            self.api, "GET", "/api/v1/operations/runs", query="q=hostile-scope-task"
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(1, found["total"])
+        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=扫描")
+        self.assertEqual(200, code)
+        self.assertEqual(1, found["total"])
+        self.assertEqual("hostile-scope-task", found["items"][0]["run_id"])
+
+    def test_searchable_text_is_exactly_the_published_form(self) -> None:
+        """Search input equals published output, value by value.
+
+        The invariant behind the two probes above: a persisted identity
+        contributes to ``run_search`` if and only if it is exactly what the
+        public projection publishes (and never when the projection would
+        replace it with the redaction marker).
+        """
+
+        from mediaflow.domain.manual_safety import (
+            bounded_identity_path,
+            searchable_identity_text,
+        )
+
+        matrix = (
+            None,
+            "",
+            "Movies/2024",
+            "Unified media source",
+            "/srv/private-host/root",
+            "\\\\server\\share\\file.mkv",
+            "https://private.example/api",
+            "Archive api_key=INVENTORYPROBE-SECRET",
+            "Bearer secret.mkv",
+            "a" * 600,
+        )
+        for value in matrix:
+            with self.subTest(value=value):
+                published = bounded_identity_path(value)
+                searchable = searchable_identity_text(value)
+                if published in (None, "[redacted-path]"):
+                    self.assertIsNone(searchable)
+                else:
+                    self.assertEqual(published, searchable)
 
 
 if __name__ == "__main__":

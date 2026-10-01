@@ -16,6 +16,7 @@ from __future__ import annotations
 import io
 import json
 import posixpath
+import sqlite3
 import tempfile
 import threading
 import time
@@ -1237,6 +1238,113 @@ class TransferApiTests(TransferTestCase):
         rendered = json.dumps(normalized)
         for forbidden in (str(root), "password", "token", "secret", "Authorization"):
             self.assertNotIn(forbidden, rendered)
+
+    def test_admitted_transfer_records_operations_display_identity(self) -> None:
+        """The transfer admission writes the business identity Operations needs.
+
+        The display row commits inside the same transaction that admits the
+        Task, from the exact pinned runtime whose manifest digest admission
+        just verified: an operator can find the queued run by the source
+        library they selected and the destination directory they chose, the
+        overview identifies the target, and a restarted runtime still reads
+        the same durable identity.  No manifest, confirmation, Worker or
+        Storage behaviour changes, and no command is added.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _active, _runtime = self._activate(root)
+            (root / "source" / "a.mkv").write_bytes(b"media")
+            (root / "source" / "Movies").mkdir()
+            status, impact = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfer-impact"
+                "?path=a.mkv&to=source&toPath=Movies&operation=copy&conflict=fail",
+            )
+            self.assertEqual(status, 200)
+            created, result = request(
+                api,
+                "/api/v1/resource-libraries/source/files/transfers",
+                method="POST",
+                body={
+                    "operation": "copy",
+                    "paths": ["a.mkv"],
+                    "destinationResourceLibraryId": "source",
+                    "destinationDirectory": "Movies",
+                    "conflictMode": "fail",
+                    "manifestDigest": impact["manifestDigest"],
+                },
+            )
+            self.assertEqual(created, 202)
+            task_id = result["taskId"]
+            # The admitted Task still carries the reviewed relative scope as
+            # before: display evidence is additive, nothing persisted is
+            # rewritten.
+            queued_task = _runtime.get_task(task_id)
+            self.assertIsNotNone(queued_task)
+            self.assertEqual("a.mkv", queued_task.scope_path)
+
+            # The display row commits with the admission transaction itself.
+            connection = sqlite3.connect(root / "runtime.sqlite3")
+            try:
+                rows = connection.execute(
+                    "SELECT source_scope, target_scope, search_text"
+                    " FROM operations_run_display WHERE task_id = ?",
+                    (task_id,),
+                ).fetchall()
+            finally:
+                connection.close()
+            self.assertEqual(1, len(rows), rows)
+            source_scope, target_scope, search_text = rows[0]
+            self.assertEqual("Unified media source/a.mkv", source_scope)
+            self.assertEqual("Unified media source/Movies", target_scope)
+            self.assertIn("Unified media source", search_text)
+            self.assertIn("Movies", search_text)
+
+            # The READ principal finds the run by the source library name and
+            # the chosen destination directory, and the overview identifies
+            # the target with the historical source scope intact.
+            for needle in ("Unified media source", "Movies", "a.mkv"):
+                with self.subTest(needle=needle):
+                    code, page = request(
+                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
+                    )
+                    self.assertEqual(200, code)
+                    self.assertEqual(1, page["total"], page)
+                    self.assertEqual(task_id, page["items"][0]["run_id"])
+            code, overview = request(
+                api, f"/api/v1/operations/runs/{task_id}", token="viewer-token"
+            )
+            self.assertEqual(200, code)
+            self.assertEqual("文件传输", overview["command_label"])
+            self.assertEqual("Unified media source/a.mkv", overview["source_scope"])
+            self.assertEqual("Unified media source/Movies", overview["target_scope"])
+            # Bounded and secret-free: no host root or adapter evidence in
+            # the public inventory documents.
+            rendered = json.dumps([page, overview])
+            for forbidden in (str(root), "password", "token", "secret", "Authorization"):
+                self.assertNotIn(forbidden, rendered)
+
+            # Restart: a fresh runtime connection over the same database
+            # still publishes the identical durable identity.
+            reopened = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(reopened.close)
+            restarted_api = MediaFlowApi(
+                reopened,
+                None,
+                principals=(
+                    ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+                ),
+            )
+            code, page = request(
+                restarted_api,
+                "/api/v1/operations/runs?q=Unified%20media%20source",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(1, page["total"], page)
+            self.assertEqual("Unified media source/a.mkv", page["items"][0]["source_scope"])
+            self.assertEqual("Unified media source/Movies", page["items"][0]["target_scope"])
 
     def test_transfer_routes_share_application_behavior_and_rbac(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
