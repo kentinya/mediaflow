@@ -60,8 +60,11 @@ from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, St
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_DIRECT_COMMAND_TASK,
+    RunDisplayContext,
     TaskItemStatus,
     direct_command_task_command,
+    join_display_scope,
+    relative_display_scope,
 )
 
 __all__ = ["DirectFileCommandService", "DirectFileError"]
@@ -581,6 +584,10 @@ class DirectFileCommandService:
             item_limit=max(1, len(entries)),
             configuration_snapshot_id=self._revision.revision_id,
             configuration_snapshot_digest=self._revision.digest,
+            # A Delete removes in place: the confirmed top-level scope it
+            # destroyed is the whole known historical scope, and there is no
+            # destination to invent for it.
+            display=self._run_display_context(library, source_scope=scope_parent),
         )
         outcomes: list[dict[str, object]] = []
         uncertain = False
@@ -717,6 +724,48 @@ class DirectFileCommandService:
     # Admission helpers
     # ------------------------------------------------------------------
 
+    def _run_display_context(
+        self,
+        library: ResourceLibrary | MediaLibrary,
+        *,
+        source_scope: str | None = None,
+        target_scope: str | None = None,
+    ) -> RunDisplayContext:
+        """The bounded business identity of one admitted direct command.
+
+        Display/search evidence only, composed from the exact pinned Active
+        revision this admission already resolved — never a read-time lookup:
+        the configured library display name plus the reviewed
+        library-relative scope of the command.  A creation publishes the
+        directory it happened in as its source scope (the library itself at
+        the root) and the created entry as its target; Rename and Text Save
+        name the exact entry on each side; a Delete publishes the confirmed
+        top-level scope it removed, and ``None`` on either side means that
+        side has no known scope at all — a Delete has no destination to
+        invent.  Absolute host roots never enter it — the shared
+        :func:`relative_display_scope` guard drops anything not provably
+        relative — an unknown library name stays unavailable, and the public
+        projection redacts, while the inventory search refuses, anything
+        that is not a provably safe relative identity.  Nothing here changes
+        selection, authorization, claim, confirmation or execution
+        behaviour, and it adds no command.
+        """
+
+        name = str(getattr(library, "name", "") or "").strip()
+        return RunDisplayContext(
+            source_scope=(
+                None
+                if source_scope is None
+                else join_display_scope(name, relative_display_scope(source_scope))
+            ),
+            target_scope=(
+                None
+                if target_scope is None
+                else join_display_scope(name, relative_display_scope(target_scope))
+            ),
+            labels=(name,) if name else (),
+        )
+
     def _run_single(
         self,
         library: ResourceLibrary | MediaLibrary,
@@ -732,6 +781,14 @@ class DirectFileCommandService:
             FILES_DIRECT_COMMAND_TASK,
             media_library=self._kind is LibraryKind.MEDIA,
         )
+        # The known historical scope of this command: a creation is scoped to
+        # the directory it happened in (empty at the library root, where only
+        # the library name remains), while an in-place entry operation
+        # (Rename, Text Save) names the exact entry on each side.
+        if operation in (DirectFileOperation.CREATE_DIRECTORY, DirectFileOperation.CREATE_TEXT):
+            display_source = posixpath.dirname(library_path)
+        else:
+            display_source = library_path
         task = self._tasks.create(
             command,
             execute_authorized=True,
@@ -739,6 +796,11 @@ class DirectFileCommandService:
             item_limit=1,
             configuration_snapshot_id=self._revision.revision_id,
             configuration_snapshot_digest=self._revision.digest,
+            display=self._run_display_context(
+                library,
+                source_scope=display_source,
+                target_scope=target,
+            ),
         )
         try:
             item = self._tasks.begin_item(

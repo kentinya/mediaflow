@@ -79,6 +79,8 @@ from mediaflow.domain.task_persistence import (
     RunDisplayContext,
     TaskItemStatus,
     direct_command_task_command,
+    join_display_scope,
+    relative_display_scope,
 )
 
 __all__ = [
@@ -792,12 +794,12 @@ class DirectFileTransferService:
 
         source_name = str(getattr(source_library, "name", "") or "").strip()
         destination_name = str(getattr(destination_library, "name", "") or "").strip()
-        relative_source = _display_relative_scope(source_scope)
-        relative_destination = _display_relative_scope(manifest.destination_directory)
+        relative_source = relative_display_scope(source_scope)
+        relative_destination = relative_display_scope(manifest.destination_directory)
         labels = tuple(name for name in (source_name, destination_name) if name)
         return RunDisplayContext(
-            source_scope=_join_display_scope(source_name, relative_source),
-            target_scope=_join_display_scope(destination_name, relative_destination),
+            source_scope=join_display_scope(source_name, relative_source),
+            target_scope=join_display_scope(destination_name, relative_destination),
             labels=labels,
         )
 
@@ -4355,34 +4357,6 @@ def _admitted_item(
 
 def _item_full_path(manifest: TransferManifest, relative: str) -> str:
     return f"{manifest.source_root}/{relative}" if manifest.source_root else relative
-
-
-def _display_relative_scope(value: object) -> str | None:
-    """One reviewed path usable as display evidence: provably relative only.
-
-    A legacy or externally written value that looks like a host root, a
-    drive/UNC path or a traversal simply contributes nothing — display
-    evidence is optional context and can never fail or widen an admission.
-    """
-
-    text = str(value or "").strip()
-    if (
-        not text
-        or text.startswith(("/", "\\", "~"))
-        or "\\" in text
-        or (len(text) > 1 and text[1] == ":")
-        or any(segment in {"", ".", ".."} for segment in text.split("/"))
-    ):
-        return None
-    return text
-
-
-def _join_display_scope(name: str, relative: str | None) -> str | None:
-    """``Library name/relative scope``, or whichever of the two is known."""
-
-    if name and relative:
-        return f"{name}/{relative}"
-    return name or relative or None
 
 
 def _queued_document(
