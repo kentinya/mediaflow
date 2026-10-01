@@ -264,118 +264,133 @@ not-yet-implemented outcomes.
 
 ### Changed Files
 
-Correction checkpoint `ae62c00` — the correction delta over the reviewed
-checkpoint `5e1a20a` (completion report `aacd3de`) is 7 files, 480 insertions /
-56 deletions (`git diff --check` clean for the working tree and for the full
-`f1806d3..HEAD` range; no private or unrelated files staged; the three
-pre-existing untracked `docs/pics/*.png` remain excluded and untouched;
-`config/alist.json` stays ignored/untracked/unstaged; reference images
-unchanged):
+Correction checkpoint `ac5a43ed89d5d782809569ce5e58aedb8f2b03cb` — the correction
+delta over the reviewed product checkpoint `ae62c00` (previous report head
+`2577c58`) is 6 files, 527 insertions / 35 deletions (`git diff --stat
+2577c58..ac5a43e`; `git diff --check` clean for the working tree, for
+`2577c58..ac5a43e` and for the full `f1806d3a13c0ab0538c07749ff82621782d91a24..HEAD`
+range; no private or unrelated files staged; the three pre-existing untracked
+`docs/pics/*.png` remain excluded and untouched; `config/alist.json` stays
+ignored/untracked/unstaged; reference images unchanged at
+`a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`):
 
-- Python domain: `mediaflow/domain/manual_safety.py` (the single fail-closed
-  `bounded_identity_path` rule with `_EVIDENCE_PATH_SHAPES` moved here from the
-  application layer, plus the new `searchable_identity_text` search guard),
-  `mediaflow/domain/task_persistence.py` (`admit_files_transfer` protocol gains
-  an optional `display`).
-- Python application/infrastructure: `mediaflow/application/operations_lifecycle.py`
-  (publication now delegates to the shared domain rule — identical behavior),
-  `mediaflow/infrastructure/sqlite_runtime.py` (deterministic
-  `mf_run_search_text` scalar registered on every runtime connection; `run_search`
-  built only from guarded public forms; `effective_scope` prefers
-  admission-written display evidence; `admit_files_transfer(..., display=...)`
-  writes `operations_run_display` inside the admission transaction),
-  `mediaflow/application/direct_file_transfers.py` (transfer admission composes
-  and persists the bounded display context from the pinned runtime).
-- Python tests: `tests/test_operations_run_inventory.py` (36 → 39 tests:
-  credential-shaped library-name search privacy through a real Scan admission
-  with a READ principal, hostile legacy `scope_path`/Job `source_scope`
-  fallback privacy, and a published-vs-searchable parity matrix),
-  `tests/test_direct_file_transfers.py` (99 → 100 tests: a real Copy
-  impact/confirm admission writes the display row, is searchable by source
-  library name and destination directory, publishes the target in the overview,
-  and survives a repository restart).
-- `TASK.md` (this report; B's round-2 review text carried unchanged).
+- `mediaflow/domain/task_persistence.py` — the `PersistentTaskRepository.create_task`
+  protocol gains a keyword-only `display: RunDisplayContext | None = None`, and the
+  two display-composition helpers (`relative_display_scope`,
+  `join_display_scope`) move here from the transfer producer so every producer
+  composes display evidence from one domain-level definition.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `SQLiteTaskRepository.create_task`
+  writes the `operations_run_display` row inside the same transaction as the `tasks`
+  insert.
+- `mediaflow/application/task_runtime.py` — `PersistentTaskCoordinator.create` passes
+  its new optional `display` through to the repository.
+- `mediaflow/application/direct_file_commands.py` — the complete shared
+  direct-command/delete admission boundary (`_run_display_context`, used by
+  `_run_single` and `execute_delete`) composes and persists the run display context.
+- `mediaflow/application/direct_file_transfers.py` — now imports those two helpers
+  from the domain instead of defining them privately; behaviour byte-identical
+  (pure move).
+- `tests/test_direct_file_operations.py` — 55 → 60 tests: five focused
+  display-evidence tests over the real managed activation and production API, plus
+  two small static read helpers.
+- `TASK.md` (this report; B's round-3 review text carried unchanged).
 
 ### Implemented
 
-Both P1 blockers of this correction round, same Task, no scope change:
+B's single round-3 P1 — "新 Files direct-command 工作仍被当作无历史范围的记录
+(AC-T1、AC-T3 / RO-2)" — fixed at the complete shared production boundary, no scope
+change:
 
-1. **A new Files transfer admission carries its historical business scope
-   (AC-T3 / RO-2).** After the manifest digest is re-verified against the exact
-   pinned runtime, `submit_transfer` resolves the source and destination
-   library display names from that same revision-pinned runtime and composes
-   them with the reviewed relative source scope and the chosen destination
-   directory into a bounded `RunDisplayContext`. The new optional `display`
-   parameter of `admit_files_transfer` persists it as the
-   `operations_run_display` row inside the very same `BEGIN IMMEDIATE`
-   transaction that creates the Task, its bounded items and the claimable
-   transfer row. Proved against the real production Copy impact/confirm API
-   with the original `TransferApiTests` LocalStorage fixture: the display row
-   holds `source_scope="Unified media source/a.mkv"`,
-   `target_scope="Unified media source/Movies"`; a READ viewer finds the run
-   with `q=Unified media source`, `q=Movies` and `q=a.mkv` (total=1 each); the
-   overview identifies the target while keeping `command_label=文件传输`; a
-   fresh repository over the same database reads the identical identity. The
-   persisted `scope_path` (`a.mkv`), items and transfer authority rows are
-   untouched, and no manifest, confirmation, Worker/execution-authority or
-   Storage-mutation behavior changed — no command was added.
-2. **Search matches only evidence the public projection publishes (AC-T3 /
-   RO-2, RO-7, Safety Invariant 8).** The fail-closed identity rule moved into
-   the domain (`manual_safety.bounded_identity_path` with the
-   `_EVIDENCE_PATH_SHAPES` tuple) so publication and persistence share
-   literally one definition, and a new deterministic `mf_run_search_text`
-   scalar, registered on every runtime SQLite connection, wraps every identity
-   input of `run_search` — anchor ID, effective source scope, effective target
-   scope and the display search text — returning exactly the published form of
-   a value and nothing at all when the projection would replace it with
-   `[redacted-path]`. Page rows, the filtered total, the status partitions and
-   the attention facet all derive from that guarded document, so neither a
-   READ-principal substring search nor the counts can probe hidden text — for
-   admission display rows, raw `tasks.scope_path`, raw
-   `automation_jobs.source_scope` or any legacy column. The sentinel
-   reproduction now answers `q=INVENTORYPROBE-SECRET`, `q=INVENTORYPROBE` and
-   `q=api_key=INVENTORYPROBE` with `total=0, status_counts={},
-   attention_count=0`, while `q=扫描` still returns the run and neither the
-   list, the search result nor the overview contains the sentinel; hostile
-   legacy scopes (`/srv/...`, credential-shaped, `https://` endpoints) behave
-   the same. To keep searchable text inside the published identity,
-   `effective_scope` now prefers the admission-written display evidence
-   (library name + reviewed scope) before the raw task scope; rows without a
-   display row keep the previous order, so legacy reads are unchanged.
+1. **Every supported direct-command branch now records its historical business
+   scope at admission, for both library kinds.** `DirectFileCommandService` (the one
+   boundary serving ResourceLibrary and MediaLibrary work) composes the context from
+   the exact pinned Active revision the admission already resolved — never a
+   read-time Active lookup: a creation publishes the containing directory as its
+   source scope (the library itself at the root, so a root-level `create_directory`
+   still names its library) and the created entry as its target; Rename and Text
+   Save name the exact entry on each side (Text Save's target is the in-place write
+   path); Delete publishes the confirmed top-level scope it removed and invents no
+   destination (`target_scope=None` — a side that is `None` has no known scope at
+   all, while an empty relative scope means the library root). Values pass the shared
+   provably-relative guard, are clamped by the existing `RunDisplayContext` bounds,
+   and an unknown library name stays unavailable. The MediaLibrary branch keeps its
+   durable `media_files_*` command identity, so `library_kind` stays `media` while
+   the display row adds `Movies/...` identity — equal ResourceLibrary/MediaLibrary
+   IDs remain distinct.
+2. **The display row commits with the Task, restart-safe and immutable.**
+   `PersistentTaskCoordinator.create` → `create_task(task, display=...)` writes the
+   `operations_run_display` row in the same SQLite transaction as the `tasks` insert,
+   so task and identity commit (or fail) together. The row is written once, never
+   backfilled or rewritten: a restart over the same database reads the identical
+   identity, and a real Active A→B library rename through the same managed service
+   the API pins changes nothing in the durable identity or search results. No schema
+   change — the runtime schema stays 41, so migration, rehearsal, preflight and
+   backup suites pass unchanged.
+3. **Search keeps following publication, under the same single guard.** Nothing in
+   the read path changed: the registered `mf_run_search_text` scalar still wraps
+   every identity input of `run_search`, so a credential-shaped configured library
+   name is written as durable evidence, published as `[redacted-path]` and matches
+   nothing — including its filtered total, status partitions and attention facet —
+   while the visible command label keeps the run discoverable. Moving the two
+   composition helpers into the domain removes the last producer-local copy without
+   changing any producer's behaviour.
+4. **No new authority, capability, confirmation or execution behaviour.** The change
+   adds display/persistence work only: no command, no Storage/Provider call, no
+   change to selection, authorization, claim, manifest, confirmation/delete rules or
+   OrganizerExecutor. `PersistentTaskCoordinator.create`'s new parameter is optional,
+   so every other caller (automation admission, CLI, tests) behaves exactly as
+   before.
 
-No schema change: the runtime schema stays 41 (the additive
-`operations_run_display` table already exists), so migration, rehearsal,
-preflight and backup suites pass unchanged.
+B's reproduction, rerun as `.venv/bin/python /tmp/dev-r3-direct-command-probe.py`
+(same `DirectFileOperationsTests` real managed validation/checks/activation, original
+LocalStorage with full capabilities, production API in a temporary directory):
+
+```text
+before: resource + media runs source_scope=null, target_scope=null; display table 0 rows;
+        q=Unified media source / q=movies / q=Movies / q=media-folder all total=0
+after:  resource run source="Unified media source", target="Unified media source/movies"
+        media run  source="Movies",                 target="Movies/media-folder"
+        operations_run_display rows: 2 (search_text carries the library names + scopes)
+        q=Unified media source -> 1, q=movies -> 2, q=Movies -> 2, q=media-folder -> 1,
+        q=文件维护 -> 2   (LIKE is ASCII case-insensitive: q=Movies also matches the
+        resource-created directory "movies"; q=movies likewise matches both)
+        overviews: 文件维护 / 媒体库文件维护 with the same source/target identity
+```
+
+The same evidence is asserted permanently by the five new tests (root-level and
+non-empty relative creation, restart, Active rename, media kind, rename/save entry
+scopes, delete-without-destination, credential-shaped name privacy).
 
 ### Tests and Results
 
-Focused Python (exact commands from Required Tests, on the final committed
-state):
+Focused Python (exact commands from Required Tests, on the committed state
+`ac5a43e`):
 
 ```text
-.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py   → Ran 39, OK (was 36; +3 correction regressions, 0 skips)
+.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py   → Ran 39, OK
 .venv/bin/python -m unittest discover -s tests -p test_operations_workspace.py       → Ran 20, OK
 .venv/bin/python -m unittest discover -s tests -p test_task_persistence.py           → Ran 13, OK
 .venv/bin/python -m unittest discover -s tests -p test_processing_worker_readiness.py → Ran 19, OK
 .venv/bin/python -m unittest discover -s tests -p test_v2_manual_organize.py         → Ran 37, OK
-.venv/bin/python -m unittest discover -s tests -p test_direct_file_operations.py     → Ran 55, OK
-.venv/bin/python -m unittest discover -s tests -p test_direct_file_transfers.py      → Ran 100, OK (was 99; +1)
+.venv/bin/python -m unittest discover -s tests -p test_direct_file_operations.py     → Ran 60, OK (was 55; +5 correction tests, 0 skips)
+.venv/bin/python -m unittest discover -s tests -p test_direct_file_transfers.py      → Ran 100, OK
 .venv/bin/python -m unittest discover -s tests -p test_api_security.py               → Ran 13, OK
 ```
 
 T4 full regression and quality/safety gates:
 
 ```text
-python3 scripts/check_governance.py                                  → governance check: PASS
+python3 scripts/check_governance.py                                  → governance check: PASS (start of task and after the checkpoint)
 scripts/docker_release_security_smoke_test.py                        → direct execution exits 126 (file mode 644, pre-existing); executed as
-                                                                       `.venv/bin/python scripts/docker_release_security_smoke_test.py` with
-                                                                       `TMPDIR=/var/mediaflow-smoke-tmp` → "Release-security smoke acceptance passed."
-                                                                       (candidate image build, four-service stack, RBAC, static V2 UI/headers,
-                                                                       managed snapshot activation, real V2 manual Organize + resident Worker,
-                                                                       log/SQLite canary scan — see Risks for the TMPDIR workaround)
-.venv/bin/python -m unittest discover -s tests                       → Ran 2055, OK (skipped=7); four runs this round — three clean (one before,
-                                                                       two after formatting with captured output) and one attempt that recorded
-                                                                       failures=1 without a captured test name (see Risks)
+                                                                       TMPDIR=/var/mediaflow-smoke-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py
+                                                                       → "Release-security smoke acceptance passed." (candidate image build, four-service
+                                                                       stack, RBAC, static V2 UI/headers, managed snapshot activation, real V2 manual
+                                                                       Organize + resident Worker, log/SQLite canary scan); the TMPDIR directory was
+                                                                       created outside the repository and removed afterwards, and no smoke container,
+                                                                       network, volume or temp directory was left behind (only the pre-existing
+                                                                       /opt/mediaflow, /opt/nginx, jellyfin deployment containers remain untouched)
+.venv/bin/python -m unittest discover -s tests                       → attempt 1: Ran 2060, FAILED (failures=1, skipped=7) — see Risks
+                                                                       attempt 2 (on the committed state): Ran 2060 in 388s, OK (skipped=7)
 .venv/bin/ruff format --check .                                      → 332 files already formatted
 .venv/bin/ruff check .                                               → All checks passed!
 .venv/bin/python -m compileall -q mediaflow tests scripts            → OK
@@ -383,17 +398,17 @@ scripts/docker_release_security_smoke_test.py                        → direct 
 .venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate            → Configuration valid
 .venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate → Configuration valid
 git diff --check                                                     → clean (working tree)
+git diff --check 2577c58..ac5a43e                                    → clean (correction range)
 git diff --check f1806d3a13c0ab0538c07749ff82621782d91a24            → clean (full range)
 sha256sum docs/pics/操作与任务.png                                    → a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86 (matches reference)
 git check-ignore config/alist.json                                   → ignored; git ls-files config/alist.json → empty
 rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                   → UNAVAILABLE (rg not installed, exit 127); equivalent
-                                                                       `grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml` → no matches (exit 1, the required result)
+                                                                       grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml → no matches (exit 1, the required result)
 ```
 
-The 7 skips are the same pre-existing environment-conditional acceptance tests
-as at Task Base (real SMB/S3/OpenList/endurance profiles, POSIX lease, symlink
-availability, container-deployment Docker gating); this Task's suites add zero
-skips.
+The 7 skips are the same pre-existing environment-conditional acceptance tests as at
+Task Base (real SMB/S3/OpenList/endurance profiles, POSIX lease, symlink
+availability, container-deployment Docker gating); this Task's suites add zero skips.
 
 Packaging/static-serving and migration gates:
 
@@ -402,175 +417,177 @@ Packaging/static-serving and migration gates:
 .venv/bin/python -m unittest discover -s tests -p test_release_validation.py   → Ran 3, OK
 .venv/bin/python -m unittest discover -s tests -p test_migration_rehearsal.py  → Ran 6, OK
 .venv/bin/python -m unittest discover -s tests -p test_upgrade_preflight.py    → Ran 4, OK
-.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-wheel-fix2 → mediaflow-2.0.0.dev0-py3-none-any.whl
-.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-wheel-fix2/mediaflow-2.0.0.dev0-py3-none-any.whl → PASS (runtime schema 41)
+.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-wheel-fix3 → mediaflow-2.0.0.dev0-py3-none-any.whl
+.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-wheel-fix3/mediaflow-2.0.0.dev0-py3-none-any.whl → PASS (runtime schema 41)
 ```
 
-Web (from `web/`):
+Web (from `web/`; no Web source changed this round):
 
 ```text
-npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes → 30 files, 453 tests, 0 failed
-npm run test -- --run                        → 58 files, 869 tests, 0 failed
+npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes → Tests 453 passed (453), exit 0
+npm run test -- --run                        → Test Files 58 passed (58), Tests 869 passed (869), 0 failed
 npm run typecheck                            → PASS (exit 0)
 npm run lint                                 → PASS (exit 0)
 npm run format:check                         → PASS (exit 0)
 npm run build                                → PASS (exit 0)
 npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts
-                                              → 58 passed, 2 failed (see Risks: FAIL / PRE-EXISTING / UNRELATED)
+                                              → 58 passed, 2 failed (see Risks: FAIL / PRE-EXISTING / UNRELATED, the same two
+                                                 deep-link.spec.ts failures B independently reproduced at Task Base)
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts → 6 passed
 ```
 
-The real Python-backed browser harness (built artifact + actual Python
-services + temporary SQLite + real producers/Worker) passes unchanged:
-admission→Task linkage, stable counts, filtered selection/return, Worker
-waiting, historical identity after restart/Active change and side-effect-free
-reads.
+The real Python-backed browser harness (built artifact + actual Python services +
+temporary SQLite + real producers/Worker) passes unchanged: truthful labels,
+side-effect-free reads, real Worker linkage, stable filtered selection/return,
+historical identity after a real restart and polling/history navigation.
 
 ### Decisions
 
-1. **One redaction rule, one home.** `bounded_identity_path` (with the
-   `_EVIDENCE_PATH_SHAPES` tuple) moved from the application layer into
-   `mediaflow/domain/manual_safety.py` — the module whose stated purpose is
-   that "application, persistence and transport projections use the same
-   definition" — and `operations_lifecycle` now delegates to it. Behavior is
-   byte-identical; the move exists so the persistence search boundary and the
-   API publication cannot drift.
-2. **Search ⊆ publication is enforced inside SQL, not by a replica.** The run
-   document feeds every identity input of `run_search` through the registered
-   deterministic `mf_run_search_text` scalar, which is exactly
-   `published-form-or-nothing`. There is no second, hand-written SQL copy of
-   the redaction rules to fall out of parity, and the guard applies to every
-   row (admission-written or legacy) at read time — no write-time backfill and
-   no return-row-only masking.
-3. **Redacted values contribute nothing, not the marker.** A hidden scope/label
-   is excluded from the searchable text entirely rather than matching as
-   `[redacted-path]`, so counts and search expose neither the content nor its
-   shape; rows stay discoverable through their safe identity (run ID, business
-   label, visible scope).
-4. **Admission-written display evidence is the preferred historical scope.**
-   `effective_scope` now reads display → task `scope_path` → Job
-   `source_scope`. The display row commits inside the admitting transaction
-   (durable, restart-safe, never a read-time Active lookup), it carries the
-   business name plus the reviewed scope, and preferring it keeps the
-   searchable business name inside the published identity. Only rows that have
-   a display row are affected — today that is new transfers (Scan/manual
-   Organize rows keep their previous result because their `scope_path` was
-   already NULL); legacy rows read exactly as before.
-5. **Transfer display evidence is producer-written, additive and bounded.**
-   The context is composed from the revision-pinned runtime `_build_manifest`
-   just resolved plus the already-reviewed relative scopes, clamped by the
-   existing `RunDisplayContext` bounds; only provably relative path segments
-   are used, and an unknown value stays unavailable. No schema change (41
-   stays), no new command, no change to selection, authorization, claim,
-   manifest, confirmation or execution behavior.
+1. **One boundary, one composition rule.** All five direct-command branches
+   (Create Folder, Create Text File, Rename, Text Save, Delete) on both library
+   kinds pass through `DirectFileCommandService`, so the display context is composed
+   there — once — instead of per command or per endpoint. Nothing outside this
+   boundary was touched (automation admission, CLI admitters and pipeline paths keep
+   their existing evidence or legacy-unavailable status).
+2. **Honest per-branch scope semantics.** Creation → containing directory (library
+   root at the root, where only the library name remains) + created entry; Rename →
+   old entry + new entry; Text Save → the one entry written on both sides; Delete →
+   confirmed top-level scope, no destination. `None` means "this side has no known
+   scope" (never an invented target); an empty relative scope means the library
+   root. Only provably relative path shapes ever enter the row.
+3. **Persist at admission, read only durable rows.** The row rides the Task's own
+   transaction through the existing `create_task` insert path — no schema change
+   (runtime schema stays 41), no read-time Active fallback, no write-time backfill
+   for legacy rows (they stay explicitly unavailable, as before).
+4. **Share the guard, not a copy.** The relative-scope/join helpers moved into
+   `mediaflow/domain/task_persistence.py` next to `RunDisplayContext` so the
+   transfer, scan, organize and direct-command producers cannot drift; the transfer
+   producer's behaviour is unchanged (pure move, verified by its 100-test suite).
+5. **No Web change.** The backend now supplies the `sourceScope`/`targetScope` the
+   existing strict models and inventory panels already render (same conclusion as
+   the round-2 transfer fix), so no model, query, router or fake-server contract
+   needed to move.
 
 ### Remaining In-Slice Work
 
 RO-3 detail/records/export, RO-4 contextual organize entry, RO-5 queued Web
-continuation and RO-6 native item/batch recovery remain open. B reevaluates
-every RO-1–RO-7 after actual Task PASS; this statement neither closes any
-Required Outcome nor authorizes another Task.
+continuation and RO-6 native item/batch recovery remain open. B reevaluates every
+RO-1–RO-7 after actual Task PASS; this statement neither closes any Required
+Outcome nor authorizes another Task.
 
 ### Risks / Deviations
 
-- **FAIL / PRE-EXISTING / UNRELATED:** the required four-spec e2e command
-  reports `58 passed, 2 failed`; both failures are the documented baseline in
-  `deep-link.spec.ts` only — "an explicit route choice at the boundary replaces
-  an earlier intention" and "V1 handoff does not leak the token into URL or
-  persistent stores". They exercise the Review & Recovery / Configuration
-  migration placeholders and the V1 handoff, code untouched by this Task (the
-  correction changed only domain redaction plumbing, the run-inventory SQL
-  document, transfer admission display persistence and their tests), and the
-  same two names are recorded in the previous checkpoint's byte-stable
-  Task-Base baseline. Evidence kept; not fixed because they lie outside this
-  Task's scope — B decides.
-- **Unreproduced full-regression attempt:** one of the four
-  `unittest discover -s tests` runs this round recorded
-  `FAILED (failures=1, skipped=7)`; the command printed only the tail, so the
-  failing test's name was not captured. The eight focused suites in that same
-  attempt all passed (their results are recorded above), and the immediate
-  re-run plus a third run on the identical final state both returned
-  `Ran 2055, OK (skipped=7)` with full output captured and no failure block.
-  Reported as observed — not claimed as PASS for that one attempt; the
-  reproduction/identity of the flake is left to B's review runs.
+- **FAIL / PRE-EXISTING / UNRELATED (full-regression attempt 1):**
+  `tests/test_resident_correction.py::ResidentCorrectionTests::
+  test_live_worker_consumes_later_and_old_published_scan_pins` failed once with
+  `AssertionError: -1 != 0 : OperationalError: database is locked` at the CLI
+  `jobs submit scan` issued while the spawned worker process was SIGSTOPped — a
+  load-dependent live-process write-lock race in a test this Task does not touch
+  (its paths never pass `display` to `create_task`; the added statement only runs
+  when a producer supplies display evidence). Evidence gathered and kept:
+  isolated re-runs on this branch → 13 OK / 6 failures of 19 runs; an interleaved
+  comparison against the reviewed base `2577c58` in a temporary `git worktree`
+  (created and removed afterwards) → 13 OK / 3 failures of 16 runs with the same
+  test and the same `database is locked` class, i.e. the identical flake exists at
+  the base B reviewed. Attempt 2 of `unittest discover -s tests` on the committed
+  state returned `Ran 2060, OK (skipped=7)` with full output captured. Reported as
+  observed — attempt 1 is not claimed as PASS; the flake's disposition is left to
+  B's review runs.
+- **FAIL / PRE-EXISTING / UNRELATED (required four-spec e2e):** `58 passed, 2
+  failed`; both failures are the documented baseline in `deep-link.spec.ts` only —
+  "an explicit route choice at the boundary replaces an earlier intention" (line
+  209) and "V1 handoff does not leak the token into URL or persistent stores" (line
+  479). B independently reproduced the same two names at Task Base from a clean
+  `f1806d3` export; the spec, `package.json` and lockfile have no Base..Head
+  changes and this correction touched no Web source. Evidence kept; B decides.
 - **Docker gate invocation:** direct `scripts/docker_release_security_smoke_test.py`
   exits 126 (file mode 644, pre-existing), so the gate ran as
-  `.venv/bin/python scripts/docker_release_security_smoke_test.py`. This
-  session's `/tmp` (and `/var/tmp`) are mounts the Docker daemon cannot see
-  (`bind source path does not exist`), so the run used
-  `TMPDIR=/var/mediaflow-smoke-tmp` — a daemon-visible directory outside the
-  repository — and then completed the full acceptance, matching B's finding
-  that this gate is runnable in the current environment. No repository content
-  was involved in the workaround and no smoke containers, networks, volumes or
-  temp directories were left behind.
+  `TMPDIR=/var/mediaflow-smoke-tmp .venv/bin/python
+  scripts/docker_release_security_smoke_test.py` — the same daemon-visible
+  workaround as the previous round, because this session's `/tmp` (and
+  `/var/tmp`) are mounts the Docker daemon cannot see. No repository content was
+  involved; the temp directory was removed after the run.
 - **Tool substitution:** `rg` is not installed in this environment; the
-  forbidden-dependency gate was executed with the equivalent `grep -rniE`
-  scan, which returned the required no-matches result (exit 1).
+  forbidden-dependency gate was executed with the equivalent `grep -rniE` scan,
+  which returned the required no-matches result (exit 1).
+- The reproduction probe lives at `/tmp/dev-r3-direct-command-probe.py`, outside
+  the repository (same convention as B's `/tmp` probes); it is not part of the
+  checkpoint.
 - Pre-existing, untouched, non-gated staleness left in place (not this Task's
-  blockers): `AutomationWorker`'s older default `runtime_schema_version: int = 34`
-  (callers pass `SCHEMA_VERSION`), `scripts/docker_upgrade_recovery_smoke_test.py`'s
-  schema 38/39 constants, and the ungated `docs/architecture.md`/`docs/deployment.md`
-  schema mentions.
+  blockers, carried from the previous report): `AutomationWorker`'s older default
+  `runtime_schema_version: int = 34` (callers pass `SCHEMA_VERSION`),
+  `scripts/docker_upgrade_recovery_smoke_test.py`'s schema 38/39 constants, and the
+  ungated `docs/architecture.md`/`docs/deployment.md` schema mentions.
 - The frontend was not changed this round: the backend now supplies the
-  transfer display evidence the existing strict models already display
-  (`sourceScope`/`targetScope`), so no Web source, model or fake-server
-  contract needed to move.
-- B's FIX REQUIRED review text in this file is carried in this report
-  checkpoint, mirroring the documented no-standalone-review-commit convention.
-- Pre-existing untracked `docs/pics/媒体库.png`,
-  `docs/pics/自动化-全局设置.png` and `docs/pics/自动化.png` were preserved
-  untouched and excluded from this checkpoint.
+  direct-command display evidence the existing strict models already display
+  (`sourceScope`/`targetScope`), so no Web source, model or fake-server contract
+  needed to move.
+- B's FIX REQUIRED review text in this file is carried in this report checkpoint,
+  mirroring the documented no-standalone-review-commit convention.
+- Pre-existing untracked `docs/pics/媒体库.png`, `docs/pics/自动化-全局设置.png`
+  and `docs/pics/自动化.png` were preserved untouched and excluded from this
+  checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: ae62c00da1133afb6d6a7724fd951e870246176b
+Head SHA: ac5a43ed89d5d782809569ce5e58aedb8f2b03cb
 ```
 
 ## B Review Result
 
-本轮复审真实 correction checkpoint `5e1a20a`（第一轮 Developer 修正），同时覆盖原 Task
-Base..Head 和 `aacd3de` 的完成报告。B 独立复核：Python 完整回归 Ran 2051、OK
-(skipped=7)，聚焦 inventory 36 项通过；Web 58 files / 869 tests 通过；真实 Python-backed
-浏览器 6 项通过。Python format/lint/compile/pip check、Web typecheck/lint/format/build、
-示例配置校验、治理和 diff/private/reference 检查通过。本轮未将 Developer 对两个 fake
-browser 失败的 pre-existing 归因当作已独立验证的 PASS 证据。
-`scripts/docker_release_security_smoke_test.py` 直接执行因权限返回 126；等价调用
-`.venv/bin/python scripts/docker_release_security_smoke_test.py` 实际完成四服务、RBAC、静态 UI、
-真实 manual Organize/Worker 和日志/SQLite 安全验收并 PASS。当前环境已可运行该 gate，
-完成报告的旧环境 UNAVAILABLE 不代表本轮验证结果。
+本轮为第二轮 Developer 修正的 B 复审；实际产品 Head 为 `ae62c00`，报告 Head 为
+`2577c58`。独立验证：Python 全回归 Ran 2055、OK (skipped=7)，inventory 聚焦 39 项
+通过，真实 Python-backed browser 6 项通过，Docker release-security（以 Python 调用）
+PASS；Python/Web format、lint、typecheck、compile、build、pip check、示例配置、治理、
+Base..Head whitespace/private/reference 检查通过。
+
+Web 全回归实际为 868 passed / 1 failed (869)：
+`NotificationRouter.test.tsx:988` 的 wrong-revision create 测试在 5000ms 超时；该文件
+在当前 Head 和独立 Task Base 构建上单独重跑均 25 passed。保留此次 full-run 失败事实，
+不把该次全回归标为 PASS；该测试/通知实现未被 Task 改动，共享 API diff 只添加 run 查询，
+没有实际生产用户缺陷证据，因此不扩入下面的 P1 列表。修正后仍须按原 Required Tests
+完成并记录完整 gate。
+
+必需 fake browser 四组实际为 58 passed / 2 failed。B 从 `f1806d3` 独立导出完整 Web
+源码、单独构建，再运行原 `deep-link.spec.ts`，得到 12 passed / 同名 2 failed：
+Review & Recovery link 在 221 行找不到、V1 handoff heading 在 494 行找不到。
+该 spec、package.json 和 lockfile Base..Head 无改动；两边错误及位置相同，确认这些为
+pre-existing/unrelated，未削弱断言或隐藏 skip。基线目录为
+`/tmp/mediaflow-b-task42-baseline-r3/web`，证据为 `/tmp/mediaflow-b-r3-base-deeplink.log`
+与 `/tmp/mediaflow-b-r3-e2e.log`。
+
+整体方案复核：当前剩余问题是既有生产者的历史上下文覆盖不足；现有 bounded display
+context、schema 41 和安全搜索规则足以修正，不需要再加架构层、扩大 Slice 或另开 Task。
+下一次为同一 Task 的第三轮修正；若之后仍需超过三轮，须再次从整个 find/inspect 旅程
+评估方案复杂度，而不是继续逐入口打补丁。
 
 ```text
-Reviewed: f1806d3a13c0ab0538c07749ff82621782d91a24..5e1a20ac2f06e67926d73ab7ea6f36a85269a689; completion report at aacd3de064aae47dad3156398f4f70e12dc5cc29
+Reviewed: f1806d3a13c0ab0538c07749ff82621782d91a24..ae62c00da1133afb6d6a7724fd951e870246176b; completion report at 2577c58b2d1bb647c4a3cc584df2b3d1a9acc3c3
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — 新 Files transfer admission 仍缺少承诺的历史业务范围（AC-T3 / RO-2）。**
-  当前合法 Local 配置经真实 managed validation、Storage checks、strategy test、destination
-  precheck 和 activation 后，通过生产 Copy impact/confirm API 创建的任务，未写入
-  `operations_run_display`；投影只有 `source_scope=a.mkv, target_scope=null`。
-  操作者在 Operations 无法按刚选择的源库名称或目标目录找到该工作，也不能从概览识别目标。
-  `.venv/bin/python /tmp/mediaflow-b-r2-direct-probe.py` 使用现有 `TransferApiTests` 的完整
-  配置 fixture、原始 LocalStorage/能力和原始服务，在 admission 返回 202 后复现：
-  新 Task 存在、清单返回 200，但搜索源库名 `Unified media source` 和已选目标 `Movies`
-  都是 total=0（文件名 `a.mkv` 则匹配 1），display table 为 0 行。
-  这是本轮 schema 41 下新产生的支持工作，不能按 legacy 缺失处理。修正方向：在当前生产
-  transfer admission 的共享边界持久化必要的安全业务标签及源/目标范围，或有界读取其精确
-  pin/已持久化 admission 证据；与已有投影、搜索、重启和 Active 变更语义一致。不得更改
-  manifest、确认、Worker/执行权限或 Storage mutation 行为，也不需要新增命令。
-- **P1 — 搜索仍匹配公开投影已隐藏的原文，泄露受保护文本的匹配信息
-  （AC-T3 / RO-2、RO-7，Safety Invariant 8）。** `RunDisplayContext` 和
-  `_insert_run_display_locked` 保存未脱敏 labels/scopes/search_text，SQL `run_search` 直接
-  使用这些原文；`bounded_identity_path` 只在序列化响应时隐藏范围，无法保护搜索。
-  `.venv/bin/python /tmp/mediaflow-b-r2-privacy-probe.py` 通过真实合法 managed activation、
-  原始 LocalStorage、实际 SQLite runtime + SQLite FileIndex 和生产 Scan API，以测试
-  sentinel 库名 `Archive api_key=INVENTORYPROBE-SECRET` 创建 Scan（202）。公开清单范围
-  为 `[redacted-path]`，但只有 READ 权限的 viewer 查询 `q=INVENTORYPROBE-SECRET` 或其
-  子串 `q=INVENTORYPROBE` 均返回 total=1，不存在的 sentinel 返回 0。操作者可利用
-  Operations 文本搜索和统计探测本应隐藏的内容；配置合法，未删除/隐藏生产能力，未使用
-  真实凭据。修正方向：让查询只匹配与公开投影一致的安全证据，在进入可搜索上下文之前
-  完成必要的脱敏/不可公开文本排除；不要仅在返回行中替换原文。对现有 scope fallback
-  保持同一安全规则，并用真实 admission + READ principal 验证子串搜索不能命中隐藏内容。
+- **P1 — 新 Files direct-command 工作仍被当作无历史范围的记录
+  （AC-T1、AC-T3 / RO-2）。** 在当前支持的资源库和媒体库入口，操作者正常新建目录后，
+  Operations 的新运行不能说明是哪个库/范围，也无法按刚使用的库名找到。
+  `.venv/bin/python /tmp/mediaflow-b-r3-direct-command-probe.py` 使用现有
+  `DirectFileOperationsTests` 的真实 managed validation/checks/activation、原始
+  LocalStorage/完整 capabilities 和生产 API，在临时目录中复现：
+  `POST /api/v1/resource-libraries/source/files/commands`
+  (`create_directory`, `parentPath=""`, `name="movies"`) 返回 200 / SUCCESS，持久 Task
+  为 completed，但 runs 清单的 `source_scope=null, target_scope=null`、display table
+  为 0 行，`q=Unified media source` 和 `q=movies` 都是 total=0。
+  同一配置的 `POST /api/v1/media-libraries/movies/files/commands` 创建 `media-folder`
+  也返回 200 / SUCCESS；其 exact overview 正确标为 media，却同样没有源/目标范围，
+  `q=Movies`、`q=media-folder` 均为 0。这些是本轮真实新创建的支持工作，不是 legacy、
+  非法配置、未来适配器或削弱能力的替身。
+  `DirectFileCommandService._run_single` 仅经 coordinator 创建 Task、root-level
+  `scope_path` 为空；其共享 direct-command/删除 admission 边界没有提供已有的
+  `RunDisplayContext`，当前投影也没有从精确 pin/持久证据补足必要范围。
+  修正方向：在这个完整共享生产边界保存或有界投影必要的库类型/历史库名和已知 run-level
+  源/目标范围，覆盖两种库及现有 direct-command 分支；沿用同一安全搜索和 immutable pin
+  规则，覆盖 root-level、非空相对目录、重启和 Active 变更。不要改操作能力、授权、
+  确认/删除规则、执行行为或 OrganizerExecutor，也不要为每个字段/命令另开 Task。
