@@ -264,94 +264,127 @@ not-yet-implemented outcomes.
 
 ### Changed Files
 
-Implementation checkpoint `e89db7c` — Base..Head `f1806d3..e89db7c`, 32 files,
-5527 insertions / 318 deletions (`git diff --check` clean; no private or
-unrelated files, reference images untouched):
+Correction checkpoint `5e1a20a` — the correction delta over the reviewed
+checkpoint `0586db9` is 29 files, 2480 insertions / 373 deletions
+(`git diff --check` clean for the working tree and for the full
+`f1806d3..HEAD` range; no private or unrelated files staged; the three
+pre-existing untracked `docs/pics/*.png` remain excluded and untouched;
+`config/alist.json` stays ignored/untracked/unstaged; reference images
+unchanged):
 
-- Python domain/persistence/API: `mediaflow/domain/operations_run.py` (new),
-  `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`,
-  `mediaflow/interfaces/pagination.py`, `mediaflow/application/automation.py`.
-- Python tests: `tests/test_operations_run_inventory.py` (new, 27 tests);
-  schema pins 39→40 in `tests/test_configuration_classification.py`,
+- Python domain/persistence/API: `mediaflow/domain/operations_run.py`
+  (public `COMMAND_LABELS`, `target_scope` field),
+  `mediaflow/domain/task_persistence.py` (`RunDisplayContext` +
+  `admit_manual_execution` display protocol),
+  `mediaflow/infrastructure/sqlite_runtime.py` (schema 41,
+  `operations_run_display`, `operations_runs_window`, exact-ID
+  `operations_run`, attention facet clause, generated
+  `command_label_sql`, display writes),
+  `mediaflow/interfaces/service_api.py` (attention query/cursor
+  scope/echo, window handler, exact-ID overview, `target_scope`),
+  `mediaflow/application/manual_scan.py`,
+  `mediaflow/application/manual_organize_execution.py`,
+  `mediaflow/application/automation.py` (worker default schema 41).
+- Python tests: `tests/test_operations_run_inventory.py` (27 → 36 tests:
+  cross-connection snapshot, both-direction stable totals, `limit=100`,
+  attention facet, exact-ID overview, SQL/Python label parity, two real
+  Scan-admission display tests, the real manual-Organize journey display
+  test, schema-41 additive-table assertion); runtime-schema pins 40→41 in
+  `tests/test_configuration_classification.py`,
   `tests/test_configuration_destination.py`,
   `tests/test_configuration_destination_activation.py`,
   `tests/test_configuration_destination_precheck.py`,
-  `tests/test_configuration_organize.py`, `tests/test_resident_correction.py`.
-- Harness: `scripts/operations_inventory_harness.py` (new),
-  `web/playwright.python.config.ts` (new), `web/playwright.config.ts`
-  (python-spec exclusion).
-- Web source: `web/src/entities/operations/run.ts` + `run.test.ts` (new),
-  `web/src/shared/api/api-client.ts`, `web/src/shared/api/operations-api.test.ts`,
-  `web/src/features/operations/run-query.ts` (new),
-  `web/src/features/operations/OperationsLanding.tsx`,
-  `web/src/features/operations/OperationsInventory.test.tsx` (new),
+  `tests/test_configuration_organize.py`,
+  `tests/test_resident_correction.py`.
+- Web source: `web/src/entities/operations/run.ts` (task-kind count
+  semantics, attention-facet proof, `targetScope`),
+  `web/src/shared/api/api-client.ts` (attention parameter),
+  `web/src/features/operations/run-query.ts` (one shared refetch policy),
+  `web/src/features/operations/OperationsLanding.tsx` (attention card,
+  URL-resident filter/cursor/direction state, push selection, lifted
+  overview query + refresh, two-column layout, focus management, target
+  scope fact), `web/src/shared/navigation/destination-model.ts`
+  (`attention`/`cursor`/`dir` allowlist), `web/src/shared/ui/styles.css`
+  (layout/overlay rules).
+- Web tests: `web/src/entities/operations/run.test.ts` (+5),
+  `web/src/features/operations/OperationsInventory.test.tsx` (8 → 12),
+  `web/src/shared/api/operations-api.test.ts`,
   `web/src/features/operations/ManualOperationsRouter.test.tsx`,
-  `web/src/shared/navigation/destination-model.ts` + test,
-  `web/src/shared/ui/styles.css`.
-- Web e2e: `web/tests/fake-server.mjs` (runs endpoints),
-  `web/tests/e2e/operations.spec.ts` (+2 inventory journeys),
-  `web/tests/e2e/operations-inventory.python.spec.ts` (new, 5 tests), and
-  intentional presentation adaptations in `web/tests/e2e/manual-operations.spec.ts`,
-  `web/tests/e2e/manual-organize.spec.ts`, `web/tests/e2e/medialib-transfers.spec.ts`.
+  `web/src/shared/navigation/destination-model.test.ts` (+1),
+  `web/src/features/operations/run-query.test.ts` (new, 4),
+  `web/tests/fake-server.mjs` (attention contract + `target_scope`),
+  `web/tests/e2e/operations.spec.ts` (attention toggle, Back, layout),
+  `web/tests/e2e/operations-inventory.python.spec.ts` (+1 test).
 
 ### Implemented
 
-RO-1/RO-2 vertical read journey, end to end:
+All eight B blockers of this correction round, same Task, no scope change:
 
-- **One real population.** A unified run inventory over `automation_jobs ∪
-  standalone tasks`, joined only by the explicit persisted
-  `automation_jobs.task_id` (never filename/time/labels/command prefix). A Job
-  keeps its admission identity before and after acquiring a Task and is counted
-  once; pre-Task pending/failed Jobs, standalone Tasks (manual scans, exact
-  manual organize executions, direct commands/transfers), scheduled definition
-  occurrences and retry/recovery continuations are all discoverable. Unknown
-  legacy commands keep an honest `recognizedCommand: false` label instead of a
-  guessed business meaning. A completed Job never masks its linked Task's
-  partial success/failure (aggregate-status precedence in SQL mirrors
-  `derive_run_status`).
-- **Authoritative query/counts.** `GET /api/v1/operations/runs` supports
-  composed text/status/kind/creation-time filters, deterministic directional
-  cursors (kind `operations_runs`, always scope-bound to the submitted filters
-  *and* the reading principal — cross-filter or cross-principal replay refuses
-  with `invalid_request`), and returns page + filtered total + partitioned
-  status counts + the explicitly overlapping attention count from one
-  lock-held consistent read basis. Invalid values/limits/ranges reject with 400.
-- **Historical identity/privacy.** Scope evidence comes from durable
-  admission rows only (`task.scope_path`, then the Job's recorded admission
-  scope), published through `bounded_identity_path` (relative identity only;
-  absolute host roots become the redaction marker); missing legacy evidence is
-  `null`/explicitly unavailable with no current-Active fallback and no
-  read-time backfill. Reads skip the Active binding refresh (like
-  `/api/v1/tasks`), so durable history stays readable when the current Active
-  is unusable; an A→B Active rename leaves identity, scope and search results
-  byte-identical (proven against a real managed-configuration assembly).
-- **Complete find/inspect journey.** `操作与任务` landing: summary cards whose
-  click applies the same server-side status filter, compact search/status/kind/
-  time filters, full-width table, closed-detail default entry, mouse/keyboard
-  selection opening the run overview (bounded durable facts, pause-request vs
-  acknowledged state, honest item counts that never claim organize success),
-  deep-link `?run=` selection, narrow-screen complete detail with an
-  accessible close, and preserved Task/Job/Automation/Notification/Scan/Preview
-  journeys plus workspace links. `/operations` search allowlist carries only
-  bounded filters, the selection and the scope pair through auth
-  continuation.
-- **Honest states.** No-work/no-match/loading/read-failure/malformed/401/403
-  are distinct bounded states; a failed read never renders as zero runs;
-  unavailable is not zero. Strict fail-closed frontend models (attention facet
-  must match the modelled status set; contradictory progress is malformed).
-  Bounded polling: refetch only while a listed run is non-terminal, pause when
-  the page is hidden, back off after failure, settle on terminal — and every
-  poll is a GET that replays no command (browser-proven).
-- **No new authority/side effects.** READ-gated endpoints that admit nothing,
-  invoke no Provider and touch no Storage; zero display backfills; RecognitionType
-  C and existing control/mutation rules untouched (affected suites pass).
+1. **Paging no longer changes the population.** The page window, filtered
+   total, status partitions and attention facet come from one
+   `operations_runs_window` call: the cursor bounds the page window only,
+   counts derive from the business filters only, both directions return
+   newest-first rows with correct previous/next cursors (a backward page
+   keeps one ordering and honestly proves an older page), and `limit+1`
+   is an internal fetch so the published legal `limit=100` is served.
+   `operations_runs_page` remains as a thin three-tuple view.
+2. **One read snapshot.** Page/total/status/attention run inside an
+   explicit `BEGIN … COMMIT` read transaction, so a legitimate admission
+   committed by another SQLite connection either lands entirely before or
+   entirely after the snapshot — proven by a two-connection regression
+   that schedules a real admission at the exact count-statement
+   interleaving point.
+3. **The attention card filters what it advertises.** `GET
+   /api/v1/operations/runs?attention=true` is an explicit composable
+   population facet bound into the cursor scope (mismatched replay →
+   `invalid_request`), the response echoes `attention`, and the Web card
+   toggles it (`aria-pressed`, never disabled) instead of resetting to
+   `status=all`; the model rejects a server that echoes the facet without
+   applying it. Attention stays an overlapping facet of the status
+   partitions.
+4. **Historical runs open.** The overview reads one run by exact anchor
+   ID from the same linked projection (bounded `WHERE anchor_id = ?`),
+   never from a newest-100 window; unknown IDs stay honest 404s.
+5. **New work carries its business identity.** Schema 41 adds the
+   additive `operations_run_display` table; the manual Scan and manual
+   Organize admissions write bounded display evidence (library names,
+   reviewed source scope, planned target scope, safe labels) inside their
+   own admission transactions from the exact resolved/pinned runtime. The
+   projection publishes `source_scope`/`target_scope` and searches the
+   labels/scopes (search now matches 扫描/手动整理, the library names and
+   the reviewed file scope), with the SQL label CASE generated from the
+   same `COMMAND_LABELS` map as `known_command_label` and a parity test.
+   Legacy rows stay explicitly unavailable — no current-Active fallback,
+   no read-time backfill (the A→B rename regression still passes).
+6. **Legal Scan failures stay visible.** The Web model now validates
+   task-kind aware: `total` required with any count, non-negative integer
+   counts, `completed <= total` for every command, and the
+   `completed + failed <= total` sum only for exact-partition families
+   (`manual_organize`, the bounded Files commands). A real
+   `total=0/completed=0/failed=1` Scan renders as a row with an honesty
+   note instead of rejecting the whole inventory; genuinely impossible
+   documents still fail closed.
+7. **The selected detail follows reality.** The overview query is owned
+   by the landing on the shared `runRefetchInterval` lifecycle (5s while
+   non-terminal, hidden tabs pause, failure stops polling, terminal
+   settles), the header Refresh refetches it, and Job→Task linkage
+   updates facts and exact Task links while the admission identity stays.
+   All polls are GETs that replay no command.
+8. **Complete inspect surface.** The detail is the right column of a
+   `.mf-run-layout` grid at desktop widths (sticky under the topbar) and
+   a complete full-viewport overlay with visible close control on narrow
+   screens, with heading focus on open and focus return on close/Escape.
+   Selection now **pushes** history (Back restores the previous list
+   entry), closing replaces, and filters + cursor + direction + selection
+   live in the URL so refresh, Back/close, deep links and 401 reconnect
+   all restore the same list context (allowlist extended accordingly).
 
 ### Tests and Results
 
-Focused Python (exact commands from Required Tests, all PASS):
+Focused Python (exact commands from Required Tests):
 
 ```text
-.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py   → Ran 27, OK (new)
+.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py   → Ran 36, OK (was 27; +9 correction regressions, 0 skips)
 .venv/bin/python -m unittest discover -s tests -p test_operations_workspace.py       → Ran 20, OK
 .venv/bin/python -m unittest discover -s tests -p test_task_persistence.py           → Ran 13, OK
 .venv/bin/python -m unittest discover -s tests -p test_processing_worker_readiness.py → Ran 19, OK
@@ -365,24 +398,27 @@ T4 full regression and quality/safety gates:
 
 ```text
 python3 scripts/check_governance.py                                  → governance check: PASS
-.venv/bin/python -m unittest discover -s tests                       → Ran 2042, OK (skipped=7)
-.venv/bin/ruff format --check .                                      → 310 files already formatted
+.venv/bin/python -m unittest discover -s tests                       → Ran 2051, OK (skipped=7; run twice — after the
+                                                                       implementation and again on the final state)
+.venv/bin/ruff format --check .                                      → 332 files already formatted
 .venv/bin/ruff check .                                               → All checks passed!
 .venv/bin/python -m compileall -q mediaflow tests scripts            → OK
 .venv/bin/python -m pip check                                        → No broken requirements found
-.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate            → OK
-.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate → OK
-git diff --check                                                     → clean
-git diff --check f1806d3a13c0ab0538c07749ff82621782d91a24            → clean
+.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate            → Configuration valid
+.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate → Configuration valid
+git diff --check                                                     → clean (working tree)
+git diff --check f1806d3a13c0ab0538c07749ff82621782d91a24            → clean (full range)
 sha256sum docs/pics/操作与任务.png                                    → a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86 (matches reference)
-git check-ignore config/alist.json                                   → ignored; git ls-files → untracked
-rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                   → UNAVAILABLE (rg not installed in this environment, exit 127);
-                                                                       equivalent `grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml` → no matches (exit 1, the required result)
+git check-ignore config/alist.json                                   → ignored; git ls-files config/alist.json → empty
+rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml                   → UNAVAILABLE (rg not installed, exit 127); equivalent
+                                                                       `grep -rniE 'ffprobe|ffmpeg' mediaflow pyproject.toml`
+                                                                       → no matches (exit 1, the required result)
 ```
 
-The 7 skips are all pre-existing environment-conditional acceptance tests
-(real SMB/S3/OpenList/endurance profiles, POSIX lease, symlink availability,
-container-deployment Docker gating); this Task's new suite adds zero skips.
+The 7 skips are the same pre-existing environment-conditional acceptance
+tests as at Task Base (real SMB/S3/OpenList/endurance profiles, POSIX
+lease, symlink availability, container-deployment Docker gating); this
+Task's suites add zero skips.
 
 Packaging/static-serving and migration gates:
 
@@ -391,138 +427,215 @@ Packaging/static-serving and migration gates:
 .venv/bin/python -m unittest discover -s tests -p test_release_validation.py   → Ran 3, OK
 .venv/bin/python -m unittest discover -s tests -p test_migration_rehearsal.py  → Ran 6, OK
 .venv/bin/python -m unittest discover -s tests -p test_upgrade_preflight.py    → Ran 4, OK
-.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-wheel-AmDS → mediaflow-2.0.0.dev0-py3-none-any.whl
-.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-wheel-AmDS/mediaflow-2.0.0.dev0-py3-none-any.whl → PASS (runtime schema 40)
-scripts/docker_release_security_smoke_test.py                        → UNAVAILABLE (environmental): the Docker daemon in this
-                                                                       sandbox cannot see /tmp — a plain bind-mount probe
-                                                                       (`docker run --rm -v /tmp/mount-probe:/probe alpine cat /probe/probe.txt`)
-                                                                       fails "No such file or directory", so the compose stack's
-                                                                       bind mounts can never resolve here, independent of repository content
+.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-wheel-fix → mediaflow-2.0.0.dev0-py3-none-any.whl
+.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-wheel-fix/mediaflow-2.0.0.dev0-py3-none-any.whl → PASS (runtime schema 41)
+scripts/docker_release_security_smoke_test.py                        → UNAVAILABLE (environmental, pre-existing): the Docker
+                                                                        daemon in this sandbox cannot see the sandbox's /tmp bind
+                                                                        sources (`bind source path does not exist:
+                                                                        /tmp/mediaflow-smoke-security-...`), so the compose stack's
+                                                                        bind mounts can never resolve here, independent of repository
+                                                                        content; same environmental reason recorded at the previous
+                                                                        checkpoint
 ```
 
 Web (from `web/`):
 
 ```text
-npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes → 29 files, 440 tests, 0 failed
-npm run test -- --run                        → 57 files, 855 tests, 0 failed
-npm run typecheck                            → PASS
-npm run lint                                 → PASS
-npm run format:check                         → PASS
-npm run build                                → PASS
+npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes → 30 files, 453 tests, 0 failed
+npm run test -- --run                        → 58 files, 869 tests, 0 failed
+npm run typecheck                            → PASS (exit 0)
+npm run lint                                 → PASS (exit 0)
+npm run format:check                         → PASS (exit 0)
+npm run build                                → PASS (exit 0)
 npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts
-                                             → 57 passed, 2 failed (see Risks: FAIL / PRE-EXISTING / UNRELATED)
-npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts → 5 passed
+                                              → 58 passed, 2 failed (see Risks: FAIL / PRE-EXISTING / UNRELATED)
+npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts → 6 passed
 ```
 
-Real Python-backed browser evidence (exact reproducible command above): the
-harness starts the packaged `MediaFlowApi` (which also serves the built
-`/ui-v2` artifact) over one temporary SQLite database and seeds runs through
-real producers (API `POST /api/v1/jobs` admission, the production
-`PersistentTaskCoordinator`, the scheduler's `admit_job`); the spec then proves
-real `AutomationWorker` claim→Task linkage with a stable run count and
-preserved admission identity, server-side filtered selection/return,
-Worker-waiting (`no_worker`) before registration, durable identity across a
-real database+API restart, and GET-only side-effect-free reads.
-
-Full fake-path e2e sweep (`npx playwright test` from `web/`): 195 passed,
-31 failed — the failure set is byte-identical to Task Base (verified by
-`diff` of sorted failing-test lists against a baseline run with all Task
-changes stashed and a fresh baseline build): 28 storage-management, 2
-deep-link, 1 dashboard. See Risks.
+The real Python-backed browser harness (built artifact + actual Python
+services + temporary SQLite + real producers/Worker) now also proves the
+correction round: ≥2 bounded overview GETs within 6.5s on a non-terminal
+selection, one more on header Refresh, select → browser Back restoring the
+list context, and the detail inside the right-column layout — alongside
+the existing admission/linkage, filtered selection/return, Worker-waiting,
+restart identity and GET-only side-effect proofs.
 
 ### Decisions
 
-1. **Population/identity:** runs = `automation_jobs ∪ standalone tasks`,
-   joined only by persisted `task_id`; a linked run keeps the admission
-   (Job) identity, so an admission keeps its visible identity after acquiring
-   a Task and linkage never changes the run count (browser-proven).
-2. **Aggregate status** is derived in SQL with the exact precedence of
-   `derive_run_status` (paused Task wins; live evidence beats terminal
-   claims; terminal prefers the Task; missing evidence is `unknown`, never
-   optimistic), so the page and the status partitions share one read basis.
-3. **Scope evidence:** `task.scope_path` first, then the Job's recorded
-   admission scope; never the current Active; published only as a bounded
-   relative identity; legacy `null` stays explicitly unavailable.
-4. **Cursors** use a new scoped kind `operations_runs`: every cursor binds
-   the full filter state and the reading principal's ID (digested, never
-   exposed); mismatched filter or principal refuses with `invalid_request`
-   (read recovery), and equal-timestamp ties page deterministically by ID.
-5. **Durable reads vs Active:** `/api/v1/operations/runs` is exempt from the
-   Active binding refresh (same class as `/api/v1/tasks`), because it
-   resolves configuration nowhere — history stays readable without a usable
-   current Active.
-6. **Schema 40** records the additive read indexes; the six runtime-schema
-   pins were updated in the same checkpoint following the documented 38→39
-   precedent (commit 2f25385). The `tasks(scope_path)` index is created after
-   the additive column migration so legacy tables receive the column first.
-7. **Polling** is bounded to active work: refetch every 5s only while a
-   non-terminal run is listed, pause on hidden pages, settle on terminal
-   states, stop after failure — GET-only, never a command replay.
-8. **Intentional presentation adaptations** to existing browser journeys
-   (Chinese landing labels 手动操作/任务列表/作业列表/发起受限扫描/…, scope
-   selector restored on the landing) preserve every safety assertion: no
-   manual action before an exact scope, exactly-one POST controls,
-   resume-exactly-once, hostile-evidence rejection, read-only principals get
-   no actionable control.
-9. **TASK.md gates block:** added the two exact command strings required by
-   `tests/test_release_security.py` (`python3 scripts/check_governance.py`,
-   `scripts/docker_release_security_smoke_test.py`) — factual gate
-   documentation; Goal, Scope and Acceptance Criteria unchanged.
-10. **Python browser harness:** the WSGI app is `MediaFlowApi` itself (it
-    serves `/ui-v2` statics and `/api/v1`), with two test-only control routes
-    (`/__harness__/run-worker`, `/__harness__/restart`) as harness
-    infrastructure; no product endpoint or document was added for them.
+1. **One window call, one snapshot.** `operations_runs_window` returns
+   page + filter-scoped total + partitions + adjacent-page flags read
+   inside one `BEGIN/COMMIT` read transaction; writers on other
+   connections block briefly instead of skewing counts, and `limit+1` is
+   internal so every published limit works.
+2. **Cursor vs population.** Counts are computed from the business
+   filters only; the cursor narrows the window only, and previous pages
+   are the rows *before* the boundary returned in the same newest-first
+   order, so totals (105/105/105/105 rather than 105/85/65/45) and
+   partitions are stable across the whole walk.
+3. **Attention is a first-class facet.** `attention=true` composes with
+   every other filter, joins the cursor scope (a facet/cursor mismatch
+   refuses with `invalid_request` + read recovery), and echoes in the
+   response; `attention_count` remains the sum of the overlapping
+   partitions, which equals `total` while the facet is applied.
+4. **Exact-ID overview.** `operations_run(run_id)` reads the same linked
+   projection with a bounded ID predicate; existence never depends on a
+   newest-window position.
+5. **Display evidence is producer-written.** Schema 41 adds only the
+   additive `operations_run_display` table, written inside the admitting
+   transaction from the exact resolved/pinned runtime (never the current
+   Active at read time), joined for scope/labels/search only — no
+   selection, authorization, claim or execution behavior changed; legacy
+   rows remain explicitly unavailable.
+6. **Label parity by construction.** The SQL search label CASE is
+   generated from the exported `COMMAND_LABELS` map with a
+   `media_`-prefix/`:`-family rule identical to `known_command_label`, and
+   a parity test evaluates both against the same command matrix.
+7. **Task-kind-aware progress honesty (Web).** Exact-partition commands
+   keep the strict sum rule; scan/pipeline/legacy families keep
+   `completed <= total` but may carry independent scan errors — one legal
+   failing run renders honestly instead of rejecting the page, and no
+   persisted count is ever rewritten.
+8. **One polling lifecycle (Web).** `runRefetchInterval` is shared by the
+   inventory and the lifted overview query; the header Refresh and the
+   panel use the same bounded, GET-only, hidden-pause, failure-stopping,
+   terminal-settling policy.
+9. **URL is the recoverable state (Web).** Filters, cursor + direction,
+   and selection all live in search params: selection pushes (Back = the
+   prior list entry), closing replaces, filter changes drop the cursor,
+   and the reconnect allowlist carries `attention`/`cursor`/`dir` so a
+   401 continuation restores the exact context.
+10. **Schema 41 lockstep.** Following the documented 39→40 precedent, the
+    six literal runtime-schema pins and the `ProcessingWorkerService`
+    default moved to 41 with the additive table; migration/rehearsal/
+    preflight/backup suites are constant-driven and pass unchanged.
 
 ### Remaining In-Slice Work
 
-RO-3 detail/records/export, RO-4 contextual organize entry, RO-5 queued Web continuation and RO-6
-native item/batch recovery remain open. B reevaluates every RO-1–RO-7 after actual Task PASS; this
-statement neither closes any Required Outcome nor authorizes another Task.
+RO-3 detail/records/export, RO-4 contextual organize entry, RO-5 queued Web
+continuation and RO-6 native item/batch recovery remain open. B reevaluates
+every RO-1–RO-7 after actual Task PASS; this statement neither closes any
+Required Outcome nor authorizes another Task.
 
 ### Risks / Deviations
 
-- **FAIL / PRE-EXISTING / UNRELATED:** 31 failures in the full fake-path e2e
-  sweep (28 `storage-management`, 2 `deep-link`: "an explicit route choice at
-  the boundary replaces an earlier intention" and "V1 handoff does not leak
-  the token into URL or persistent stores", 1 `dashboard`: "review and
-  configuration destinations remain migration placeholders"). Reproduced
-  identically at Task Base with all Task changes stashed and a clean baseline
-  build; failing-test sets are byte-identical (`diff` clean). Evidence kept;
-  not fixed because they lie outside this Task's scope — B decides.
-- **UNAVAILABLE (environmental):** `scripts/docker_release_security_smoke_test.py`
-  cannot run here — the Docker daemon does not share this sandbox's `/tmp`
-  (plain bind-mount probe fails), so its compose bind mounts can never
-  resolve. Not caused by repository content.
+- **FAIL / PRE-EXISTING / UNRELATED:** the required four-spec e2e command
+  reports `58 passed, 2 failed`; both failures are the documented
+  pre-existing baseline in `deep-link.spec.ts` only — "an explicit route
+  choice at the boundary replaces an earlier intention" and "V1 handoff
+  does not leak the token into URL or persistent stores". They exercise
+  the Review & Recovery / Configuration migration placeholders and the V1
+  handoff, code untouched by this Task (the correction changed only the
+  `/operations` allowlist branch and operations inventory surfaces), and
+  the same two names are recorded in the previous checkpoint's byte-stable
+  Task-Base baseline. Evidence kept; not fixed because they lie outside
+  this Task's scope — B decides.
+- **UNAVAILABLE (environmental, pre-existing):**
+  `scripts/docker_release_security_smoke_test.py` fails at
+  `docker compose up` because the Docker daemon cannot see this sandbox's
+  `/tmp` bind sources (`bind source path does not exist:
+  /tmp/mediaflow-smoke-security-…`), so its compose bind mounts can never
+  resolve. Not caused by repository content; identical to the previously
+  recorded environmental reason.
 - **Tool substitution:** `rg` is not installed in this environment; the
   forbidden-dependency gate was executed with the equivalent `grep -rniE`
-  scan, which returned the required no-matches result.
-- Run-level target scope is explicitly unavailable in this Task (Non-goal:
-  per-item destination evidence stays on the existing detail surfaces);
-  historical context beyond durable admission rows is deferred to RO-3.
-- Pre-existing untracked `docs/pics/媒体库.png`, `docs/pics/自动化-全局设置.png`
-  and `docs/pics/自动化.png` were preserved untouched and excluded from this
-  Task's checkpoint.
-- B's 20-test planning baseline was exceeded by the actual feature evidence
-  above; no Contract ambiguity or rescope blocker was found during
-  implementation.
+  scan, which returned the required no-matches result (exit 1).
+- Pre-existing, untouched, non-gated staleness left in place (not this
+  Task's blockers): `AutomationWorker`'s older default
+  `runtime_schema_version: int = 34` (callers pass `SCHEMA_VERSION`),
+  `scripts/docker_upgrade_recovery_smoke_test.py`'s schema 38/39
+  constants, and the ungated `docs/architecture.md`/`docs/deployment.md`
+  schema mentions.
+- The frontend models and displays `target_scope` but the detail fact
+  renders it exactly as published (relative label or explicit
+  unavailability); per-item destination evidence stays on the existing
+  detail surfaces per the Task's non-goals.
+- B's FIX REQUIRED review text in this file is carried in the follow-up
+  report checkpoint, mirroring the documented no-standalone-review-commit
+  convention.
+- Pre-existing untracked `docs/pics/媒体库.png`,
+  `docs/pics/自动化-全局设置.png` and `docs/pics/自动化.png` were preserved
+  untouched and excluded from this checkpoint.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: e89db7cff91febe8dfa220343796b367664082be
+Head SHA: 5e1a20ac2f06e67926d73ab7ea6f36a85269a689
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: NOT REVIEWED
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: f1806d3a13c0ab0538c07749ff82621782d91a24..e89db7cff91febe8dfa220343796b367664082be; completion report at 0586db92835210e14880bd681bb79165e8f537db
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
 
-Fixes remain in this Task with Task ID, Task Base and Goal unchanged. FIX REQUIRED lists only
-evidenced current-Contract P0/P1 blockers. If fixes exceed three rounds, B reassesses the entire
-approach against actual feature need before another round; a material Contract issue returns to A.
-This Task does not close the Slice or update Roadmap.
+- **P1 — 分页改变统计总体，反向分页无法连续返回（AC-T2 / RO-2）。**
+  `SQLiteTaskRepository.operations_runs_page` 把游标条件同时用于 page、total 和 status counts；
+  API 的 previous 分支不恢复降序且固定 `has_previous=False`。
+  用真实 `PersistentTaskCoordinator` 创建 105 个独立 Scan 后，
+  `.venv/bin/python /tmp/mediaflow-b-42.1-probe.py` 的连续四页（limit=20）总数为
+  105、85、65、45；第四页返回上一页得到升序记录且没有 previous cursor，用户无法继续返回。
+  同一生产 API 接受的上限 `limit=100` 又因内部请求 101 条而返回 400。
+  修正方向：统计只受业务筛选影响；游标只限制页窗口；双向页面维持统一排序、正确相邻游标，
+  支持公布的合法 limit，并补充跨多页的真实仓储/API 回归。
+- **P1 — 页面和统计没有一致读快照（AC-T2 / RO-2）。**
+  当前实现用实例锁串行执行三个独立 SELECT，没有覆盖其他合法 SQLite 连接的读事务。
+  `.venv/bin/python /tmp/mediaflow-b-snapshot-probe.py` 使用两个实际仓储连接和生产 coordinator，
+  在 page SELECT 与 count SELECT 之间调度一次合法 admission，API 返回
+  `items=2, total=3, status_counts={running:3}, next_cursor=None`。
+  用户在正常并发入队时看见无法由当前清单解释的统计。
+  修正方向：让页、总数、状态分区和 attention 使用同一个数据库读快照，覆盖跨连接入队/
+  Job→Task linkage/状态更新，而不是仅锁住当前 Python 对象。
+- **P1 — “需要关注”卡片不筛选关注总体（AC-T2 / RO-2）。**
+  `OperationsLanding.CountCards` 把该卡片绑定到 `status=all`，无筛选时还禁用按钮；API 没有对应
+  attention facet 查询。真实 Python 服务上的 `node /tmp/mediaflow-b-browser-probe.mjs`
+  复现默认按钮 disabled；从失败筛选点击卡片后变成全部状态、显示全部 4 条，包括非关注运行。
+  修正方向：提供明确的、与既有筛选组合且绑定游标的服务端 attention facet，让卡片应用
+  它所标示的筛选；保留 attention 与状态分区重叠的语义。
+- **P1 — 超过最新 100 条的真实历史运行无法打开（AC-T1、AC-T4 / RO-1）。**
+  `_operations_run_overview` 仅查询最新 100 条再按 ID 查找。
+  `.venv/bin/python /tmp/mediaflow-b-42.1-probe.py` 在上述 105 个合法 Scan 中，对仍存在且可分页
+  找到的最旧 Task 请求 `/api/v1/operations/runs/<id>` 得到 404。
+  这直接阻断历史清单选择和支持的详情深链接。
+  修正方向：通过有界精确 ID 查询读取同一个显式链接投影，不以最新列表窗口判断记录是否存在。
+- **P1 — 新工作没有保存/投影必要的历史业务名称和源/目标范围，搜索也不覆盖业务标签
+  （AC-T3 / RO-2）。** `run_search` 实际只有 anchor ID 和少量原始 scope；scope 为 NULL 时
+  整个拼接表达式也为 NULL。`.venv/bin/python /tmp/mediaflow-b-42.1-probe.py` 使用现有完整
+  手动整理 fixture（真实 LocalStorage、原样 capabilities、真实 intent→Preview→confirm API、
+  已注册 Worker），执行 admission 返回 202，但新运行 `source_scope=null`，没有业务库名/
+  目标范围；查询其可见标签“手动整理”、源库名 `Library` 或选中文件 `One.2001.mkv` 都返回
+  total=0。另有 105 条 Scan 的可见标签“扫描”搜索也为 0。
+  用户无法通过承诺的名称/范围找到刚创建的工作。
+  修正方向：在共享合法生产者保存必要的 bounded display context，或有界读取精确 pin 中的
+  历史证据；投影并搜索安全业务标签和已知源/目标范围，区分库类型。新工作不能统一按 legacy
+  缺失处理，也不能回退当前 Active；run-level 范围属于本 Task，不是被排除的 per-item 明细。
+- **P1 — 合法 Scan 失败会使整个 Web 清单被当作 malformed 拒绝（AC-T1、AC-T5 / RO-1）。**
+  `normalizeRunSummary` 要求 `completed_items + failed_items <= total_items`，但生产 Scan 的
+  failed count 可包含独立扫描错误，Slice Baseline 已明确这种语义。
+  `.venv/bin/python /tmp/mediaflow-b-scan-probe.py` 先在真实 LocalStorage 的有效目录上成功
+  admission，再模拟源目录消失并运行原始 `ManualScanService`：清单 API 返回 200，合法记录
+  `total_items=0, completed_items=0, failed_items=1`。将保存的真实响应
+  `/tmp/mediaflow-b-scan-response.json` 交给实际 `normalizeRunInventoryPage`（Vite SSR 加载
+  `src/entities/operations/run.ts`）得到 `operations run response did not match the expected contract`。
+  一条需要诊断/恢复的真实失败会阻断同页所有运行。
+  修正方向：模型尊重既有 task-kind 计数语义，必要时分开主条目计数和 Scan errors；不要修改
+  生产失败事实或以跳过该运行掩盖问题。覆盖真实失败响应到 Web 清单的回归。
+- **P1 — 已选 active 详情不随轮询、刷新或 Job→Task linkage 更新（AC-T4、AC-T5 / RO-1）。**
+  `RunDetailPanel` 未使用已有 overview polling options，也未参与 header refresh。
+  `node /tmp/mediaflow-b-browser-probe.mjs` 在真实 Python API 上先选择 pending Preview Job，
+  再执行 harness 的真实 `AutomationWorker` claim/linkage，点击 Refresh 并等待 6.5 秒：
+  清单已显示“进行中”和 `Movies/Harness/Linked`，详情仍为“待处理”、范围不可用、仅 Job 链接；
+  全程 overview GET 只有 1 次。用户观察的状态和可用详情链接停留在 admission 之前。
+  修正方向：接入统一 active/terminal/hidden/failure 查询生命周期，显式刷新也刷新所选详情，
+  linkage 后保持 admission 身份但更新事实和精确 Task 链接，不重放任何命令。
+- **P1 — 选择后的详情布局和浏览器返回不满足承诺的完整 inspect surface（AC-T4 / RO-1）。**
+  同一真实 Python 浏览器复现：1400px 桌面上 table 和 detail 均 x=264、宽1080，detail
+  y=521 在 table 之后，没有右侧面板；390px 窄屏 detail 为 `position:static`、y=1221，
+  留在长清单下方，没有完整全屏详情。截图为 `/tmp/mediaflow-b-desktop.png` 和
+  `/tmp/mediaflow-b-narrow.png`，均来自实际构建产物。选择使用 `replace:true`；选择后浏览器
+  Back 直接到 `/ui-v2/dashboard`，而不是返回先前的 Operations 列表状态。
+  修正方向：完成 Contract 已指定的桌面右侧详情/窄屏完整详情及可访问返回，并把筛选、分页/
+  选择上下文纳入可恢复导航状态，覆盖选择→Back/close→刷新/重连，不要求像素一致。
