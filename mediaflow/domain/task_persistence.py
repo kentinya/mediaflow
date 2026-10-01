@@ -249,6 +249,36 @@ class RunDisplayContext:
         return text or None
 
 
+def relative_display_scope(value: object) -> str | None:
+    """One reviewed path usable as display evidence: provably relative only.
+
+    A legacy or externally written value that looks like a host root, a
+    drive/UNC path or a traversal simply contributes nothing — display
+    evidence is optional context and can never fail or widen an admission.
+    Shared by every producer that composes a :class:`RunDisplayContext`, so
+    no producer can record a scope shape the others would not.
+    """
+
+    text = str(value or "").strip()
+    if (
+        not text
+        or text.startswith(("/", "\\", "~"))
+        or "\\" in text
+        or (len(text) > 1 and text[1] == ":")
+        or any(segment in {"", ".", ".."} for segment in text.split("/"))
+    ):
+        return None
+    return text
+
+
+def join_display_scope(name: str, relative: str | None) -> str | None:
+    """``Library name/relative scope``, or whichever of the two is known."""
+
+    if name and relative:
+        return f"{name}/{relative}"
+    return name or relative or None
+
+
 @dataclass(frozen=True)
 class PersistentTask:
     task_id: str
@@ -528,7 +558,12 @@ class PersistentTaskRepository(Protocol):
         effects: tuple[ManualExecutionEffect, ...],
         audit: ManualExecutionAuthorizationAudit,
     ) -> None: ...
-    def create_task(self, task: PersistentTask) -> None: ...
+    def create_task(
+        self,
+        task: PersistentTask,
+        *,
+        display: RunDisplayContext | None = None,
+    ) -> None: ...
     def update_task(self, task: PersistentTask) -> None: ...
     def admit_files_transfer(
         self,

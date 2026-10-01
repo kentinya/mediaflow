@@ -542,7 +542,21 @@ class SQLiteTaskRepository:
     def __exit__(self, *_: object) -> None:
         self.close()
 
-    def create_task(self, task: PersistentTask) -> None:
+    def create_task(
+        self,
+        task: PersistentTask,
+        *,
+        display: RunDisplayContext | None = None,
+    ) -> None:
+        """Atomically create the Task row and its optional display evidence.
+
+        When the admitting producer supplies bounded display evidence, the
+        ``operations_run_display`` row commits in the same transaction, so a
+        newly admitted run can never exist without the business identity its
+        operator just chose — and a failed insert can never leave one without
+        the other.
+        """
+
         with self._lock, self._connection:
             self._connection.execute(
                 """
@@ -550,6 +564,8 @@ class SQLiteTaskRepository:
                 """,
                 self._task_values(task),
             )
+            if display is not None:
+                self._insert_run_display_locked(task.task_id, display, task.created_at)
 
     def update_task(self, task: PersistentTask) -> None:
         with self._lock, self._connection:

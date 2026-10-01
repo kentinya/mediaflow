@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -2038,6 +2039,408 @@ class DirectFileOperationsTests(unittest.TestCase):
                 self.assertNotIn(secret_text, json.dumps(record.__dict__, default=str))
             for item in runtime.list_items(outcome["taskId"]):
                 self.assertNotIn(secret_text, json.dumps(item.__dict__, default=str))
+
+    # ------------------------------------------------------------------
+    # Unified Operations run inventory display evidence
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _display_rows(database: Path, task_id: str) -> list[tuple]:
+        connection = sqlite3.connect(database)
+        try:
+            return connection.execute(
+                "SELECT source_scope, target_scope, search_text"
+                " FROM operations_run_display WHERE task_id = ?",
+                (task_id,),
+            ).fetchall()
+        finally:
+            connection.close()
+
+    @staticmethod
+    def _inventory_overview(api, task_id: str) -> dict:
+        code, overview = request(api, f"/api/v1/operations/runs/{task_id}", token="viewer-token")
+        if code != 200:
+            raise AssertionError(f"overview read failed: {code} {overview}")
+        return overview
+
+    def test_resource_direct_commands_publish_historical_scope_and_are_searchable(
+        self,
+    ) -> None:
+        """A new Files run carries the business identity its operator just used.
+
+        The display row commits in the same transaction that admits the Task
+        and is composed from the pinned Active revision the admission already
+        resolved — never a read-time Active lookup.  A root-level creation
+        still names its library and the created entry, a non-empty relative
+        directory publishes its exact nested scope, a READ principal finds
+        the run by business name, scope or command label, the display row
+        adds no Task/Job/authority work of its own, and a restarted runtime
+        reads the identical durable identity (AC-T1 / AC-T3 / AC-T6).
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            code, created = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={"operation": "create_directory", "parentPath": "", "name": "collections"},
+            )
+            self.assertEqual(200, code, created)
+            root_task = created["taskId"]
+            rows = self._display_rows(root / "runtime.sqlite3", root_task)
+            self.assertEqual(1, len(rows), rows)
+            source_scope, target_scope, search_text = rows[0]
+            self.assertEqual("Unified media source", source_scope)
+            self.assertEqual("Unified media source/collections", target_scope)
+            self.assertIn("Unified media source", search_text)
+            self.assertIn("collections", search_text)
+            # Display evidence is additive: it admits no extra durable work.
+            self.assertEqual(1, len(runtime.list_tasks(limit=100)))
+
+            code, page = request(api, "/api/v1/operations/runs", token="viewer-token")
+            self.assertEqual(200, code)
+            self.assertEqual(1, page["total"], page)
+            run = page["items"][0]
+            self.assertEqual(root_task, run["run_id"])
+            self.assertEqual("文件维护", run["command_label"])
+            self.assertEqual("resource", run["library_kind"])
+            self.assertEqual("Unified media source", run["source_scope"])
+            self.assertEqual("Unified media source/collections", run["target_scope"])
+            for needle, total in (
+                ("Unified media source", 1),
+                ("collections", 1),
+                ("文件维护", 1),
+            ):
+                with self.subTest(needle=needle):
+                    code, found = request(
+                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
+                    )
+                    self.assertEqual(200, code)
+                    self.assertEqual(total, found["total"], found)
+                    self.assertEqual(root_task, found["items"][0]["run_id"])
+
+            # A non-empty relative directory publishes its exact nested scope.
+            service = self._service(api, active)
+            nested = service.create_directory(
+                library_id="source", parent_path="collections", name="2024"
+            )
+            nested_task = nested["taskId"]
+            rows = self._display_rows(root / "runtime.sqlite3", nested_task)
+            self.assertEqual(1, len(rows), rows)
+            self.assertEqual("Unified media source/collections", rows[0][0])
+            self.assertEqual("Unified media source/collections/2024", rows[0][1])
+            code, found = request(api, "/api/v1/operations/runs?q=2024", token="viewer-token")
+            self.assertEqual(200, code)
+            self.assertEqual(1, found["total"], found)
+            self.assertEqual(nested_task, found["items"][0]["run_id"])
+            code, found = request(
+                api, "/api/v1/operations/runs?q=collections", token="viewer-token"
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(2, found["total"], found)
+            self.assertEqual(
+                {root_task, nested_task},
+                {item["run_id"] for item in found["items"]},
+            )
+            self.assertEqual(2, len(runtime.list_tasks(limit=100)))
+
+            # No host root, credential or adapter evidence in the public
+            # list or overview documents.
+            code, overview = request(
+                api, f"/api/v1/operations/runs/{root_task}", token="viewer-token"
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(run["source_scope"], overview["source_scope"])
+            self.assertEqual(run["target_scope"], overview["target_scope"])
+            self.assertEqual(run["command_label"], overview["command_label"])
+            rendered = json.dumps([page, overview])
+            for forbidden in (str(root), "password", "token", "secret", "Authorization"):
+                self.assertNotIn(forbidden, rendered)
+
+            # Restart over the same durable database: byte-identical identity
+            # and search results, read by a fresh process boundary.
+            reopened = SQLiteTaskRepository(root / "runtime.sqlite3")
+            self.addCleanup(reopened.close)
+            restarted_api = MediaFlowApi(
+                reopened,
+                None,
+                principals=(
+                    ResolvedApiPrincipal("viewer", "viewer-token", frozenset({ApiPermission.READ})),
+                ),
+            )
+            code, found = request(
+                restarted_api,
+                "/api/v1/operations/runs?q=Unified%20media%20source",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(2, found["total"], found)
+            by_id = {item["run_id"]: item for item in found["items"]}
+            self.assertEqual("Unified media source", by_id[root_task]["source_scope"])
+            self.assertEqual(
+                "Unified media source/collections/2024",
+                by_id[nested_task]["target_scope"],
+            )
+
+            # An Active A→B library rename — a real configuration change
+            # through the same managed service the API pins — cannot rewrite
+            # A's historical identity, its display row or its search results:
+            # inventory reads durable admission evidence, never the current
+            # Active configuration.
+            configuration = api._configuration_service
+            renamed_document = self._document(root)
+            renamed_document["resourceLibraries"][0]["name"] = "Renamed Unified Source"
+            draft = configuration.import_draft(renamed_document, actor="operator")
+            validated = configuration.validate(draft.revision_id, actor="operator")
+            revision_b = configuration.activate(
+                validated.revision_id, expected_version=validated.version, actor="operator"
+            )
+            self.assertNotEqual(revision_b.revision_id, active.revision_id)
+            rows = self._display_rows(root / "runtime.sqlite3", root_task)
+            self.assertEqual("Unified media source", rows[0][0])
+            code, found = request(
+                api,
+                "/api/v1/operations/runs?q=Unified%20media%20source",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(2, found["total"], found)
+            code, renamed_found = request(
+                api,
+                "/api/v1/operations/runs?q=Renamed%20Unified%20Source",
+                token="viewer-token",
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(0, renamed_found["total"], renamed_found)
+
+    def test_media_direct_command_publishes_its_library_identity_and_kind(self) -> None:
+        """A MediaLibrary command keeps its own historical identity and kind.
+
+        The same shared admission boundary serves both library kinds: the
+        run names the configured MediaLibrary and the created folder, is
+        findable by either through the READ-principal search, and its
+        overview keeps the durable ``media`` kind proven by the media
+        command identity — equal ResourceLibrary/MediaLibrary IDs can still
+        never be mistaken for one another (AC-T1 / AC-T3).
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, runtime = self._activate(root)
+            code, created = request(
+                api,
+                "/api/v1/media-libraries/movies/files/commands",
+                method="POST",
+                body={"operation": "create_directory", "parentPath": "", "name": "media-folder"},
+            )
+            self.assertEqual(200, code, created)
+            task_id = created["taskId"]
+            self.assertTrue((root / "target" / "Movies" / "media-folder").is_dir())
+            rows = self._display_rows(root / "runtime.sqlite3", task_id)
+            self.assertEqual(1, len(rows), rows)
+            source_scope, target_scope, search_text = rows[0]
+            self.assertEqual("Movies", source_scope)
+            self.assertEqual("Movies/media-folder", target_scope)
+            self.assertIn("Movies", search_text)
+
+            for needle, total in (
+                ("Movies", 1),
+                ("media-folder", 1),
+                ("媒体库文件维护", 1),
+            ):
+                with self.subTest(needle=needle):
+                    code, found = request(
+                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
+                    )
+                    self.assertEqual(200, code)
+                    self.assertEqual(total, found["total"], found)
+                    self.assertEqual(task_id, found["items"][0]["run_id"])
+
+            code, overview = request(
+                api, f"/api/v1/operations/runs/{task_id}", token="viewer-token"
+            )
+            self.assertEqual(200, code)
+            self.assertEqual("media", overview["library_kind"])
+            self.assertEqual("媒体库文件维护", overview["command_label"])
+            self.assertEqual("Movies", overview["source_scope"])
+            self.assertEqual("Movies/media-folder", overview["target_scope"])
+            self.assertEqual(1, len(runtime.list_tasks(limit=100)))
+
+    def test_rename_and_text_save_publish_both_entry_scopes(self) -> None:
+        """An in-place entry command names the exact entry on each side.
+
+        Rename publishes the old and the new library-relative path under the
+        historical library name, Text Save publishes the one path it wrote
+        (source and target are the same entry), and both runs are findable
+        through the READ-principal server-side search.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _runtime = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "old-name.nfo").write_text("one", encoding="utf-8")
+
+            renamed = service.rename(
+                library_id="source",
+                path="old-name.nfo",
+                name="new-name.nfo",
+                expected=_entry_evidence(api, active, "source", "old-name.nfo"),
+            )
+            self.assertEqual(renamed["status"], "SUCCESS")
+            rename_task = renamed["taskId"]
+            rows = self._display_rows(root / "runtime.sqlite3", rename_task)
+            self.assertEqual(1, len(rows), rows)
+            self.assertEqual("Unified media source/old-name.nfo", rows[0][0])
+            self.assertEqual("Unified media source/new-name.nfo", rows[0][1])
+            for needle, total in (
+                ("old-name.nfo", 1),
+                ("new-name.nfo", 1),
+            ):
+                with self.subTest(needle=needle):
+                    code, found = request(
+                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
+                    )
+                    self.assertEqual(200, code)
+                    self.assertEqual(total, found["total"], found)
+                    self.assertEqual(rename_task, found["items"][0]["run_id"])
+
+            saved = service.save_text(
+                library_id="source",
+                path="new-name.nfo",
+                content="two",
+                expected=_loaded_evidence(service, "source", "new-name.nfo"),
+            )
+            self.assertEqual(saved["status"], "SUCCESS")
+            save_task = saved["taskId"]
+            rows = self._display_rows(root / "runtime.sqlite3", save_task)
+            self.assertEqual(1, len(rows), rows)
+            self.assertEqual("Unified media source/new-name.nfo", rows[0][0])
+            self.assertEqual("Unified media source/new-name.nfo", rows[0][1])
+            code, found = request(
+                api, "/api/v1/operations/runs?q=new-name.nfo", token="viewer-token"
+            )
+            self.assertEqual(200, code)
+            self.assertEqual(2, found["total"], found)
+            self.assertEqual(
+                {rename_task, save_task},
+                {item["run_id"] for item in found["items"]},
+            )
+            overview = self._inventory_overview(api, save_task)
+            self.assertEqual("Unified media source/new-name.nfo", overview["source_scope"])
+            self.assertEqual("Unified media source/new-name.nfo", overview["target_scope"])
+
+    def test_delete_publishes_the_confirmed_scope_without_a_destination(self) -> None:
+        """A Delete names the confirmed scope it removed — and invents no target.
+
+        The multi-entry delete run publishes
+        ``library name/confirmed top-level scope`` as its historical source,
+        explicitly keeps the target unavailable (removal has no destination),
+        and stays findable by the removed scope through the READ-principal
+        search.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, runtime = self._activate(root)
+            service = self._service(api, active)
+            (root / "source" / "trash").mkdir()
+            (root / "source" / "trash" / "a.mkv").write_bytes(b"media")
+
+            impact = service.delete_impact(library_id="source", paths=["trash"])
+            deleted = service.execute_delete(
+                library_id="source",
+                paths=["trash"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(deleted["taskCommand"], "files_delete")
+            task_id = deleted["taskId"]
+            rows = self._display_rows(root / "runtime.sqlite3", task_id)
+            self.assertEqual(1, len(rows), rows)
+            source_scope, target_scope, search_text = rows[0]
+            self.assertEqual("Unified media source/trash", source_scope)
+            self.assertIsNone(target_scope)
+            self.assertIn("trash", search_text)
+            self.assertFalse((root / "source" / "trash").exists())
+
+            code, found = request(api, "/api/v1/operations/runs?q=trash", token="viewer-token")
+            self.assertEqual(200, code)
+            self.assertEqual(1, found["total"], found)
+            self.assertEqual(task_id, found["items"][0]["run_id"])
+            overview = self._inventory_overview(api, task_id)
+            self.assertEqual("文件删除", overview["command_label"])
+            self.assertEqual("resource", overview["library_kind"])
+            self.assertEqual("Unified media source/trash", overview["source_scope"])
+            self.assertIsNone(overview["target_scope"])
+            self.assertEqual(1, len(runtime.list_tasks(limit=100)))
+
+    def test_credential_shaped_library_name_is_hidden_from_search_and_overview(
+        self,
+    ) -> None:
+        """Search never probes text the public projection hides (Safety Invariant 8).
+
+        The admission really records the credential-shaped configured library
+        name as durable display evidence, but the public projection publishes
+        only the bounded marker — so a READ principal's substring search, the
+        filtered total and the status/attention counts contribute nothing for
+        any part of the hidden text (including the created entry name carried
+        inside the hidden scope), while the visible business label keeps the
+        run discoverable.
+        """
+
+        sentinel = "Archive api_key=INVENTORYPROBE-SECRET"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _runtime = self._activate(
+                root,
+                document_overrides=lambda document: document["resourceLibraries"][0].update(
+                    {"name": sentinel}
+                ),
+            )
+            code, created = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={"operation": "create_directory", "parentPath": "", "name": "collections"},
+            )
+            self.assertEqual(200, code, created)
+            task_id = created["taskId"]
+            rows = self._display_rows(root / "runtime.sqlite3", task_id)
+            self.assertEqual(1, len(rows), rows)
+            self.assertEqual(sentinel, rows[0][0])
+            self.assertEqual(f"{sentinel}/collections", rows[0][1])
+
+            code, overview = request(
+                api, f"/api/v1/operations/runs/{task_id}", token="viewer-token"
+            )
+            self.assertEqual(200, code)
+            self.assertEqual("[redacted-path]", overview["source_scope"])
+            self.assertEqual("[redacted-path]", overview["target_scope"])
+            for needle in (
+                sentinel,
+                "INVENTORYPROBE-SECRET",
+                "INVENTORYPROBE",
+                "api_key=INVENTORYPROBE",
+                "Archive",
+                "collections",
+            ):
+                with self.subTest(needle=needle):
+                    code, found = request(
+                        api, f"/api/v1/operations/runs?q={needle}", token="viewer-token"
+                    )
+                    self.assertEqual(200, code)
+                    self.assertEqual(0, found["total"], found)
+                    self.assertEqual({}, found["status_counts"])
+                    self.assertEqual(0, found["attention_count"])
+                    self.assertNotIn("INVENTORYPROBE", json.dumps(found["items"]))
+            code, found = request(api, "/api/v1/operations/runs?q=文件维护", token="viewer-token")
+            self.assertEqual(200, code)
+            self.assertEqual(1, found["total"], found)
+            self.assertEqual(task_id, found["items"][0]["run_id"])
+            self.assertNotIn("INVENTORYPROBE", json.dumps(overview))
+            self.assertNotIn(str(root), json.dumps([overview, rows]))
 
     # ------------------------------------------------------------------
     # API journeys

@@ -23,6 +23,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTaskItem,
     PersistentTaskRepository,
     PersistentTaskStatus,
+    RunDisplayContext,
     TaskItemStatus,
 )
 
@@ -61,6 +62,7 @@ class PersistentTaskCoordinator:
         configuration_snapshot_digest: str | None = None,
         require_configuration_snapshot: bool = False,
         status: PersistentTaskStatus | None = None,
+        display: RunDisplayContext | None = None,
     ) -> PersistentTask:
         if item_limit is not None and item_limit < 1:
             raise ValueError("task item limit must be positive")
@@ -84,7 +86,7 @@ class PersistentTaskCoordinator:
             configuration_snapshot_id=configuration_snapshot_id,
             configuration_snapshot_digest=configuration_snapshot_digest,
         )
-        self.repository.create_task(task)
+        self.repository.create_task(task, display=display)
         return task
 
     def begin_queued(
