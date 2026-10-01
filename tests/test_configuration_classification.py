@@ -512,7 +512,7 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                 # Runtime schema 38 adds the durable owner generation on
                 # file_locks so a stale Worker can never release a
                 # replacement Worker's source exclusion.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 40)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 41)
 
                 optional = copy.deepcopy(document)
                 optional.pop("classificationPolicies")

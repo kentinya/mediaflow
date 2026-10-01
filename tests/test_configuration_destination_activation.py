@@ -916,7 +916,7 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 # Runtime schema 38 adds the durable owner generation on
                 # file_locks so a stale Worker can never release a
                 # replacement Worker's source exclusion.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 40)
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 41)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

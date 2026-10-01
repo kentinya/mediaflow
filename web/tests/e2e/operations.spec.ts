@@ -474,7 +474,32 @@ test("inventory count card applies its server filter and the run overview opens 
     name: /需要关注（与状态计数重叠，不是独立终态）/,
   });
   await expect(attentionCard).toBeVisible();
+  // The card is never a disabled label: it is an operable filter control.
+  await expect(attentionCard).toBeEnabled();
+  await expect(attentionCard).not.toHaveAttribute("disabled");
+  await expect(attentionCard).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByRole("button", { name: /失败/ })).toBeVisible();
+
+  // Clicking it applies the attention facet it advertises: the URL records
+  // the submitted facet, the card reads as pressed and a non-attention run
+  // leaves the server-side population.
+  await attentionCard.click();
+  await expect(page).toHaveURL(/\?attention=true/);
+  const pressed = page.getByRole("button", {
+    name: /需要关注（与状态计数重叠，不是独立终态）/,
+  });
+  await expect(pressed).toHaveAttribute("aria-pressed", "true");
+  await expect(pressed).toBeEnabled();
+  await expect(page.getByRole("row", { name: /job-001/ })).toHaveCount(0);
+
+  // Clicking it again clears the facet and restores the full population.
+  await pressed.click();
+  await expect(page).not.toHaveURL(/attention=/);
+  const cleared = page.getByRole("button", {
+    name: /需要关注（与状态计数重叠，不是独立终态）/,
+  });
+  await expect(cleared).toHaveAttribute("aria-pressed", "false");
+  await expect(page.getByRole("row", { name: /job-001/ })).toBeVisible();
 
   // Card click applies the status filter to the same server-side population.
   await page.getByRole("button", { name: /^1\s*失败/ }).click();
@@ -500,6 +525,66 @@ test("inventory count card applies its server filter and the run overview opens 
   await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
   await expect(page).toHaveURL(/status=failed/);
   await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+
+  // Selecting pushes a history entry: browser Back returns to the list
+  // entry with its filter intact instead of leaving the route.
+  await page
+    .getByRole("row", { name: /job-005/ })
+    .getByRole("button", { name: /job-005/ })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/run=job-005/);
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await page.goBack();
+  await expect(page).toHaveURL(/status=failed/);
+  await expect(page).not.toHaveURL(/run=/);
+  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
+});
+
+test("the selected run detail is a right column on desktop and a full overlay when narrow", async ({
+  page,
+}) => {
+  await connect(page);
+  await openOperations(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await expect(page.getByRole("table")).toBeVisible();
+
+  await page.getByRole("table").getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  // The panel is the right column of the detail-aware two-column layout.
+  await expect(
+    page.locator(".mf-run-layout.mf-run-has-detail .mf-run-detail"),
+  ).toHaveCount(1);
+
+  const tableBox = await page.getByRole("table").boundingBox();
+  const detailBox = await detail.boundingBox();
+  expect(tableBox).not.toBeNull();
+  expect(detailBox).not.toBeNull();
+  const table = tableBox as NonNullable<typeof tableBox>;
+  const panel = detailBox as NonNullable<typeof detailBox>;
+  // Distinct x ranges: the detail sits to the right of the table...
+  expect(panel.x).toBeGreaterThanOrEqual(table.x + table.width - 2);
+  expect(panel.width).toBeGreaterThan(200);
+  // ...with an overlapping y range, so both stay visible side by side.
+  const overlapY =
+    Math.min(table.y + table.height, panel.y + panel.height) -
+    Math.max(table.y, panel.y);
+  expect(overlapY).toBeGreaterThan(0);
+
+  // Narrow layout: the selection takes over the viewport as a complete
+  // full-screen detail with its close control visible.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(detail).toBeVisible();
+  const narrowBox = await detail.boundingBox();
+  expect(narrowBox).not.toBeNull();
+  const overlay = narrowBox as NonNullable<typeof narrowBox>;
+  expect(overlay.x).toBeLessThanOrEqual(1);
+  expect(overlay.y).toBeLessThanOrEqual(1);
+  expect(overlay.width).toBeGreaterThanOrEqual(388);
+  expect(overlay.height).toBeGreaterThanOrEqual(840);
+  await expect(detail.getByRole("button", { name: "关闭详情" })).toBeVisible();
 });
 
 test("an unauthenticated deep entry reconnects to the selected run overview", async ({

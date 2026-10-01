@@ -1238,6 +1238,9 @@ export interface RunInventoryQueryOptions {
   readonly q?: string | null;
   readonly from?: string | null;
   readonly to?: string | null;
+  /** Submit the overlapping attention facet (`attention=true`); a null or
+   * absent value reads the unfiltered population. */
+  readonly attention?: boolean | null;
   readonly limit?: number;
   readonly cursor?: string | null;
 }
@@ -1251,6 +1254,9 @@ export function runInventoryUrl(options: RunInventoryQueryOptions): string {
   if (options.to) params.set("to", options.to);
   if (options.limit !== undefined) params.set("limit", String(options.limit));
   if (options.cursor) params.set("cursor", options.cursor);
+  // The facet is a boolean server parameter: only `attention=true` restricts
+  // the population, so an unfiltered read keeps its exact original URL.
+  if (options.attention) params.set("attention", "true");
   const qs = params.toString();
   return `/api/v1/operations/runs${qs ? `?${qs}` : ""}`;
 }

@@ -406,6 +406,7 @@ describe("unified run inventory reads", () => {
       schedule_id: null,
       definition_id: null,
       source_scope: "Movies",
+      target_scope: null,
       library_kind: "resource",
       total_items: 2,
       completed_items: 2,
@@ -428,6 +429,7 @@ describe("unified run inventory reads", () => {
       q: null,
       from: null,
       to: null,
+      attention: false,
       total: 1,
       truncated: false,
       status_counts: { completed: 1 },
@@ -454,6 +456,28 @@ describe("unified run inventory reads", () => {
       "/api/v1/operations/runs?status=failed&command=scan&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1",
     );
     expect(runInventoryUrl({})).toBe("/api/v1/operations/runs");
+    // The attention facet is appended only when it is actually submitted, so
+    // an unfiltered read keeps its exact original address, and a falsy/null
+    // facet never emits a parameter the backend would reject.
+    expect(
+      runInventoryUrl({
+        status: "failed",
+        command: "scan",
+        q: "电影",
+        from: "2026-08-01T00:00:00Z",
+        limit: 20,
+        cursor: "c1",
+        attention: true,
+      }),
+    ).toBe(
+      "/api/v1/operations/runs?status=failed&command=scan&q=%E7%94%B5%E5%BD%B1&from=2026-08-01T00%3A00%3A00Z&limit=20&cursor=c1&attention=true",
+    );
+    expect(runInventoryUrl({ attention: false })).toBe(
+      "/api/v1/operations/runs",
+    );
+    expect(runInventoryUrl({ attention: null })).toBe(
+      "/api/v1/operations/runs",
+    );
   });
 
   it("normalizes a bounded inventory page with counts", async () => {

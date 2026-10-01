@@ -186,6 +186,69 @@ class TaskItemStatus(StrEnum):
         }
 
 
+#: Hard bounds on one admission's recorded display evidence.  The row is
+#: display-only, so it must stay small, secret-free and cheap to search.
+MAX_RUN_DISPLAY_SCOPE_LENGTH = 320
+MAX_RUN_DISPLAY_LABELS = 8
+MAX_RUN_DISPLAY_LABEL_LENGTH = 120
+
+
+@dataclass(frozen=True)
+class RunDisplayContext:
+    """Bounded, secret-free display evidence recorded with one admission.
+
+    A shared producer persists this context in the same durable transaction
+    that admits the work, so a newly admitted run carries its business
+    identity — the historical source/target scope and the safe business
+    labels (library names, reviewed scope) — for the unified Operations run
+    inventory.  A legacy row without this evidence stays explicitly
+    unavailable: reads never backfill it and never fall back to the current
+    Active configuration.  The values are display/search evidence only: they
+    grant no authority and never change selection, authorization, claim or
+    execution behaviour.
+    """
+
+    source_scope: str | None = None
+    target_scope: str | None = None
+    labels: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Display evidence is best-effort context: an overlong value is
+        # clamped, never rejected, so recording it can never fail the
+        # admission that owns the transaction.
+        for field, value in (
+            ("source_scope", self.source_scope),
+            ("target_scope", self.target_scope),
+        ):
+            if value is None:
+                continue
+            if not isinstance(value, str):
+                raise ValueError(f"run display {field} must be text")
+            stripped = value.strip()[:MAX_RUN_DISPLAY_SCOPE_LENGTH].strip()
+            object.__setattr__(self, field, stripped or None)
+        if not isinstance(self.labels, (tuple, list)):
+            raise ValueError("run display labels must be a tuple")
+        labels: list[str] = []
+        for label in self.labels:
+            if not isinstance(label, str):
+                raise ValueError("run display labels must be text")
+            stripped = label.strip()[:MAX_RUN_DISPLAY_LABEL_LENGTH].strip()
+            if not stripped or stripped in labels:
+                continue
+            labels.append(stripped)
+            if len(labels) >= MAX_RUN_DISPLAY_LABELS:
+                break
+        object.__setattr__(self, "labels", tuple(labels))
+
+    @property
+    def search_text(self) -> str | None:
+        """The bounded, space-separated searchable text of this context."""
+
+        parts = [*(self.labels or ()), self.source_scope, self.target_scope]
+        text = " ".join(part for part in parts if part)
+        return text or None
+
+
 @dataclass(frozen=True)
 class PersistentTask:
     task_id: str
@@ -404,6 +467,8 @@ class PersistentTaskRepository(Protocol):
         items: tuple[ManualExecutionItem, ...],
         locks: tuple[tuple[str, str], ...],
         now: datetime,
+        *,
+        display: RunDisplayContext | None = None,
     ) -> ManualExecution: ...
     def get_manual_execution(self, execution_id: str) -> ManualExecution | None: ...
     def list_manual_executions_for_preview(

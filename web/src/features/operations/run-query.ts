@@ -1,10 +1,12 @@
 /**
  * TanStack Query options for the unified Operations run inventory.
  *
- * The inventory page polls only while it is visible and while any listed run
- * is still active (non-terminal), backs off after a failure and settles once
- * every listed run reached a terminal state. Reads are side-effect-free, so
- * a poll never replays a command — it repeats only the same bounded read.
+ * One shared bounded polling policy drives both the inventory page and the
+ * selected run overview: each read polls only while it is visible and while
+ * something it reports is still active (non-terminal), backs off after a
+ * failure and settles once everything it reports reached a terminal state.
+ * Reads are side-effect-free, so a poll never replays a command — it repeats
+ * only the same bounded read.
  */
 
 import { queryOptions } from "@tanstack/react-query";
@@ -22,6 +24,32 @@ import {
 
 export const runInventoryQueryKey = "operations.run-inventory" as const;
 
+/** The bounded active-work polling interval shared by every run read. */
+export const RUN_REFETCH_INTERVAL = 5_000;
+
+/**
+ * The one shared refetch policy for an inventory page or one run overview.
+ *
+ * An undefined (not yet loaded) or failed read never schedules a poll; a read
+ * reporting any non-terminal run repeats every 5 seconds; a fully terminal
+ * read settles to `false`. The selected overview therefore follows the same
+ * lifecycle as the list it was selected from instead of freezing at its
+ * first render.
+ */
+export function runRefetchInterval(
+  read: RunInventoryRead | RunOverviewRead | undefined,
+): number | false {
+  if (read === undefined || !read.ok) {
+    return false;
+  }
+  const model = read.model;
+  const active =
+    "items" in model
+      ? hasActiveRuns(model.items)
+      : !TERMINAL_RUN_STATUSES.includes(model.status);
+  return active ? RUN_REFETCH_INTERVAL : false;
+}
+
 export function runInventoryQueryOptions(
   token: string | null,
   options: RunInventoryQueryOptions = {},
@@ -37,16 +65,7 @@ export function runInventoryQueryOptions(
     // Bounded active-work polling: refetch while visible and something may
     // still change; a fully terminal page settles. Hidden tabs pause
     // automatically through refetchIntervalInBackground: false.
-    refetchInterval: (query) => {
-      const data = query.state.data as RunInventoryRead | undefined;
-      if (data === undefined || !data.ok) {
-        return false;
-      }
-      const active = data.model.items.some(
-        (item) => !TERMINAL_RUN_STATUSES.includes(item.status),
-      );
-      return active ? 5_000 : false;
-    },
+    refetchInterval: (query) => runRefetchInterval(query.state.data),
     refetchIntervalInBackground: false,
   });
 }
@@ -62,13 +81,9 @@ export function runOverviewQueryOptions(token: string | null, runId: string) {
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     staleTime: 10_000,
-    refetchInterval: (query) => {
-      const data = query.state.data as RunOverviewRead | undefined;
-      if (data === undefined || !data.ok) {
-        return false;
-      }
-      return TERMINAL_RUN_STATUSES.includes(data.model.status) ? false : 5_000;
-    },
+    // The selected run follows the same shared policy as the list: it polls
+    // only while its own state is still non-terminal.
+    refetchInterval: (query) => runRefetchInterval(query.state.data),
     refetchIntervalInBackground: false,
   });
 }

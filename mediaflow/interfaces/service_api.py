@@ -12471,10 +12471,11 @@ class MediaFlowApi:
         """
 
         values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
-        allowed = {"limit", "cursor", "status", "command", "q", "from", "to"}
+        allowed = {"limit", "cursor", "status", "command", "q", "from", "to", "attention"}
         if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
             raise ValueError(
-                "operations runs query accepts limit, cursor, status, command, q, from, and to once"
+                "operations runs query accepts limit, cursor, status, command, q, from, to, "
+                "and attention once"
             )
         limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["50"])[0], "run")
         raw_status = values.get("status", [""])[0]
@@ -12484,6 +12485,13 @@ class MediaFlowApi:
             status = raw_status
         else:
             raise ValueError("operations run status filter is invalid")
+        raw_attention = values.get("attention", [""])[0]
+        if raw_attention in {"", "all", "false", "no"}:
+            attention = False
+        elif raw_attention in {"true", "yes"}:
+            attention = True
+        else:
+            raise ValueError("operations run attention filter is invalid")
         raw_command = values.get("command", [""])[0]
         command = None if raw_command in {"", "all"} else raw_command
         if command is not None and not _TASK_COMMAND_FILTER.fullmatch(command):
@@ -12501,6 +12509,7 @@ class MediaFlowApi:
             search=search,
             created_after=created_after,
             created_before=created_before,
+            attention=attention,
         )
         raw_cursor = values.get("cursor")
         cursor = (
@@ -12518,6 +12527,7 @@ class MediaFlowApi:
             "status": status,
             "command": command,
             "search": search,
+            "attention": attention,
             "created_after": created_after,
             "created_before": created_before,
             "scope": scope,
@@ -12561,6 +12571,7 @@ class MediaFlowApi:
         search: str | None,
         created_after: datetime | None,
         created_before: datetime | None,
+        attention: bool = False,
     ) -> str:
         """Deterministic cursor scope binding filters and the reading principal.
 
@@ -12568,11 +12579,15 @@ class MediaFlowApi:
         minted by one API principal is refused for another: a cross-principal
         replay recovers as an invalid cursor, never as a silently different
         page.  The digest hides the identity from the cursor payload itself.
+        Every submitted population filter — including the overlapping
+        attention facet — is bound the same way, so a cursor minted for one
+        filter state is refused as soon as any filter differs.
         """
 
         parts = [
             f"principal={principal_id}",
             f"status={status or 'all'}",
+            f"attention={'true' if attention else 'false'}",
             f"command={command or 'all'}",
             f"q={search or ''}",
             f"from={created_after.isoformat() if created_after else ''}",
@@ -12590,53 +12605,48 @@ class MediaFlowApi:
 
         query = self._operations_runs_query(environ, principal.principal_id)
         repository = self._repository
-        if repository is None or not callable(getattr(repository, "operations_runs_page", None)):
+        if repository is None or not callable(getattr(repository, "operations_runs_window", None)):
             return self._error(
                 start_response,
                 503,
                 "service_unavailable",
                 "unified run inventory is unavailable for this runtime",
             )
-        # The cursor direction determines the page window: a forward cursor
-        # consumes `limit+1` rows so `has_next` stays exact, and a backward
-        # cursor keeps the last `limit` rows of the returned window.
+        # One repository window call derives the page, the filtered total,
+        # the status partitions and the overlapping attention facet from one
+        # database read snapshot.  The submitted cursor only bounds the page
+        # window — it never narrows the reported population — and both page
+        # directions keep one newest-first ordering with honestly derived
+        # adjacent-page flags, so an operator can page forward and back
+        # through the whole filtered population.
         cursor: DecodedCursor | None = query["cursor"]
         limit: int = query["limit"]
+        arguments: dict[str, object] = {
+            "limit": limit,
+            "status": query["status"],
+            "command": query["command"],
+            "search": query["search"],
+            "created_after": query["created_after"],
+            "created_before": query["created_before"],
+            "attention": query["attention"],
+        }
         if cursor is not None and cursor.direction is CursorDirection.PREVIOUS:
-            # A backward cursor keeps the newest `limit` rows strictly after
-            # the boundary, so a previous page's shape matches the forward
-            # one; `has_previous` claims another older page only when the
-            # boundary itself had a full window behind it.
-            page, _total, counts = repository.operations_runs_page(
-                limit=limit,
-                before=cursor.position,
-                status=query["status"],
-                command=query["command"],
-                search=query["search"],
-                created_after=query["created_after"],
-                created_before=query["created_before"],
-            )
-            has_previous = False
-            has_next = bool(page)
+            window = repository.operations_runs_window(before=cursor.position, **arguments)
         else:
-            page, _total, counts = repository.operations_runs_page(
-                limit=limit + 1,
-                after=cursor.position if cursor else None,
-                status=query["status"],
-                command=query["command"],
-                search=query["search"],
-                created_after=query["created_after"],
-                created_before=query["created_before"],
+            window = repository.operations_runs_window(
+                after=cursor.position if cursor else None, **arguments
             )
-            has_next = len(page) > limit
-            has_previous = bool(cursor and page)
-            page = page[:limit]
+        page = window.page
+        has_next = bool(window.has_next)
+        has_previous = bool(window.has_previous)
         scope: str = query["scope"]
         # The attention count is the overlapping facet over the same filtered
-        # population — never a mutually exclusive terminal state.
+        # population — never a mutually exclusive terminal state.  With the
+        # attention facet applied, the page *is* that overlapping population,
+        # so the card keeps showing exactly the count it filters to.
         attention_count = sum(
             count
-            for value, count in counts.items()
+            for value, count in window.status_counts.items()
             if value in {item.value for item in ATTENTION_RUN_STATUSES}
         )
         return self._response(
@@ -12648,11 +12658,12 @@ class MediaFlowApi:
                 "status": query["status"],
                 "command": query["command"],
                 "q": query["search"],
+                "attention": bool(query["attention"]),
                 "from": (query["created_after"].isoformat() if query["created_after"] else None),
                 "to": (query["created_before"].isoformat() if query["created_before"] else None),
-                "total": _total,
+                "total": window.total,
                 "truncated": has_next,
-                "status_counts": counts,
+                "status_counts": window.status_counts,
                 "attention_count": attention_count,
                 "population": (
                     "unified job/task run inventory, deduplicated by explicit task linkage"
@@ -12671,15 +12682,17 @@ class MediaFlowApi:
         """One selected run's bounded overview (RO-1 selection journey)."""
 
         repository = self._repository
-        if repository is None or not callable(getattr(repository, "operations_runs_page", None)):
+        if repository is None or not callable(getattr(repository, "operations_run", None)):
             return self._error(
                 start_response,
                 503,
                 "service_unavailable",
                 "unified run inventory is unavailable for this runtime",
             )
-        page, _total, _counts = repository.operations_runs_page(limit=100)
-        overview = next((item for item in page if item.run_id == run_id), None)
+        # An exact bounded ID read of the same linked projection: whether a
+        # run is openable never depends on it being among the newest rows, so
+        # a real historical run (and its supported deep link) stays reachable.
+        overview = repository.operations_run(run_id)
         if overview is None:
             raise LookupError(f"operations run {run_id!r} was not found")
         return self._response(
@@ -12732,6 +12745,7 @@ class MediaFlowApi:
             "schedule_id": overview.schedule_id,
             "definition_id": overview.definition_id,
             "source_scope": bounded_identity_path(overview.source_scope),
+            "target_scope": bounded_identity_path(overview.target_scope),
             "library_kind": overview.library_kind.value if overview.library_kind else None,
             "total_items": overview.total_items,
             "completed_items": overview.completed_items,

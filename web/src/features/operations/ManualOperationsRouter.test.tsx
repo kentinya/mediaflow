@@ -107,6 +107,7 @@ function runInventoryPageDocument(): Json {
     q: null,
     from: null,
     to: null,
+    attention: false,
     total: 0,
     truncated: false,
     status_counts: {},
