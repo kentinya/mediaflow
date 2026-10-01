@@ -225,3 +225,57 @@ test("historical identity survives a real restart of the runtime database", asyn
     .allInnerTexts();
   expect(after).toEqual(before);
 });
+
+test("the selected run follows polling, header refresh and history navigation", async ({
+  page,
+}) => {
+  const api = recordApiCalls(page);
+  await connect(page);
+  await openInventory(page);
+
+  const overviewReads = () =>
+    api.filter(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path.startsWith("/api/v1/operations/runs/"),
+    ).length;
+
+  // Select a real non-terminal run: the seeded pending admission stays
+  // pending until a Worker claims it, so its overview keeps polling.
+  const activeRow = page.getByRole("row").filter({ hasText: "待处理" }).first();
+  await expect(activeRow).toBeVisible();
+  await activeRow.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  expect(overviewReads()).toBeGreaterThanOrEqual(1);
+
+  // Bounded polling: the selected overview is re-read while its state is
+  // non-terminal (first read on selection, second read ~5s later).
+  await expect
+    .poll(overviewReads, { timeout: 6500, intervals: [250] })
+    .toBeGreaterThanOrEqual(2);
+
+  // The header refresh re-reads the same bounded overview exactly once more.
+  const beforeRefresh = overviewReads();
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expect
+    .poll(overviewReads, { timeout: 10000, intervals: [250] })
+    .toBeGreaterThan(beforeRefresh);
+
+  // Selecting pushed a history entry: browser Back restores the list entry
+  // (same URL, no selection) instead of leaving the route.
+  await expect(page).toHaveURL(/run=/);
+  await page.goBack();
+  await expect(page).not.toHaveURL(/run=/);
+  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expect(page.getByRole("table")).toBeVisible();
+
+  // At a desktop width the selection is the right column of the two-column
+  // inventory layout, never a block stacked under the list.
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await activeRow.getByRole("button").first().click();
+  await expect(
+    page.locator(".mf-run-layout.mf-run-has-detail .mf-run-detail"),
+  ).toBeVisible();
+  await expect(detail.getByRole("button", { name: "关闭详情" })).toBeVisible();
+});

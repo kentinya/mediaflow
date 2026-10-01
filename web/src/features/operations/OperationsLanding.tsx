@@ -2,27 +2,32 @@
  * The unified `操作与任务` run inventory (Slice 42 RO-1/RO-2).
  *
  * One full-width list is the default entry with no selection. Selecting a run
- * opens the right overview panel (complete full-screen detail on narrow
- * layouts) with an accessible return to the same list context. All reads go
- * through the central API boundary; entry, refresh, filters, paging and
- * selection admit no work, perform no mutation and replay no command.
+ * opens the right detail column beside the list (a complete full-viewport
+ * detail on narrow layouts) with an accessible return to the same list
+ * context. All reads go through the central API boundary; entry, refresh,
+ * filters, paging and selection admit no work, perform no mutation and replay
+ * no command.
  *
  * Count cards are filters over the same server-side population the table
- * reads: clicking one applies that status filter. The attention card is an
- * explicitly overlapping facet, not a separate terminal state, and is
- * labelled as such. Worker readiness and the manual Scan/Preview entries
- * stay discoverable below the inventory; existing Task/Job/Automation/
- * Notification detail routes remain the deeper evidence journeys.
+ * reads: clicking one applies that status filter, and the attention card
+ * applies the overlapping attention facet it advertises (composing with the
+ * other filters rather than replacing them, and never disabled). The
+ * attention card is an explicitly overlapping facet, not a separate terminal
+ * state, and is labelled as such. Worker readiness and the manual Scan/
+ * Preview entries stay discoverable below the inventory; existing Task/Job/
+ * Automation/Notification detail routes remain the deeper evidence journeys.
+ *
+ * Filters, the server cursor page and the selection all live in the URL, so
+ * a refresh, a browser Back/Forward and a 401 reconnect restore the exact
+ * list context; selecting a run pushes a history entry while closing one
+ * replaces it.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import {
-  fetchRunOverview,
-  type RunOverviewRead,
-} from "../../shared/api/api-client";
+import type { RunOverviewRead } from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -36,7 +41,11 @@ import {
   type RunStatus,
   type RunSummary,
 } from "../../entities/operations/run";
-import { runInventoryQueryOptions, runOverviewQueryKey } from "./run-query";
+import {
+  runInventoryQueryOptions,
+  runOverviewQueryKey,
+  runOverviewQueryOptions,
+} from "./run-query";
 import { ResidentServiceStatus } from "./ResidentServiceStatus";
 import { manualActionsQueryOptions } from "./manual-actions-query";
 import { workerReadinessQueryOptions } from "./worker-query";
@@ -48,17 +57,28 @@ import type { ManualActionMatrixModel } from "../../entities/operations/manual-a
 /** The bounded page size submitted to the server on every read. */
 const RUN_PAGE_LIMIT = 20;
 
+/** The submitted collection filters, reflected in the URL for reconnect. */
 interface RunListFilters {
   readonly status: string;
   readonly command: string;
   readonly q: string;
   readonly from: string;
   readonly to: string;
+  /** The overlapping attention facet the count card advertises. */
+  readonly attention: boolean;
+}
+
+/** The server cursor page, reflected in the URL so paging survives reload. */
+interface RunPageState {
+  readonly cursor: string | null;
+  readonly direction: "forward" | "backward";
 }
 
 const STATUS_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
 const COMMAND_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 const DATE_TOKEN = /^\d{4}-\d{2}-\d{2}(T[\d:.]+(Z|\+00:00)?)?$/;
+/** The bounded cursor grammar a run-inventory URL may carry. */
+const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
 
 function readSafeSearchValue(
   search: Record<string, unknown>,
@@ -68,7 +88,22 @@ function readSafeSearchValue(
   return typeof value === "string" ? value : "";
 }
 
-/** The submitted collection filters, reflected in the URL for reconnect. */
+/**
+ * The submitted attention facet. The router's default search parser
+ * JSON-parses the literal `attention=true` into the boolean `true`, while a
+ * quoted `attention="true"` stays the string `"true"`; only those two exact
+ * spellings mean the facet is submitted — anything else (including `yes`,
+ * `1` or a stray object) reads as no facet.
+ */
+function readAttentionFacet(search: Record<string, unknown>): boolean {
+  const value = search["attention"];
+  return value === true || value === "true";
+}
+
+/**
+ * Read the submitted filters from the URL: every key falls back to its safe
+ * default when absent, oversized or not matching the backend grammar.
+ */
 function readFilters(search: Record<string, unknown>): RunListFilters {
   const status = readSafeSearchValue(search, "status");
   const command = readSafeSearchValue(search, "command");
@@ -87,17 +122,63 @@ function readFilters(search: Record<string, unknown>): RunListFilters {
     q: q.length <= 128 ? q : "",
     from: from && DATE_TOKEN.test(from) ? from : "",
     to: to && DATE_TOKEN.test(to) ? to : "",
+    attention: readAttentionFacet(search),
   };
 }
 
-function filtersToSearch(filters: RunListFilters): Record<string, string> {
-  const search: Record<string, string> = {};
+/**
+ * The submitted cursor page. An out-of-contract cursor or direction drops to
+ * the first page instead of being replayed against the server, so a tampered
+ * or stale URL can never address a page the backend would refuse.
+ */
+function readPageState(search: Record<string, unknown>): RunPageState {
+  const cursor = readSafeSearchValue(search, "cursor");
+  const direction = readSafeSearchValue(search, "dir");
+  if (direction !== "" && direction !== "forward" && direction !== "backward") {
+    return { cursor: null, direction: "forward" };
+  }
+  if (cursor !== "" && !CURSOR_TOKEN.test(cursor)) {
+    return { cursor: null, direction: "forward" };
+  }
+  return {
+    cursor: cursor === "" ? null : cursor,
+    direction: direction === "backward" ? "backward" : "forward",
+  };
+}
+
+type RunSearchValue = string | boolean;
+
+function filtersToSearch(
+  filters: RunListFilters,
+): Record<string, RunSearchValue> {
+  const search: Record<string, RunSearchValue> = {};
   if (filters.status !== "all") search["status"] = filters.status;
   if (filters.command !== "all") search["command"] = filters.command;
   if (filters.q) search["q"] = filters.q;
   if (filters.from) search["from"] = filters.from;
   if (filters.to) search["to"] = filters.to;
+  // The facet is written as the boolean `true` so the router serializes it
+  // as the literal `attention=true`: a *string* `"true"` would round-trip as
+  // `attention=%22true%22`, which the reconnect allowlist and an operator
+  // reading the address bar would not recognise as the facet.
+  if (filters.attention) search["attention"] = true;
   return search;
+}
+
+/**
+ * True when any submitted filter (including the attention facet) narrows the
+ * population: it gates the reset affordance and the filtered-empty copy, so
+ * both always describe exactly what the URL submitted.
+ */
+function isFiltered(filters: RunListFilters): boolean {
+  return (
+    filters.attention ||
+    filters.status !== "all" ||
+    filters.command !== "all" ||
+    filters.q !== "" ||
+    filters.from !== "" ||
+    filters.to !== ""
+  );
 }
 
 /** Chinese business label of one run's operation kind. */
@@ -143,8 +224,10 @@ export function OperationsLanding() {
     "resourceLibraryId",
   );
   const selectedId = readSafeSearchValue(searchParams, "run");
-  const [cursor, setCursor] = useState<string | null>(null);
-  const [direction, setDirection] = useState<"forward" | "backward">("forward");
+  // Paging context lives in the URL (cursor + direction), never in component
+  // state, so a refresh, a Back/Forward step and a reconnect all restore the
+  // same server page instead of silently restarting at the first one.
+  const { cursor, direction } = readPageState(searchParams);
   // The search draft resets exactly when the submitted URL query changes
   // (deep entry, reset, reconnect): adjusting state during render instead of
   // an effect keeps one source of truth without a second render pass.
@@ -165,57 +248,77 @@ export function OperationsLanding() {
       q: filters.q || null,
       from: filters.from || null,
       to: filters.to || null,
+      attention: filters.attention ? true : null,
       limit: RUN_PAGE_LIMIT,
       cursor,
     }),
   );
 
+  /** The full current list state (filters, page and selection) as URL search. */
+  const listSearch = (runId?: string): Record<string, RunSearchValue> => {
+    const search = filtersToSearch(filters);
+    if (cursor !== null) {
+      search["cursor"] = cursor;
+      search["dir"] = direction;
+    }
+    if (runId !== undefined && runId !== "") {
+      search["run"] = runId;
+    }
+    return search;
+  };
+
   const applyFilters = (next: Partial<RunListFilters>) => {
-    const merged = { ...filters, ...next };
-    setCursor(null);
-    setDirection("forward");
+    // A submitted filter always starts from the first page: a cursor minted
+    // for the previous population is never carried into a new one.
     void navigate({
       to: "/operations",
-      search: filtersToSearch(merged),
+      search: filtersToSearch({ ...filters, ...next }),
       replace: true,
     });
   };
 
   const resetFilters = () => {
-    setCursor(null);
-    setDirection("forward");
     void navigate({ to: "/operations", search: {}, replace: true });
   };
 
   const selectRun = (runId: string) => {
+    // A pushed history entry carrying the full list state: browser Back
+    // after selecting returns to this exact list entry instead of leaving
+    // the route, and closing (replace) still drops only the selection.
     void navigate({
       to: "/operations",
-      search: { ...filtersToSearch(filters), run: runId },
-      replace: true,
+      search: listSearch(runId),
+      replace: false,
     });
   };
 
   const closeRun = () => {
-    void navigate({
-      to: "/operations",
-      search: filtersToSearch(filters),
-      replace: true,
-    });
+    void navigate({ to: "/operations", search: listSearch(), replace: true });
     // A closed selection drops its overview cache so a later selection of
     // the same run starts from a fresh bounded read.
     void queryClient.removeQueries({ queryKey: [runOverviewQueryKey] });
   };
 
-  const filtered =
-    filters.status !== "all" ||
-    filters.command !== "all" ||
-    filters.q !== "" ||
-    filters.from !== "" ||
-    filters.to !== "";
+  /** Move one server page by replacing the URL (no extra history entries). */
+  const turnPage = (
+    nextCursor: string,
+    nextDirection: "forward" | "backward",
+  ) => {
+    const search = filtersToSearch(filters);
+    search["cursor"] = nextCursor;
+    search["dir"] = nextDirection;
+    if (selectedId !== "") {
+      search["run"] = selectedId;
+    }
+    void navigate({ to: "/operations", search, replace: true });
+  };
+
+  const filtered = isFiltered(filters);
 
   const page: RunInventoryPage | null =
     query.data?.ok === true ? query.data.model : null;
 
+  const overviewQuery = useQuery(runOverviewQueryOptions(token, selectedId));
   const readinessQuery = useQuery(workerReadinessQueryOptions(token));
   const matrixQuery = useQuery(
     manualActionsQueryOptions(token, {
@@ -224,15 +327,21 @@ export function OperationsLanding() {
     }),
   );
   // The explicit header refresh re-reads every bounded landing read (the
-  // inventory, Worker readiness and the manual action matrix); it never
-  // submits or replays any command.
+  // inventory, the selected run overview, Worker readiness and the manual
+  // action matrix); it never submits or replays any command.
   const refreshAll = () => {
     void query.refetch();
+    if (selectedId !== "") {
+      void overviewQuery.refetch();
+    }
     void readinessQuery.refetch();
     void matrixQuery.refetch();
   };
   const anyFetching =
-    query.isFetching || readinessQuery.isFetching || matrixQuery.isFetching;
+    query.isFetching ||
+    overviewQuery.isFetching ||
+    readinessQuery.isFetching ||
+    matrixQuery.isFetching;
 
   return (
     <div className="mf-dashboard mf-operations-inventory">
@@ -249,166 +358,181 @@ export function OperationsLanding() {
             {page !== null && (
               <CountCards page={page} onCard={applyFilters} filters={filters} />
             )}
-            <section
-              className="mf-count-section mf-run-filters"
-              aria-label="运行筛选"
+            <div
+              className={
+                selectedId !== ""
+                  ? "mf-run-layout mf-run-has-detail"
+                  : "mf-run-layout"
+              }
             >
-              <form
-                className="mf-run-filter-bar"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  applyFilters({ q: searchDraft.trim() });
-                }}
-              >
-                <label htmlFor="run-search">搜索</label>
-                <input
-                  id="run-search"
-                  type="search"
-                  value={searchDraft}
-                  maxLength={128}
-                  placeholder="按业务名称或范围搜索"
-                  onChange={(event) => setSearchDraft(event.target.value)}
-                />
-                <button type="submit" className="mf-button mf-button-secondary">
-                  搜索
-                </button>
-                <label htmlFor="run-status-filter">状态</label>
-                <select
-                  id="run-status-filter"
-                  value={filters.status}
-                  onChange={(event) =>
-                    applyFilters({ status: event.target.value })
-                  }
+              <div className="mf-run-main">
+                <section
+                  className="mf-count-section mf-run-filters"
+                  aria-label="运行筛选"
                 >
-                  <option value="all">全部状态</option>
-                  {RUN_STATUSES.map((status) => (
-                    <option key={status} value={status}>
-                      {RUN_STATUS_LABELS[status]}
-                    </option>
-                  ))}
-                </select>
-                <label htmlFor="run-command-filter">操作类型</label>
-                <input
-                  id="run-command-filter"
-                  type="text"
-                  value={filters.command === "all" ? "" : filters.command}
-                  maxLength={64}
-                  placeholder="如 scan、preview"
-                  onChange={(event) =>
-                    applyFilters({
-                      command:
-                        event.target.value === "" ? "all" : event.target.value,
-                    })
-                  }
-                />
-                <label htmlFor="run-from-filter">创建时间从</label>
-                <input
-                  id="run-from-filter"
-                  type="date"
-                  value={filters.from.slice(0, 10)}
-                  onChange={(event) =>
-                    applyFilters({
-                      from:
-                        event.target.value === ""
-                          ? ""
-                          : `${event.target.value}T00:00:00Z`,
-                    })
-                  }
-                />
-                <label htmlFor="run-to-filter">至</label>
-                <input
-                  id="run-to-filter"
-                  type="date"
-                  value={filters.to.slice(0, 10)}
-                  onChange={(event) =>
-                    applyFilters({
-                      to:
-                        event.target.value === ""
-                          ? ""
-                          : `${event.target.value}T23:59:59Z`,
-                    })
-                  }
-                />
-                {filtered && (
-                  <button
-                    type="button"
-                    className="mf-button mf-button-secondary"
-                    onClick={resetFilters}
+                  <form
+                    className="mf-run-filter-bar"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      applyFilters({ q: searchDraft.trim() });
+                    }}
                   >
-                    重置筛选
-                  </button>
-                )}
-              </form>
-            </section>
-            {query.data === undefined ? (
-              <StatusBanner variant="info" title="正在加载运行清单">
-                <p>正在从 MediaFlow API 读取运行清单。</p>
-              </StatusBanner>
-            ) : !query.data.ok ? (
-              <StatusBanner variant="error" title={query.data.failure.title}>
-                <p>{query.data.failure.nextAction}</p>
-                <div className="mf-actions">
-                  <RefreshControl onRefresh={refresh} refreshing={isFetching} />
-                  {filtered && (
+                    <label htmlFor="run-search">搜索</label>
+                    <input
+                      id="run-search"
+                      type="search"
+                      value={searchDraft}
+                      maxLength={128}
+                      placeholder="按业务名称或范围搜索"
+                      onChange={(event) => setSearchDraft(event.target.value)}
+                    />
                     <button
-                      type="button"
+                      type="submit"
                       className="mf-button mf-button-secondary"
-                      onClick={resetFilters}
                     >
-                      重置筛选
+                      搜索
                     </button>
-                  )}
-                </div>
-              </StatusBanner>
-            ) : page === null ? null : page.items.length === 0 ? (
-              <StatusBanner
-                variant="info"
-                title={filtered ? "没有匹配的运行" : "还没有运行记录"}
-              >
-                <p>
-                  {filtered
-                    ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
-                    : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
-                </p>
-                {filtered && (
-                  <div className="mf-actions">
-                    <button
-                      type="button"
-                      className="mf-button mf-button-secondary"
-                      onClick={resetFilters}
+                    <label htmlFor="run-status-filter">状态</label>
+                    <select
+                      id="run-status-filter"
+                      value={filters.status}
+                      onChange={(event) =>
+                        applyFilters({ status: event.target.value })
+                      }
                     >
-                      重置筛选
-                    </button>
-                  </div>
+                      <option value="all">全部状态</option>
+                      {RUN_STATUSES.map((status) => (
+                        <option key={status} value={status}>
+                          {RUN_STATUS_LABELS[status]}
+                        </option>
+                      ))}
+                    </select>
+                    <label htmlFor="run-command-filter">操作类型</label>
+                    <input
+                      id="run-command-filter"
+                      type="text"
+                      value={filters.command === "all" ? "" : filters.command}
+                      maxLength={64}
+                      placeholder="如 scan、preview"
+                      onChange={(event) =>
+                        applyFilters({
+                          command:
+                            event.target.value === ""
+                              ? "all"
+                              : event.target.value,
+                        })
+                      }
+                    />
+                    <label htmlFor="run-from-filter">创建时间从</label>
+                    <input
+                      id="run-from-filter"
+                      type="date"
+                      value={filters.from.slice(0, 10)}
+                      onChange={(event) =>
+                        applyFilters({
+                          from:
+                            event.target.value === ""
+                              ? ""
+                              : `${event.target.value}T00:00:00Z`,
+                        })
+                      }
+                    />
+                    <label htmlFor="run-to-filter">至</label>
+                    <input
+                      id="run-to-filter"
+                      type="date"
+                      value={filters.to.slice(0, 10)}
+                      onChange={(event) =>
+                        applyFilters({
+                          to:
+                            event.target.value === ""
+                              ? ""
+                              : `${event.target.value}T23:59:59Z`,
+                        })
+                      }
+                    />
+                    {filtered && (
+                      <button
+                        type="button"
+                        className="mf-button mf-button-secondary"
+                        onClick={resetFilters}
+                      >
+                        重置筛选
+                      </button>
+                    )}
+                  </form>
+                </section>
+                {query.data === undefined ? (
+                  <StatusBanner variant="info" title="正在加载运行清单">
+                    <p>正在从 MediaFlow API 读取运行清单。</p>
+                  </StatusBanner>
+                ) : !query.data.ok ? (
+                  <StatusBanner
+                    variant="error"
+                    title={query.data.failure.title}
+                  >
+                    <p>{query.data.failure.nextAction}</p>
+                    <div className="mf-actions">
+                      <RefreshControl
+                        onRefresh={refresh}
+                        refreshing={isFetching}
+                      />
+                      {filtered && (
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={resetFilters}
+                        >
+                          重置筛选
+                        </button>
+                      )}
+                    </div>
+                  </StatusBanner>
+                ) : page === null ? null : page.items.length === 0 ? (
+                  <StatusBanner
+                    variant="info"
+                    title={filtered ? "没有匹配的运行" : "还没有运行记录"}
+                  >
+                    <p>
+                      {filtered
+                        ? "没有运行匹配已提交的筛选条件。重置筛选可以查看此主体可读的全部运行。"
+                        : "当前没有已受理或历史运行记录。从下方入口开始一次扫描、预览或整理。"}
+                    </p>
+                    {filtered && (
+                      <div className="mf-actions">
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={resetFilters}
+                        >
+                          重置筛选
+                        </button>
+                      </div>
+                    )}
+                  </StatusBanner>
+                ) : (
+                  <RunTable
+                    page={page}
+                    selectedId={selectedId}
+                    direction={direction}
+                    onSelect={selectRun}
+                    onForward={() => {
+                      if (page.nextCursor) {
+                        turnPage(page.nextCursor, "forward");
+                      }
+                    }}
+                    onBackward={() => {
+                      if (page.previousCursor) {
+                        turnPage(page.previousCursor, "backward");
+                      }
+                    }}
+                  />
                 )}
-              </StatusBanner>
-            ) : (
-              <RunTable
-                page={page}
-                selectedId={selectedId}
-                direction={direction}
-                onSelect={selectRun}
-                onForward={() => {
-                  if (page.nextCursor) {
-                    setCursor(page.nextCursor);
-                    setDirection("forward");
-                  }
-                }}
-                onBackward={() => {
-                  if (page.previousCursor) {
-                    setCursor(page.previousCursor);
-                    setDirection("backward");
-                  }
-                }}
-              />
-            )}
-            {selectedId !== "" && (
-              <RunDetailPanel
-                runId={selectedId}
-                token={token}
-                onClose={closeRun}
-              />
-            )}
+              </div>
+              {selectedId !== "" && (
+                <RunDetailPanel query={overviewQuery} onClose={closeRun} />
+              )}
+            </div>
             <WorkerReadinessSection query={readinessQuery} />
             <ManualOperationsSection
               matrixQuery={matrixQuery}
@@ -444,8 +568,8 @@ function CountCards({
           <button
             type="button"
             className="mf-card-button"
-            onClick={() => onCard({ status: "all" })}
-            disabled={!filtered_(filters)}
+            onClick={() => onCard({ attention: !filters.attention })}
+            aria-pressed={filters.attention}
           >
             <span className="mf-count-value">{page.attentionCount}</span>
             <span className="mf-count-label">
@@ -473,16 +597,6 @@ function CountCards({
       </ul>
       <p className="mf-dashboard-meta">{page.population}</p>
     </section>
-  );
-}
-
-function filtered_(filters: RunListFilters): boolean {
-  return (
-    filters.status !== "all" ||
-    filters.command !== "all" ||
-    filters.q !== "" ||
-    filters.from !== "" ||
-    filters.to !== ""
   );
 }
 
@@ -615,26 +729,36 @@ function RunTable({
 /**
  * The explicitly selected run overview. It renders only bounded durable
  * facts; unknown or missing evidence is stated as such, and deeper evidence
- * stays on the exact existing Task/Job detail routes.
+ * stays on the exact existing Task/Job detail routes. The query itself is
+ * owned by the landing, so the header refresh, the shared bounded polling
+ * policy and the selection lifecycle all reach this panel.
+ *
+ * Opening the panel moves focus onto its heading; closing it (the close
+ * control or Escape) returns focus to the element that opened it — the
+ * selecting row button — so keyboard and screen-reader users keep the list
+ * context they came from.
  */
 function RunDetailPanel({
-  runId,
-  token,
+  query,
   onClose,
 }: {
-  readonly runId: string;
-  readonly token: string | null;
+  readonly query: UseQueryResult<RunOverviewRead, Error>;
   readonly onClose: () => void;
 }) {
-  const query = useQuery({
-    queryKey: [runOverviewQueryKey, runId],
-    queryFn: (): Promise<RunOverviewRead> => fetchRunOverview(token, runId),
-    enabled: token !== null && runId.length > 0,
-    retry: false,
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    staleTime: 10_000,
-  });
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    const opener =
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    headingRef.current?.focus();
+    return () => {
+      if (opener !== null && document.contains(opener)) {
+        opener.focus();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
@@ -649,7 +773,9 @@ function RunDetailPanel({
   return (
     <section className="mf-run-detail" aria-label="运行详情">
       <header className="mf-dashboard-head">
-        <h3>运行详情</h3>
+        <h3 tabIndex={-1} ref={headingRef}>
+          运行详情
+        </h3>
         <button
           type="button"
           className="mf-button mf-button-secondary"
@@ -709,6 +835,10 @@ function RunDetailFacts({ run }: { readonly run: RunSummary }) {
         <dd>{run.sourceScope ?? "历史范围证据不可用"}</dd>
       </div>
       <div>
+        <dt>目标范围</dt>
+        <dd>{run.targetScope ?? "历史目标范围证据不可用"}</dd>
+      </div>
+      <div>
         <dt>创建时间</dt>
         <dd>{formatDate(run.createdAt)}</dd>
       </div>
@@ -727,6 +857,14 @@ function RunDetailFacts({ run }: { readonly run: RunSummary }) {
           </dd>
         </div>
       )}
+      {run.totalItems !== null &&
+        (run.failedItems ?? 0) > run.totalItems - (run.completedItems ?? 0) && (
+          <div>
+            <dt>失败计数说明</dt>
+            {/* Display only: recorded counts are never rewritten. */}
+            <dd>失败数包含独立扫描错误,可能超过条目总数</dd>
+          </div>
+        )}
       {run.workerId !== null && (
         <div>
           <dt>Worker</dt>

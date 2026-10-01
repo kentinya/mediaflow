@@ -232,6 +232,47 @@ describe("destination model", () => {
       ).toBeNull();
     });
 
+    it("keeps the run-inventory attention facet, cursor page and direction", () => {
+      // The three continuation keys survive a reconnect only with their exact
+      // legal values, so refresh/401-reconnect restores filters, paging and
+      // the selection together.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "status=failed&run=job-001&attention=true&cursor=abc123-DEF_0&dir=backward",
+        ),
+      ).toBe(
+        "status=failed&run=job-001&attention=true&cursor=abc123-DEF_0&dir=backward",
+      );
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "dir=forward&attention=true",
+        ),
+      ).toBe("attention=true&dir=forward");
+      // Only the literal submitted facet value is kept: another spelling is a
+      // filter the backend would reject, so it never replays on reconnect.
+      for (const search of [
+        "attention=false",
+        "attention=yes",
+        "attention=1",
+        "attention=true%20",
+      ]) {
+        expect(allowlistedDestinationSearch("/operations", search)).toBeNull();
+      }
+      // Paging state must match the closed cursor/direction grammar.
+      for (const search of [
+        "cursor=../../etc/passwd",
+        `cursor=${"a".repeat(513)}`,
+        "cursor=has%20space",
+        "cursor=",
+        "dir=sideways",
+        "dir=",
+      ]) {
+        expect(allowlistedDestinationSearch("/operations", search)).toBeNull();
+      }
+    });
+
     it("returns null when no allowed keys are present", () => {
       expect(
         allowlistedDestinationSearch(

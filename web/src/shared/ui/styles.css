@@ -4075,11 +4075,48 @@ tr[aria-selected="true"] {
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 12px 16px;
-  margin-top: 12px;
+  margin-top: 0;
   background: var(--panel);
 }
-@media (max-width: 720px) {
+/* One grid for filters + table + detail: the list keeps the wide left
+   column while an explicitly selected run becomes the right detail column;
+   without a selection the list stays full width. */
+.mf-run-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.mf-run-layout.mf-run-has-detail {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 34%);
+}
+/* The left column never lets the table overflow the grid track. */
+.mf-run-main {
+  min-width: 0;
+}
+/* Desktop detail stays in view while the list scrolls, below the sticky
+   topbar (z-index 30/40) and above the page content. */
+@media (min-width: 1081px) {
+  .mf-run-layout.mf-run-has-detail .mf-run-detail {
+    position: sticky;
+    top: 70px;
+    max-height: calc(100vh - 90px);
+    overflow-y: auto;
+  }
+}
+/* Narrow layouts give the selection a complete full-viewport detail with the
+   close control always visible above the sticky topbar. */
+@media (max-width: 1080px) {
+  .mf-run-layout.mf-run-has-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .mf-run-detail {
-    margin-top: 16px;
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    margin: 0;
+    border-radius: 0;
+    max-height: none;
+    overflow-y: auto;
   }
 }

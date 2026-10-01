@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -34,6 +36,7 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionScopeItem,
     ManualExecutionStatus,
 )
+from mediaflow.domain.manual_organize_preview import ManualOrganizePreview
 from mediaflow.domain.manual_safety import (
     contains_manual_secret,
     redact_manual_value,
@@ -60,6 +63,7 @@ from mediaflow.domain.task_persistence import (
     PersistentResultRecord,
     PersistentTaskItem,
     PersistentTaskStatus,
+    RunDisplayContext,
     TaskItemStatus,
 )
 
@@ -94,6 +98,43 @@ _CONCURRENT_PREFLIGHT_ERROR_CODES = frozenset(
         "source_stale",
     }
 )
+
+
+def _display_library_name(libraries: Mapping[str, object], library_id: str) -> str | None:
+    """The bounded display name of one pinned-runtime library, if it is known."""
+
+    if not library_id:
+        return None
+    for candidate in (library_id, library_id.removeprefix("media:")):
+        library = libraries.get(candidate)
+        name = str(getattr(library, "name", "") or "").strip()
+        if name:
+            return name
+    return None
+
+
+def _relative_display_path(value: str) -> bool:
+    """Whether one persisted path is provably relative (never a host root)."""
+
+    return (
+        bool(value)
+        and not value.startswith(("/", "\\", "~"))
+        and not re.match(r"^[A-Za-z]:", value)
+    )
+
+
+def _common_relative_path(paths: Sequence[str]) -> str | None:
+    """The common library-relative path shared by every selected source."""
+
+    usable = [path for path in paths if _relative_display_path(path)]
+    if not usable:
+        return None
+    if len(usable) == 1:
+        return usable[0]
+    try:
+        return posixpath.commonpath(usable) or None
+    except ValueError:
+        return None
 
 
 @dataclass(frozen=True)
@@ -541,6 +582,88 @@ class ManualOrganizeExecutionService:
             admit_only=True,
         )
 
+    def _run_display_context(
+        self,
+        *,
+        preview: ManualOrganizePreview,
+        selected: Sequence,
+        plans: Mapping[str, OrganizePlan],
+        runtime: object,
+    ) -> RunDisplayContext:
+        """The bounded business identity of one admitted manual Organize run.
+
+        Display/search evidence only: the reviewed source scope, the library
+        display names of the *pinned* runtime this admission already loaded,
+        and the planned destination scope.  Nothing is resolved at read time
+        from the current Active configuration, nothing grants authority, and
+        an unavailable name stays unavailable instead of being guessed.  All
+        values are relative/label shaped; the public projection redacts them
+        again independently.
+        """
+
+        resource_libraries = {
+            str(getattr(value, "library_id", "") or ""): value
+            for value in getattr(runtime, "resource_libraries", ()) or ()
+        }
+        media_libraries = {
+            str(getattr(value, "library_id", "") or ""): value
+            for value in getattr(runtime, "media_libraries", ()) or ()
+        }
+        source_names: list[str] = []
+        source_paths: list[str] = []
+        for item in selected:
+            source = item.source
+            name = _display_library_name(
+                resource_libraries, str(getattr(source, "resource_library_id", "") or "")
+            )
+            if name and name not in source_names:
+                source_names.append(name)
+            path = str(getattr(source, "path", "") or "")
+            if _relative_display_path(path) and path not in source_paths:
+                source_paths.append(path)
+        # The reviewed Preview scope wins when it is explicit; a legacy
+        # intent-scoped Preview falls back to the exact reviewed item paths
+        # (bounded, library-relative evidence from the same admission).
+        relative: str | None = None
+        scope_kind = getattr(preview, "source_scope", None)
+        scope_id = str(getattr(preview, "source_scope_id", "") or "")
+        if scope_kind == "file" and _relative_display_path(scope_id):
+            relative = scope_id
+        elif scope_kind != "library":
+            relative = _common_relative_path(source_paths)
+        if len(source_names) == 1:
+            source_scope = f"{source_names[0]}/{relative}" if relative else source_names[0]
+        elif source_names:
+            source_scope = ", ".join(source_names)
+        else:
+            source_scope = relative
+        target_names: list[str] = []
+        target_relatives: set[str] = set()
+        for plan in plans.values():
+            classification = getattr(plan, "classification_result", None)
+            name = _display_library_name(
+                media_libraries, str(getattr(classification, "media_library_id", "") or "")
+            )
+            if name and name not in target_names:
+                target_names.append(name)
+            relative_destination = str(getattr(plan, "relative_destination", "") or "")
+            if relative_destination:
+                target_relatives.add(relative_destination)
+        target_relative = next(iter(target_relatives)) if len(target_relatives) == 1 else None
+        if target_names:
+            target_scope = (
+                f"{target_names[0]}/{target_relative}"
+                if target_relative
+                else ", ".join(target_names)
+            )
+        else:
+            target_scope = target_relative
+        return RunDisplayContext(
+            source_scope=source_scope,
+            target_scope=target_scope,
+            labels=(*source_names, *target_names),
+        )
+
     def execute(
         self,
         authorization_id: str,
@@ -689,7 +812,17 @@ class ManualOrganizeExecutionService:
                 code="execution_unavailable",
                 status=503,
             )
-        admitted = admit(authority, execution, execution_items, locks, now)
+        # The bounded display evidence (historical source/target scope and
+        # safe business labels) commits inside the same admission
+        # transaction, so this new run can never appear in the unified
+        # Operations inventory as legacy-missing or scope-unavailable.
+        display = self._run_display_context(
+            preview=preview,
+            selected=selected,
+            plans=plan_by_item,
+            runtime=runtime,
+        )
+        admitted = admit(authority, execution, execution_items, locks, now, display=display)
         if admit_only:
             # The durable execution is committed and waiting for the resident
             # Processing Worker; this boundary never calls OrganizerExecutor.

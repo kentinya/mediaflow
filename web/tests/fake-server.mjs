@@ -10532,13 +10532,17 @@ const server = createServer(async (req, res) => {
     return `status=${status ?? "all"};command=${command ?? "all"}`;
   }
 
-  function runScope(status, command, q, from, to) {
+  function runScope(status, command, q, from, to, attention) {
     return [
       `status=${status ?? "all"}`,
       `command=${command ?? "all"}`,
       `q=${q ?? ""}`,
       `from=${from ?? ""}`,
       `to=${to ?? ""}`,
+      // The attention facet is part of the cursor scope binding, exactly like
+      // the Python contract: a cursor minted for one facet is refused for the
+      // other, so a filter change can never replay the wrong population.
+      `attention=${attention ? "true" : "false"}`,
     ].join(";");
   }
 
@@ -10651,6 +10655,9 @@ const server = createServer(async (req, res) => {
     const attention = ATTENTION_RUN_STATUSES.includes(run.status);
     return {
       ...run,
+      // Bounded destination-scope evidence; the fake population records no
+      // run-level target scope, exactly like a legacy admission row.
+      target_scope: null,
       attention,
     };
   }
@@ -11580,13 +11587,24 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
+    // The overlapping attention facet accepts exactly the backend's closed
+    // value set; anything else is a rejected filter, never a silent no-op.
+    const rawAttention = url.searchParams.get("attention");
+    if (
+      rawAttention !== null &&
+      !["", "all", "false", "no", "true", "yes"].includes(rawAttention)
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const attention = rawAttention === "true" || rawAttention === "yes";
     const rawLimit = url.searchParams.get("limit");
     const limit = rawLimit === null ? 20 : Number(rawLimit);
     if (!Number.isInteger(limit) || limit < 1 || limit > 100) {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
-    const scope = runScope(status, command, q, from, to);
+    const scope = runScope(status, command, q, from, to, attention);
     const rawCursor = url.searchParams.get("cursor");
     let offset = null;
     if (rawCursor !== null && rawCursor !== "") {
@@ -11621,6 +11639,15 @@ const server = createServer(async (req, res) => {
     if (to !== null && to !== "") {
       filtered = filtered.filter((run) => run.created_at <= to);
     }
+    if (attention) {
+      // The facet composes with every other business filter and restricts the
+      // population to the overlapping attention statuses — it is never a
+      // label-only card. Totals and partitions below are computed from this
+      // filtered population, so `attention_count` equals `total` here.
+      filtered = filtered.filter((run) =>
+        ATTENTION_RUN_STATUSES.includes(run.status),
+      );
+    }
     const page = collectionPage(filtered, limit, offset);
     const statusCounts = {};
     let attentionCount = 0;
@@ -11636,6 +11663,7 @@ const server = createServer(async (req, res) => {
       status,
       command,
       q,
+      attention,
       from,
       to,
       total: filtered.length,

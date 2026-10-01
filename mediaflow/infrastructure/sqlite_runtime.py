@@ -6,7 +6,7 @@ import secrets
 import sqlite3
 import threading
 from collections.abc import Iterable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import uuid4
@@ -145,6 +145,8 @@ from mediaflow.domain.notification import (
     NotificationEventType,
 )
 from mediaflow.domain.operations_run import (
+    ATTENTION_RUN_STATUSES,
+    COMMAND_LABELS,
     OperationsRunOverview,
     OperationsRunStatus,
     OperationsRunTrigger,
@@ -200,6 +202,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
+    RunDisplayContext,
     TaskItemStatus,
     redact_persistent_result,
 )
@@ -245,7 +248,14 @@ from mediaflow.infrastructure.file_index_schema import (
 # Task status/created ordering index.  It is purely additive — no column, row,
 # pin, link or authority value is rewritten — and the inventory itself stays a
 # read projection with no new execution authority.
-SCHEMA_VERSION = 40
+# Schema 41 adds the additive ``operations_run_display`` table: a shared
+# producer records one run's bounded, secret-free display evidence (historical
+# source/target scope and safe business labels) in the same durable
+# transaction that admits the work.  It is display/search evidence only — no
+# selection, authorization, claim, execution or authority state changes — and a
+# legacy row without it stays explicitly unavailable with no Active fallback
+# and no read-time backfill.
+SCHEMA_VERSION = 41
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -347,6 +357,68 @@ def _run_search_pattern(search: str) -> str:
     """Build the escaped LIKE pattern matching one safe text search value."""
 
     return search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _sql_string(value: str) -> str:
+    """Quote one trusted, already-validated SQL string literal."""
+
+    return "'" + value.replace("'", "''") + "'"
+
+
+def command_label_sql(command_expression: str) -> str:
+    """A SQL CASE expression mirroring :func:`known_command_label`.
+
+    The run inventory must search the exact bounded Chinese business labels
+    the API publishes, so this expression is generated from the same shared
+    ``COMMAND_LABELS`` map: a repository search for ``扫描``/``手动整理`` and
+    the published ``command_label`` can never disagree, and an unknown legacy
+    command yields NULL (honestly unrecognized) in both places.
+    """
+
+    expression = command_expression
+    family = (
+        f"CASE WHEN instr({expression}, ':') > 0 "
+        f"THEN substr({expression}, 1, instr({expression}, ':') - 1) "
+        f"ELSE {expression} END"
+    )
+    prefix = MEDIA_LIBRARY_TASK_COMMAND_PREFIX
+    media_raw = f"substr({expression}, {len(prefix) + 1})"
+    media_family = (
+        f"CASE WHEN instr({media_raw}, ':') > 0 "
+        f"THEN substr({media_raw}, 1, instr({media_raw}, ':') - 1) "
+        f"ELSE {media_raw} END"
+    )
+    family_cases = " ".join(
+        f"WHEN {_sql_string(name)} THEN {_sql_string(label)}"
+        for name, label in COMMAND_LABELS.items()
+    )
+    # SQLite string concatenation propagates NULL, so an unknown MediaLibrary
+    # family stays NULL (unrecognized) exactly like ``known_command_label``.
+    return (
+        f"CASE WHEN substr({expression}, 1, {len(prefix)}) = {_sql_string(prefix)} THEN "
+        f"'媒体库' || CASE {media_family} {family_cases} ELSE NULL END "
+        f"ELSE CASE {family} {family_cases} ELSE NULL END END"
+    )
+
+
+@dataclass(frozen=True)
+class OperationsRunsWindow:
+    """One bounded page window plus its filter-scoped totals.
+
+    ``page`` is always ordered newest-first (descending), including a page
+    reached through a previous cursor, so both directions share one ordering.
+    ``total`` and ``status_counts`` are computed from the business filters
+    only — the cursor narrows the page window, never the population — so the
+    reported totals stay stable while an operator pages.
+    ``has_next``/``has_previous`` prove an adjacent page from the same read
+    basis, so the API can mint the exact neighbouring cursor.
+    """
+
+    page: tuple[OperationsRunOverview, ...]
+    total: int
+    status_counts: dict[str, int]
+    has_next: bool
+    has_previous: bool
 
 
 _JOB_RUN_STATUS_MAP = {
@@ -669,8 +741,20 @@ class SQLiteTaskRepository:
         values = tuple(self._task(row) for row in rows)
         return tuple(reversed(values)) if reverse else values
 
-    def create_manual_scan(self, task: PersistentTask, scan: ManualScanTask) -> None:
-        """Atomically create the generic Task row and its discovery-specific scope row."""
+    def create_manual_scan(
+        self,
+        task: PersistentTask,
+        scan: ManualScanTask,
+        *,
+        display: RunDisplayContext | None = None,
+    ) -> None:
+        """Atomically create the generic Task row and its discovery-specific scope row.
+
+        When the admitting producer supplies bounded display evidence, the
+        ``operations_run_display`` row commits in the same transaction, so a
+        newly admitted Scan can never appear in the unified inventory without
+        the business identity its operator just chose.
+        """
 
         if task.task_id != scan.task_id:
             raise ValueError("manual Scan Task and scope identity do not match")
@@ -692,6 +776,30 @@ class SQLiteTaskRepository:
                 """,
                 self._manual_scan_values(scan),
             )
+            if display is not None:
+                self._insert_run_display_locked(task.task_id, display, task.created_at)
+
+    def _insert_run_display_locked(
+        self, task_id: str, display: RunDisplayContext, created_at: datetime
+    ) -> None:
+        """Persist one run's bounded display evidence inside an open transaction.
+
+        Callers already hold the write transaction that admitted the Task, so
+        the display row and the work it describes commit (or fail) together.
+        """
+
+        self._connection.execute(
+            "INSERT OR REPLACE INTO operations_run_display "
+            "(task_id, source_scope, target_scope, search_text, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                task_id,
+                display.source_scope,
+                display.target_scope,
+                display.search_text,
+                created_at.isoformat(),
+            ),
+        )
 
     def get_manual_scan(self, task_id: str) -> ManualScanTask | None:
         with self._lock:
@@ -4722,11 +4830,16 @@ class SQLiteTaskRepository:
         search: str | None,
         created_after: datetime | None,
         created_before: datetime | None,
+        attention: bool = False,
     ) -> tuple[list[str], list[object]]:
         """Bounded WHERE clauses shared by the page and the count queries.
 
         Every clause binds to a real persisted column of the unified
         population; nothing infers a link or a label from free-form data.
+        ``attention`` is an explicit, composable population facet over the
+        overlapping attention statuses — it never replaces the status
+        partition and is always submitted as a first-class filter, so a
+        cursor minted with it can never be replayed without it.
         """
 
         clauses: list[str] = []
@@ -4734,6 +4847,10 @@ class SQLiteTaskRepository:
         if status is not None:
             clauses.append("derived_status = ?")
             parameters.append(status)
+        if attention:
+            attention_statuses = sorted(value.value for value in ATTENTION_RUN_STATUSES)
+            clauses.append(f"derived_status IN ({', '.join('?' for _ in attention_statuses)})")
+            parameters.extend(attention_statuses)
         if command is not None:
             clauses.append("(effective_command = ? OR effective_command LIKE ? ESCAPE '\\')")
             parameters.extend((command, _command_family_pattern(command)))
@@ -4760,10 +4877,18 @@ class SQLiteTaskRepository:
         exact evidence columns with the same precedence as
         :func:`mediaflow.domain.operations_run.derive_run_status`, so the
         page and the status partitions share one read basis.
+
+        The outer level derives ``run_search`` from persisted evidence only:
+        the run's own identity, its effective historical scope, the bounded
+        display context a shared producer recorded at admission (business
+        labels, source/target scope) and the same Chinese business label the
+        API publishes.  A legacy row without display evidence simply
+        contributes nothing to the search text — it is never backfilled from
+        the current Active configuration.
         """
 
         media_prefix = f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}%"
-        return f"""
+        document = f"""
             SELECT runs.*,
                    task_status.status AS linked_task_status,
                    COALESCE(task_status.command, runs.anchor_command) AS effective_command,
@@ -4790,13 +4915,23 @@ class SQLiteTaskRepository:
                    task_status.failed_items, task_status.pause_requested,
                    task_status.configuration_snapshot_id,
                    -- The bounded historical scope: prefer the exact work scope
-                   -- the Task itself persisted, then the Job's recorded
-                   -- admission scope.  Neither value is ever backfilled from
-                   -- the current Active.  The derived column is named
-                   -- ``effective_scope`` because ``runs.*`` already carries the
-                   -- Job branch's raw ``source_scope``.
-                   COALESCE(NULLIF(task_status.scope_path, ''), NULLIF(runs.source_scope, ''))
-                       AS effective_scope,
+                   -- the Task itself persisted, then the display context the
+                   -- admitting producer recorded, then the Job's recorded
+                   -- admission scope.  None of these values is ever
+                   -- backfilled from the current Active.  The derived column
+                   -- is named ``effective_scope`` because ``runs.*`` already
+                   -- carries the Job branch's raw ``source_scope``.
+                   COALESCE(
+                       NULLIF(task_status.scope_path, ''),
+                       NULLIF(display.source_scope, ''),
+                       NULLIF(runs.source_scope, '')
+                   ) AS effective_scope,
+                   -- The bounded historical destination scope recorded with
+                   -- the admission (``None``/unavailable for legacy rows).
+                   NULLIF(display.target_scope, '') AS effective_target_scope,
+                   -- The bounded business-label text recorded with the
+                   -- admission: library names, reviewed scope, safe labels.
+                   COALESCE(display.search_text, '') AS display_search,
                    COALESCE(task_status.updated_at, runs.job_updated_at, runs.sort_at)
                        AS updated_at,
                    CASE
@@ -4811,14 +4946,7 @@ class SQLiteTaskRepository:
                        WHEN runs.job_status IN ('completed', 'failed', 'cancelled') THEN
                            runs.job_status
                        ELSE 'unknown'
-                   END AS derived_status,
-                   -- The bounded search text: the run's own identity plus the
-                   -- recorded admission scope.  Only persisted evidence enters
-                   -- this expression, so a search never matches a value that a
-                   -- run does not actually carry.
-                   COALESCE(runs.anchor_id, '') || ' ' ||
-                       COALESCE(NULLIF(task_status.scope_path, ''), NULLIF(runs.source_scope, ''))
-                           AS run_search
+                   END AS derived_status
             FROM (
                 SELECT job_rows.*,
                        jobs.command AS anchor_command,
@@ -4830,6 +4958,18 @@ class SQLiteTaskRepository:
             LEFT JOIN tasks task_status ON task_status.task_id = COALESCE(
                 runs.linked_task_id, runs.transfer_task_id, runs.anchor_id
             )
+            LEFT JOIN operations_run_display display ON display.task_id = COALESCE(
+                runs.linked_task_id, runs.transfer_task_id, runs.anchor_id
+            )
+        """
+        label_sql = command_label_sql("projected.effective_command")
+        return f"""
+            SELECT projected.*,
+                   COALESCE(projected.anchor_id, '') || ' ' ||
+                       COALESCE(projected.effective_scope, '') || ' ' ||
+                       COALESCE(projected.display_search, '') || ' ' ||
+                       COALESCE({label_sql}, '') AS run_search
+            FROM ( {document} ) projected
         """
 
     def list_operations_runs(
@@ -4864,6 +5004,115 @@ class SQLiteTaskRepository:
         )
         return page
 
+    def operations_runs_window(
+        self,
+        *,
+        limit: int = 50,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+        status: str | None = None,
+        command: str | None = None,
+        search: str | None = None,
+        created_after: datetime | None = None,
+        created_before: datetime | None = None,
+        attention: bool = False,
+    ) -> OperationsRunsWindow:
+        """One page window plus filter-scoped totals from one read snapshot.
+
+        The page, the filtered total, every status partition and the
+        overlapping attention facet are read inside a single SQLite read
+        transaction, so a concurrent admission, Job→Task linkage or state
+        change committed by *any* connection cannot make the page and its
+        counts disagree: a writer either commits before the snapshot opens or
+        after it closes.  The cursor only bounds the page window — it never
+        narrows the reported population — and both directions return one
+        newest-first ordering with honestly derived adjacent-page flags.
+        ``limit+1`` is fetched internally, so every published legal limit
+        (1..100) is supported.  No Python-side loading of the whole
+        population and no per-row pin resolution.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("operations run page limit must be between 1 and 100")
+        if search is not None:
+            search = search.strip()
+            if not search:
+                search = None
+            elif len(search) > 128:
+                raise ValueError("operations run search text is too long")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        reverse = before is not None
+        document = self._run_query_document()
+        # The business filters shape both the page window and the reported
+        # totals; the cursor clause is added to the page query only.
+        filter_clauses, filter_parameters = self._run_query_clauses(
+            status=status,
+            command=command,
+            search=search,
+            created_after=created_after,
+            created_before=created_before,
+            attention=attention,
+        )
+        filter_where = f"WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
+        page_clauses = list(filter_clauses)
+        page_parameters = list(filter_parameters)
+        # The directional page cursor binds the same sort key the page orders
+        # by: a next cursor keeps rows strictly after the boundary going
+        # newest-first, and a previous cursor keeps rows strictly before it.
+        # The ID tiebreak keeps equal timestamps deterministic in both
+        # directions.
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append("(sort_at < ? OR (sort_at = ? AND anchor_id < ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append("(sort_at > ? OR (sort_at = ? AND anchor_id > ?))")
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        page_where = f"WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+        order = "sort_at ASC, anchor_id ASC" if reverse else "sort_at DESC, anchor_id DESC"
+        page_sql = f"SELECT * FROM ({document}) {page_where} ORDER BY {order} LIMIT ?"
+        count_sql = f"SELECT COUNT(*) AS total FROM ({document}) {filter_where}"
+        status_sql = (
+            f"SELECT derived_status, COUNT(*) AS value_count FROM ({document})"
+            f" {filter_where} GROUP BY derived_status"
+        )
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                rows = self._connection.execute(page_sql, (*page_parameters, limit + 1)).fetchall()
+                total = int(
+                    self._connection.execute(count_sql, filter_parameters).fetchone()["total"]
+                )
+                counts = {
+                    str(row["derived_status"]): int(row["value_count"])
+                    for row in self._connection.execute(status_sql, filter_parameters).fetchall()
+                }
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            # The window fetches the ``limit`` rows nearest the boundary
+            # oldest-first; one extra row proves an older page behind them.
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        values = tuple(self._operations_run_overview(row) for row in rows)
+        return OperationsRunsWindow(
+            page=values,
+            total=total,
+            status_counts=counts,
+            has_next=has_next,
+            has_previous=has_previous,
+        )
+
     def operations_runs_page(
         self,
         *,
@@ -4875,67 +5124,45 @@ class SQLiteTaskRepository:
         search: str | None = None,
         created_after: datetime | None = None,
         created_before: datetime | None = None,
+        attention: bool = False,
     ) -> tuple[tuple[OperationsRunOverview, ...], int, dict[str, int]]:
         """Page, filtered total and status counts from one consistent basis.
 
-        The filtered total and the partitioned status counts are computed
-        inside one SQLite read of the same WHERE shape as the page, so a
-        concurrent Job→Task linkage or state change cannot make the page and
-        its counts disagree beyond one statement boundary.  No Python-side
-        loading of the whole population and no per-row pin resolution.
+        Thin view over :meth:`operations_runs_window` for callers that only
+        need the row window plus its filter-scoped totals.
         """
 
-        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
-            raise ValueError("operations run page limit must be between 1 and 100")
-        if search is not None:
-            search = search.strip()
-            if not search:
-                search = None
-            elif len(search) > 128:
-                raise ValueError("operations run search text is too long")
-        reverse = before is not None
-        if after is not None and before is not None:
-            raise ValueError("after and before are mutually exclusive")
-        document = self._run_query_document()
-        clauses, parameters = self._run_query_clauses(
+        window = self.operations_runs_window(
+            limit=limit,
+            after=after,
+            before=before,
             status=status,
             command=command,
             search=search,
             created_after=created_after,
             created_before=created_before,
+            attention=attention,
         )
-        # The directional page cursor binds the same sort key the page orders
-        # by: a next cursor keeps rows strictly after the boundary going
-        # newest-first, and a previous cursor keeps rows strictly before it
-        # going oldest-first.  The ID tiebreak keeps equal timestamps
-        # deterministic in both directions.
-        if after is not None:
-            timestamp = after[0].isoformat()
-            clauses.append("(sort_at < ? OR (sort_at = ? AND anchor_id < ?))")
-            parameters.extend((timestamp, timestamp, after[1]))
-        elif before is not None:
-            timestamp = before[0].isoformat()
-            clauses.append("(sort_at > ? OR (sort_at = ? AND anchor_id > ?))")
-            parameters.extend((timestamp, timestamp, before[1]))
-        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
-        order = "sort_at ASC, anchor_id ASC" if reverse else "sort_at DESC, anchor_id DESC"
-        page_sql = f"SELECT * FROM ({document}) {where} ORDER BY {order} LIMIT ?"
+        return window.page, window.total, window.status_counts
+
+    def operations_run(self, run_id: object) -> OperationsRunOverview | None:
+        """One run by its exact anchor ID from the same linked projection.
+
+        The overview is served from a bounded exact-ID read of the shared
+        population document, never from a "newest N rows" window, so a real
+        historical run stays openable and deep-linkable no matter how many
+        newer runs exist.  Returns ``None`` when no such run exists — the
+        caller decides whether that is an honest 404.
+        """
+
+        if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+            return None
+        document = self._run_query_document()
         with self._lock:
-            # One connection/lock acquisition carries the page, the filtered
-            # total and every status count: one consistent read basis.
-            rows = self._connection.execute(page_sql, (*parameters, limit)).fetchall()
-            count_sql = f"SELECT COUNT(*) AS total FROM ({document}) {where}"
-            total = int(self._connection.execute(count_sql, parameters).fetchone()["total"])
-            status_sql = (
-                f"SELECT derived_status, COUNT(*) AS value_count FROM ({document}) {where}"
-                " GROUP BY derived_status"
-            )
-            counts = {
-                str(row["derived_status"]): int(row["value_count"])
-                for row in self._connection.execute(status_sql, parameters).fetchall()
-            }
-        values = tuple(self._operations_run_overview(row) for row in rows)
-        return values, total, counts
+            row = self._connection.execute(
+                f"SELECT * FROM ({document}) WHERE anchor_id = ? LIMIT 1", (run_id,)
+            ).fetchone()
+        return self._operations_run_overview(row) if row is not None else None
 
     def _operations_run_overview(self, row: sqlite3.Row) -> OperationsRunOverview:
         """One bounded inventory row from the joined population document."""
@@ -4969,6 +5196,8 @@ class SQLiteTaskRepository:
         source_scope = (
             str(row["effective_scope"]) if row["effective_scope"] not in {None, ""} else None
         )
+        target_scope_raw = row["effective_target_scope"]
+        target_scope = str(target_scope_raw) if target_scope_raw not in {None, ""} else None
         total_items = row["total_items"]
         return OperationsRunOverview(
             run_kind=run_kind,
@@ -4985,6 +5214,7 @@ class SQLiteTaskRepository:
             schedule_id=str(schedule_id) if schedule_id else None,
             definition_id=str(definition_id) if definition_id else None,
             source_scope=source_scope,
+            target_scope=target_scope,
             library_kind=library_kind,
             total_items=total_items,
             completed_items=row["completed_items"],
@@ -7929,8 +8159,16 @@ class SQLiteTaskRepository:
         items: tuple[ManualExecutionItem, ...],
         locks: tuple[tuple[str, str], ...],
         now: datetime,
+        *,
+        display: RunDisplayContext | None = None,
     ) -> ManualExecution:
-        """Atomically consume exact authority, create Task scope, and fence paths."""
+        """Atomically consume exact authority, create Task scope, and fence paths.
+
+        When the admitting producer supplies bounded display evidence, the
+        ``operations_run_display`` row commits inside this same transaction:
+        a newly admitted manual Organize run always carries its historical
+        business identity for the unified Operations inventory.
+        """
 
         if not items or tuple(item.item_id for item in items) != execution.selected_item_ids:
             raise ValueError("manual execution items do not match selected scope")
@@ -8138,6 +8376,8 @@ class SQLiteTaskRepository:
                     "INSERT INTO tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     self._task_values(task),
                 )
+                if display is not None:
+                    self._insert_run_display_locked(task.task_id, display, execution.created_at)
                 self._connection.execute(
                     """INSERT INTO manual_executions (
                         execution_id, preview_id, intent_id, authorization_id, task_id,
@@ -10281,6 +10521,11 @@ class SQLiteTaskRepository:
                     plan_id TEXT, destination_storage_id TEXT, destination_path TEXT,
                     execution_status TEXT, error TEXT, progress TEXT,
                     UNIQUE(task_id, storage_id, source_path),
+                    FOREIGN KEY(task_id) REFERENCES tasks(task_id)
+                );
+                CREATE TABLE IF NOT EXISTS operations_run_display (
+                    task_id TEXT PRIMARY KEY, source_scope TEXT, target_scope TEXT,
+                    search_text TEXT, created_at TEXT NOT NULL,
                     FOREIGN KEY(task_id) REFERENCES tasks(task_id)
                 );
                 CREATE TABLE IF NOT EXISTS files_transfers (

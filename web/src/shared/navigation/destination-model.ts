@@ -554,6 +554,8 @@ const STATUS_FILTER_TOKEN = /^[a-z][a-z0-9_]{0,31}$/;
 const DELIVERY_STATUS_FILTER_TOKEN = /^[a-z][a-z0-9-]{0,31}$/;
 /** A backend-submitted Operations command filter is a bounded work-kind token. */
 const COMMAND_FILTER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
+/** A run-inventory cursor URL may carry only the bounded cursor alphabet. */
+const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
 
 /**
  * Return only the first safe values of allowlisted query keys for the
@@ -650,9 +652,11 @@ export function allowlistedDestinationSearch(
   }
   if (path === "/operations") {
     // The unified run inventory carries only its bounded submitted filter
-    // state and the selected run identity through authentication
-    // continuation; a filter token that does not match the backend grammar
-    // (including anything credential-like or free-form) is dropped.
+    // state, server cursor page and selected run identity through
+    // authentication continuation; a filter token that does not match the
+    // backend grammar (including anything credential-like or free-form) is
+    // dropped, and so is a cursor outside the bounded cursor grammar or a
+    // paging direction outside the two supported page turns.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setFilterToken(
@@ -671,6 +675,17 @@ export function allowlistedDestinationSearch(
     setSafe(allowed, "from", current.get("from"));
     setSafe(allowed, "to", current.get("to"));
     setSafe(allowed, "run", current.get("run"));
+    // The attention facet travels only as its one literal `true` value, so a
+    // reconnect restores exactly the facet the card applied — never a value
+    // the backend would reject.
+    if (current.get("attention") === "true") {
+      allowed.set("attention", "true");
+    }
+    setFilterToken(allowed, "cursor", current.get("cursor"), CURSOR_TOKEN);
+    const direction = current.get("dir");
+    if (direction === "forward" || direction === "backward") {
+      allowed.set("dir", direction);
+    }
     // The manual Scan/Preview scope selector carries one closed scope kind and
     // one bounded configured library identity, exactly like the retired
     // landing did. The pair is kept only together, so a scope kind that does

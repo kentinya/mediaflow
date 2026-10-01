@@ -25,6 +25,7 @@ function runDocument(overrides: Record<string, unknown> = {}) {
     schedule_id: null,
     definition_id: null,
     source_scope: "Movies",
+    target_scope: null,
     library_kind: "resource",
     total_items: 2,
     completed_items: 2,
@@ -47,6 +48,7 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
     q: null,
     from: null,
     to: null,
+    attention: false,
     total: 1,
     truncated: false,
     status_counts: { completed: 1 },
@@ -90,6 +92,92 @@ describe("run summary normalization", () => {
         runDocument({ total_items: 1, completed_items: 2, failed_items: 0 }),
       ),
     ).toThrow(RunNormalizationError);
+  });
+
+  it("still rejects completing more items than the run has, for any command", () => {
+    // `completed <= total` is independent of the task-kind sum rule below.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          command: "scan",
+          total_items: 1,
+          completed_items: 2,
+          failed_items: 0,
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          command: "preview",
+          total_items: 0,
+          completed_items: 1,
+          failed_items: 0,
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("requires the item total whenever a completed/failed count is reported", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ total_items: null, completed_items: 1 }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(runDocument({ total_items: null, failed_items: 1 })),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("accepts an honest scan-error run but keeps exact partitions bounded", () => {
+    // A production Scan may carry independent scan errors beyond its known
+    // item list (total 0, no completion, one failure): one such run must
+    // render as a row instead of rejecting the whole page.
+    const scanError = normalizeRunSummary(
+      runDocument({
+        command: "scan",
+        total_items: 0,
+        completed_items: 0,
+        failed_items: 1,
+      }),
+    );
+    expect(scanError.totalItems).toBe(0);
+    expect(scanError.completedItems).toBe(0);
+    expect(scanError.failedItems).toBe(1);
+
+    // Every exact-partition command still partitions one item list, including
+    // a MediaLibrary-owned direct command whose family is derived the same
+    // way the backend derives its label.
+    for (const command of [
+      "manual_organize",
+      "files_direct_command",
+      "files_delete",
+      "files_transfer",
+      "media_files_transfer",
+      "manual_organize:intent-1",
+    ]) {
+      expect(() =>
+        normalizeRunSummary(
+          runDocument({
+            command,
+            total_items: 2,
+            completed_items: 2,
+            failed_items: 1,
+          }),
+        ),
+      ).toThrow(RunNormalizationError);
+    }
+    // The same exact-partition command stays valid inside its own total.
+    expect(
+      normalizeRunSummary(
+        runDocument({
+          command: "manual_organize",
+          total_items: 3,
+          completed_items: 2,
+          failed_items: 1,
+        }),
+      ).failedItems,
+    ).toBe(1);
   });
 
   it("requires a label for a recognized command and rejects a mismatch", () => {
@@ -158,6 +246,59 @@ describe("run inventory page normalization", () => {
         pageDocument({
           status_counts: { failed: 2 },
           attention_count: 5,
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("reads the submitted attention facet as a required boolean", () => {
+    expect(normalizeRunInventoryPage(pageDocument()).attention).toBe(false);
+    const applied = normalizeRunInventoryPage(
+      pageDocument({
+        items: [runDocument({ status: "failed", attention: true })],
+        status_counts: { failed: 1 },
+        attention_count: 1,
+        total: 1,
+        attention: true,
+      }),
+    );
+    expect(applied.attention).toBe(true);
+    // A wrong-typed or missing echo is malformed data, never a coerced false.
+    expect(() =>
+      normalizeRunInventoryPage(pageDocument({ attention: "yes" })),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunInventoryPage(pageDocument({ attention: "true" })),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunInventoryPage(pageDocument({ attention: undefined })),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects an attention echo the population does not honour", () => {
+    // The server echoed the facet over a page whose partitions are not all
+    // attention statuses: it advertised a filter it did not apply.
+    expect(() =>
+      normalizeRunInventoryPage(
+        pageDocument({
+          items: [runDocument({ status: "running" })],
+          status_counts: { running: 1 },
+          attention_count: 0,
+          total: 1,
+          attention: true,
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    // Every partition is an attention status, but the facet page does not
+    // cover the whole reported population either.
+    expect(() =>
+      normalizeRunInventoryPage(
+        pageDocument({
+          items: [runDocument({ status: "failed", attention: true })],
+          status_counts: { failed: 1 },
+          attention_count: 1,
+          total: 2,
+          attention: true,
         }),
       ),
     ).toThrow(RunNormalizationError);

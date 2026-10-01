@@ -9,6 +9,21 @@
  * malformed instead of being rendered as an approximate truth. The document
  * carries no digest, fingerprint, host root or raw durable error, and an
  * unknown legacy command keeps its honest `recognizedCommand: false` shape.
+ *
+ * Progress honesty is task-kind aware rather than one blanket sum rule: an
+ * exact-partition command (`manual_organize`, the bounded Files commands)
+ * partitions one item list, so `completed + failed` may never exceed the
+ * total, while a scan/preview/organize/retry or unknown legacy run may carry
+ * independent scan errors beyond its known items (for example
+ * `total=0, completed=0, failed=1`). One such honest production run must
+ * render as a row instead of rejecting the whole page — the contradiction
+ * checks above the sum rule (required total, non-negative counts and
+ * `completed <= total`) still fail closed for every command.
+ *
+ * The page additionally proves the attention facet it echoes: when
+ * `attention` is true the server applied the overlapping facet, so every
+ * partition is an attention status and the whole filtered total is that
+ * population. A server that echoes the flag without applying it is rejected.
  */
 
 import {
@@ -85,6 +100,10 @@ export interface RunSummary {
   readonly scheduleId: string | null;
   readonly definitionId: string | null;
   readonly sourceScope: string | null;
+  /** Bounded/redacted destination-scope evidence (the literal
+   * `[redacted-path]` when the raw path may not be published). It is modeled
+   * fail-closed but not rendered by this Task. */
+  readonly targetScope: string | null;
   readonly libraryKind: RunLibraryKind | null;
   readonly totalItems: number | null;
   readonly completedItems: number | null;
@@ -103,6 +122,9 @@ export interface RunInventoryPage {
   readonly q: string | null;
   readonly from: string | null;
   readonly to: string | null;
+  /** True only when the submitted `attention=true` facet restricted this
+   * page's population to the overlapping attention statuses. */
+  readonly attention: boolean;
   readonly total: number;
   readonly truncated: boolean;
   readonly statusCounts: Readonly<Record<string, number>>;
@@ -197,6 +219,43 @@ export function isAttentionRun(status: RunStatus): boolean {
   return ATTENTION_RUN_STATUSES.includes(status);
 }
 
+/**
+ * The MediaLibrary-owned command prefix the backend's own label derivation
+ * strips before reading the family (`media_<family>[:<identity>]`).
+ */
+const MEDIA_LIBRARY_COMMAND_PREFIX = "media_";
+
+/**
+ * Commands whose items form one exact partition of `total_items`: a completed
+ * or failed item is one of the listed items, so `completed + failed` may never
+ * exceed the total. Every other family (scan, preview, organize, retry,
+ * continuations, unknown legacy) may legally carry independent errors — a
+ * production Scan reports scan errors next to a zero item list.
+ */
+const EXACT_PARTITION_COMMAND_FAMILIES: ReadonlySet<string> = new Set([
+  "manual_organize",
+  "files_direct_command",
+  "files_delete",
+  "files_transfer",
+]);
+
+/**
+ * The command family, derived with the backend's own rules (strip a leading
+ * `media_` prefix, take the segment before `:` — mirroring
+ * `known_command_label` in `mediaflow/domain/operations_run.py`). A run
+ * without a command has no family and therefore no exact-partition claim.
+ */
+function commandFamily(command: string | null): string | null {
+  if (command === null || command.length === 0) {
+    return null;
+  }
+  const withoutPrefix = command.startsWith(MEDIA_LIBRARY_COMMAND_PREFIX)
+    ? command.slice(MEDIA_LIBRARY_COMMAND_PREFIX.length)
+    : command;
+  const family = withoutPrefix.split(":", 1)[0];
+  return family.length > 0 ? family : null;
+}
+
 export function normalizeRunSummary(payload: unknown): RunSummary {
   const source = readRecord(payload, "run");
   let status: RunStatus;
@@ -226,12 +285,31 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   const totalItems = optionalCount(source, "total_items");
   const completedItems = optionalCount(source, "completed_items");
   const failedItems = optionalCount(source, "failed_items");
+  const reportedProgress = completedItems !== null || failedItems !== null;
+  // R1: progress that cannot name its own population is contradictory, not
+  // rounded — a completed/failed count always requires the item total.
+  if (reportedProgress && totalItems === null) {
+    fail();
+  }
+  // R2: every count is a non-negative integer (optionalCount above).
+  // R3: a run can never complete more items than it has, for every command.
   if (
-    (completedItems !== null || failedItems !== null) &&
-    (totalItems === null ||
-      (completedItems ?? 0) + (failedItems ?? 0) > totalItems)
+    totalItems !== null &&
+    completedItems !== null &&
+    completedItems > totalItems
   ) {
-    // Progress that cannot describe one run is contradictory, not rounded.
+    fail();
+  }
+  // R4: only an exact-partition command must fit inside its total. Scan and
+  // pipeline runs may carry independent scan errors beyond the known items,
+  // so their sum is display evidence, never a malformedness claim.
+  const family = commandFamily(command);
+  if (
+    totalItems !== null &&
+    family !== null &&
+    EXACT_PARTITION_COMMAND_FAMILIES.has(family) &&
+    (completedItems ?? 0) + (failedItems ?? 0) > totalItems
+  ) {
     fail();
   }
   const attention = flag(source, "attention");
@@ -254,6 +332,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     scheduleId: optionalText(source, "schedule_id"),
     definitionId: optionalText(source, "definition_id"),
     sourceScope: optionalText(source, "source_scope"),
+    targetScope: optionalText(source, "target_scope"),
     libraryKind,
     totalItems,
     completedItems,
@@ -310,6 +389,9 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
     }
   }
   const statusCounts = normalizeRunStatusCounts(source);
+  // The submitted attention facet echo is a required boolean: an omitted or
+  // coerced flag is malformed data, never an implicit "no filter".
+  const attention = flag(source, "attention");
   // The attention count is the overlapping facet over the same population:
   // it must equal the sum of the modelled attention partitions, never an
   // invented separate total.
@@ -317,10 +399,17 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
     (sum, value) => sum + (statusCounts[value] ?? 0),
     0,
   );
-  if (
-    normalizeBoundedCount(source["attention_count"], "attention_count") !==
-    modelledAttention
-  ) {
+  const reportedAttentionCount = (() => {
+    try {
+      return normalizeBoundedCount(
+        source["attention_count"],
+        "attention_count",
+      );
+    } catch {
+      return fail();
+    }
+  })();
+  if (reportedAttentionCount !== modelledAttention) {
     fail();
   }
   const boundedTotal = (() => {
@@ -330,6 +419,20 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
       return fail();
     }
   })();
+  if (attention) {
+    // A server that echoes the applied facet must really have applied it:
+    // every partition belongs to the overlapping attention population and the
+    // whole filtered total IS that population. Echoing `attention: true` over
+    // an unfiltered page would advertise a filter the table did not apply.
+    for (const key of Object.keys(statusCounts)) {
+      if (!(ATTENTION_RUN_STATUSES as readonly string[]).includes(key)) {
+        fail();
+      }
+    }
+    if (reportedAttentionCount !== boundedTotal) {
+      fail();
+    }
+  }
   const pageItems = items.map((item) => normalizeRunSummary(item));
   // The filtered total is at least the current page size, never below it.
   if (boundedTotal < pageItems.length) {
@@ -349,6 +452,7 @@ export function normalizeRunInventoryPage(payload: unknown): RunInventoryPage {
     q: normalizeRunFilterEcho(source, "q"),
     from: normalizeRunFilterEcho(source, "from"),
     to: normalizeRunFilterEcho(source, "to"),
+    attention,
     total: boundedTotal,
     truncated: flag(source, "truncated"),
     statusCounts,

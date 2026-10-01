@@ -22,9 +22,11 @@ bounded label instead of disappearing.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
+from types import MappingProxyType
 
 from mediaflow.domain.automation import AutomationJob, AutomationJobStatus
 from mediaflow.domain.direct_files import LibraryKind
@@ -206,6 +208,13 @@ _COMMAND_LABELS = {
     FILES_TRANSFER_TASK_COMMAND: "文件传输",
 }
 
+#: Public read-only view of the bounded business labels above.  The SQL run
+#: inventory projects the exact same family→label mapping (see
+#: :func:`mediaflow.infrastructure.sqlite_runtime.command_label_sql`), so a
+#: repository search for a visible business label and the published
+#: ``command_label`` can never disagree.
+COMMAND_LABELS: Mapping[str, str] = MappingProxyType(_COMMAND_LABELS)
+
 
 @dataclass(frozen=True)
 class OperationsRunOverview:
@@ -232,6 +241,7 @@ class OperationsRunOverview:
     schedule_id: str | None = None
     definition_id: str | None = None
     source_scope: str | None = None
+    target_scope: str | None = None
     library_kind: LibraryKind | None = None
     total_items: int | None = None
     completed_items: int | None = None

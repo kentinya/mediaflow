@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
@@ -35,6 +36,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskItem,
     PersistentTaskStatus,
+    RunDisplayContext,
     TaskItemStatus,
 )
 
@@ -337,13 +339,42 @@ class ManualScanService:
                 durable_state="no_task_created",
                 next_action="restore the runtime Task repository, then retry",
             )
-        creator(task, scan)
+        # The bounded display evidence commits atomically with the Task, so
+        # this newly admitted Scan always carries its business identity (the
+        # configured library name and its exact scope) for the unified
+        # Operations inventory instead of appearing as legacy-missing.
+        creator(task, scan, display=self._run_display_context(library, scan))
         if record is not None:
             self._upsert_initial_file_item(scan, record, now)
         should_start = self._start_async if start is None else bool(start)
         if should_start:
             self._start(task_id)
         return scan
+
+    def _run_display_context(
+        self, library: ResourceLibrary, scan: ManualScanTask
+    ) -> RunDisplayContext:
+        """The bounded business identity of one admitted Scan.
+
+        Display/search evidence only — recorded from the exact configured
+        library the admission already resolved, never from a read-time Active
+        lookup.  A library scope publishes the library name; a file scope
+        additionally publishes the library-relative source path when it is
+        provably relative (an absolute host path is simply omitted, and the
+        published projection redacts it independently).
+        """
+
+        name = str(library.name).strip()
+        scope = name
+        source_path = str(scan.source_path or "").strip()
+        if (
+            ManualScanScopeKind(scan.scope_kind) is ManualScanScopeKind.FILE
+            and source_path
+            and not source_path.startswith(("/", "\\", "~"))
+            and not re.match(r"^[A-Za-z]:", source_path)
+        ):
+            scope = f"{name}/{source_path.lstrip('/')}"
+        return RunDisplayContext(source_scope=scope, labels=(name,) if name else ())
 
     def run(self, task_id: str) -> ManualScanTask:
         scan = self._require_task(task_id)

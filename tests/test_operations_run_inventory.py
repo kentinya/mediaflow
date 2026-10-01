@@ -9,14 +9,19 @@ legal production assemblies:
   manual-execution Tasks, scheduled definition occurrences, retry
   continuations and both library kinds' direct commands/transfers are all
   discoverable; unknown legacy commands keep an honest label; a completed
-  Job never masks its linked Task's partial success or failure.
+  Job never masks its linked Task's partial success or failure; and an
+  exact-ID overview keeps even the oldest run openable.
 - AC-T2 authoritative query/counts: text/status/kind/time filters compose,
   invalid values reject safely, ties page deterministically, cursors bind
   the submitted filter scope (and refuse a mismatch), totals and status
-  partitions reconcile beyond one page, and the attention facet is
+  partitions reconcile beyond one page and in both paging directions from
+  one cross-connection read snapshot (the cursor bounds the window, never
+  the population), the published maximum limit is served, and the attention
+  facet is an explicit, composable, cursor-bound filter whose count stays
   explicitly overlapping.
 - AC-T3 historical identity/privacy: scope evidence comes from the durable
-  admission record or is explicitly unavailable; a restart and an Active
+  admission record (including the display context shared producers record
+  at admission) or is explicitly unavailable; a restart and an Active
   A-to-B rename/delete cannot rewrite it; equal library IDs keep their
   kinds; no secret, private endpoint, host root or raw adapter exception
   leaves the API.
@@ -42,11 +47,14 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from mediaflow.application.automation import ProcessingWorkerService
+from mediaflow.application.manual_scan import ManualScanService
+from mediaflow.application.scanner import StorageScanner
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
 )
+from mediaflow.domain.library import ResourceLibrary
 from mediaflow.domain.operations_run import (
     ATTENTION_RUN_STATUSES,
     known_command_label,
@@ -56,6 +64,7 @@ from mediaflow.domain.task_persistence import (
     PersistentTask,
     PersistentTaskStatus,
 )
+from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from mediaflow.interfaces.pagination import (
     CursorDirection,
@@ -63,6 +72,8 @@ from mediaflow.interfaces.pagination import (
     encode_cursor,
 )
 from mediaflow.interfaces.service_api import MediaFlowApi
+from tests.test_scanner import FakeStorage
+from tests.test_v2_manual_organize import _JourneyFixtureMixin
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -159,7 +170,9 @@ def job(
     )
 
 
-class RunInventoryTestCase(unittest.TestCase):
+class _InventoryApiTestCase(unittest.TestCase):
+    """One real SQLite repository behind the authenticated inventory API."""
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.repository = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
@@ -173,6 +186,8 @@ class RunInventoryTestCase(unittest.TestCase):
         self.repository.close()
         self.directory.cleanup()
 
+
+class RunInventoryTestCase(_InventoryApiTestCase):
     # -- AC-T1: one real population -------------------------------------
 
     def test_job_task_linkage_counts_once_and_survives_the_link(self) -> None:
@@ -336,6 +351,53 @@ class RunInventoryTestCase(unittest.TestCase):
         self.assertEqual(known_command_label("scan"), "扫描")
         # A media-prefixed command that is not a known family is not guessed.
         self.assertIsNone(known_command_label("media_totally_unknown"))
+
+    def test_sql_label_expression_mirrors_the_published_command_label(self) -> None:
+        """The search label and the published label come from one shared map.
+
+        The repository must find a run by exactly the Chinese business label
+        the API publishes (and honestly find nothing for an unknown legacy
+        command), so the generated SQL CASE is evaluated against the same
+        command matrix as :func:`known_command_label`.
+        """
+
+        from mediaflow.infrastructure.sqlite_runtime import command_label_sql
+
+        cases = (
+            "scan",
+            "scan:task-1",
+            "preview",
+            "preview:task-2",
+            "organize",
+            "manual_organize",
+            "retry:task-3",
+            "retry-failed:task-3",
+            "metadata-correction-continuation:task-4",
+            "recovery-continuation:task-4",
+            "file-metadata-correction:task-5",
+            "files_direct_command",
+            "files_delete:task-6",
+            "files_transfer",
+            "media_scan:task-7",
+            "media_organize",
+            "media_files_transfer:task-8",
+            "media_totally_unknown:task-9",
+            "totally_unknown_command",
+            "scan:",
+            "",
+        )
+        with sqlite3.connect(":memory:") as connection:
+            for command in cases:
+                with self.subTest(command=command):
+                    literal = "'" + command.replace("'", "''") + "'"
+                    sql_label = connection.execute(
+                        f"SELECT {command_label_sql(literal)}"
+                    ).fetchone()[0]
+                    self.assertEqual(known_command_label(command), sql_label)
+            # A NULL command behaves exactly like the domain function's None.
+            sql_label = connection.execute(f"SELECT {command_label_sql('NULL')}").fetchone()[0]
+            self.assertIsNone(sql_label)
+            self.assertIsNone(known_command_label(None))
 
     def test_manual_execution_task_is_visible_with_pinned_evidence(self) -> None:
         self.repository.create_task(
@@ -503,7 +565,9 @@ class RunInventoryTestCase(unittest.TestCase):
         decoded = decode_directional_cursor(
             cursor,
             "operations_runs",
-            expected_scope=("principal=viewer;status=completed;command=all;q=;from=;to="),
+            expected_scope=(
+                "principal=viewer;status=completed;attention=false;command=all;q=;from=;to="
+            ),
         )
         self.assertEqual(decoded.direction, CursorDirection.NEXT)
         _status, second, _ = request(
@@ -568,6 +632,278 @@ class RunInventoryTestCase(unittest.TestCase):
         finally:
             thread.join()
         self.assertEqual(errors, [])
+
+    def test_page_and_counts_share_one_database_snapshot_across_connections(
+        self,
+    ) -> None:
+        """A concurrent admission on another connection cannot skew the read.
+
+        The page, the filtered total and the status partitions must come from
+        one SQLite read snapshot: a legitimate admission committed by a
+        *second* repository connection while the page SELECT is being read
+        either lands entirely before or entirely after that snapshot, never
+        between the page and its counts.
+        """
+
+        self.repository.create_task(task("base-one", rank=1))
+        self.repository.create_task(task("base-two", rank=2))
+        other = SQLiteTaskRepository(Path(self.directory.name, "runtime.sqlite3"))
+        self.addCleanup(other.close)
+        writer_done = threading.Event()
+        writer_threads: list[threading.Thread] = []
+        writer_outcome: list[str] = []
+        signalled: list[bool] = []
+
+        def writer() -> None:
+            try:
+                other.create_task(task("concurrent-admission", rank=0))
+                writer_outcome.append("committed")
+            except Exception as error:  # pragma: no cover - diagnostic only
+                writer_outcome.append(f"blocked:{type(error).__name__}")
+            finally:
+                writer_done.set()
+
+        def hook(statement: str) -> None:
+            # Fire exactly once, when the count statement is about to run —
+            # i.e. after the page window was already read inside the same
+            # snapshot, at the exact interleaving point a concurrent
+            # admission could skew the totals.
+            if signalled or "SELECT COUNT(*) AS total FROM" not in statement:
+                return
+            signalled.append(True)
+            thread = threading.Thread(target=writer)
+            writer_threads.append(thread)
+            thread.start()
+            # Give the second connection a bounded window to commit inside
+            # this read.  With a real read transaction it can only commit
+            # after the snapshot closes, so the totals below stay truthful.
+            writer_done.wait(timeout=0.5)
+
+        connection = self.repository._connection  # test-only statement hook
+        connection.set_trace_callback(hook)
+        try:
+            window = self.repository.operations_runs_window(limit=10)
+        finally:
+            connection.set_trace_callback(None)
+        for thread in writer_threads:
+            thread.join(timeout=5)
+        self.assertTrue(signalled, "the page statement was never observed")
+        # Page items, filtered total and status partitions agree: the write
+        # that was scheduled inside the read can never land between them.
+        self.assertEqual(2, len(window.page))
+        self.assertEqual(2, window.total)
+        self.assertEqual({"completed": 2}, window.status_counts)
+        self.assertEqual(2, sum(window.status_counts.values()))
+        self.assertEqual(["committed"], writer_outcome)
+        # The blocked admission still commits once the snapshot closes.
+        _status, after, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        self.assertEqual(3, after["total"])
+
+    def test_pages_keep_filter_scoped_totals_in_both_directions(self) -> None:
+        """Totals never shrink while paging; both directions page newest-first."""
+
+        for index in range(30):
+            self.repository.create_task(
+                task(
+                    f"bulk-{index}",
+                    command="scan",
+                    status=PersistentTaskStatus.COMPLETED,
+                    rank=index,
+                )
+            )
+        for index in range(5):
+            self.repository.create_task(
+                task(
+                    f"bulk-failed-{index}",
+                    command="preview",
+                    status=PersistentTaskStatus.FAILED,
+                    rank=100 + index,
+                )
+            )
+        expected_counts = {"completed": 30, "failed": 5}
+        pages: list[dict] = []
+        cursor: str | None = None
+        for _ in range(4):
+            query = "limit=10" + (f"&cursor={cursor}" if cursor else "")
+            code, page, _ = request(self.api, "GET", "/api/v1/operations/runs", query=query)
+            self.assertEqual(200, code)
+            # The cursor bounds the window only: the reported population is
+            # always the full filtered population (35, never 35/25/15/5).
+            self.assertEqual(35, page["total"])
+            self.assertEqual(expected_counts, page["status_counts"])
+            self.assertEqual(35, sum(page["status_counts"].values()))
+            self.assertEqual(5, page["attention_count"])
+            pages.append(page)
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        self.assertEqual(4, len(pages))
+        self.assertEqual([10, 10, 10, 5], [len(page["items"]) for page in pages])
+        self.assertIsNone(pages[0]["previous_cursor"])
+        self.assertIsNotNone(pages[0]["next_cursor"])
+        self.assertIsNotNone(pages[1]["previous_cursor"])
+        self.assertIsNone(pages[3]["next_cursor"])
+        seen: list[str] = []
+        for page in pages:
+            created = [item["created_at"] for item in page["items"]]
+            self.assertEqual(created, sorted(created, reverse=True))
+            seen.extend(item["run_id"] for item in page["items"])
+        self.assertEqual(len(seen), len(set(seen)))
+        # Walking backward from page 2 returns page 1, newest-first, with the
+        # adjacent cursors that let the operator keep going both ways.
+        code, back, _ = request(
+            self.api,
+            "GET",
+            "/api/v1/operations/runs",
+            query=f"limit=10&cursor={pages[1]['previous_cursor']}",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(
+            [item["run_id"] for item in pages[0]["items"]],
+            [item["run_id"] for item in back["items"]],
+        )
+        created = [item["created_at"] for item in back["items"]]
+        self.assertEqual(created, sorted(created, reverse=True))
+        self.assertEqual(35, back["total"])
+        self.assertEqual(expected_counts, back["status_counts"])
+        self.assertIsNone(back["previous_cursor"])
+        self.assertIsNotNone(back["next_cursor"])
+        # Following the backward page's next cursor returns page 2 again.
+        code, again, _ = request(
+            self.api,
+            "GET",
+            "/api/v1/operations/runs",
+            query=f"limit=10&cursor={back['next_cursor']}",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(
+            [item["run_id"] for item in pages[1]["items"]],
+            [item["run_id"] for item in again["items"]],
+        )
+        # A middle page can also step back to its own previous page.
+        code, middle, _ = request(
+            self.api,
+            "GET",
+            "/api/v1/operations/runs",
+            query=f"limit=10&cursor={pages[2]['previous_cursor']}",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(
+            [item["run_id"] for item in pages[1]["items"]],
+            [item["run_id"] for item in middle["items"]],
+        )
+
+    def test_published_maximum_limit_is_served(self) -> None:
+        """The advertised legal maximum limit works, including its follow-up."""
+
+        for index in range(105):
+            self.repository.create_task(
+                task(
+                    f"cap-{index:03d}",
+                    command="scan",
+                    status=PersistentTaskStatus.COMPLETED,
+                    rank=index,
+                )
+            )
+        code, first, _ = request(self.api, "GET", "/api/v1/operations/runs", query="limit=100")
+        self.assertEqual(200, code)
+        self.assertEqual(100, len(first["items"]))
+        self.assertEqual(105, first["total"])
+        self.assertEqual({"completed": 105}, first["status_counts"])
+        self.assertTrue(first["truncated"])
+        self.assertIsNotNone(first["next_cursor"])
+        self.assertIsNone(first["previous_cursor"])
+        self.assertIs(first["attention"], False)
+        code, second, _ = request(
+            self.api,
+            "GET",
+            "/api/v1/operations/runs",
+            query=f"limit=100&cursor={first['next_cursor']}",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(5, len(second["items"]))
+        self.assertEqual(105, second["total"])
+        self.assertEqual({"completed": 105}, second["status_counts"])
+        self.assertFalse(second["truncated"])
+        self.assertIsNone(second["next_cursor"])
+        self.assertIsNotNone(second["previous_cursor"])
+
+    def test_attention_facet_filters_the_population_and_binds_the_cursor(
+        self,
+    ) -> None:
+        """The attention card's filter is explicit, composable and cursor-bound."""
+
+        self.repository.create_task(task("at-pending", status=PersistentTaskStatus.PENDING, rank=0))
+        self.repository.create_task(task("at-failed", status=PersistentTaskStatus.FAILED, rank=1))
+        self.repository.create_task(
+            task("at-partial", status=PersistentTaskStatus.PARTIAL_SUCCESS, rank=2)
+        )
+        self.repository.create_task(task("at-done", status=PersistentTaskStatus.COMPLETED, rank=3))
+        self.repository.create_task(task("at-done2", status=PersistentTaskStatus.COMPLETED, rank=4))
+
+        code, page, _ = request(self.api, "GET", "/api/v1/operations/runs", query="attention=true")
+        self.assertEqual(200, code)
+        self.assertIs(page["attention"], True)
+        self.assertEqual(3, page["total"])
+        self.assertEqual({"pending": 1, "failed": 1, "partial_success": 1}, page["status_counts"])
+        self.assertEqual(3, page["attention_count"])
+        self.assertEqual(
+            {"at-pending", "at-failed", "at-partial"},
+            {item["run_id"] for item in page["items"]},
+        )
+        # The facet composes with the other filters.
+        code, composed, _ = request(
+            self.api, "GET", "/api/v1/operations/runs", query="attention=true&status=failed"
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(1, composed["total"])
+        self.assertEqual("at-failed", composed["items"][0]["run_id"])
+        # Absent/false/all keep the unfiltered population.
+        for value in ("", "all", "false"):
+            with self.subTest(value=value):
+                code, plain, _ = request(
+                    self.api,
+                    "GET",
+                    "/api/v1/operations/runs",
+                    query=(f"attention={value}" if value else ""),
+                )
+                self.assertEqual(200, code)
+                self.assertIs(plain["attention"], False)
+                self.assertEqual(5, plain["total"])
+                self.assertEqual(3, plain["attention_count"])
+        # An invalid facet value rejects safely instead of silently dropping.
+        code, error_body, _ = request(
+            self.api, "GET", "/api/v1/operations/runs", query="attention=maybe"
+        )
+        self.assertEqual(400, code)
+        self.assertEqual("invalid_request", error_body["error"]["code"])
+        # A cursor minted with the facet cannot be replayed without it, and
+        # the reverse mismatch refuses the same way (read recovery).
+        code, first, _ = request(
+            self.api, "GET", "/api/v1/operations/runs", query="attention=true&limit=1"
+        )
+        self.assertEqual(200, code)
+        cursor = first["next_cursor"]
+        self.assertIsNotNone(cursor)
+        code, continued, _ = request(
+            self.api,
+            "GET",
+            "/api/v1/operations/runs",
+            query=f"attention=true&limit=1&cursor={cursor}",
+        )
+        self.assertEqual(200, code)
+        self.assertEqual(1, len(continued["items"]))
+        self.assertNotEqual(
+            [item["run_id"] for item in first["items"]],
+            [item["run_id"] for item in continued["items"]],
+        )
+        for mismatched in (f"limit=1&cursor={cursor}", f"attention=false&limit=1&cursor={cursor}"):
+            with self.subTest(query=mismatched):
+                code, body, _ = request(
+                    self.api, "GET", "/api/v1/operations/runs", query=mismatched
+                )
+                self.assertEqual(400, code)
+                self.assertEqual("invalid_request", body["error"]["code"])
 
     def test_cursors_refuse_a_different_reading_principal(self) -> None:
         """A cursor minted for one principal never pages another (AC-T2)."""
@@ -872,6 +1208,33 @@ class RunInventoryTestCase(unittest.TestCase):
         self.assertEqual(overview_status, 200)
         self.assertEqual(overview["sideEffects"], "none")
 
+    def test_oldest_run_opens_by_exact_id_beyond_the_newest_window(self) -> None:
+        """A real historical run stays openable no matter how many followed.
+
+        The overview must read one run by its exact ID from the same linked
+        projection, never by scanning a "newest N rows" window: selection and
+        supported detail deep links keep working for the oldest admitted run
+        of a busy inventory, while an unknown ID stays an honest 404.
+        """
+
+        for index in range(105):
+            self.repository.create_task(task(f"hist-{index:03d}", command="scan", rank=index))
+        # The oldest run is not in any newest-100 window.
+        code, overview, _ = request(self.api, "GET", "/api/v1/operations/runs/hist-000")
+        self.assertEqual(code, 200)
+        self.assertEqual("hist-000", overview["run_id"])
+        self.assertEqual("扫描", overview["command_label"])
+        self.assertEqual("none", overview["sideEffects"])
+        # It is also still findable and pageable in the filtered inventory.
+        code, page, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=hist-000")
+        self.assertEqual(code, 200)
+        self.assertEqual(1, page["total"])
+        self.assertEqual("hist-000", page["items"][0]["run_id"])
+        # An unknown ID is an honest not-found, not an empty overview.
+        code, body, _ = request(self.api, "GET", "/api/v1/operations/runs/not-a-run")
+        self.assertEqual(code, 404)
+        self.assertEqual("not_found", body["error"]["code"])
+
     def test_unsupported_runtime_has_no_inventory_endpoint_access(self) -> None:
         class NoInventoryRepository:
             def list_tasks(self, **_kwargs):
@@ -953,6 +1316,14 @@ class RunInventoryTestCase(unittest.TestCase):
                 connection.commit()
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                # The schema-41 display table is created additively by the
+                # upgrade; the fixture itself never contained it.
+                with sqlite3.connect(database) as upgraded:
+                    display_table = upgraded.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                        " AND name='operations_run_display'"
+                    ).fetchone()
+                self.assertIsNotNone(display_table)
                 # Pins, links, results and authority survive the additive
                 # upgrade untouched.
                 upgraded_task = repository.get_task("legacy-task-1")
@@ -1016,9 +1387,10 @@ class RunInventoryTestCase(unittest.TestCase):
     def _create_schema39_database(path: Path) -> None:
         """Create a production-shaped schema-39 runtime database.
 
-        The fixture reproduces the Task-Base layout: every current table, the
-        schema-39 marker and none of the schema-40 inventory indexes.  The
-        production repository migration then adds only the additive indexes.
+        The fixture reproduces the Task-Base layout: every table that existed
+        at the Task Base, the schema-39 marker and none of the schema-40
+        inventory indexes or the schema-41 display table.  The production
+        repository migration then adds only those additive objects.
         """
 
         from tests.test_task_persistence import Schema34To35UpgradeTests
@@ -1136,6 +1508,136 @@ def _retime(task_id: str, when: datetime) -> PersistentTask:
     from dataclasses import replace
 
     return replace(task(task_id, rank=0), created_at=when, updated_at=when)
+
+
+class ScanDisplayEvidenceTests(_InventoryApiTestCase):
+    """A newly admitted Scan records its business identity at admission.
+
+    The producer writes bounded display evidence inside the same transaction
+    that creates the Task, so a brand-new Scan is searchable by its visible
+    business label and configured library scope instead of appearing as
+    legacy-missing.
+    """
+
+    def _service(self) -> tuple[ManualScanService, InMemoryFileIndexRepository]:
+        storage = FakeStorage("source")
+        storage.add_file("current.mkv", 10, NOW - timedelta(hours=2))
+        storage.add_file("sibling.mkv", 11, NOW - timedelta(hours=2))
+        index = InMemoryFileIndexRepository()
+        library = ResourceLibrary("library", "Library", "source", "", exclude_rules=())
+        StorageScanner({"source": storage}, index, clock=lambda: NOW).scan(library)
+        service = ManualScanService(
+            self.repository,
+            index,
+            resource_libraries=(library,),
+            storages={"source": storage},
+            configuration_snapshot_id="snap-a",
+            configuration_snapshot_digest="digest-a",
+            clock=lambda: NOW,
+            start_async=False,
+        )
+        return service, index
+
+    def _run_document(self, run_id: str) -> dict:
+        code, page, _ = request(self.api, "GET", "/api/v1/operations/runs")
+        self.assertEqual(200, code)
+        matches = [item for item in page["items"] if item["run_id"] == run_id]
+        self.assertEqual(1, len(matches), page)
+        return matches[0]
+
+    def test_library_scope_scan_publishes_scope_and_is_searchable(self) -> None:
+        service, _index = self._service()
+        admitted = service.admit_document(
+            {
+                "scopeKind": "resource_library",
+                "resourceLibraryId": "library",
+                "mode": "full",
+            }
+        )
+        run = self._run_document(admitted.task_id)
+        self.assertEqual("扫描", run["command_label"])
+        self.assertEqual("Library", run["source_scope"])
+        self.assertIsNone(run["target_scope"])
+        self.assertEqual("resource", run["library_kind"])
+        for needle in ("Library", "扫描"):
+            with self.subTest(needle=needle):
+                code, found, _ = request(
+                    self.api, "GET", "/api/v1/operations/runs", query=f"q={needle}"
+                )
+                self.assertEqual(200, code)
+                self.assertEqual(1, found["total"])
+                self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
+
+    def test_file_scope_scan_publishes_the_relative_source_path(self) -> None:
+        service, index = self._service()
+        record = index.find_by_path("source", "library", "current.mkv")
+        self.assertIsNotNone(record)
+        admitted = service.admit_document(
+            {
+                "scopeKind": "file",
+                "resourceLibraryId": "library",
+                "fileId": record.file_id,
+                "occurrenceId": record.occurrence_id,
+                "fingerprint": record.fingerprint,
+                "mode": "incremental",
+            }
+        )
+        run = self._run_document(admitted.task_id)
+        self.assertEqual("Library/current.mkv", run["source_scope"])
+        code, found, _ = request(self.api, "GET", "/api/v1/operations/runs", query="q=current.mkv")
+        self.assertEqual(200, code)
+        self.assertEqual(1, found["total"])
+        self.assertEqual(admitted.task_id, found["items"][0]["run_id"])
+
+
+class ManualOrganizeDisplayEvidenceTests(_JourneyFixtureMixin, unittest.TestCase):
+    """A newly admitted manual Organize run carries its full business identity.
+
+    The display evidence (historical source/target scope and safe business
+    labels) is recorded from the reviewed Preview, the selected items and the
+    pinned runtime inside the admission transaction — never resolved from the
+    current Active configuration at read time — and is searchable immediately.
+    """
+
+    def test_admitted_execution_publishes_display_identity_and_is_searchable(
+        self,
+    ) -> None:
+        with self.journey() as value:
+            intent = self._create_reviewed_intent(value)
+            preview = self._create_preview(value, intent)
+            status, execution = self._execute(value, preview, intent)
+            self.assertEqual(202, status)
+            task_id = execution["taskId"]
+
+            status, page = self._request(value, "/api/v1/operations/runs")
+            self.assertEqual(200, status)
+            self.assertEqual(1, page["total"])
+            run = page["items"][0]
+            self.assertEqual(task_id, run["run_id"])
+            self.assertEqual("手动整理", run["command_label"])
+            self.assertEqual("manual", run["trigger"])
+            self.assertEqual("resource", run["library_kind"])
+            self.assertTrue(run["source_scope"], run)
+            self.assertTrue(run["target_scope"], run)
+            self.assertTrue(str(run["source_scope"]).startswith("Library"), run)
+            self.assertTrue(str(run["target_scope"]).startswith("Movies"), run)
+
+            # The visible business label, both library scopes and the reviewed
+            # source file are all reachable through the server-side search.
+            for needle in ("手动整理", "Library", "Movies", "One.2001.mkv"):
+                with self.subTest(needle=needle):
+                    status, found = self._request(value, f"/api/v1/operations/runs?q={needle}")
+                    self.assertEqual(200, status)
+                    self.assertGreaterEqual(found["total"], 1, needle)
+                    self.assertIn(task_id, [item["run_id"] for item in found["items"]])
+
+            # The selected-run overview (deep-link target) publishes exactly
+            # the same identity as the list row.
+            status, overview = self._request(value, f"/api/v1/operations/runs/{task_id}")
+            self.assertEqual(200, status)
+            self.assertEqual(run["source_scope"], overview["source_scope"])
+            self.assertEqual(run["target_scope"], overview["target_scope"])
+            self.assertEqual(run["command_label"], overview["command_label"])
 
 
 if __name__ == "__main__":
