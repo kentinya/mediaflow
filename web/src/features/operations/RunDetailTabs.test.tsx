@@ -476,6 +476,111 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The evidence document of a **standalone processing-chain** item (the
+ * supported `organize --execute` path): a real durable Result with persisted
+ * completed steps, an uncertain sibling effect, one captured pipeline
+ * document whose `operation` section holds the executor's bounded step lists
+ * — and *no* Manual execution linkage, so `planEvidence` says unavailable.
+ */
+function standaloneExecutionEvidenceDocument(
+  overrides: Record<string, unknown> = {},
+) {
+  return evidenceDocument({
+    item_id: "item-9",
+    item: itemRow({
+      item_id: "item-9",
+      source_path: "movies/standalone.mkv",
+      destination_path: "Movies/Two (2002)/Two (2002).mkv",
+      execution_status: "SUCCESS",
+    }),
+    checkpoint: {
+      status: "success",
+      stage: "completed",
+      raw_stage: "organize",
+      attempts: 1,
+      source_storage_id: "source",
+      resource_library_id: "movies",
+      source_path: "movies/standalone.mkv",
+      plan_id: "plan-9",
+      destination_storage_id: "target",
+      destination_path: "Movies/Two (2002)/Two (2002).mkv",
+      configuration: { snapshot_id: "snap-1", resolvable: true, reason: null },
+      latest_result: null,
+      prior_results: [],
+      blockers: [],
+      blocker: null,
+      audits: [],
+      recovery_requests: [],
+      recovery_request: null,
+      recovery_continuation: null,
+      // The exact durable facts B's repro proved the API returns for a
+      // non-Manual item: the aggregate hides them unless the view reads them.
+      effects: {
+        certainty: "verified_complete",
+        completed_operations: ["CREATE_DIRECTORY", "MOVE"],
+        uncertain_effects: [],
+      },
+      error_category: null,
+      retry_safety: "safe",
+      failureExplanation: null,
+      nextAction: null,
+      actions: [],
+      permitted_action_ids: [],
+      refusal_reason: null,
+      checkpoint_version: "v1",
+      updated_at: "2026-08-22T12:03:00+00:00",
+    },
+    results: [
+      evidenceResultRow({
+        item_id: "item-9",
+        completed_operations: ["CREATE_DIRECTORY", "MOVE"],
+        effect_certainty: "verified_complete",
+        uncertain_effects: [],
+      }),
+      evidenceResultRow({
+        result_id: "result-2",
+        item_id: "item-9",
+        completed_operations: ["copy_written", "destination_verified"],
+        effect_certainty: "attempted_unverified",
+        uncertain_effects: ["source_deletion"],
+        cleanup_status: null,
+      }),
+    ],
+    evidence: [
+      {
+        evidenceId: "ev-9",
+        attempts: 1,
+        outcome: "success",
+        capturedAt: "2026-08-22T12:02:00+00:00",
+        truncated: false,
+        sections: {
+          operation: {
+            available: true,
+            truncated: false,
+            value: {
+              status: "SUCCESS",
+              operation: "MOVE",
+              createdDirectories: ["Movies/Anime/Two (2002)"],
+              completedOperations: ["CREATE_DIRECTORY", "MOVE"],
+              uncertainEffects: ["source_deletion"],
+              cleanupStatus: "disabled",
+            },
+            items: [],
+            warnings: [],
+          },
+        },
+      },
+    ],
+    // A standalone item never joined the reviewed Manual journey: the honest
+    // unavailable statement stays, and the durable block below carries the
+    // explanation instead (Task 42.2 P1 / AC-T4).
+    planEvidence: { available: false },
+    logs: [],
+    ...overrides,
+  });
+}
+
 /** The evidence document of the successfully executed 手动整理 item-1. */
 function manualExecutionEvidenceDocument(
   overrides: Record<string, unknown> = {},
@@ -939,6 +1044,78 @@ describe("selected-run detail tabs", () => {
     expect(within(evidence).getByText("不可用段")).toBeVisible();
     expect(
       within(evidence).getByText(/metadata\(legacy evidence\)/),
+    ).toBeVisible();
+  });
+
+  it("shows the durable completed steps of a non-Manual executed item", async () => {
+    // The Task 42.2 P1 regression: a standalone processing-chain item has no
+    // reviewed Manual plan linkage, so 查看证据 used to hide its persisted
+    // CREATE_DIRECTORY/MOVE steps behind "—".  The same bounded read must now
+    // state the completed and unconfirmed steps from the durable
+    // checkpoint/Result rows, keep the genuinely absent reviewed plan
+    // explicitly unavailable, and never recompute anything.
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.includes("/items/item-9")) {
+        return jsonResponse(standaloneExecutionEvidenceDocument());
+      }
+      if (url.includes("/items?") || url.endsWith("/items")) {
+        return jsonResponse(itemsPageDocument({ items: [itemRow()] }));
+      }
+      if (url.includes("/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001&item=item-9");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("条目证据:item-9");
+
+    // The reviewed-plan section keeps its honest unavailability…
+    expect(
+      within(evidence).getByRole("heading", {
+        name: "持久审核计划(不可用)",
+      }),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(/没有可展示的持久审核计划/),
+    ).toBeVisible();
+    // …while the durable execution steps now appear right beneath it.
+    expect(
+      within(evidence).getByText("持久执行步骤(检查点与结果聚合)"),
+    ).toBeVisible();
+    const completedRow = within(evidence)
+      .getByText("已完成操作")
+      .closest("div");
+    expect(
+      within(completedRow as HTMLElement).getByText("CREATE_DIRECTORY、MOVE"),
+    ).toBeVisible();
+    // The Result table states each row's own persisted steps and effects —
+    // including the second, uncertain result — not just the aggregate.
+    expect(
+      within(evidence).getByText(/步: CREATE_DIRECTORY、MOVE/),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(/步: copy_written、destination_verified/),
+    ).toBeVisible();
+    expect(within(evidence).getByText("source_deletion")).toBeVisible();
+    // The captured operation section renders its bounded lists instead of
+    // collapsing arrays to "—" (the exact strings B observed as `—`).
+    expect(
+      within(evidence).getByText(
+        /createdDirectories=Movies\/Anime\/Two \(2002\)/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(/uncertainEffects=source_deletion/),
     ).toBeVisible();
   });
 

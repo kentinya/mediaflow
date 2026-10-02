@@ -567,6 +567,15 @@ export interface RunItemCheckpoint {
   readonly snapshotId: string | null;
   readonly snapshotResolvable: boolean;
   readonly effectCertainty: string;
+  /**
+   * The durable completed operation steps and unconfirmed effects the
+   * checkpoint aggregates from this item's latest persisted Result.  These
+   * exist for **every** task kind — the standalone/coordinator processing
+   * chain included — so 查看证据 can explain what actually executed even
+   * when no reviewed Manual plan linkage exists (Task 42.2 P1 / AC-T4).
+   */
+  readonly completedOperations: readonly string[];
+  readonly uncertainEffects: readonly string[];
   readonly retrySafety: string;
   readonly errorCategory: string | null;
   readonly refusalReason: string | null;
@@ -663,6 +672,17 @@ function normalizeCheckpoint(payload: unknown): RunItemCheckpoint {
     fail();
   }
   const effects = readRecord(source["effects"], "checkpoint.effects");
+  // The checkpoint's aggregate step lists are the same durable Result facts
+  // the rows below carry, read with the identical strict array model so one
+  // document can never disagree with itself.
+  const effectCompleted = normalizeTextArray(
+    effects["completed_operations"] ?? [],
+    "checkpoint.effects.completed_operations",
+  );
+  const effectUncertain = normalizeTextArray(
+    effects["uncertain_effects"] ?? [],
+    "checkpoint.effects.uncertain_effects",
+  );
   const failure = source["failureExplanation"];
   let failureCategory: string | null = null;
   if (failure !== null && failure !== undefined) {
@@ -700,6 +720,8 @@ function normalizeCheckpoint(payload: unknown): RunItemCheckpoint {
     snapshotId: optionalText(configuration, "snapshot_id"),
     snapshotResolvable: flag(configuration, "resolvable"),
     effectCertainty: text(effects, "certainty"),
+    completedOperations: effectCompleted,
+    uncertainEffects: effectUncertain,
     retrySafety: text(source, "retry_safety"),
     errorCategory: optionalText(source, "error_category"),
     refusalReason: optionalText(source, "refusal_reason"),

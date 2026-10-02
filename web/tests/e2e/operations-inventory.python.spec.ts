@@ -705,7 +705,12 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   await expect(
     itemEvidence.getByText("未启用(本次执行没有获得源目录清理授权)"),
   ).toBeVisible();
-  await expect(itemEvidence.getByText("CREATE_DIRECTORY、MOVE")).toBeVisible();
+  // The reviewed-plan block states the persisted step list exactly; the
+  // durable Result row now also names its own steps ("2 步: …"), so the
+  // aggregate claim is matched exactly instead of as a substring.
+  await expect(
+    itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+  ).toBeVisible();
 
   // The native export resolves this exact standalone Task and downloads its
   // persisted one-item package through the existing result-package authority.
@@ -756,7 +761,7 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
     reloadedEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
   ).toBeVisible();
   await expect(
-    reloadedEvidence.getByText("CREATE_DIRECTORY、MOVE"),
+    reloadedEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
   ).toBeVisible();
   await expect(
     reloadedEvidence.getByText("未启用(本次执行没有获得源目录清理授权)"),
@@ -765,6 +770,177 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   // Every product API call made by the browser during the inspection, export
   // and post-restart refresh is a GET; the harness command above is outside
   // the product API and uses only temporary files/storage.
+  expect(api.length).toBeGreaterThan(0);
+  expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
+});
+
+test("a real standalone pipeline run keeps its durable steps through detail and restart", async ({
+  page,
+  request,
+}) => {
+  // Task 42.2 P1: the reviewer's repro runs the supported non-Manual
+  // `organize --execute` assembly (PersistentTaskCoordinator →
+  // MediaOrganizerService → OrganizerExecutor). Such a run has no reviewed
+  // Manual plan — `planEvidence` is legitimately unavailable — yet its
+  // executor persisted CREATE_DIRECTORY/MOVE on the checkpoint and the
+  // Result.  查看证据 must state those durable steps natively.
+  const api = recordApiCalls(page);
+  await connect(page);
+  await openInventory(page);
+  // The seeded population plus the Manual run from the previous test.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+
+  const executed = await request.post(
+    `${BASE}/__harness__/run-standalone-pipeline`,
+  );
+  expect(executed.ok()).toBeTruthy();
+  const run = (await executed.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly itemId: string;
+    readonly status: string;
+    readonly sourcePath: string;
+  };
+  expect(run.status).toBe("completed");
+
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
+
+  // Isolate the exact new run through the existing server-side command
+  // filter — the standalone pipeline command is unique in this population.
+  await page.getByLabel("操作类型").fill("harness-standalone-organize");
+  await expect(page).toHaveURL(/command=harness-standalone-organize/);
+  await expectRunTotal(page, 1);
+  const row = page.getByRole("row").filter({ hasText: run.runId });
+  await expect(row).toHaveCount(1);
+  await row.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByRole("row")).toHaveCount(2); // header + one item
+  await expect(items.getByText(run.sourcePath)).toBeVisible();
+
+  // The same bounded, side-effect-free item-evidence read — no provider,
+  // planner or Storage re-run — carries the durable step lists.
+  const evidenceResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response
+        .url()
+        .includes(`/operations/runs/${run.runId}/items/${run.itemId}`),
+  );
+  await items.getByRole("button", { name: "查看证据" }).click();
+  const response = await evidenceResponse;
+  expect(response.ok()).toBeTruthy();
+  const evidence = (await response.json()) as {
+    readonly planEvidence: {
+      readonly available: boolean;
+      readonly reason?: string;
+    };
+    readonly checkpoint: {
+      readonly effects: {
+        readonly certainty: string;
+        readonly completed_operations: readonly string[];
+      };
+    };
+    readonly results: readonly {
+      readonly completed_operations: readonly string[];
+      readonly effect_certainty: string;
+      readonly cleanup_status: string;
+    }[];
+  };
+  expect(evidence.planEvidence).toEqual({
+    available: false,
+    reason: "no_reviewed_manual_execution_plan",
+  });
+  expect(evidence.checkpoint.effects.completed_operations).toEqual([
+    "CREATE_DIRECTORY",
+    "MOVE",
+  ]);
+  expect(evidence.results[0]).toMatchObject({
+    completed_operations: ["CREATE_DIRECTORY", "MOVE"],
+    effect_certainty: "verified_complete",
+    cleanup_status: "disabled",
+  });
+
+  const itemEvidence = detail.getByRole("region", { name: "条目证据" });
+  // The reviewed-plan section keeps its honest unavailability…
+  await expect(
+    itemEvidence.getByRole("heading", { name: "持久审核计划(不可用)" }),
+  ).toBeVisible();
+  await expect(
+    itemEvidence.getByText(/没有可展示的持久审核计划/),
+  ).toBeVisible();
+  // …and the durable steps the P1 hid behind "—" are now stated natively.
+  await expect(
+    itemEvidence.getByText("持久执行步骤(检查点与结果聚合)"),
+  ).toBeVisible();
+  // The aggregate statement is exactly one: no duplicate fabricated list.
+  await expect(
+    itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+  ).toHaveCount(1);
+  // The durable Result row names its own persisted steps.
+  await expect(
+    itemEvidence.getByText(/步: CREATE_DIRECTORY、MOVE/),
+  ).toBeVisible();
+  // The captured operation section renders its bounded step lists instead
+  // of collapsing arrays to "—" (createdDirectories was the `—` the reviewer
+  // pointed at).
+  await expect(
+    itemEvidence.getByText(
+      /createdDirectories=Movies\/Movies\/Anime\/Two \(2002\) \[tmdbid-102\]/,
+    ),
+  ).toBeVisible();
+  await expect(
+    itemEvidence.getByText(/completedOperations=CREATE_DIRECTORY、MOVE/),
+  ).toBeVisible();
+  // The cleanup truth from the Result row stays explained.
+  await expect(
+    itemEvidence.getByRole("cell", {
+      name: "未启用(本次执行没有获得源目录清理授权)",
+    }),
+  ).toBeVisible();
+
+  // Refresh keeps the same durable facts — the run is not recomputed.
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expect(
+    itemEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+  ).toHaveCount(1);
+
+  // Restart the real Python runtime over the same SQLite file and return
+  // through the authentication continuation: the steps still come from
+  // durable history.
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${run.runId}`));
+  await expect(page).toHaveURL(new RegExp(`item=${run.itemId}`));
+  const reloadedEvidence = page
+    .getByRole("region", { name: "运行详情" })
+    .getByRole("region", { name: "条目证据" });
+  await expect(
+    reloadedEvidence.getByText(run.sourcePath, { exact: true }),
+  ).toBeVisible();
+  await expect(
+    reloadedEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    reloadedEvidence.getByText(/createdDirectories=Movies\/Movies\/Anime/),
+  ).toBeVisible();
+  await expect(
+    reloadedEvidence.getByRole("heading", { name: "持久审核计划(不可用)" }),
+  ).toBeVisible();
+
+  // Privacy: no host temp path leaks into the DOM.
+  const html = await page.content();
+  expect(html).not.toContain("/tmp/");
+
+  // Every product API call is a GET; the harness commands are outside the
+  // product API and only ever touched temporary files.
   expect(api.length).toBeGreaterThan(0);
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
