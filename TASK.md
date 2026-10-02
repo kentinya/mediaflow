@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 42.2
 Parent Slice: 42
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: cf7099a478a203f3f29ac57ef5b8acc295aadaa9
 Difficulty: High
 Test Level: T4
@@ -291,184 +291,109 @@ truth. Do not copy production config or modify reference/user files for a gate.
 
 ### Changed Files
 
-Backend: `mediaflow/interfaces/pagination.py` (new scoped cursor kinds);
-`mediaflow/domain/operations_run.py` (dispositions, progress/record/item-window
-contracts); `mediaflow/domain/task_persistence.py` (`list_items` status filter);
-`mediaflow/infrastructure/sqlite_runtime.py` (schema 42 additive read indexes,
-`operations_run_with_progress`, `operations_run_items_window`,
-`operations_run_records_window`, `resolve_operations_run_link`,
-`list_operational_logs_for_plan`, filtered `list_items`);
-`mediaflow/application/operations_lifecycle.py` (accounting basis, progress/
-record/item-evidence documents); `mediaflow/application/automation.py` (documented
-worker schema default 41→42); `mediaflow/interfaces/service_api.py`
-(`runs/{id}` overview now carries `progress`; `runs/{id}/items`,
-`runs/{id}/records`, `runs/{id}/items/{itemId}`, `runs/{id}/export`; scoped
-cursor scopes; masked audit routes for the run family).
-
-Web: new `web/src/entities/operations/run-detail.ts`,
-`web/src/features/operations/run-detail-query.ts`, `run-detail-state.ts`,
-`RunDetailTabs.tsx`; extended `run.ts`, `task.ts` (exported item/result
-normalizers), `api-client.ts` (fetchers), `OperationsLanding.tsx`,
-`TaskDetailPage.tsx` (native tabs replace the separate item/result tables),
-`destination-model.ts` (auth-continuation allowlist), `styles.css`.
-
-Tests: new `tests/test_operations_run_detail.py` (36), `run-detail.test.ts` (32),
-`run-detail-state.test.ts` (4), `RunDetailTabs.test.tsx` (8), extended
-`operations-api.test.ts` (+13), `OperationsInventory/OperationsRouter` tests,
-`destination-model.test.ts` (+2); `scripts/operations_inventory_harness.py` rich
-durable population through real repository write paths;
-`web/tests/fake-server.mjs` detail routes; `web/tests/e2e/operations.spec.ts`
-(+5 detail tests incl. a real download), `operations-inventory.python.spec.ts`
-(+4 real-Python detail tests). Six existing schema-version pins updated
-41→42 as factual migration maintenance.
+- Backend: `mediaflow/application/media_organizer.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`.
+- Browser proof: `scripts/operations_inventory_harness.py`, `web/tests/e2e/operations-inventory.python.spec.ts`.
+- Web: `web/src/entities/operations/preview.ts`, `web/src/entities/operations/run-detail.ts`, `web/src/entities/operations/run-detail.test.ts`, `web/src/features/operations/RunDetailTabs.tsx`, `web/src/features/operations/RunDetailTabs.test.tsx`.
+- Regression suites: `tests/test_operations_run_detail_plan_evidence.py`, `tests/test_operations_run_detail_log_isolation.py`.
 
 ### Implemented
 
-AC-T1–AC-T8 of the Task. One selected-run journey: the overview and its
-task-kind-specific progress come from one SQLite read snapshot (mutually
-exclusive dispositions reconcile to the known total; a live scan or an
-unadmitted Task stays honestly indeterminate; admitted-but-unmaterialized rows
-publish inside `pending`; success splits exactly into confirmed plus uncertain,
-and uncertain effects are never counted as confirmed success; scan errors and
-attachment steps stay separate; no ETA/current-file/success-percentage). Items
-and operation records page and filter on the server with cursors bound to
-principal + exact run/task + submitted filters (new `run_items`/`run_records`
-scoped kinds; legacy unscoped cursors and routes untouched). The record stream
-unions `task_results`, captured `pipeline_evidence`, operational logs joined by
-persisted `task_id`/`job_id`, and control/recovery audit rows joined by
-persisted task IDs — never text, never the global collection filtered in the
-browser. One item's evidence composes checkpoint/Results/plan/plan-linked logs
-through exact IDs; a foreign item is a 404; absent logs never erase a Result;
-configuration digests/fingerprints stay out. The native export action resolves
-the run's exact linked Task server-side and delegates to the existing
-`PackageExchangeService.export_results` authority (ordering/redaction/limits/
-digest/truncation unchanged; pre-Task is an explicit 409 `task_not_linked`;
-a failed export never becomes an empty download; the downloaded
-`mediaflow.results.v1` camelCase package is validated before saving). Chinese
-`任务详情`/`操作记录` tabs, narrow-screen detail, focus/Escape/return behavior,
-URL-owned tab/filters/cursors/inspected-item context through history, refresh
-and auth continuation, shared bounded polling that settles on terminal state.
-All reads are GET-only side-effect-free; existing Task/Job/Files/Scan/Preview/
-Automation links, controls and retired-endpoint boundaries survive; RecognitionType
-C identity is preserved through every joined path and the export. Additive
-schema-42 indexes only, with a real Task-Base (schema-41) upgrade proof.
+- Run-item evidence joins `manual_execution_items` only by its exact persisted `(task_id, task_item_id)` link. It projects the captured Preview plan, analysis, identity, policies, destination, conflicts, cleanup plan and durable execution effects through bounded allowlists; absent links state that the reviewed plan is unavailable. Reads do not call a Provider, Planner or media Storage.
+- Result cleanup status and step count are added only to the run-item evidence document, keeping existing Manual Preview/Execution response contracts intact. RecognitionType C stays C with Naming/Classification policy A.
+- Operational logs now require the reusable `plan_id` plus persisted Task or Job linkage. The Organizer stamps its Task ID when emitting tracked logs; no time or message inference attributes legacy unlinked logs.
+- Web detail preserves and renders evidence-section contents and the captured reviewed plan, effects and cleanup outcome. The Python-backed harness now admits an exact Preview through the real API and completes it with `ManualOrganizeExecutionWorker` using temporary managed configuration, Local Storage and synthetic metadata.
 
 ### Tests and Results
 
-Focused + affected integration (`.venv/bin/python -m unittest discover -s tests -p <file>`, all OK):
-`test_operations_run_detail.py` 36; `test_operations_run_inventory.py` 39;
-`test_operations_workspace.py` 20; `test_task_persistence.py` 13;
-`test_processing_worker_readiness.py` 19; `test_v2_manual_organize.py` 37;
-`test_direct_file_operations.py` 60; `test_direct_file_transfers.py` 100;
-`test_operational_logging.py` 6; `test_configuration_package_exchange.py` 13;
-`test_recovery_continuation.py` 28; `test_recovery_batch.py` 48;
-`test_api_security.py` 13.
-
-Full regression: `discover -s tests` → Ran 2096, **OK (skipped=7)** (run twice,
-including after the final source state).
-
-T4 gates: `scripts/check_governance.py` PASS; `ruff format --check` +
-`ruff check` clean; `compileall` OK; `pip check` OK; both example configs
-`config validate` OK; `test_release_security.py` 6 OK,
-`test_release_validation.py` 3 OK, `test_migration_rehearsal.py` 6 OK,
-`test_upgrade_preflight.py` 4 OK; `git diff --check` (worktree and
-`cf7099a`) clean; reference SHA-256 unchanged
-`a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`;
-`config/alist.json` ignored/untracked/unstaged, `git ls-files` empty;
-`grep -rn -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` → 0 matches.
-Docker gate: first invocation **FAILed environmentally** (the daemon cannot see
-this container's private `/tmp` tmpfs: "bind source path does not exist");
-re-run per the Task's allowance with an isolated daemon-visible
-`TMPDIR=/root/mediaflow/.gate-tmp` → "Release-security smoke acceptance
-passed" (re-verified after the final formatting); only gate-owned temp removed.
-Wheel: `pip wheel . --no-deps --no-build-isolation -w <temp>` +
-`wheel_smoke_test.py` → PASS at schema 42 (rebuilt and re-run on the final
-state).
-
-Web (from `web/`): `npm run test -- --run` → 61 files, **922 passed** (final;
-869 before this Task's added coverage); `npm run typecheck`, `npm run lint`,
-`npm run format:check`, `npm run build` all pass. Playwright invocations were
-run sequentially (shared artifact directory):
-`npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts
-tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts` →
-**63 passed / 2 failed**; both failures are `deep-link.spec.ts:209` (explicit
-route choice) and `:479` (V1 handoff) — the same two B independently proved
-pre-existing/unrelated at this Task's Base (log
-`/tmp/mediaflow-b-r3-base-deeplink.log`, 12 passed / 2 failed on the unmodified
-Base export). They are recorded as **FAIL / PRE-EXISTING / UNRELATED**, not
-claimed PASS; no assertions, skips or timeouts were changed.
-`npm run test:e2e -- --config=playwright.python.config.ts
-tests/e2e/operations-inventory.python.spec.ts` → **10 passed**, including the
-new real-producer journey: selected detail → truthful organize progress (已处理
-5/6, confirmed vs uncertain split) → server item filter → item evidence →
-exactly-linked records stream with kind filter → real `mediaflow.results.v1`
-download with digest/ordering/truncation checks → GET-only proof for every
-detail read → indeterminate run states 总数未知 → tab/filter context survives a
-reload through auth continuation.
+- Final Python regression: `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2,113 tests, 7 skipped. The earlier correction attempt failed one `test_manual_operations_contract` fixture comparison after broadening shared Manual API documents; I scoped the new fields to run-item evidence, reran that exact fixture test successfully, then reran the full suite successfully.
+- `.venv/bin/python -m unittest tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture` — first **FAIL** with that intermediate broad projection, then **PASS** after restoring the existing Manual API shape.
+- Focused run-detail/log-isolation tests after that correction: `.venv/bin/python -m unittest tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation` — **PASS**, 53 tests. The two new suites contain 10 plan-evidence and 7 log-isolation tests.
+- These focused integration commands passed (449 tests total); the final full Python regression above covers them again on the final source:
+  - `.venv/bin/python -m unittest discover -s tests -p test_operations_run_detail.py` — **PASS**, 36.
+  - `.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py` — **PASS**, 39.
+  - `.venv/bin/python -m unittest discover -s tests -p test_operations_workspace.py` — **PASS**, 20.
+  - `.venv/bin/python -m unittest discover -s tests -p test_task_persistence.py` — **PASS**, 13.
+  - `.venv/bin/python -m unittest discover -s tests -p test_processing_worker_readiness.py` — **PASS**, 19.
+  - `.venv/bin/python -m unittest discover -s tests -p test_v2_manual_organize.py` — **PASS**, 37.
+  - `.venv/bin/python -m unittest discover -s tests -p test_direct_file_operations.py` — **PASS**, 60.
+  - `.venv/bin/python -m unittest discover -s tests -p test_direct_file_transfers.py` — **PASS**, 100.
+  - `.venv/bin/python -m unittest discover -s tests -p test_operational_logging.py` — **PASS**, 6.
+  - `.venv/bin/python -m unittest discover -s tests -p test_configuration_package_exchange.py` — **PASS**, 13.
+  - `.venv/bin/python -m unittest discover -s tests -p test_recovery_continuation.py` — **PASS**, 28.
+  - `.venv/bin/python -m unittest discover -s tests -p test_recovery_batch.py` — **PASS**, 48.
+  - `.venv/bin/python -m unittest discover -s tests -p test_api_security.py` — **PASS**, 13.
+- Web focused command `npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes` — **PASS**, 33 files / 518 tests. Full Web command `npm run test -- --run` — **PASS**, 61 files / 936 tests. `npm run typecheck`, `npm run lint`, `npm run format:check` and `npm run build` — **PASS**; build retains the existing large-chunk warning.
+- Fake-response Playwright command `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts` — **63 passed / 2 failed**. The failures are `deep-link.spec.ts:209` and `:479`; B independently reproduced both at Task Base and recorded them as pre-existing/unrelated. The real Python-backed command `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS**, 11 tests, including real admission/Worker completion, C identity with A policies, completed CREATE_DIRECTORY/MOVE, disabled cleanup, scoped export and restart-persistent detail.
+- Earlier overlapping Web attempts exposed one Manual Organize intent timeout and two Storage page assertions before being interrupted; the isolated intent test and both final serial Web suites passed. The first Python-browser attempts exposed two harness startup issues and a Worker snapshot mismatch (10/11); after fixing the import/config path and pinning the Worker to the Active snapshot, the exact final Python-browser command passed 11/11.
+- T4 checks — **PASS**: `python3 scripts/check_governance.py`; `.venv/bin/python scripts/docker_release_security_smoke_test.py` (temporary project and context cleaned); `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required `config validate` commands; release security (6), release validation (3), migration rehearsal (6) and upgrade preflight (4) tests. `git diff --check` and `git diff --check cf7099a478a203f3f29ac57ef5b8acc295aadaa9` are clean. Reference image SHA-256 matches `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`; `config/alist.json` is ignored and neither tracked nor staged; `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` found no matches.
+- Wheel gate: `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w <temporary-output>` and `.venv/bin/python scripts/wheel_smoke_test.py <built-wheel>` — **PASS**, schema 42, with no migration required.
 
 ### Decisions
 
-- New scoped cursor kinds `run_items`/`run_records` (principal + exact run/task +
-  submitted filter bound) instead of re-scoping `task_items`/`task_results`, so
-  the V1 compatibility detail and its existing cursors stay byte-compatible.
-- The progress partition is derived from persisted item statuses (so it always
-  reconciles); the uncertain-effect annotation is published as
-  `confirmed_success` + `uncertain_success` (sum equals the success status count)
-  and the UI headlines confirmed success only — uncertain is never claimed as
-  success while reconciliation holds.
-- Indeterminate rule: a live manual Scan (discovery not reconciled), a
-  non-terminal Task with nothing admitted, or an unknown/legacy status row (it
-  counts as failed/partial, never dropped).
-- The record stream uses prefixed record IDs (`result:`/`evidence:`/`log:`/
-  `audit:`) as the deterministic keyset tiebreak, with a bounded two-phase
-  payload fetch inside the same snapshot.
-- Export stays delegated to `PackageExchangeService.export_results`; the route
-  adds only run→Task resolution. The frontend validates the committed
-  camelCase interchange row contract (a real snake/camel mismatch was caught by
-  the real-browser proof and fixed in the frontend validator, not the package).
-- Schema 42 is index-only and additive; the six test pins and the documented
-  `ProcessingWorkerService` default were updated exactly as previous bumps did.
-- The landing overview read now passes through `AuthorizedReadBoundary` so
-  401/403/unavailable/malformed overview failures stay distinct instead of
-  sticking on loading.
-- The Python harness attaches the repository-only `PackageExchangeService`
-  (test-only wiring; configuration-dependent package routes keep their 503).
+- Reused the persisted Manual execution-item link and reviewed `plan_json`; made the log query require the exact run linkage alongside `plan_id`.
+- Kept the new Result cleanup facts and cleanup plan projection local to run-item evidence so existing Manual Preview/Execution documents do not change.
+- Used only temporary local paths and a synthetic provider in the browser harness. No migration or production service was needed.
 
 ### Remaining In-Slice Work
 
-Per B's post-42.1 evaluation, still open in Slice 42 and untouched here:
-RO-4's new organize-entry journey completion, RO-5's non-transfer safe queued
-Web Continue, RO-6's native task-linked decisions/failed-analysis recovery, and
-RO-7's remaining future-journey integration/restart proof. Existing controls and
-their safe destinations were preserved, not extended.
+RO-4's new organize-entry journey, RO-5's queued Continue/control authority and RO-6's native review/failed-analysis commands remain outside this Task.
 
 ### Risks / Deviations
 
-- The two `deep-link.spec.ts` failures above are pre-existing/unrelated
-  (B-proven at Base); this Task did not touch those specs.
-- The Docker gate required the Task-allowed isolated daemon-visible `TMPDIR` in
-  this environment; recorded above with the passing re-run.
-- The V1 compatibility route `/api/v1/tasks/{id}` still publishes
-  `configuration_snapshot_digest` in its pre-existing compatibility document
-  contract; every new bounded surface (overview/items/records/evidence/export)
-  publishes no digest or fingerprint (asserted).
-- Full-suite output contains pre-existing ResourceWarnings about unclosed temp
-  SQLite connections from older tests; no failures, no skips added.
-- B's rewritten `TASK.md` (this Task's contract) travels with the completion
-  report commit; the implementation checkpoint itself contains no Task-document
-  churn.
+- The two deep-link Playwright failures remain as the Base-proven, unrelated failures noted above. The Vite build emitted a large-chunk warning. The Python suite emits existing SQLite `ResourceWarning`s but completed successfully.
+- Preserved the three pre-existing untracked images under `docs/pics/`; they are not part of this checkpoint. No external service gate was unavailable.
 
 ### Checkpoint
 
-```text
 Status: READY FOR B REVIEW
-Head SHA: 4edc41534ea767b72ad0b217ff66bf9ba1ec381c
+Head SHA: 186e61f850be69126997c948f544146c1198e78e
 
 ## B Review Result
 
 ```text
-Reviewed: NOT REVIEWED
-Decision: PENDING
+Reviewed: cf7099a478a203f3f29ac57ef5b8acc295aadaa9..4edc41534ea767b72ad0b217ff66bf9ba1ec381c
+Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
-Next: PENDING
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — 原生条目证据没有完成持久解释旅程（AC-T4；Scope 4；Slice RO-3 / AC-6）。**
+  当前合法入口是 ResourceLibrary Files 整理 → 已审核 Preview → 明确执行 → Worker 完成
+  → `操作与任务` 选中运行 → `查看证据`。B 使用已通过 Storage check / strategy test /
+  destination precheck 并 checked activation 的真实 Managed 配置、SQLite FileIndex/Task、
+  原有完整能力的 LocalStorage 和本地合成 MetadataProvider，经过真实 API 准入和
+  `ManualOrganizeExecutionWorker` 完成一项 MOVE；未手工补写 TaskItem、Result 或分析证据。
+  `.venv/bin/python /tmp/mediaflow-b-t42-2-managed-detail.py` 与
+  `node /tmp/mediaflow-b-t42-2-managed-browser.mjs` 可重复该旅程。持久 Result 的
+  `recognition_type=C`、`metadata_policy_id=C`、Naming/Classification/Organize policy A、
+  `completed_operations=[CREATE_DIRECTORY, MOVE]` 均存在，checkpoint 还有
+  `cleanup_status=disabled`；原生详情未展示这些身份、策略、步骤，并把清理显示为 `—`。
+  同一执行精确关联的持久 Preview GET 返回 200，含 recognition/metadata/naming/
+  classification 分析、operationPolicy 和 conflicts；新条目证据却返回 `evidence=[]`，
+  Web 显示“该条目没有持久化的计划/分析证据”。`操作记录` 只有摘要，`查看条目` 回到同一
+  不完整详情。证据在 `/tmp/mediaflow-b-t42-2-managed-evidence.json`、
+  `/tmp/mediaflow-b-t42-2-managed-persisted-preview.json` 和
+  `/tmp/mediaflow-b-t42-2-managed-browser.json`。实际代码位于
+  `service_api.py::_operations_run_item_evidence`、
+  `run-detail.ts::normalizeEvidenceDocument`（丢弃 section 内容）和
+  `RunDetailTabs.tsx::RunEvidenceSection`（只显示段名/摘要）。修正方向：复用已有持久
+  Manual execution→Preview/item 关联及安全解释投影，在同一有界只读旅程展示适用的身份、
+  策略、计划/冲突、已完成/未确认步骤与清理；真正缺失才标 unavailable，不重跑 Provider、
+  Planner 或 Storage。补足现有真实 Python 浏览器用例的生产准入/Worker→详情解释验证，
+  不能仅靠仓库补写的 rich fixture 或断言段名证明完成。
+- **P1 — “精确关联日志”混入另一运行的记录（AC-T4；Scope 5；Slice RO-3 / AC-6）。**
+  在同一 checked-active Managed 配置及完整 LocalStorage 上，当前生产
+  `PersistentTaskCoordinator` / `MediaOrganizerService` / `OrganizerExecutor` /
+  `SQLiteOperationalLogger` 对同一合法源先后执行两次零变更 Preview，得到两个独立 Task。
+  `.venv/bin/python /tmp/mediaflow-b-t42-2-log-link.py` 返回两项相同的确定性
+  `plan_id=4b79249fb44270c6f5f1`；第一项的
+  `GET /api/v1/operations/runs/{taskA}/items/{itemA}` 返回 4 条日志，其中 2 条由第二次
+  运行实际生成，证据在 `/tmp/mediaflow-b-t42-2-log-link.log` 与
+  `/tmp/mediaflow-b-t42-2-log-link.json`。操作员查看第一项任务证据时，另一运行的时间和
+  execution/plan 事件被标成该项的“精确关联日志”，无法正确区分两次尝试。
+  `organizer.py::_plan_id` 只哈希源/目标 Storage 与路径，不是运行唯一键；新增
+  `SQLiteTaskRepository.list_operational_logs_for_plan` 仅按 plan_id 查询，API 未附加
+  当前 Task/Job 边界。修正方向：在现有有界查询上同时约束该运行的真实持久 Task/Job
+  关联和计划，不能仅凭可复用 plan ID 归属日志；没有足够运行关联的历史日志明确不可用，
+  不按时间/文本猜测或补写关联。加入两次真实生产 Preview 的隔离回归，保持 Result 独立
+  于日志，不改变任务引擎、执行权限或媒体行为。
