@@ -30,6 +30,10 @@ import {
   type TaskItemSummary,
   type TaskResultSummary,
 } from "./task";
+import {
+  normalizeManualPreviewPlan,
+  type ManualPreviewPlanModel,
+} from "./preview";
 
 /** The mutually exclusive primary-item dispositions, in presentation order. */
 export const RUN_DISPOSITIONS = [
@@ -580,6 +584,16 @@ export interface RunEvidenceSection {
   readonly available: boolean;
   readonly unavailableReason: string | null;
   readonly truncated: boolean;
+  /**
+   * The bounded, already-secret-free detail the backend captured for this
+   * stage (parse fields, recognition decision, policy ids, plan facts...).
+   * It is preserved verbatim as a structured value so 查看证据 can explain
+   * *what was decided*, not only *that a stage existed*; a missing or
+   * malformed payload stays ``null`` instead of guessing.
+   */
+  readonly value: Record<string, unknown> | null;
+  readonly items: readonly Record<string, unknown>[];
+  readonly warnings: readonly string[];
 }
 
 export interface RunEvidenceDocument {
@@ -591,6 +605,40 @@ export interface RunEvidenceDocument {
   readonly sections: readonly RunEvidenceSection[];
 }
 
+/** One durable execution step of the exact manual Organize item. */
+export interface RunPlanEffect {
+  readonly action: string | null;
+  readonly sourceStorageId: string | null;
+  readonly sourceLocation: string | null;
+  readonly destinationStorageId: string | null;
+  readonly destinationLocation: string | null;
+  readonly verified: boolean;
+  readonly certainty: string | null;
+  readonly rollback: boolean;
+  readonly occurredAt: string | null;
+}
+
+/**
+ * The durable reviewed-plan explanation of one manually executed item
+ * (Task 42.2 / AC-T4).  ``available`` is the honest fact: an item that came
+ * through the reviewed Preview→authorize→Worker journey carries the same
+ * secret-free plan projection the operator reviewed; anything else says so
+ * instead of showing a false empty.
+ */
+export interface RunPlanEvidence {
+  readonly available: boolean;
+  readonly reason: string | null;
+  readonly previewId: string | null;
+  readonly executionId: string | null;
+  readonly status: string | null;
+  readonly stage: string | null;
+  readonly effectCertainty: string | null;
+  readonly completedOperations: readonly string[];
+  readonly uncertainEffects: readonly string[];
+  readonly effects: readonly RunPlanEffect[];
+  readonly plan: ManualPreviewPlanModel | null;
+}
+
 export interface RunItemEvidence {
   readonly runId: string;
   readonly taskId: string;
@@ -599,6 +647,7 @@ export interface RunItemEvidence {
   readonly checkpoint: RunItemCheckpoint;
   readonly results: readonly TaskResultSummary[];
   readonly evidence: readonly RunEvidenceDocument[];
+  readonly planEvidence: RunPlanEvidence;
   readonly logs: readonly RunRecord[];
 }
 
@@ -668,6 +717,43 @@ function normalizeCheckpoint(payload: unknown): RunItemCheckpoint {
   };
 }
 
+function normalizeEvidenceSection(
+  name: string,
+  raw: unknown,
+): RunEvidenceSection {
+  const record = readRecord(raw, "evidence.sections[]");
+  const rawValue = record["value"];
+  if (
+    rawValue !== null &&
+    rawValue !== undefined &&
+    typeof rawValue !== "object"
+  ) {
+    fail();
+  }
+  const rawItems = record["items"] ?? [];
+  if (!Array.isArray(rawItems) || rawItems.length > 64) {
+    fail();
+  }
+  return {
+    name,
+    available: flag(record, "available"),
+    unavailableReason: optionalText(record, "unavailableReason"),
+    truncated: flag(record, "truncated"),
+    value:
+      rawValue === null || rawValue === undefined
+        ? null
+        : { ...readRecord(rawValue, "evidence.sections[].value") },
+    items: rawItems.map((item) => ({
+      ...readRecord(item, "evidence.sections[].items[]"),
+    })),
+    warnings: normalizeTextArray(
+      record["warnings"] ?? [],
+      "evidence.sections[].warnings",
+      64,
+    ),
+  };
+}
+
 function normalizeEvidenceDocument(payload: unknown): RunEvidenceDocument {
   const source = readRecord(payload, "evidence");
   if ("configurationSnapshotDigest" in source) {
@@ -677,13 +763,7 @@ function normalizeEvidenceDocument(payload: unknown): RunEvidenceDocument {
   const sections = readRecord(source["sections"], "evidence.sections");
   const values: RunEvidenceSection[] = [];
   for (const [name, raw] of Object.entries(sections)) {
-    const record = readRecord(raw, "evidence.sections[]");
-    values.push({
-      name,
-      available: flag(record, "available"),
-      unavailableReason: optionalText(record, "unavailableReason"),
-      truncated: flag(record, "truncated"),
-    });
+    values.push(normalizeEvidenceSection(name, raw));
   }
   if (values.length > 32) {
     fail();
@@ -695,6 +775,94 @@ function normalizeEvidenceDocument(payload: unknown): RunEvidenceDocument {
     capturedAt: text(source, "capturedAt"),
     truncated: flag(source, "truncated"),
     sections: values,
+  };
+}
+
+function normalizePlanEffect(value: unknown): RunPlanEffect {
+  const source = readRecord(value, "planEvidence.effects[]");
+  return {
+    action: optionalText(source, "action"),
+    sourceStorageId: optionalText(source, "sourceStorageId"),
+    sourceLocation: optionalText(source, "sourceLocation"),
+    destinationStorageId: optionalText(source, "destinationStorageId"),
+    destinationLocation: optionalText(source, "destinationLocation"),
+    verified: flag(source, "verified"),
+    certainty: optionalText(source, "certainty"),
+    rollback: flag(source, "rollback"),
+    occurredAt: optionalText(source, "occurredAt"),
+  };
+}
+
+export const UNAVAILABLE_PLAN_REASON = "no_reviewed_manual_execution_plan";
+
+/** Chinese labels for the durable plan-evidence unavailable reason codes. */
+export const RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS: Readonly<
+  Record<string, string>
+> = {
+  no_reviewed_manual_execution_plan:
+    "该条目不是经审核 Manual Organize 旅程执行的(CLI、计划任务或历史记录),没有可展示的持久审核计划。",
+};
+
+function normalizePlanEvidence(payload: unknown): RunPlanEvidence {
+  if (payload === null || payload === undefined) {
+    // A detail response without the section at all is still an honest
+    // statement, not a silent blank: the plan explanation is unavailable.
+    return {
+      available: false,
+      reason: UNAVAILABLE_PLAN_REASON,
+      previewId: null,
+      executionId: null,
+      status: null,
+      stage: null,
+      effectCertainty: null,
+      completedOperations: [],
+      uncertainEffects: [],
+      effects: [],
+      plan: null,
+    };
+  }
+  const source = readRecord(payload, "planEvidence");
+  if (!flag(source, "available")) {
+    return {
+      available: false,
+      reason: optionalText(source, "reason") ?? UNAVAILABLE_PLAN_REASON,
+      previewId: null,
+      executionId: null,
+      status: null,
+      stage: null,
+      effectCertainty: null,
+      completedOperations: [],
+      uncertainEffects: [],
+      effects: [],
+      plan: null,
+    };
+  }
+  const rawCompleted = source["completedOperations"] ?? [];
+  const rawUncertain = source["uncertainEffects"] ?? [];
+  const rawEffects = source["effects"] ?? [];
+  if (!Array.isArray(rawEffects) || rawEffects.length > 32) {
+    fail();
+  }
+  return {
+    available: true,
+    reason: null,
+    previewId: optionalText(source, "previewId"),
+    executionId: optionalText(source, "executionId"),
+    status: optionalText(source, "status"),
+    stage: optionalText(source, "stage"),
+    effectCertainty: optionalText(source, "effectCertainty"),
+    completedOperations: normalizeTextArray(
+      rawCompleted,
+      "planEvidence.completedOperations",
+      32,
+    ),
+    uncertainEffects: normalizeTextArray(
+      rawUncertain,
+      "planEvidence.uncertainEffects",
+      32,
+    ),
+    effects: rawEffects.map((item) => normalizePlanEffect(item)),
+    plan: normalizeManualPreviewPlan(source["plan"] ?? null),
   };
 }
 
@@ -739,6 +907,7 @@ export function normalizeRunItemEvidence(payload: unknown): RunItemEvidence {
     checkpoint,
     results,
     evidence,
+    planEvidence: normalizePlanEvidence(source["planEvidence"]),
     logs,
   };
 }

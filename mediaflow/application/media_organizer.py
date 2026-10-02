@@ -688,6 +688,13 @@ class MediaOrganizerService:
 
     def _log(self, level: LogLevel, message: str, **context: object) -> None:
         if self._logger:
+            if self._task_id and "task_id" not in context:
+                # One run of the tracked pipeline attributes its own operational
+                # logs with the exact persisted Task ID.  A plan ID alone is not
+                # run-unique (two attempts at one source share a plan), so the
+                # durable run linkage is written at emission time — never
+                # inferred later from time, text or the plan ID.
+                context = {**context, "task_id": self._task_id}
             self._logger.log(level, message, **context)
 
     def _record(

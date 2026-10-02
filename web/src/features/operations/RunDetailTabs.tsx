@@ -31,11 +31,15 @@ import {
   RUN_DISPOSITION_LABELS,
   RUN_DISPOSITIONS,
   RUN_ITEM_STATUS_LABELS,
+  RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS,
   RUN_RECORD_KIND_LABELS,
   RUN_RECORD_KINDS,
+  UNAVAILABLE_PLAN_REASON,
   type RunDisposition,
+  type RunEvidenceSection,
   type RunItemEvidence,
   type RunItemsPage,
+  type RunPlanEvidence,
   type RunProgress,
   type RunRecord,
   type RunRecordKind,
@@ -69,6 +73,312 @@ const RUN_EFFECT_CERTAINTY_LABELS: Readonly<Record<string, string>> = {
   attempted_unverified: "已尝试,未验证",
   unknown: "未知",
 };
+
+/** Chinese labels for the durable source-directory-cleanup outcome. */
+const RUN_CLEANUP_STATUS_LABELS: Readonly<Record<string, string>> = {
+  disabled: "未启用(本次执行没有获得源目录清理授权)",
+  not_applicable: "不适用(该操作不产生可清理的源目录)",
+  success: "已清理(空源目录已删除)",
+  stopped: "已停止(达到配置的清理上限)",
+  refused: "已拒绝(策略或安全检查阻止清理)",
+  partial: "部分清理",
+  failed: "清理失败",
+};
+
+function cleanupStatusLabel(value: string | null): string {
+  if (value === null || value === "") {
+    return "—";
+  }
+  return RUN_CLEANUP_STATUS_LABELS[value] ?? value;
+}
+
+function safeValue(value: string | null): string {
+  return value === null || value === "" ? "—" : value;
+}
+
+function evidenceFieldValue(value: unknown): string | null {
+  if (typeof value === "string") {
+    return value === "" ? null : value;
+  }
+  if (typeof value === "number" || typeof value === "boolean") {
+    return String(value);
+  }
+  return null;
+}
+
+/** One captured pipeline section's bounded detail, not just its name. */
+function EvidenceSectionDetails({
+  sections,
+}: {
+  readonly sections: readonly RunEvidenceSection[];
+}) {
+  const available = sections.filter((section) => section.available);
+  const missing = sections.filter((section) => !section.available);
+  return (
+    <dl className="mf-dashboard-facts">
+      {available.map((section) => (
+        <div key={section.name}>
+          <dt>{section.name}</dt>
+          <dd>
+            {section.value === null && section.items.length === 0
+              ? "已捕获(无展示字段)"
+              : [
+                  ...Object.entries(section.value ?? {}).map(
+                    ([key, value]) =>
+                      `${key}=${evidenceFieldValue(value) ?? "—"}`,
+                  ),
+                  ...section.items.map(
+                    (item, index) =>
+                      `条目${index + 1}: ${
+                        Object.entries(item)
+                          .map(
+                            ([key, value]) =>
+                              `${key}=${evidenceFieldValue(value) ?? "—"}`,
+                          )
+                          .join(", ") || "无字段"
+                      }`,
+                  ),
+                ].join(" · ") || "—"}
+            {section.truncated ? "(已截断)" : ""}
+            {section.warnings.length > 0
+              ? ` 警告: ${section.warnings.join("; ")}`
+              : ""}
+          </dd>
+        </div>
+      ))}
+      {missing.length > 0 && (
+        <div>
+          <dt>不可用段</dt>
+          <dd>
+            {missing
+              .map(
+                (section) =>
+                  `${section.name}(${
+                    RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[
+                      section.unavailableReason ?? ""
+                    ] ??
+                    section.unavailableReason ??
+                    "未捕获"
+                  })`,
+              )
+              .join("、")}
+          </dd>
+        </div>
+      )}
+    </dl>
+  );
+}
+
+/**
+ * The durable reviewed-plan explanation of one manually executed item.
+ *
+ * Every value here was persisted at Preview/admission/Worker time and is
+ * re-read through the exact TaskItem linkage — nothing is recomputed from the
+ * Provider, planner or Storage, and a truly absent section says so instead of
+ * silently disappearing.
+ */
+function PlanEvidenceBlock({
+  plan: evidence,
+}: {
+  readonly plan: RunPlanEvidence;
+}) {
+  const plan = evidence.plan;
+  const analysis = plan?.analysis ?? null;
+  return (
+    <>
+      <dl className="mf-dashboard-facts">
+        <div>
+          <dt>识别类型</dt>
+          <dd>{safeValue(plan?.recognitionType ?? null)}</dd>
+        </div>
+        <div>
+          <dt>元数据身份</dt>
+          <dd>
+            {safeValue(plan?.provider ?? null)} /{" "}
+            {safeValue(plan?.providerId ?? null)} ·{" "}
+            {safeValue(plan?.title ?? null)} ·{" "}
+            {safeValue(plan?.mediaIdentity?.mediaType ?? null)}
+          </dd>
+        </div>
+        <div>
+          <dt>策略</dt>
+          <dd>
+            Metadata {safeValue(plan?.policies?.metadataPolicyId ?? null)} ·
+            Naming {safeValue(plan?.policies?.namingPolicyId ?? null)} ·
+            Classification{" "}
+            {safeValue(plan?.policies?.classificationPolicyId ?? null)} ·
+            Organize {safeValue(plan?.policies?.organizePolicyId ?? null)}
+          </dd>
+        </div>
+        <div>
+          <dt>解析分析</dt>
+          <dd>
+            {analysis?.parse === null || analysis === null
+              ? "—"
+              : `title=${safeValue(analysis.parse.titleCandidate)} · year=${
+                  analysis.parse.year ?? "—"
+                } · S${analysis.parse.season ?? "—"}E${
+                  analysis.parse.episode ?? "—"
+                } · ${safeValue(analysis.parse.resolution)} · ${safeValue(
+                  analysis.parse.source,
+                )} · ${safeValue(analysis.parse.videoCodec)}`}
+          </dd>
+        </div>
+        <div>
+          <dt>识别分析</dt>
+          <dd>
+            {analysis?.recognition === null || analysis === null
+              ? "—"
+              : `${safeValue(analysis.recognition.status)} · 规则 ${safeValue(
+                  analysis.recognition.ruleId,
+                )} · 置信 ${safeValue(analysis.recognition.confidence)}${
+                  analysis.recognition.reasons.length > 0
+                    ? ` · ${analysis.recognition.reasons
+                        .map((reason) => `${reason.code}: ${reason.message}`)
+                        .join("; ")}`
+                    : ""
+                }`}
+          </dd>
+        </div>
+        <div>
+          <dt>元数据分析</dt>
+          <dd>
+            {analysis?.metadata === null || analysis === null
+              ? "—"
+              : `${safeValue(analysis.metadata.status)} · 匹配分 ${
+                  analysis.metadata.match?.score ?? "—"
+                } · 候选 ${analysis.metadata.match?.candidateCount ?? 0}`}
+          </dd>
+        </div>
+        <div>
+          <dt>操作</dt>
+          <dd>{safeValue(plan?.operation ?? null)}</dd>
+        </div>
+        <div>
+          <dt>计划目标</dt>
+          <dd>
+            {safeValue(plan?.targetStorageId ?? null)}:
+            {safeValue(plan?.targetPath ?? null)}
+          </dd>
+        </div>
+        <div>
+          <dt>冲突</dt>
+          <dd>
+            {plan === null || plan.conflicts.length === 0
+              ? "无"
+              : plan.conflicts
+                  .map((conflict) => safeValue(conflict.type))
+                  .join("、")}
+          </dd>
+        </div>
+        <div>
+          <dt>能力判定</dt>
+          <dd>
+            {plan?.capabilities === null || plan === null
+              ? "—"
+              : `${safeValue(plan.capabilities.verdict)} · missing: ${
+                  plan.capabilities.missing.length > 0
+                    ? plan.capabilities.missing.join(", ")
+                    : "none"
+                }`}
+          </dd>
+        </div>
+        <div>
+          <dt>破坏性含义</dt>
+          <dd>
+            {plan?.destructiveImplications === null || plan === null
+              ? "—"
+              : plan.destructiveImplications.statement}
+          </dd>
+        </div>
+        <div>
+          <dt>审核清理投影</dt>
+          <dd>
+            {plan?.cleanupProjection === null || plan === null ? (
+              "未配置源目录清理"
+            ) : (
+              <span>
+                模式 {plan.cleanupProjection.mode}
+                {plan.cleanupProjection.permanentDelete
+                  ? "(整理成功后永久删除匹配文件)"
+                  : ""}{" "}
+                · 匹配 {plan.cleanupProjection.matchedFiles.length} 项 · 阻塞{" "}
+                {plan.cleanupProjection.blockingEntries.length} 项 · 预期{" "}
+                {safeValue(plan.cleanupProjection.expectedDirectoryOutcome)}
+              </span>
+            )}
+          </dd>
+        </div>
+        <div>
+          <dt>预览/执行关联</dt>
+          <dd>
+            preview {safeValue(evidence.previewId)} · execution{" "}
+            {safeValue(evidence.executionId)} · 持久状态{" "}
+            {safeValue(evidence.status)}
+          </dd>
+        </div>
+      </dl>
+      <h6>执行步骤(持久)</h6>
+      <dl className="mf-dashboard-facts">
+        <div>
+          <dt>已完成操作</dt>
+          <dd>
+            {evidence.completedOperations.length === 0
+              ? "无(未执行任何持久记录的操作)"
+              : evidence.completedOperations.join("、")}
+          </dd>
+        </div>
+        <div>
+          <dt>效果确定性</dt>
+          <dd>
+            {RUN_EFFECT_CERTAINTY_LABELS[
+              evidence.effectCertainty ?? "unknown"
+            ] ?? safeValue(evidence.effectCertainty)}
+          </dd>
+        </div>
+        {evidence.uncertainEffects.length > 0 && (
+          <div>
+            <dt>未确认效果</dt>
+            <dd>{evidence.uncertainEffects.join("、")}</dd>
+          </div>
+        )}
+      </dl>
+      {evidence.effects.length > 0 && (
+        <div style={{ overflowX: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>步骤</th>
+                <th>操作</th>
+                <th>目标</th>
+                <th>验证</th>
+                <th>确定性</th>
+              </tr>
+            </thead>
+            <tbody>
+              {evidence.effects.map((effect, index) => (
+                <tr key={`${effect.action ?? "step"}-${index}`}>
+                  <td>
+                    {index + 1}
+                    {effect.rollback ? "(回滚)" : ""}
+                  </td>
+                  <td>{safeValue(effect.action)}</td>
+                  <td>{safeValue(effect.destinationLocation)}</td>
+                  <td>{effect.verified ? "已验证" : "未验证"}</td>
+                  <td>
+                    {RUN_EFFECT_CERTAINTY_LABELS[
+                      effect.certainty ?? "unknown"
+                    ] ?? safeValue(effect.certainty)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </>
+  );
+}
 
 function formatDateTime(value: string): string {
   return value.replace("T", " ").replace(/\+00:00|Z$/, " UTC");
@@ -642,17 +952,33 @@ function RunEvidenceSection({
                             ] ?? result.effectCertainty}
                           </td>
                           <td>{result.destinationPath ?? "—"}</td>
-                          <td>{result.cleanupStatus ?? "—"}</td>
+                          <td>{cleanupStatusLabel(result.cleanupStatus)}</td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               )}
+              <h5>
+                持久审核计划(
+                {evidence.planEvidence.available ? "已捕获" : "不可用"})
+              </h5>
+              {evidence.planEvidence.available ? (
+                <PlanEvidenceBlock plan={evidence.planEvidence} />
+              ) : (
+                <p className="mf-dashboard-meta">
+                  {
+                    RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[
+                      evidence.planEvidence.reason ?? UNAVAILABLE_PLAN_REASON
+                    ]
+                  }
+                </p>
+              )}
               <h5>计划与分析证据({evidence.evidence.length})</h5>
               {evidence.evidence.length === 0 ? (
                 <p className="mf-dashboard-meta">
-                  该条目没有持久化的计划/分析证据(历史证据不可用,不会现算)。
+                  该条目没有流水线阶段的分析证据(历史记录或未捕获,不会现算);上方
+                  持久审核计划独立显示其已捕获的解释。
                 </p>
               ) : (
                 <ul className="mf-dashboard-meta">
@@ -660,21 +986,8 @@ function RunEvidenceSection({
                     <li key={value.evidenceId}>
                       {formatDateTime(value.capturedAt)} — {value.outcome}
                       (第 {value.attempts} 次尝试
-                      {value.truncated ? ",证据已截断" : ""}
-                      ;可用段:
-                      {value.sections
-                        .filter((section) => section.available)
-                        .map((section) => section.name)
-                        .join("、") || "无"}
-                      {value.sections.some((section) => !section.available)
-                        ? `;不可用段:${
-                            value.sections
-                              .filter((section) => !section.available)
-                              .map((section) => section.name)
-                              .join("、") || "无"
-                          }`
-                        : ""}
-                      )
+                      {value.truncated ? ",证据已截断" : ""})
+                      <EvidenceSectionDetails sections={value.sections} />
                     </li>
                   ))}
                 </ul>

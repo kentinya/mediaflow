@@ -401,6 +401,18 @@ def _bounded_scan_error_count(raw: object) -> int | None:
     return None
 
 
+def _safe_json_object(raw: object) -> dict[str, object]:
+    """A decoded persisted JSON object, or empty when it is missing/invalid."""
+
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
 def _bounded_int_mapping(raw: object) -> dict[str, int]:
     """A small bounded ``{name: count}`` mapping from persisted scan progress."""
 
@@ -7668,23 +7680,58 @@ class SQLiteTaskRepository:
         return tuple(reversed(values)) if reverse else values
 
     def list_operational_logs_for_plan(
-        self, plan_id: str, *, limit: int = 20
+        self,
+        plan_id: str,
+        *,
+        task_id: str | None = None,
+        job_id: str | None = None,
+        limit: int = 20,
     ) -> tuple[OperationalLogRecord, ...]:
-        """The operational logs exactly linked to one persisted plan ID.
+        """The operational logs of one run's persisted plan, bounded by that run.
 
-        The item evidence read joins through the persisted ``plan_id`` column
-        only — never through text matching — newest first and hard-bounded.
+        The item evidence read joins through persisted ID columns only — never
+        through text, time proximity or a row scan.  A plan ID is *not*
+        run-unique: ``_plan_id`` hashes the source/target Storage and paths, so
+        two independent attempts at the same source legitimately share one plan
+        ID while being distinct Tasks.  Attribution therefore requires the
+        calling run's own durable linkage: a row counts only when its persisted
+        ``plan_id`` matches AND it already carries this run's persisted Task ID
+        or Job ID.  With no run linkage at all, nothing is attributed — history
+        that cannot be tied to this run stays unavailable rather than being
+        claimed as this item's log.
         """
 
         if not isinstance(plan_id, str) or not plan_id.strip() or len(plan_id) > 128:
             raise ValueError("operational log plan ID is required")
         if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
             raise ValueError("operational log plan limit must be between 1 and 100")
+        linkage: list[str] = []
+        for name, value in (("task", task_id), ("job", job_id)):
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip() or len(value) > 128:
+                raise ValueError(f"operational log {name} ID is invalid")
+            linkage.append(value)
+        if not linkage:
+            # The reusable plan ID alone is not run evidence.
+            return ()
+        predicates = ["plan_id = ?"]
+        parameters: list[object] = [plan_id]
+        if task_id is not None and job_id is not None:
+            predicates.append("(task_id = ? OR job_id = ?)")
+            parameters.extend((task_id, job_id))
+        elif task_id is not None:
+            predicates.append("task_id = ?")
+            parameters.append(task_id)
+        else:
+            predicates.append("job_id = ?")
+            parameters.append(job_id)
         with self._lock:
             rows = self._connection.execute(
-                "SELECT * FROM operational_logs WHERE plan_id = ? "
-                "ORDER BY occurred_at DESC, log_id DESC LIMIT ?",
-                (plan_id, limit),
+                "SELECT * FROM operational_logs WHERE "
+                + " AND ".join(predicates)
+                + " ORDER BY occurred_at DESC, log_id DESC LIMIT ?",
+                (*parameters, limit),
             ).fetchall()
         return tuple(
             OperationalLogRecord(
@@ -9164,6 +9211,76 @@ class SQLiteTaskRepository:
                 status=503,
             )
         return admitted
+
+    def manual_execution_item_for_task_item(
+        self, task_id: str, task_item_id: str
+    ) -> dict[str, object] | None:
+        """The bounded durable Manual execution rows for one TaskItem (AC-T4).
+
+        The read joins the persisted ``manual_execution_items`` linkage only —
+        ``(task_id, task_item_id)`` is its own column pair and ``task_item_id``
+        is unique — so one item's reviewed plan, its preview analysis linkage
+        and its per-effect durable steps come back through the same exact link
+        the admission and Worker wrote, never through time proximity, text or
+        a reusable plan ID.  Returns ``None`` when the item was never executed
+        through the manual Organize journey (CLI, scheduled or legacy rows);
+        the evidence read then states the plan evidence as unavailable rather
+        than fabricating it.
+        """
+
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 128:
+            raise ValueError("manual execution task ID is required")
+        if not isinstance(task_item_id, str) or not task_item_id.strip() or len(task_item_id) > 128:
+            raise ValueError("manual execution task item ID is required")
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM manual_execution_items WHERE task_id=? AND task_item_id=?",
+                (task_id, task_item_id),
+            ).fetchone()
+            if row is None:
+                return None
+            effect_rows = self._connection.execute(
+                "SELECT * FROM manual_execution_effects WHERE execution_item_id=? "
+                "ORDER BY sequence, effect_id",
+                (row["execution_item_id"],),
+            ).fetchall()
+        try:
+            plan = json.loads(row["plan_json"])
+        except (TypeError, ValueError):
+            plan = {}
+        if not isinstance(plan, dict):
+            plan = {}
+        return {
+            "execution_item_id": row["execution_item_id"],
+            "execution_id": row["execution_id"],
+            "preview_id": row["preview_id"],
+            "preview_item_id": row["preview_item_id"],
+            "task_id": row["task_id"],
+            "task_item_id": row["task_item_id"],
+            "status": row["status"],
+            "stage": row["stage"],
+            "result_id": row["result_id"],
+            "effect_certainty": row["effect_certainty"],
+            "completed_operations": tuple(json.loads(row["completed_operations"] or "[]")),
+            "uncertain_effects": tuple(json.loads(row["uncertain_effects"] or "[]")),
+            "plan": plan,
+            "effects": tuple(
+                {
+                    "action": value["action"],
+                    "source_storage_id": value["source_storage_id"],
+                    "source_path": value["source_path"],
+                    "destination_storage_id": value["destination_storage_id"],
+                    "destination_path": value["destination_path"],
+                    "verified": bool(value["verified"]),
+                    "certainty": value["certainty"],
+                    # ``details_json`` was written through redact_manual_value at
+                    # persistence time; the operator projection bounds it again.
+                    "details": _safe_json_object(value["details_json"]),
+                    "occurred_at": value["created_at"],
+                }
+                for value in effect_rows
+            ),
+        }
 
     def get_manual_execution(self, execution_id: str) -> ManualExecution | None:
         if not isinstance(execution_id, str) or not execution_id.strip():
