@@ -869,32 +869,87 @@ function normalizeAnalysis(value: unknown): ManualPreviewAnalysisModel | null {
   };
 }
 
+/** The plan-derived findings shared by the Preview item and the durable run
+ *  item evidence (one exact shape-aware contract for one durable document). */
+export interface ManualPreviewPlanModel {
+  readonly recognitionType: string | null;
+  readonly operation: ManualPreviewOperation | null;
+  readonly destructiveImplications: ManualPreviewDestructiveImplicationsModel | null;
+  readonly title: string | null;
+  readonly provider: string | null;
+  readonly providerId: string | null;
+  readonly mediaIdentity: ManualPreviewMediaIdentityModel | null;
+  readonly policies: ManualPreviewPoliciesModel | null;
+  readonly analysis: ManualPreviewAnalysisModel | null;
+  readonly targetStorageId: string | null;
+  readonly targetPath: string | null;
+  readonly organizePolicy: string | null;
+  readonly planStatus: string | null;
+  readonly destination: ManualPreviewDestinationModel | null;
+  readonly attachments: readonly ManualPreviewAttachmentModel[];
+  readonly cleanupProjection: ManualPreviewCleanupModel | null;
+  readonly conflicts: readonly ManualPreviewConflictModel[];
+  readonly warnings: readonly string[];
+  readonly capabilities: ManualPreviewCapabilitiesModel | null;
+}
+
+function normalizePlanFields(
+  plan: Record<string, unknown> | null,
+): ManualPreviewPlanModel {
+  const rawAttachments = plan?.["attachments"] ?? [];
+  if (!Array.isArray(rawAttachments)) {
+    return fail();
+  }
+  const rawConflicts = plan?.["conflicts"] ?? [];
+  if (!Array.isArray(rawConflicts)) {
+    return fail();
+  }
+  const rawWarnings = plan?.["warnings"] ?? [];
+  if (!Array.isArray(rawWarnings)) {
+    return fail();
+  }
+  const destination = normalizeDestination(plan?.["destination"] ?? null);
+  const policies = normalizePolicies(plan?.["policies"] ?? null);
+  const mediaIdentity = normalizeMediaIdentity(plan?.["mediaIdentity"] ?? null);
+  const analysis = normalizeAnalysis(plan?.["analysis"] ?? null);
+  return {
+    recognitionType:
+      plan === null ? null : optionalText(plan, "recognitionType"),
+    operation: plan === null ? null : optionalOperation(plan, "operation"),
+    destructiveImplications: normalizeDestructiveImplications(
+      plan?.["destructiveImplications"] ?? null,
+    ),
+    title: mediaIdentity === null ? null : mediaIdentity.title,
+    provider: mediaIdentity === null ? null : mediaIdentity.provider,
+    providerId: mediaIdentity === null ? null : mediaIdentity.providerId,
+    mediaIdentity,
+    policies,
+    analysis,
+    targetStorageId: destination?.storageId ?? null,
+    targetPath: destination?.relativePath ?? null,
+    organizePolicy: policies === null ? null : policies.organizePolicyId,
+    planStatus: plan === null ? null : optionalText(plan, "planStatus"),
+    destination,
+    attachments: rawAttachments.map((item) => normalizeAttachment(item)),
+    cleanupProjection: normalizeCleanupProjection(
+      plan?.["cleanupProjection"] ?? null,
+    ),
+    conflicts: rawConflicts.map((item) => normalizeConflict(item)),
+    warnings: rawWarnings.map((item, index) =>
+      normalizeBoundedText(item, `plan.warnings[${index}]`),
+    ),
+    capabilities: normalizeCapabilities(plan?.["capabilities"] ?? null),
+  };
+}
+
 function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
   const source = readRecord(value, "preview_item");
   const sourceRecord = readRecord(source["source"], "item.source");
   readRecord(source["choice"], "item.choice");
   const plan = optionalRecord(source["plan"], "item.plan");
 
-  const rawAttachments = plan?.["attachments"] ?? [];
-  if (!Array.isArray(rawAttachments)) {
-    fail();
-  }
-  const rawConflicts = plan?.["conflicts"] ?? [];
-  if (!Array.isArray(rawConflicts)) {
-    fail();
-  }
-  const rawWarnings = plan?.["warnings"] ?? [];
-  if (!Array.isArray(rawWarnings)) {
-    fail();
-  }
-
   try {
-    const destination = normalizeDestination(plan?.["destination"] ?? null);
-    const policies = normalizePolicies(plan?.["policies"] ?? null);
-    const mediaIdentity = normalizeMediaIdentity(
-      plan?.["mediaIdentity"] ?? null,
-    );
-    const analysis = normalizeAnalysis(plan?.["analysis"] ?? null);
+    const findings = normalizePlanFields(plan);
     return {
       itemId: text(source, "itemId"),
       previewItemId: text(source, "previewItemId"),
@@ -911,32 +966,7 @@ function normalizePreviewItem(value: unknown): ManualPreviewItemModel {
       sourcePath: optionalText(sourceRecord, "path"),
       sourceFilename: optionalText(sourceRecord, "filename"),
       resourceLibraryId: optionalText(sourceRecord, "resourceLibraryId"),
-      recognitionType:
-        plan === null ? null : optionalText(plan, "recognitionType"),
-      operation: plan === null ? null : optionalOperation(plan, "operation"),
-      destructiveImplications: normalizeDestructiveImplications(
-        plan?.["destructiveImplications"] ?? null,
-      ),
-      title: mediaIdentity === null ? null : mediaIdentity.title,
-      provider: mediaIdentity === null ? null : mediaIdentity.provider,
-      providerId: mediaIdentity === null ? null : mediaIdentity.providerId,
-      mediaIdentity,
-      policies,
-      analysis,
-      targetStorageId: destination?.storageId ?? null,
-      targetPath: destination?.relativePath ?? null,
-      organizePolicy: policies === null ? null : policies.organizePolicyId,
-      planStatus: plan === null ? null : optionalText(plan, "planStatus"),
-      destination,
-      attachments: rawAttachments.map((item) => normalizeAttachment(item)),
-      cleanupProjection: normalizeCleanupProjection(
-        plan?.["cleanupProjection"] ?? null,
-      ),
-      conflicts: rawConflicts.map((item) => normalizeConflict(item)),
-      warnings: rawWarnings.map((item, index) =>
-        normalizeBoundedText(item, `plan.warnings[${index}]`),
-      ),
-      capabilities: normalizeCapabilities(plan?.["capabilities"] ?? null),
+      ...findings,
     };
   } catch {
     return fail();
@@ -1025,6 +1055,26 @@ export function normalizeManualPreviewItem(
   payload: unknown,
 ): ManualPreviewItemModel {
   return normalizePreviewItem(payload);
+}
+
+/**
+ * Validate one bounded durable Preview plan document.
+ *
+ * The same shape-aware plan projection the Preview surface publishes also
+ * arrives inside a run item's evidence (the reviewed plan of the exact
+ * Manual execution that mutated media, Task 42.2).  One field set, one
+ * closed contract and one fail-closed validator serve both journeys, so an
+ * operator never sees two interpretations of the same durable explanation.
+ */
+export function normalizeManualPreviewPlan(
+  payload: unknown,
+): ManualPreviewPlanModel | null {
+  const plan = optionalRecord(payload, "plan");
+  try {
+    return normalizePlanFields(plan);
+  } catch {
+    return fail();
+  }
 }
 
 /**

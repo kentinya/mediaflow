@@ -585,3 +585,186 @@ test("the detail tab and filter context survives a reload through auth continuat
   ).toBeVisible();
   await expect(restoredRecords.getByText("匹配 2 条记录")).toBeVisible();
 });
+
+test("a real Manual Organize Worker run keeps its reviewed plan through detail, export and restart", async ({
+  page,
+  request,
+}) => {
+  const api = recordApiCalls(page);
+  await connect(page);
+  await openInventory(page);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL);
+
+  // The isolated Python harness admits an exact ResourceLibrary file Preview
+  // through the real API, then completes its MOVE with the production manual
+  // execution Worker. No TaskItem, Result or reviewed plan is hand-seeded.
+  const admitted = await request.post(
+    `${BASE}/__harness__/run-manual-organize`,
+  );
+  expect(admitted.ok()).toBeTruthy();
+  const run = (await admitted.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly itemId: string;
+    readonly executionId: string;
+    readonly previewId: string;
+    readonly status: string;
+  };
+  expect(run.runId).toBe(run.taskId);
+  expect(run.status).toBe("completed");
+
+  // Select the exact new Task through the visible run inventory and inspect
+  // the single durable item/result written by the actual Worker execution.
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  const row = page.getByRole("row").filter({ hasText: run.runId });
+  await expect(row).toHaveCount(1);
+  await row.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByRole("row")).toHaveCount(2); // header + one item
+  await expect(items.getByText("One.2001.mkv")).toBeVisible();
+
+  const evidenceResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response
+        .url()
+        .includes(`/operations/runs/${run.runId}/items/${run.itemId}`),
+  );
+  await items.getByRole("button", { name: "查看证据" }).click();
+  const response = await evidenceResponse;
+  expect(response.ok()).toBeTruthy();
+  const evidence = (await response.json()) as {
+    readonly planEvidence: {
+      readonly available: boolean;
+      readonly previewId: string;
+      readonly executionId: string;
+      readonly completedOperations: readonly string[];
+      readonly plan: {
+        readonly recognitionType: string;
+        readonly mediaIdentity: {
+          readonly provider: string;
+          readonly providerId: string;
+        };
+        readonly policies: {
+          readonly metadataPolicyId: string;
+          readonly namingPolicyId: string;
+          readonly classificationPolicyId: string;
+        };
+      };
+    };
+    readonly results: readonly {
+      readonly cleanup_status: string;
+      readonly recognition_type: string;
+      readonly effect_certainty: string;
+    }[];
+  };
+  expect(evidence.planEvidence.available).toBe(true);
+  expect(evidence.planEvidence.previewId).toBe(run.previewId);
+  expect(evidence.planEvidence.executionId).toBe(run.executionId);
+  expect(evidence.planEvidence.completedOperations).toEqual([
+    "CREATE_DIRECTORY",
+    "MOVE",
+  ]);
+  expect(evidence.planEvidence.plan.recognitionType).toBe("C");
+  expect(evidence.planEvidence.plan.mediaIdentity).toEqual({
+    provider: "tmdb",
+    providerId: "101",
+    mediaType: "movie",
+    title: "One",
+    originalTitle: null,
+    episodeTitle: null,
+    matchedBy: "candidate_matcher",
+    recognitionTypeId: "C",
+    year: 2001,
+    season: null,
+    episode: null,
+    episodes: [],
+    genres: ["Animation"],
+    countries: ["JP"],
+    languages: [],
+  });
+  expect(evidence.planEvidence.plan.policies).toMatchObject({
+    metadataPolicyId: "C",
+    namingPolicyId: "A",
+    classificationPolicyId: "A",
+  });
+  expect(evidence.results).toHaveLength(1);
+  expect(evidence.results[0]).toMatchObject({
+    cleanup_status: "disabled",
+    recognition_type: "C",
+    effect_certainty: "verified_complete",
+  });
+
+  const itemEvidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(
+    itemEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
+  ).toBeVisible();
+  await expect(
+    itemEvidence.getByText("未启用(本次执行没有获得源目录清理授权)"),
+  ).toBeVisible();
+  await expect(itemEvidence.getByText("CREATE_DIRECTORY、MOVE")).toBeVisible();
+
+  // The native export resolves this exact standalone Task and downloads its
+  // persisted one-item package through the existing result-package authority.
+  const downloadPromise = page.waitForEvent("download");
+  await detail.getByRole("button", { name: "导出结果 JSON" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(
+    `mediaflow-results-${run.taskId}.json`,
+  );
+  const packagePath = await download.path();
+  expect(packagePath).toBeTruthy();
+  const resultPackage = JSON.parse(
+    readFileSync(packagePath as string, "utf8"),
+  ) as ResultPackage;
+  expect(resultPackage.packageKind).toBe("mediaflow.results.v1");
+  expect(resultPackage.source.scope).toBe("task");
+  expect(resultPackage.source.taskId).toBe(run.taskId);
+  expect(resultPackage.results).toHaveLength(1);
+  expect(resultPackage.results[0].itemId).toBe(run.itemId);
+
+  // Result records remain visible in their own tab, independent of whether
+  // any operational log was emitted for this manual execution.
+  await detail.getByRole("button", { name: "操作记录" }).click();
+  const records = detail.getByRole("region", { name: "操作记录", exact: true });
+  await expect(records.getByRole("cell", { name: "执行结果" })).toBeVisible();
+  await expect(records.getByText("匹配 1 条记录")).toBeVisible();
+  await detail.getByRole("button", { name: "任务详情" }).click();
+  const restoredItems = detail.getByRole("region", { name: "主条目" });
+  await restoredItems.getByRole("button", { name: "查看证据" }).click();
+
+  // Restart the actual Python runtime over the same SQLite file, reload the
+  // browser's exact item context through authentication continuation, and
+  // prove the reviewed plan and result still come from durable history.
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${run.runId}`));
+  await expect(page).toHaveURL(new RegExp(`item=${run.itemId}`));
+  const reloadedDetail = page.getByRole("region", { name: "运行详情" });
+  await expect(reloadedDetail).toBeVisible();
+  const reloadedEvidence = reloadedDetail.getByRole("region", {
+    name: "条目证据",
+  });
+  await expect(
+    reloadedEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
+  ).toBeVisible();
+  await expect(
+    reloadedEvidence.getByText("CREATE_DIRECTORY、MOVE"),
+  ).toBeVisible();
+  await expect(
+    reloadedEvidence.getByText("未启用(本次执行没有获得源目录清理授权)"),
+  ).toBeVisible();
+
+  // Every product API call made by the browser during the inspection, export
+  // and post-restart refresh is a GET; the harness command above is outside
+  // the product API and uses only temporary files/storage.
+  expect(api.length).toBeGreaterThan(0);
+  expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
+});

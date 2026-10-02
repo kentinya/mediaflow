@@ -64,6 +64,7 @@ from mediaflow.application.operations_lifecycle import (
     job_operator_document,
     manual_action_matrix_operator_document,
     manual_execution_operator_document,
+    manual_execution_plan_evidence_operator,
     manual_intent_operator_document,
     manual_preview_operator_document,
     manual_scan_operator_document,
@@ -13049,10 +13050,25 @@ class MediaFlowApi:
         evidence_documents = [
             value.document() for value in repository.list_evidence_for_item(item.item_id, limit=16)
         ]
+        plan_evidence = None
+        execution_reader = getattr(repository, "manual_execution_item_for_task_item", None)
+        if callable(execution_reader):
+            # The durable reviewed plan joins through the exact persisted
+            # (task_id, task_item_id) Manual execution linkage only.  CLI,
+            # scheduled and legacy items have no such row, so their plan
+            # evidence stays explicitly unavailable.
+            execution_document = execution_reader(task_id, item.item_id)
+            if isinstance(execution_document, dict):
+                plan_evidence = manual_execution_plan_evidence_operator(execution_document)
         logs = []
         plan_id = item.plan_id
         log_reader = getattr(repository, "list_operational_logs_for_plan", None)
         if plan_id and callable(log_reader):
+            # A plan ID is deterministic but not run-unique: two attempts at
+            # the same source share one plan while being distinct Tasks.
+            # Attribution therefore also binds the run's own persisted Task/Job
+            # linkage; a log row that carries neither stays unavailable
+            # evidence instead of being claimed through its reusable plan ID.
             logs = [
                 OperationsRunRecord(
                     kind="log",
@@ -13067,7 +13083,12 @@ class MediaFlowApi:
                         "link": value.plan_id,
                     },
                 )
-                for value in log_reader(plan_id, limit=20)
+                for value in log_reader(
+                    plan_id,
+                    task_id=task_id,
+                    job_id=overview.job_id,
+                    limit=20,
+                )
             ]
         document = run_item_evidence_document(
             item=item,
@@ -13075,6 +13096,7 @@ class MediaFlowApi:
             results=results,
             evidence=evidence_documents,
             logs=logs,
+            plan_evidence=plan_evidence,
         )
         document["run_id"] = overview.run_id
         document["task_id"] = task_id

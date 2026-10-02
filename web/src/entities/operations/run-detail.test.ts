@@ -16,7 +16,9 @@ import {
   normalizeRunProgress,
   normalizeRunRecordsPage,
   RUN_DISPOSITIONS,
+  RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS,
   RUN_RECORD_KINDS,
+  UNAVAILABLE_PLAN_REASON,
 } from "./run-detail";
 import { normalizeRunOverview } from "./run";
 
@@ -219,7 +221,13 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
         capturedAt: "2026-08-22T12:02:00+00:00",
         truncated: false,
         sections: {
-          plan: { available: true, truncated: false },
+          plan: {
+            available: true,
+            truncated: false,
+            value: { operation: "MOVE" },
+            items: [{ field: "ext", value: "mkv" }],
+            warnings: ["w"],
+          },
           metadata: {
             available: false,
             unavailableReason: "legacy evidence",
@@ -249,6 +257,176 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
       },
     ],
     sideEffects: "none",
+    ...overrides,
+  };
+}
+
+/**
+ * The real `planEvidence` projection a Manual-Organize-executed item publishes
+ * (`manual_execution_plan_evidence_operator` composed through
+ * `_bounded_preview_plan` in `operations_lifecycle.py`): camelCase ids, the
+ * durable effect rows and the exact reviewed Preview plan document.
+ */
+function planEvidencePayload(overrides: Record<string, unknown> = {}) {
+  return {
+    available: true,
+    previewId: "preview-1",
+    executionId: "exec-1",
+    status: "success",
+    stage: "completed",
+    effectCertainty: "verified_complete",
+    completedOperations: ["CREATE_DIRECTORY", "MOVE"],
+    uncertainEffects: [],
+    effects: [
+      {
+        action: "MOVE",
+        sourceStorageId: "source",
+        sourceLocation: "One (2001)/One (2001).mkv",
+        destinationStorageId: "target",
+        destinationLocation: "One (2001)/One (2001).mkv",
+        verified: true,
+        certainty: "verified_complete",
+        rollback: false,
+        occurredAt: "2026-08-22T12:03:00+00:00",
+      },
+    ],
+    plan: {
+      recognitionType: "C",
+      mediaIdentity: {
+        provider: "tmdb",
+        providerId: "101",
+        mediaType: "movie",
+        title: "One",
+        originalTitle: null,
+        episodeTitle: null,
+        matchedBy: "candidate_matcher",
+        recognitionTypeId: "C",
+        year: 2001,
+        season: null,
+        episode: null,
+        episodes: [],
+        genres: ["Animation"],
+        countries: ["JP"],
+        languages: [],
+      },
+      policies: {
+        recognitionTypePolicyId: "type-C",
+        metadataPolicyId: "C",
+        namingPolicyId: "A",
+        classificationPolicyId: "A",
+        organizePolicyId: "A",
+      },
+      analysis: {
+        parse: {
+          titleCandidate: "One",
+          year: 2001,
+          season: null,
+          episode: null,
+          episodes: [],
+          resolution: null,
+          source: null,
+          videoCodec: null,
+          audio: null,
+          hdr: null,
+          version: null,
+          releaseGroup: null,
+          evidence: [],
+          warnings: [],
+        },
+        recognition: {
+          status: "recognized",
+          recognitionTypeId: "C",
+          ruleId: "movie-year",
+          score: 100,
+          confidence: "1.0",
+          reasons: [],
+          warnings: [],
+        },
+        metadata: {
+          available: true,
+          status: "matched",
+          query: "One",
+          identity: {
+            provider: "tmdb",
+            providerId: "101",
+            mediaType: "movie",
+            title: "One",
+            year: 2001,
+          },
+          match: {
+            status: "matched",
+            score: 100,
+            reasons: [],
+            warnings: [],
+            candidateCount: 1,
+            candidates: [],
+          },
+        },
+        naming: {
+          available: true,
+          reason: null,
+          policyId: "A",
+          recognitionTypeId: "C",
+          directory: "One (2001)",
+          directorySegments: ["One (2001)"],
+          filename: "One (2001).mkv",
+          warnings: [],
+          sanitizationChanges: [],
+        },
+        classification: {
+          available: true,
+          reason: null,
+          status: "classified",
+          policyId: "A",
+          recognitionTypeId: "C",
+          mediaLibraryId: "movies",
+          relativePath: "Movies",
+          matchedRuleId: null,
+          matchedRuleName: null,
+          evidence: [],
+          warnings: [],
+        },
+      },
+      destination: {
+        storageId: "target",
+        relativePath: "Movies/One (2001)/One (2001).mkv",
+        filename: "One (2001).mkv",
+      },
+      operation: "MOVE",
+      operationPolicy: "MOVE",
+      attachments: [],
+      capabilities: {
+        verdict: "ok",
+        required: ["can_move", "can_delete"],
+        declared: ["can_move", "can_delete"],
+        missing: [],
+      },
+      conflicts: [],
+      warnings: [],
+      planStatus: "organized",
+      destructiveImplications: {
+        overwriteRequired: false,
+        sourceCleanupRequired: false,
+        statement:
+          "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+      },
+      cleanupProjection: {
+        mode: "empty_only",
+        parent: "source/Season 1",
+        ignorePatterns: ["*.nfo"],
+        maxParentDirectories: 3,
+        maxEntries: 24,
+        matchedFiles: ["One.2001.mkv"],
+        blockingEntries: [],
+        expectedDirectoryOutcome: "remove_empty",
+        permanentDelete: false,
+      },
+      // Fidelity extras the backend projection always publishes; the shared
+      // validator intentionally ignores unknown fields.
+      zeroMutation: true,
+      bounded: true,
+      deterministic: true,
+    },
     ...overrides,
   };
 }
@@ -734,6 +912,347 @@ describe("run item evidence normalization", () => {
         }),
       ),
     ).toThrow(/invalid field|did not match the contract/);
+  });
+});
+
+describe("run item plan evidence (Task 42.2)", () => {
+  it("normalizes the durable reviewed-plan projection of a manually executed item", () => {
+    const evidence = normalizeRunItemEvidence(
+      evidenceDocument({ planEvidence: planEvidencePayload() }),
+    );
+    const planEvidence = evidence.planEvidence;
+    expect(planEvidence.available).toBe(true);
+    expect(planEvidence.reason).toBeNull();
+    expect(planEvidence.previewId).toBe("preview-1");
+    expect(planEvidence.executionId).toBe("exec-1");
+    expect(planEvidence.status).toBe("success");
+    expect(planEvidence.stage).toBe("completed");
+    expect(planEvidence.effectCertainty).toBe("verified_complete");
+    expect(planEvidence.completedOperations).toEqual([
+      "CREATE_DIRECTORY",
+      "MOVE",
+    ]);
+    expect(planEvidence.uncertainEffects).toEqual([]);
+    expect(planEvidence.effects).toHaveLength(1);
+    expect(planEvidence.effects[0]).toEqual({
+      action: "MOVE",
+      sourceStorageId: "source",
+      sourceLocation: "One (2001)/One (2001).mkv",
+      destinationStorageId: "target",
+      destinationLocation: "One (2001)/One (2001).mkv",
+      verified: true,
+      certainty: "verified_complete",
+      rollback: false,
+      occurredAt: "2026-08-22T12:03:00+00:00",
+    });
+    const plan = planEvidence.plan;
+    expect(plan).not.toBeNull();
+    expect(plan?.recognitionType).toBe("C");
+    expect(plan?.mediaIdentity?.provider).toBe("tmdb");
+    expect(plan?.mediaIdentity?.providerId).toBe("101");
+    expect(plan?.mediaIdentity?.mediaType).toBe("movie");
+    expect(plan?.mediaIdentity?.title).toBe("One");
+    // The permanent recognition regression holds on the durable plan too:
+    // RecognitionType C stays C under NamingPolicy A / ClassificationPolicy A.
+    expect(plan?.policies?.recognitionTypePolicyId).toBe("type-C");
+    expect(plan?.policies?.metadataPolicyId).toBe("C");
+    expect(plan?.policies?.namingPolicyId).toBe("A");
+    expect(plan?.policies?.classificationPolicyId).toBe("A");
+    expect(plan?.policies?.organizePolicyId).toBe("A");
+    expect(plan?.recognitionType).toBe("C");
+    expect(plan?.analysis?.parse?.titleCandidate).toBe("One");
+    expect(plan?.analysis?.parse?.year).toBe(2001);
+    expect(plan?.analysis?.recognition?.status).toBe("recognized");
+    expect(plan?.analysis?.recognition?.ruleId).toBe("movie-year");
+    expect(plan?.analysis?.metadata?.status).toBe("matched");
+    expect(plan?.analysis?.metadata?.match?.candidateCount).toBe(1);
+    expect(plan?.analysis?.naming?.filename).toBe("One (2001).mkv");
+    expect(plan?.analysis?.classification?.mediaLibraryId).toBe("movies");
+    expect(plan?.operation).toBe("MOVE");
+    expect(plan?.destination?.relativePath).toBe(
+      "Movies/One (2001)/One (2001).mkv",
+    );
+    expect(plan?.targetStorageId).toBe("target");
+    expect(plan?.targetPath).toBe("Movies/One (2001)/One (2001).mkv");
+    expect(plan?.organizePolicy).toBe("A");
+    expect(plan?.planStatus).toBe("organized");
+    expect(plan?.attachments).toEqual([]);
+    expect(plan?.capabilities?.verdict).toBe("ok");
+    expect(plan?.conflicts).toEqual([]);
+    expect(plan?.warnings).toEqual([]);
+    expect(plan?.cleanupProjection).toEqual({
+      mode: "empty_only",
+      parent: "source/Season 1",
+      ignorePatterns: ["*.nfo"],
+      maxParentDirectories: 3,
+      maxEntries: 24,
+      matchedFiles: ["One.2001.mkv"],
+      blockingEntries: [],
+      expectedDirectoryOutcome: "remove_empty",
+      permanentDelete: false,
+    });
+    expect(plan?.destructiveImplications?.overwriteRequired).toBe(false);
+    expect(plan?.destructiveImplications?.sourceCleanupRequired).toBe(false);
+  });
+
+  it("treats an absent planEvidence section as the honest unavailable default", () => {
+    const evidence = normalizeRunItemEvidence(evidenceDocument());
+    expect(evidence.planEvidence).toEqual({
+      available: false,
+      reason: UNAVAILABLE_PLAN_REASON,
+      previewId: null,
+      executionId: null,
+      status: null,
+      stage: null,
+      effectCertainty: null,
+      completedOperations: [],
+      uncertainEffects: [],
+      effects: [],
+      plan: null,
+    });
+    expect(UNAVAILABLE_PLAN_REASON).toBe("no_reviewed_manual_execution_plan");
+    expect(
+      RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[UNAVAILABLE_PLAN_REASON],
+    ).toContain("没有可展示的持久审核计划");
+  });
+
+  it("treats a null planEvidence the same as an absent one", () => {
+    const evidence = normalizeRunItemEvidence(
+      evidenceDocument({ planEvidence: null }),
+    );
+    expect(evidence.planEvidence.available).toBe(false);
+    expect(evidence.planEvidence.reason).toBe(UNAVAILABLE_PLAN_REASON);
+    expect(evidence.planEvidence.plan).toBeNull();
+    expect(evidence.planEvidence.effects).toEqual([]);
+  });
+
+  it("defaults an explicit unavailable section without a reason to the standard code", () => {
+    const evidence = normalizeRunItemEvidence(
+      evidenceDocument({ planEvidence: { available: false } }),
+    );
+    expect(evidence.planEvidence.available).toBe(false);
+    expect(evidence.planEvidence.reason).toBe(UNAVAILABLE_PLAN_REASON);
+    expect(evidence.planEvidence.plan).toBeNull();
+    expect(evidence.planEvidence.previewId).toBeNull();
+  });
+
+  it("keeps a documented unavailable reason instead of rewriting it", () => {
+    const evidence = normalizeRunItemEvidence(
+      evidenceDocument({
+        planEvidence: {
+          available: false,
+          reason: "legacy_history_without_manual_execution",
+        },
+      }),
+    );
+    expect(evidence.planEvidence.reason).toBe(
+      "legacy_history_without_manual_execution",
+    );
+  });
+
+  it("keeps available:true with an absent plan visible without inventing findings", () => {
+    const evidence = normalizeRunItemEvidence(
+      evidenceDocument({
+        planEvidence: planEvidencePayload({ plan: null }),
+      }),
+    );
+    expect(evidence.planEvidence.available).toBe(true);
+    expect(evidence.planEvidence.previewId).toBe("preview-1");
+    expect(evidence.planEvidence.effects).toHaveLength(1);
+    // The shared validator models an absent plan as an all-null plan finding
+    // set, never a fabricated reviewed plan.
+    expect(evidence.planEvidence.plan?.recognitionType).toBeNull();
+    expect(evidence.planEvidence.plan?.mediaIdentity).toBeNull();
+    expect(evidence.planEvidence.plan?.policies).toBeNull();
+    expect(evidence.planEvidence.plan?.analysis).toBeNull();
+    expect(evidence.planEvidence.plan?.destination).toBeNull();
+    expect(evidence.planEvidence.plan?.capabilities).toBeNull();
+    expect(evidence.planEvidence.plan?.attachments).toEqual([]);
+    expect(evidence.planEvidence.plan?.conflicts).toEqual([]);
+    expect(evidence.planEvidence.plan?.warnings).toEqual([]);
+  });
+
+  it("refuses an effects list beyond the bounded 32 durable steps", () => {
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument({
+          planEvidence: planEvidencePayload({
+            effects: Array.from({ length: 33 }, () => ({
+              action: "MOVE",
+              verified: true,
+              rollback: false,
+            })),
+          }),
+        }),
+      ),
+    ).toThrow(/invalid field|did not match/);
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument({
+          planEvidence: planEvidencePayload({ effects: "not-array" }),
+        }),
+      ),
+    ).toThrow(/invalid field|did not match/);
+  });
+
+  it("refuses an effect without its required verified or rollback boolean", () => {
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument({
+          planEvidence: planEvidencePayload({
+            effects: [{ action: "MOVE" }],
+          }),
+        }),
+      ),
+    ).toThrow(/invalid field|did not match/);
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument({
+          planEvidence: planEvidencePayload({
+            effects: [{ action: "MOVE", verified: true }],
+          }),
+        }),
+      ),
+    ).toThrow(/invalid field|did not match/);
+  });
+
+  it("refuses a malformed reviewed plan document instead of showing a half-truth", () => {
+    const conflicts = planEvidencePayload();
+    (conflicts.plan as Record<string, unknown>)["conflicts"] = "x";
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: conflicts })),
+    ).toThrow(/invalid field|did not match/);
+
+    const verdict = planEvidencePayload();
+    (verdict.plan as Record<string, unknown>)["capabilities"] = {
+      verdict: { nested: "object" },
+      required: [],
+      declared: [],
+      missing: [],
+    };
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: verdict })),
+    ).toThrow(/invalid field|did not match/);
+
+    const operation = planEvidencePayload();
+    (operation.plan as Record<string, unknown>)["operation"] = "DELETE_ALL";
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: operation })),
+    ).toThrow(/invalid field|did not match/);
+
+    const attachments = planEvidencePayload();
+    (attachments.plan as Record<string, unknown>)["attachments"] = "x";
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: attachments })),
+    ).toThrow(/invalid field|did not match/);
+
+    const warnings = planEvidencePayload();
+    (warnings.plan as Record<string, unknown>)["warnings"] = "x";
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: warnings })),
+    ).toThrow(/invalid field|did not match/);
+  });
+
+  it("refuses a non-record planEvidence or an unmodelled available flag", () => {
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: "x" })),
+    ).toThrow(/invalid field|did not match/);
+    expect(() =>
+      normalizeRunItemEvidence(evidenceDocument({ planEvidence: {} })),
+    ).toThrow(/invalid field|did not match/);
+  });
+
+  it("preserves the bounded detail the backend captured on evidence sections", () => {
+    const evidence = normalizeRunItemEvidence(evidenceDocument());
+    const sections = evidence.evidence[0]?.sections ?? [];
+    expect(sections).toHaveLength(2);
+    const plan = sections[0];
+    expect(plan?.name).toBe("plan");
+    expect(plan?.available).toBe(true);
+    expect(plan?.value).not.toBeNull();
+    expect(plan?.value?.["operation"]).toBe("MOVE");
+    expect(plan?.items).toHaveLength(1);
+    expect(plan?.items[0]?.["field"]).toBe("ext");
+    expect(plan?.items[0]?.["value"]).toBe("mkv");
+    expect(plan?.warnings).toEqual(["w"]);
+    const metadata = sections[1];
+    expect(metadata?.available).toBe(false);
+    expect(metadata?.unavailableReason).toBe("legacy evidence");
+    expect(metadata?.value).toBeNull();
+    expect(metadata?.items).toEqual([]);
+    expect(metadata?.warnings).toEqual([]);
+  });
+
+  it("models a detail-free legacy section as captured-but-empty", () => {
+    const evidence = normalizeRunItemEvidence(
+      evidenceDocument({
+        evidence: [
+          {
+            evidenceId: "ev-legacy",
+            attempts: 1,
+            outcome: "failed",
+            capturedAt: "2026-08-22T12:02:00+00:00",
+            truncated: false,
+            sections: {
+              parse: { available: true, truncated: false },
+            },
+          },
+        ],
+      }),
+    );
+    const section = evidence.evidence[0]?.sections[0];
+    expect(section?.name).toBe("parse");
+    expect(section?.value).toBeNull();
+    expect(section?.items).toEqual([]);
+    expect(section?.warnings).toEqual([]);
+  });
+
+  it("refuses malformed evidence-section detail", () => {
+    const sectionDocument = (section: Record<string, unknown>) => ({
+      evidence: [
+        {
+          evidenceId: "ev-1",
+          attempts: 1,
+          outcome: "failed",
+          capturedAt: "2026-08-22T12:02:00+00:00",
+          truncated: false,
+          sections: { plan: section },
+        },
+      ],
+    });
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument(
+          sectionDocument({
+            available: true,
+            truncated: false,
+            value: "string",
+          }),
+        ),
+      ),
+    ).toThrow(/invalid field|did not match/);
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument(
+          sectionDocument({
+            available: true,
+            truncated: false,
+            items: ["not-a-record"],
+          }),
+        ),
+      ),
+    ).toThrow(/invalid field|did not match/);
+    expect(() =>
+      normalizeRunItemEvidence(
+        evidenceDocument(
+          sectionDocument({
+            available: true,
+            truncated: false,
+            items: Array.from({ length: 65 }, () => ({ field: "x" })),
+          }),
+        ),
+      ),
+    ).toThrow(/invalid field|did not match/);
   });
 });
 

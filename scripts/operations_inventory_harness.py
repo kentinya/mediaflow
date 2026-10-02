@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated real-Python browser harness for the V2 run inventory (Task 42.1).
+"""Isolated real-Python browser harness for V2 Operations (Tasks 42.1–42.2).
 
 One process serves both the built V2 artifact (``/ui-v2/*`` through the
 production static-serving boundary) and the real ``MediaFlowApi`` over one
@@ -28,16 +28,17 @@ Two test-only control routes exist for the browser journey (they are harness
 infrastructure, not product endpoints, and never touch product documents):
 
 - ``POST /__harness__/run-worker`` runs one real Worker claim + linkage;
+- ``POST /__harness__/run-manual-organize`` admits one exact Preview through
+  the real API and completes its MOVE through ``ManualOrganizeExecutionWorker``;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
   API object over the same file, which is exactly what a process restart does
   to durable state.
 
 The run-detail result-package export is served by the shared package-exchange
-authority; production wires it through the managed configuration service and
-this harness deliberately has none, so it attaches the repository-only
-instance (the result export reads durable Task/Result rows and writes one
-best-effort audit row, while every configuration-dependent package route
-still answers the same 503 it answered before).
+authority; it reads durable Task/Result rows and writes one best-effort audit
+row. The Manual Organize proof uses a checked temporary Active configuration,
+temporary Local Storage and a synthetic MetadataProvider; no production
+configuration or external service is involved.
 
 No production media, credential, Storage adapter, Provider or external service
 is involved. The script fails fast when the built artifact is missing.
@@ -61,16 +62,31 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from mediaflow.application.automation import AutomationWorker  # noqa: E402
+from mediaflow.application.configuration_objects import ConfigurationObjectService  # noqa: E402
+from mediaflow.application.configuration_snapshot import ManagedConfigurationService  # noqa: E402
+from mediaflow.application.file_catalog import FileCatalogService  # noqa: E402
+from mediaflow.application.manual_organize_worker import (  # noqa: E402
+    ManualOrganizeExecutionWorker,
+)
+from mediaflow.application.metadata import MetadataProviderRegistry  # noqa: E402
 from mediaflow.application.package_exchange import PackageExchangeService  # noqa: E402
+from mediaflow.application.scanner import StorageScanner  # noqa: E402
+from mediaflow.application.strategy_test import SyntheticMetadataProvider  # noqa: E402
 from mediaflow.application.task_runtime import PersistentTaskCoordinator  # noqa: E402
 from mediaflow.domain.automation import (  # noqa: E402
     AutomationCommand,
     AutomationJob,
     AutomationJobStatus,
 )
+from mediaflow.domain.configuration_management import (  # noqa: E402
+    ConfigurationDestinationPrecheckStatus,
+    ConfigurationStorageCheckStatus,
+    ConfigurationStrategyTestStatus,
+)
 from mediaflow.domain.failure import FailureExplanation  # noqa: E402
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord  # noqa: E402
 from mediaflow.domain.media_evidence import EvidenceSection, PipelineEvidence  # noqa: E402
+from mediaflow.domain.metadata import MediaCandidate, MediaType  # noqa: E402
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal  # noqa: E402
 from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentResultRecord,
@@ -79,6 +95,17 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentTaskStatus,
     TaskItemStatus,
 )
+from mediaflow.infrastructure.configuration_snapshot import (  # noqa: E402
+    build_configuration_snapshot,
+)
+from mediaflow.infrastructure.runtime_configuration import (  # noqa: E402
+    load_managed_runtime_configuration,
+    with_managed_snapshot,
+)
+from mediaflow.infrastructure.sqlite_configuration_management import (  # noqa: E402
+    SQLiteConfigurationRepository,
+)
+from mediaflow.infrastructure.sqlite_file_index import SQLiteFileIndexRepository  # noqa: E402
 from mediaflow.infrastructure.sqlite_runtime import (  # noqa: E402
     SCHEMA_VERSION,
     SQLiteTaskRepository,
@@ -87,6 +114,7 @@ from mediaflow.interfaces.service_api import MediaFlowApi  # noqa: E402
 from mediaflow.interfaces.v2_ui import asset_root  # noqa: E402
 
 HARNESS_TOKEN = "harness-viewer-token"
+HARNESS_ADMIN_TOKEN = "harness-admin-token"
 WORKER_ID = "harness-inventory-worker"
 
 PRINCIPAL = ResolvedApiPrincipal(
@@ -101,32 +129,216 @@ PRINCIPAL = ResolvedApiPrincipal(
     ),
 )
 
+ADMIN_PRINCIPAL = ResolvedApiPrincipal(
+    "harness-admin",
+    HARNESS_ADMIN_TOKEN,
+    frozenset(ApiPermission),
+)
 
-def build_api(repository: SQLiteTaskRepository) -> MediaFlowApi:
-    """One API object over the runtime repository, plus the export authority.
 
-    The run-detail result-package export (``GET /api/v1/operations/runs/
-    {id}/export``) is served by ``PackageExchangeService``, which production
-    wires through the managed configuration service.  This harness runs with
-    no Active configuration on purpose, so it attaches the repository-only
-    instance: ``export_results`` reads only durable Task/Result rows and
-    writes one best-effort audit row, and every configuration-dependent
-    package route still refuses with the same 503 it answered before.
+@dataclasses.dataclass(frozen=True)
+class ManagedHarnessContext:
+    """Temporary Active configuration used by the real Manual Organize proof."""
+
+    root: Path
+    configuration_repository: SQLiteConfigurationRepository
+    configuration_service: ManagedConfigurationService
+    bootstrap_document: dict[str, object]
+    active: object
+    runtime: object
+    metadata_registry: MetadataProviderRegistry
+
+
+def build_api(
+    repository: SQLiteTaskRepository,
+    *,
+    managed: ManagedHarnessContext | None = None,
+    file_index: SQLiteFileIndexRepository | None = None,
+) -> MediaFlowApi:
+    """One real API object over the runtime repository and optional Active pin.
+
+    The repository-only export authority reads durable Task/Result rows and
+    writes one best-effort audit row.  When this isolated harness owns a
+    temporary managed fixture, the same API also serves the real Manual
+    Organize admission and execution endpoints against its temporary Local
+    Storage and synthetic MetadataProvider.
     """
 
-    api = MediaFlowApi(repository, None, principals=(PRINCIPAL,))
+    managed_options: dict[str, object] = {}
+    if managed is not None:
+        if file_index is None:
+            raise ValueError("managed browser harness requires its SQLite FileIndex")
+        managed_options = {
+            "configuration_service": managed.configuration_service,
+            "bootstrap_document": managed.bootstrap_document,
+            "system_status": build_configuration_snapshot(managed.runtime),
+            "file_index": file_index,
+            "file_catalog": FileCatalogService(
+                file_index,
+                ("source",),
+                ("source-storage", "media-target"),
+                task_repository=repository,
+            ),
+            "metadata_provider_registry_factory": lambda _policies: managed.metadata_registry,
+        }
+    api = MediaFlowApi(
+        repository,
+        None,
+        principals=(PRINCIPAL, ADMIN_PRINCIPAL),
+        **managed_options,
+    )
     api._package_exchange = PackageExchangeService(None, repository)
     return api
+
+
+def build_managed_fixture(
+    database: Path, root: Path
+) -> tuple[
+    SQLiteTaskRepository,
+    SQLiteFileIndexRepository,
+    ManagedHarnessContext,
+    MediaFlowApi,
+]:
+    """Create the real checked Active/Storage/FileIndex path in temp roots."""
+
+    root.mkdir(parents=True, exist_ok=True)
+    source_root = root / "source"
+    destination_root = root / "destination"
+    (destination_root / "Movies").mkdir(parents=True, exist_ok=True)
+    source_root.mkdir(parents=True, exist_ok=True)
+    source_file = source_root / "One.2001.mkv"
+    source_file.write_bytes(b"synthetic browser media")
+
+    document = json.loads(
+        (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
+    )
+    document["persistence"]["databasePath"] = str(root / "configuration.sqlite3")
+    document["storages"][0]["rootPath"] = str(source_root)
+    document["storages"][1]["rootPath"] = str(destination_root)
+    document["resourceLibraries"][0]["storagePath"] = ""
+    document["mediaLibraries"][0]["rootPath"] = "Movies"
+
+    configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+    configuration_service = ManagedConfigurationService(
+        configuration_repository,
+        bootstrap_database_path=str(root / "configuration.sqlite3"),
+    )
+    objects = ConfigurationObjectService(
+        configuration_service,
+        storage_browser_cursor_secret="operations-inventory-harness-secret",
+    )
+    draft = configuration_service.import_draft(document, actor="harness")
+    validated = configuration_service.validate(draft.revision_id, actor="harness")
+    for storage_id in ("source-storage", "media-target"):
+        checked = objects.storage_check(
+            validated.revision_id,
+            storage_id=storage_id,
+            expected_version=validated.version,
+            expected_digest=validated.digest,
+            actor="harness",
+        )
+        if checked.status is not ConfigurationStorageCheckStatus.PASSED:
+            raise RuntimeError(f"temporary Storage check failed for {storage_id}")
+    strategy = objects.recognition_strategy_test(
+        validated.revision_id,
+        expected_version=validated.version,
+        expected_digest=validated.digest,
+        actor="harness",
+        resource_library_id="source",
+        synthetic_path="Example.Movie.2024.1080p.mkv",
+    )
+    if strategy.status is not ConfigurationStrategyTestStatus.COMPLETED:
+        raise RuntimeError("temporary recognition strategy test did not complete")
+    destination = objects.destination_precheck(
+        validated.revision_id,
+        expected_version=validated.version,
+        expected_digest=validated.digest,
+        actor="harness",
+        recognition_type="C",
+        sample={
+            "title": "One",
+            "mediaType": "movie",
+            "year": 2001,
+            "genres": ["Animation"],
+            "countries": ["JP"],
+            "extension": "mkv",
+        },
+    )
+    if destination.status is not ConfigurationDestinationPrecheckStatus.COMPLETED:
+        raise RuntimeError("temporary destination precheck did not complete")
+    active = objects.activate_checked(
+        validated.revision_id,
+        expected_version=validated.version,
+        actor="harness",
+    )
+    runtime = with_managed_snapshot(
+        load_managed_runtime_configuration(
+            active.document,
+            bootstrap_database_path=str(root / "configuration.sqlite3"),
+        ),
+        snapshot_id=active.revision_id,
+        digest=active.digest,
+        version=active.version,
+    )
+    repository = SQLiteTaskRepository(database)
+    file_index = SQLiteFileIndexRepository(database)
+    scan = StorageScanner(
+        runtime.create_storages(),
+        file_index,
+        clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+    ).scan(runtime.resource_libraries[0])
+    if scan.status.value != "completed":
+        raise RuntimeError("temporary ResourceLibrary scan did not complete")
+    registry = MetadataProviderRegistry(
+        (
+            SyntheticMetadataProvider(
+                (
+                    MediaCandidate(
+                        "tmdb",
+                        "101",
+                        MediaType.MOVIE,
+                        "One",
+                        year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                )
+            ),
+        )
+    )
+    managed = ManagedHarnessContext(
+        root=root,
+        configuration_repository=configuration_repository,
+        configuration_service=configuration_service,
+        bootstrap_document=document,
+        active=active,
+        runtime=runtime,
+        metadata_registry=registry,
+    )
+    api = build_api(repository, managed=managed, file_index=file_index)
+    return repository, file_index, managed, api
 
 
 class AppState:
     """The swap-able runtime objects; restart replaces both under one lock."""
 
-    def __init__(self, database: Path) -> None:
+    def __init__(
+        self,
+        database: Path,
+        *,
+        repository: SQLiteTaskRepository,
+        api: MediaFlowApi,
+        managed: ManagedHarnessContext,
+        file_index: SQLiteFileIndexRepository,
+    ) -> None:
         self._database = database
         self._lock = threading.Lock()
-        self.repository = SQLiteTaskRepository(database)
-        self.api = build_api(self.repository)
+        self._manual_lock = threading.Lock()
+        self.repository = repository
+        self.api = api
+        self.managed = managed
+        self.file_index = file_index
+        self.manual_run: dict[str, str] | None = None
 
     @property
     def database(self) -> Path:
@@ -140,9 +352,15 @@ class AppState:
         """
 
         with self._lock:
+            self.file_index.close()
             self.repository.close()
             self.repository = SQLiteTaskRepository(self._database)
-            self.api = build_api(self.repository)
+            self.file_index = SQLiteFileIndexRepository(self._database)
+            self.api = build_api(
+                self.repository,
+                managed=self.managed,
+                file_index=self.file_index,
+            )
             # The registered Worker's heartbeat must stay claimable across a
             # harness restart; a real resident worker heartbeats continuously.
             worker = (
@@ -181,11 +399,10 @@ def wsgi_request(
     return int(statuses[0].split()[0]), json.loads(raw)
 
 
-def seed(database: Path) -> tuple[SQLiteTaskRepository, MediaFlowApi]:
+def seed(
+    repository: SQLiteTaskRepository, api: MediaFlowApi
+) -> tuple[SQLiteTaskRepository, MediaFlowApi]:
     """Create one deterministic run population through real producers."""
-
-    repository = SQLiteTaskRepository(database)
-    api = build_api(repository)
 
     # 1. A real durable Job admission: pending, pre-Task, no Worker yet.
     status, job_document = wsgi_request(api, "POST", "/api/v1/jobs", body={"command": "preview"})
@@ -481,6 +698,9 @@ def run_worker_once(state: AppState) -> dict:
             job.command.value,
             execute_authorized=False,
             scope_path="Movies/Harness/Linked",
+            configuration_snapshot_id=job.configuration_snapshot_id,
+            configuration_snapshot_digest=job.configuration_snapshot_digest,
+            require_configuration_snapshot=job.configuration_snapshot_id is not None,
         )
         if cancelled():
             return None
@@ -491,6 +711,8 @@ def run_worker_once(state: AppState) -> dict:
         handler,
         worker_id=WORKER_ID,
         label="harness-inventory-worker",
+        configuration_snapshot_id=state.managed.active.revision_id,
+        configuration_snapshot_digest=state.managed.active.digest,
         runtime_schema_version=SCHEMA_VERSION,
     )
     claimed = worker.run_next()
@@ -502,6 +724,95 @@ def run_worker_once(state: AppState) -> dict:
         "taskId": claimed.task_id,
         "jobStatus": claimed.status.value,
     }
+
+
+def run_manual_organize_once(state: AppState) -> dict[str, str]:
+    """Admit and execute one exact Preview through the production Worker path."""
+
+    with state._manual_lock:
+        if state.manual_run is not None:
+            return dict(state.manual_run)
+        active = state.managed.active
+        state.api._worker_service.register_worker(
+            "harness-manual-worker",
+            "Harness Manual Organize Worker",
+            10.0,
+            ("scan", "preview", "organize"),
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            runtime_schema_version=SCHEMA_VERSION,
+        )
+        status, intent = wsgi_request(
+            state.api,
+            "POST",
+            "/api/v1/resource-libraries/source/files/organize",
+            body={"paths": ["One.2001.mkv"]},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 201:
+            raise RuntimeError(f"Manual Organize intent admission failed: {status}")
+        item = intent["items"][0]
+        status, intent = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/intents/{intent['intentId']}"
+            f"/items/{item['itemId']}/choice",
+            body={
+                "expectedVersion": intent["version"],
+                "expectedItemVersion": item["version"],
+                "recognitionTypeId": "C",
+                "namingPolicyId": "A",
+                "classificationPolicyId": "A",
+                "organizePolicyId": "A",
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 200:
+            raise RuntimeError(f"Manual Organize policy selection failed: {status}")
+        status, preview = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+            body={"expectedVersion": intent["version"]},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 201:
+            raise RuntimeError(f"Manual Organize Preview failed: {status}")
+        status, execution = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            body={
+                "confirmation": True,
+                "itemIds": [value["itemId"] for value in preview["items"]],
+                "expectedIntentVersion": intent["version"],
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 202:
+            raise RuntimeError(f"Manual Organize execution admission failed: {status}")
+        if not execution.get("taskId") or not execution.get("executionId"):
+            raise RuntimeError("Manual Organize admission returned no durable execution link")
+
+        completed = ManualOrganizeExecutionWorker(
+            state.api._manual_execution,
+            worker_id="harness-manual-worker",
+            notice=lambda _line: None,
+        ).run_next()
+        if completed is None or completed.status.value != "completed":
+            raise RuntimeError("Manual Organize Worker did not complete the admitted execution")
+        durable = state.repository.get_manual_execution(execution["executionId"])
+        if durable is None or durable.task_id != execution["taskId"] or len(durable.items) != 1:
+            raise RuntimeError("Manual Organize Worker lost its durable TaskItem linkage")
+        state.manual_run = {
+            "runId": durable.task_id,
+            "taskId": durable.task_id,
+            "itemId": durable.items[0].task_item_id,
+            "executionId": durable.execution_id,
+            "previewId": durable.preview_id,
+            "status": completed.status.value,
+        }
+        return dict(state.manual_run)
 
 
 class QuietHandler(WSGIRequestHandler):
@@ -519,6 +830,8 @@ def application(environ, start_response):
         method = str(environ.get("REQUEST_METHOD", "GET")).upper()
         if path == "/__harness__/run-worker" and method == "POST":
             document = run_worker_once(STATE)
+        elif path == "/__harness__/run-manual-organize" and method == "POST":
+            document = run_manual_organize_once(STATE)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}
@@ -554,9 +867,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     database = args.database or Path(tempfile_dir()) / "operations-inventory.sqlite3"
+    database.parent.mkdir(parents=True, exist_ok=True)
+    managed_root = database.parent / f"{database.stem}-manual-organize"
+    repository, file_index, managed, api = build_managed_fixture(database, managed_root)
+    seed(repository, api)
     global STATE
-    STATE = AppState(database)
-    seed(database)
+    STATE = AppState(
+        database,
+        repository=repository,
+        api=api,
+        managed=managed,
+        file_index=file_index,
+    )
 
     with make_server(
         args.host,

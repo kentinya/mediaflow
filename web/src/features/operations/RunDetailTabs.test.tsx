@@ -261,6 +261,162 @@ function recordsPageDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+/**
+ * The real durable reviewed-plan projection of a manually executed item
+ * (`manual_execution_plan_evidence_operator` through `_bounded_preview_plan`
+ * in the Python Operations surface): camelCase ids, the persisted effect rows
+ * and the exact reviewed Preview plan document.
+ */
+function planEvidenceDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    available: true,
+    previewId: "preview-1",
+    executionId: "exec-1",
+    status: "success",
+    stage: "completed",
+    effectCertainty: "verified_complete",
+    completedOperations: ["CREATE_DIRECTORY", "MOVE"],
+    uncertainEffects: [],
+    effects: [
+      {
+        action: "MOVE",
+        sourceStorageId: "source",
+        sourceLocation: "One (2001)/One (2001).mkv",
+        destinationStorageId: "target",
+        destinationLocation: "One (2001)/One (2001).mkv",
+        verified: true,
+        certainty: "verified_complete",
+        rollback: false,
+        occurredAt: "2026-08-22T12:03:00+00:00",
+      },
+    ],
+    plan: {
+      recognitionType: "C",
+      mediaIdentity: {
+        provider: "tmdb",
+        providerId: "101",
+        mediaType: "movie",
+        title: "One",
+        year: 2001,
+      },
+      policies: {
+        recognitionTypePolicyId: "type-C",
+        metadataPolicyId: "C",
+        namingPolicyId: "A",
+        classificationPolicyId: "A",
+        organizePolicyId: "A",
+      },
+      analysis: {
+        parse: {
+          titleCandidate: "One",
+          year: 2001,
+          evidence: [],
+          warnings: [],
+        },
+        recognition: {
+          status: "recognized",
+          recognitionTypeId: "C",
+          ruleId: "movie-year",
+          reasons: [],
+          warnings: [],
+        },
+        metadata: {
+          available: true,
+          status: "matched",
+          match: {
+            status: "matched",
+            candidates: [],
+            reasons: [],
+            warnings: [],
+            candidateCount: 1,
+          },
+        },
+        naming: {
+          available: true,
+          policyId: "A",
+          directory: "One (2001)",
+          directorySegments: ["One (2001)"],
+          filename: "One (2001).mkv",
+          warnings: [],
+          sanitizationChanges: [],
+        },
+        classification: {
+          available: true,
+          status: "classified",
+          policyId: "A",
+          mediaLibraryId: "movies",
+          relativePath: "Movies",
+          evidence: [],
+          warnings: [],
+        },
+      },
+      destination: {
+        storageId: "target",
+        relativePath: "Movies/One (2001)/One (2001).mkv",
+      },
+      operation: "MOVE",
+      operationPolicy: "MOVE",
+      attachments: [],
+      capabilities: {
+        verdict: "ok",
+        required: ["can_move", "can_delete"],
+        declared: ["can_move", "can_delete"],
+        missing: [],
+      },
+      conflicts: [],
+      warnings: [],
+      planStatus: "organized",
+      destructiveImplications: {
+        overwriteRequired: false,
+        sourceCleanupRequired: false,
+        statement:
+          "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
+      },
+      cleanupProjection: {
+        mode: "empty_only",
+        parent: "source/Season 1",
+        ignorePatterns: ["*.nfo"],
+        maxParentDirectories: 3,
+        maxEntries: 24,
+        matchedFiles: ["One.2001.mkv"],
+        blockingEntries: [],
+        expectedDirectoryOutcome: "remove_empty",
+        permanentDelete: false,
+      },
+    },
+    ...overrides,
+  };
+}
+
+function evidenceResultRow(overrides: Record<string, unknown> = {}) {
+  return {
+    result_id: "result-1",
+    task_id: "task-001",
+    item_id: "item-1",
+    source_storage_id: "source",
+    source_path: "movies/b.mkv",
+    destination_storage_id: "target",
+    destination_path: "Movies/Two (2002)/Two (2002).mkv",
+    recognition_type: "C",
+    provider: "tmdb",
+    provider_id: "102",
+    metadata_policy_id: "C",
+    naming_policy_id: "A",
+    classification_policy_id: "A",
+    organize_policy_id: "A",
+    operation: "MOVE",
+    status: "success",
+    created_at: "2026-08-22T12:03:00+00:00",
+    title: "Two",
+    failure: null,
+    completed_operations: ["move"],
+    effect_certainty: "verified_complete",
+    uncertain_effects: [],
+    cleanup_status: "disabled",
+    ...overrides,
+  };
+}
+
 function evidenceDocument(overrides: Record<string, unknown> = {}) {
   return {
     run_id: "task-001",
@@ -311,10 +467,85 @@ function evidenceDocument(overrides: Record<string, unknown> = {}) {
     },
     results: [],
     evidence: [],
+    // A waiting item never came through the reviewed Manual execution, so the
+    // durable plan section says so with its reason code (Task 42.2).
+    planEvidence: { available: false },
     logs: [],
     sideEffects: "none",
     ...overrides,
   };
+}
+
+/** The evidence document of the successfully executed 手动整理 item-1. */
+function manualExecutionEvidenceDocument(
+  overrides: Record<string, unknown> = {},
+) {
+  return evidenceDocument({
+    item_id: "item-1",
+    item: itemRow(),
+    checkpoint: {
+      status: "success",
+      stage: "completed",
+      raw_stage: "organize",
+      attempts: 1,
+      source_storage_id: "source",
+      resource_library_id: "movies",
+      source_path: "movies/a.mkv",
+      plan_id: "plan-1",
+      destination_storage_id: "target",
+      destination_path: "Movies/a.mkv",
+      configuration: { snapshot_id: "snap-1", resolvable: true, reason: null },
+      latest_result: null,
+      prior_results: [],
+      blockers: [],
+      blocker: null,
+      audits: [],
+      recovery_requests: [],
+      recovery_request: null,
+      recovery_continuation: null,
+      effects: {
+        certainty: "verified_complete",
+        completed_operations: ["MOVE"],
+        uncertain_effects: [],
+      },
+      error_category: null,
+      retry_safety: "safe",
+      failureExplanation: null,
+      nextAction: null,
+      actions: [],
+      permitted_action_ids: [],
+      refusal_reason: null,
+      checkpoint_version: "v1",
+      updated_at: "2026-08-22T12:03:00+00:00",
+    },
+    results: [evidenceResultRow()],
+    evidence: [
+      {
+        evidenceId: "ev-1",
+        attempts: 1,
+        outcome: "success",
+        capturedAt: "2026-08-22T12:02:00+00:00",
+        truncated: false,
+        sections: {
+          plan: {
+            available: true,
+            truncated: false,
+            value: { operation: "MOVE" },
+            items: [{ field: "ext", value: "mkv" }],
+            warnings: ["w"],
+          },
+          metadata: {
+            available: false,
+            unavailableReason: "legacy evidence",
+            truncated: false,
+          },
+        },
+      },
+    ],
+    planEvidence: planEvidenceDocument(),
+    logs: [],
+    ...overrides,
+  });
 }
 
 function exportPackageDocument(overrides: Record<string, unknown> = {}) {
@@ -407,6 +638,9 @@ function stubDetailJourney(requested: string[] = []) {
     }
     if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
       return jsonResponse(evidenceDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+      return jsonResponse(manualExecutionEvidenceDocument());
     }
     if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
       const status = new URLSearchParams(url.split("?")[1] ?? "").get("status");
@@ -601,7 +835,18 @@ describe("selected-run detail tabs", () => {
     expect(within(evidence).getByText(/waiting_for_decision/)).toBeVisible();
     expect(within(evidence).getByText(/metadata_review/)).toBeVisible();
     expect(within(evidence).getByText(/固定配置/)).toBeVisible();
-    // The evidence tab keeps the inspected item in the URL.
+    // Task 42.2: an item that never came through the reviewed Manual Organize
+    // journey shows the plan section as honestly 不可用 with its bounded
+    // Chinese explanation, not as a silent blank or a false empty plan.
+    expect(
+      within(evidence).getByRole("heading", {
+        name: "持久审核计划(不可用)",
+      }),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(/没有可展示的持久审核计划/),
+    ).toBeVisible();
+    // The URL carries the inspected item in the URL so refresh/history/reconnect restore it.
     expect(router.history.location.search).toContain("item=item-2");
 
     await user.click(
@@ -610,6 +855,91 @@ describe("selected-run detail tabs", () => {
     await waitFor(() =>
       expect(screen.queryByText("条目证据:item-2")).toBeNull(),
     );
+  });
+
+  it("renders the durable reviewed plan, effects and section detail for a manually executed item", async () => {
+    const user = userEvent.setup();
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    const inspectButtons = within(detail).getAllByRole("button", {
+      name: "查看证据",
+    });
+    await user.click(inspectButtons[0]);
+    const evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("条目证据:item-1");
+
+    // The captured reviewed plan is stated up front, then explained.
+    expect(
+      within(evidence).getByRole("heading", {
+        name: "持久审核计划(已捕获)",
+      }),
+    ).toBeVisible();
+    expect(within(evidence).getByText("识别类型")).toBeVisible();
+    // RecognitionType C survives the A naming/classification policies here too.
+    const recognitionRow = within(evidence)
+      .getByText("识别类型")
+      .closest("div");
+    expect(within(recognitionRow as HTMLElement).getByText("C")).toBeVisible();
+    expect(
+      within(evidence).getByText(/Naming A · Classification A · Organize A/),
+    ).toBeVisible();
+    expect(within(evidence).getByText(/Metadata C · Naming A/)).toBeVisible();
+    expect(
+      within(evidence).getByText(/tmdb \/ 101 · One · movie/),
+    ).toBeVisible();
+    expect(within(evidence).getByText(/title=One · year=2001/)).toBeVisible();
+    expect(
+      within(evidence).getByText(/recognized · 规则 movie-year/),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(/matched · 匹配分 .* · 候选 1/),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText(
+        /preview preview-1 · execution exec-1 · 持久状态 success/,
+      ),
+    ).toBeVisible();
+    expect(
+      within(evidence).getByText("target:Movies/One (2001)/One (2001).mkv"),
+    ).toBeVisible();
+    expect(within(evidence).getAllByText("无").length).toBeGreaterThan(0);
+    expect(
+      within(evidence).getByText(
+        /模式 empty_only · 匹配 1 项 · 阻塞 0 项 · 预期 remove_empty/,
+      ),
+    ).toBeVisible();
+    expect(within(evidence).getByText("执行步骤(持久)")).toBeVisible();
+    expect(within(evidence).getByText("CREATE_DIRECTORY、MOVE")).toBeVisible();
+    expect(within(evidence).getByText("已验证")).toBeVisible();
+    // "已验证完成" appears both in the top checkpoint facts and in the durable
+    // step table; both must speak the same label.
+    expect(within(evidence).getAllByText("已验证完成").length).toBeGreaterThan(
+      1,
+    );
+
+    // The durable result row explains the cleanup outcome instead of leaving
+    // the known `disabled` fact unknown.
+    expect(
+      within(evidence).getByText("未启用(本次执行没有获得源目录清理授权)"),
+    ).toBeVisible();
+
+    // Pipeline sections now show their captured bounded detail, not just a
+    // name, and unavailable sections stay visible with their reason.
+    expect(within(evidence).getByText(/operation=MOVE/)).toBeVisible();
+    expect(
+      within(evidence).getByText(/条目1: field=ext, value=mkv/),
+    ).toBeVisible();
+    expect(within(evidence).getByText(/警告: w/)).toBeVisible();
+    expect(within(evidence).getByText("不可用段")).toBeVisible();
+    expect(
+      within(evidence).getByText(/metadata\(legacy evidence\)/),
+    ).toBeVisible();
   });
 
   it("downloads the eligible bounded result package and labels a truncated export", async () => {
@@ -783,6 +1113,9 @@ function stubDetailJourneyResponse(url: string): Response {
   }
   if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
     return jsonResponse(evidenceDocument());
+  }
+  if (url.startsWith("/api/v1/operations/runs/task-001/items/item-1")) {
+    return jsonResponse(manualExecutionEvidenceDocument());
   }
   if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
     return jsonResponse(itemsPageDocument());

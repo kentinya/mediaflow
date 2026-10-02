@@ -1378,7 +1378,9 @@ def _manual_preview_item_operator(item: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
+def _bounded_preview_plan(
+    plan: dict[str, object], *, include_cleanup_projection: bool = False
+) -> dict[str, object]:
     """Shape-aware projection of the persisted Preview plan document.
 
     The persisted plan is the one written by ``ManualOrganizePreviewService``:
@@ -1409,6 +1411,11 @@ def _bounded_preview_plan(plan: dict[str, object]) -> dict[str, object]:
         "executionState": _bounded_preview_execution_state(plan.get("executionState")),
         "bounded": True,
         "deterministic": True,
+        **(
+            {"cleanupProjection": _bounded_cleanup_outcome(plan.get("cleanupProjection"))}
+            if include_cleanup_projection
+            else {}
+        ),
     }
 
 
@@ -2538,6 +2545,116 @@ def run_record_document(record) -> dict[str, object]:
     return document
 
 
+def _bounded_cleanup_outcome(value: object) -> dict[str, object] | None:
+    """The reviewed cleanup policy the durable Preview plan projected.
+
+    The plan's ``cleanupProjection`` is the bounded zero-mutation explanation
+    ``project_source_cleanup`` wrote at Preview time (mode, patterns, bounds,
+    matched names, blocking entries, expected outcome).  Only the operator
+    explanation fields are published; the confined parent path keeps its
+    recognizable tail and the side-effect/retry flags are dropped because the
+    execution itself is described by the persisted Result cleanup status.
+    """
+
+    if not isinstance(value, dict):
+        return None
+    mode = _bounded_evidence_text(value.get("mode"), limit=64)
+    if mode is None or mode == "none":
+        return None
+    return {
+        "mode": mode,
+        "parent": _bounded_location(value.get("parent"), segments=2),
+        "ignorePatterns": _bounded_text_list(value.get("ignorePatterns"), limit=128, maximum=64),
+        "maxParentDirectories": _bounded_counter(value.get("maxParentDirectories")),
+        "maxEntries": _bounded_counter(value.get("maxEntries")),
+        "matchedFiles": _bounded_text_list(value.get("matchedFiles"), limit=256, maximum=64),
+        "blockingEntries": _bounded_text_list(value.get("blockingEntries"), limit=256, maximum=64),
+        "expectedDirectoryOutcome": _bounded_evidence_text(
+            value.get("expectedDirectoryOutcome"), limit=64
+        ),
+        "permanentDelete": bool(value.get("permanentDelete")),
+    }
+
+
+def _bounded_execution_effect_list(value: object) -> list[dict[str, object]]:
+    """One bounded row per durable effect the exact execution item recorded."""
+
+    effects: list[dict[str, object]] = []
+    for effect in _as_list(value)[:32]:
+        if not isinstance(effect, dict):
+            continue
+        effects.append(
+            {
+                "action": _bounded_evidence_text(effect.get("action"), limit=64),
+                "sourceStorageId": _bounded_identifier(effect.get("source_storage_id")),
+                "sourceLocation": _bounded_location(effect.get("source_path"), segments=2),
+                "destinationStorageId": _bounded_identifier(effect.get("destination_storage_id")),
+                "destinationLocation": _bounded_location(
+                    effect.get("destination_path"), segments=2
+                ),
+                "verified": bool(effect.get("verified")),
+                "certainty": _bounded_evidence_text(effect.get("certainty"), limit=64),
+                "rollback": bool((effect.get("details") or {}).get("rollback"))
+                if isinstance(effect.get("details"), dict)
+                else False,
+                "occurredAt": _bounded_evidence_text(effect.get("occurred_at"), limit=64),
+            }
+        )
+    return effects
+
+
+def manual_execution_plan_evidence_operator(
+    document: dict[str, object] | None,
+) -> dict[str, object] | None:
+    """The durable reviewed-plan explanation for one executed item (AC-T4).
+
+    The manual Organize journey persists the exact reviewed Preview plan on
+    ``manual_execution_items.plan_json`` and its per-step effects on
+    ``manual_execution_effects``.  When a run item carries that linkage — the
+    only join used here — the same bounded, shape-aware projection the Preview
+    surface publishes (recognition type, media identity, the four policies,
+    parse/recognition/metadata analysis, destination, conflicts, capabilities
+    and the reviewed cleanup projection) plus the durable completed vs
+    uncertain/rolled-back steps become item evidence without re-running any
+    Provider, planner or Storage read.  A CLI, scheduled or legacy item has no
+    manual execution row: ``None`` keeps the whole section honestly
+    unavailable instead of fabricating an explanation.
+    """
+
+    if not isinstance(document, dict):
+        return None
+    plan = document.get("plan")
+    bounded_plan = (
+        _bounded_preview_plan(plan, include_cleanup_projection=True)
+        if isinstance(plan, dict)
+        else None
+    )
+    return {
+        "previewId": _bounded_identifier(document.get("preview_id")),
+        "executionId": _bounded_identifier(document.get("execution_id")),
+        "status": _bounded_evidence_text(document.get("status"), limit=64),
+        "stage": _bounded_evidence_text(document.get("stage"), limit=64),
+        "effectCertainty": _bounded_evidence_text(document.get("effect_certainty"), limit=64),
+        "completedOperations": _bounded_text_list(
+            document.get("completed_operations"), limit=64, maximum=32
+        ),
+        "uncertainEffects": _bounded_text_list(
+            document.get("uncertain_effects"), limit=64, maximum=32
+        ),
+        "effects": _bounded_execution_effect_list(document.get("effects")),
+        "plan": bounded_plan,
+    }
+
+
+def _task_result_run_evidence_document(result: PersistentResultRecord) -> dict[str, object]:
+    """The exact TaskItem Result projection, including its cleanup outcome."""
+
+    document = task_result_operator_document(result)
+    document["cleanup_status"] = _bounded_evidence_text(result.cleanup_status, limit=64)
+    document["cleanup_step_count"] = _bounded_counter(result.cleanup_step_count)
+    return document
+
+
 def run_item_evidence_document(
     *,
     item,
@@ -2545,6 +2662,7 @@ def run_item_evidence_document(
     results,
     evidence,
     logs,
+    plan_evidence: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """One exact item's durable evidence: checkpoint, results, plan and logs.
 
@@ -2561,10 +2679,21 @@ def run_item_evidence_document(
     configuration = checkpoint.get("configuration")
     if isinstance(configuration, dict):
         configuration.pop("snapshot_digest", None)
+    if plan_evidence is None:
+        plan_section: dict[str, object] = {
+            "available": False,
+            # A stable reason code, not prose: this item was never admitted
+            # through the reviewed Manual Organize journey (CLI, scheduled or
+            # legacy), so there is no durable reviewed plan to explain.
+            "reason": "no_reviewed_manual_execution_plan",
+        }
+    else:
+        bounded = _bounded_operator_document(redact_manual_value(plan_evidence))
+        plan_section = {"available": True, **dict(bounded if isinstance(bounded, dict) else {})}
     return {
         "item": task_item_operator_document(item),
         "checkpoint": redact_manual_value(checkpoint),
-        "results": [task_result_operator_document(result) for result in results],
+        "results": [_task_result_run_evidence_document(result) for result in results],
         "evidence": [
             redact_manual_value(
                 {
@@ -2575,6 +2704,7 @@ def run_item_evidence_document(
             )
             for document in evidence
         ],
+        "planEvidence": plan_section,
         "logs": [run_record_document(log) for log in logs],
         "sideEffects": "none",
     }
@@ -2593,6 +2723,7 @@ __all__ = [
     "job_lifecycle_document",
     "job_operator_document",
     "manual_action_matrix_operator_document",
+    "manual_execution_plan_evidence_operator",
     "manual_scan_operator_document",
     "require_cancellable",
     "run_accounting_basis",
