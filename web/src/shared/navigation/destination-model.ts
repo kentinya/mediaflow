@@ -9,6 +9,11 @@
  */
 
 import { RULE_FAMILIES } from "../../entities/rules/rules-workspace";
+import {
+  RUN_DETAIL_ITEM_TOKEN,
+  RUN_DISPOSITIONS,
+  RUN_RECORD_KINDS,
+} from "../../entities/operations/run-detail";
 
 const destinationData = [
   {
@@ -585,6 +590,43 @@ export function allowlistedDestinationSearch(
    * value that does not match the backend's bounded token grammar (including
    * anything credential-like, path-like or free-form) is dropped instead.
    */
+  /** The selected-run detail context (`任务详情` / `操作记录`) that travels
+   * through authentication continuation: one closed tab, one closed
+   * disposition filter, one closed record kind, one bounded item identity,
+   * both bounded server cursors and their directions. Anything else — a
+   * credential-like token, a foreign disposition or a cursor outside the
+   * grammar — is dropped instead of being replayed against the API. */
+  const setRunDetailTokens = (
+    allowed: URLSearchParams,
+    current: URLSearchParams,
+  ) => {
+    if (current.get("tab") === "records") {
+      allowed.set("tab", "records");
+    }
+    const status = current.get("istat");
+    if (
+      status !== null &&
+      (RUN_DISPOSITIONS as readonly string[]).includes(status)
+    ) {
+      allowed.set("istat", status);
+    }
+    const kind = current.get("rkind");
+    if (
+      kind !== null &&
+      (RUN_RECORD_KINDS as readonly string[]).includes(kind)
+    ) {
+      allowed.set("rkind", kind);
+    }
+    setFilterToken(allowed, "item", current.get("item"), RUN_DETAIL_ITEM_TOKEN);
+    setFilterToken(allowed, "icur", current.get("icur"), CURSOR_TOKEN);
+    setFilterToken(allowed, "rcur", current.get("rcur"), CURSOR_TOKEN);
+    for (const key of ["idir", "rdir"] as const) {
+      const direction = current.get(key);
+      if (direction === "forward" || direction === "backward") {
+        allowed.set(key, direction);
+      }
+    }
+  };
   const setFilterToken = (
     target: URLSearchParams,
     key: string,
@@ -695,6 +737,7 @@ export function allowlistedDestinationSearch(
       allowed.set("scopeKind", scopeKind);
       setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
     }
+    setRunDetailTokens(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/rules") {
@@ -732,6 +775,12 @@ export function allowlistedDestinationSearch(
       current.get("q_command"),
       COMMAND_FILTER_TOKEN,
     );
+    if (path === "/operations/tasks/$taskId") {
+      // The Task detail additionally owns the run detail context (tab,
+      // filters, cursors, inspected item) that its tabs restore on
+      // reconnect.
+      setRunDetailTokens(allowed, current);
+    }
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/operations/scan/new") {

@@ -643,6 +643,7 @@ class PersistentTaskRepository(Protocol):
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        statuses: tuple[str, ...] | None = None,
     ) -> tuple[PersistentTaskItem, ...]: ...
     def append_result(self, result: PersistentResultRecord) -> None: ...
     def list_results(

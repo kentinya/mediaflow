@@ -36,6 +36,7 @@ import {
   RUN_STATUS_LABELS,
   RUN_STATUS_FILTERS,
   RUN_TRIGGER_LABELS,
+  TERMINAL_RUN_STATUSES,
   isAttentionRun,
   type RunInventoryPage,
   type RunStatus,
@@ -46,6 +47,13 @@ import {
   runOverviewQueryKey,
   runOverviewQueryOptions,
 } from "./run-query";
+import { RunDetailTabs } from "./RunDetailTabs";
+import {
+  readRunDetailState,
+  runDetailStateSearch,
+  type RunDetailState,
+} from "./run-detail-state";
+import { runItemsQueryKey, runRecordsQueryKey } from "./run-detail-query";
 import { ResidentServiceStatus } from "./ResidentServiceStatus";
 import { manualActionsQueryOptions } from "./manual-actions-query";
 import { workerReadinessQueryOptions } from "./worker-query";
@@ -224,6 +232,9 @@ export function OperationsLanding() {
     "resourceLibraryId",
   );
   const selectedId = readSafeSearchValue(searchParams, "run");
+  // The selected run's detail view (tab/filters/cursors/inspected item) lives
+  // in the URL for the same reconnect reasons as the list state itself.
+  const detailState = readRunDetailState(searchParams);
   // Paging context lives in the URL (cursor + direction), never in component
   // state, so a refresh, a Back/Forward step and a reconnect all restore the
   // same server page instead of silently restarting at the first one.
@@ -309,7 +320,24 @@ export function OperationsLanding() {
     search["dir"] = nextDirection;
     if (selectedId !== "") {
       search["run"] = selectedId;
+      Object.assign(search, runDetailStateSearch(detailState));
     }
+    void navigate({ to: "/operations", search, replace: true });
+  };
+
+  /** Persist one detail-view change (tab/filter/cursor/inspected item) into
+   * the URL while keeping the exact list context around it. */
+  const applyDetailState = (next: Partial<RunDetailState>) => {
+    if (selectedId === "") {
+      return;
+    }
+    const search = filtersToSearch(filters);
+    if (cursor !== null) {
+      search["cursor"] = cursor;
+      search["dir"] = direction;
+    }
+    search["run"] = selectedId;
+    Object.assign(search, runDetailStateSearch({ ...detailState, ...next }));
     void navigate({ to: "/operations", search, replace: true });
   };
 
@@ -333,6 +361,10 @@ export function OperationsLanding() {
     void query.refetch();
     if (selectedId !== "") {
       void overviewQuery.refetch();
+      // The header refresh reaches the open detail tabs' bounded reads too;
+      // it repeats the same side-effect-free GETs, never a command.
+      void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+      void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
     }
     void readinessQuery.refetch();
     void matrixQuery.refetch();
@@ -530,7 +562,12 @@ export function OperationsLanding() {
                 )}
               </div>
               {selectedId !== "" && (
-                <RunDetailPanel query={overviewQuery} onClose={closeRun} />
+                <RunDetailPanel
+                  query={overviewQuery}
+                  onClose={closeRun}
+                  detailState={detailState}
+                  onDetailStateChange={applyDetailState}
+                />
               )}
             </div>
             <WorkerReadinessSection query={readinessQuery} />
@@ -741,9 +778,13 @@ function RunTable({
 function RunDetailPanel({
   query,
   onClose,
+  detailState,
+  onDetailStateChange,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
   readonly onClose: () => void;
+  readonly detailState: RunDetailState;
+  readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
 
@@ -784,23 +825,43 @@ function RunDetailPanel({
           关闭详情
         </button>
       </header>
-      {query.data === undefined ? (
-        <StatusBanner variant="info" title="正在加载运行详情">
-          <p>正在读取该运行的概览。</p>
-        </StatusBanner>
-      ) : !query.data.ok ? (
-        <StatusBanner variant="warning" title={query.data.failure.title}>
-          <p>{query.data.failure.nextAction}</p>
-          <div className="mf-actions">
-            <RefreshControl
-              onRefresh={() => void query.refetch()}
-              refreshing={query.isFetching}
+      {/* The overview read shares the shell's read boundary, so 401/403/
+          unavailable/malformed overview failures stay distinct and actionable
+          instead of leaving the panel stuck on its loading state. */}
+      <AuthorizedReadBoundary query={query} unavailableTitle="运行详情暂不可用">
+        {({ data }) => {
+          if (data === undefined) {
+            return (
+              <StatusBanner variant="info" title="正在加载运行详情">
+                <p>正在读取该运行的概览。</p>
+              </StatusBanner>
+            );
+          }
+          if (!data.ok) {
+            return (
+              <StatusBanner variant="warning" title={data.failure.title}>
+                <p>{data.failure.nextAction}</p>
+                <div className="mf-actions">
+                  <RefreshControl
+                    onRefresh={() => void query.refetch()}
+                    refreshing={query.isFetching}
+                  />
+                </div>
+              </StatusBanner>
+            );
+          }
+          return (
+            <RunDetailTabs
+              runId={data.model.runId}
+              progress={data.model.progress}
+              state={detailState}
+              onStateChange={onDetailStateChange}
+              active={!TERMINAL_RUN_STATUSES.includes(data.model.status)}
+              facts={<RunDetailFacts run={data.model} />}
             />
-          </div>
-        </StatusBanner>
-      ) : (
-        <RunDetailFacts run={query.data.model} />
-      )}
+          );
+        }}
+      </AuthorizedReadBoundary>
     </section>
   );
 }

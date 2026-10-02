@@ -266,5 +266,5 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         # Explicit initialization is the migration boundary; the probe itself
         # above cannot install schema, create a DB or advance its version.
         with SQLiteTaskRepository(self.database) as migrated:
-            self.assertEqual(migrated.schema_version, 41)
+            self.assertEqual(migrated.schema_version, 42)
             self.assertEqual(migrated.list_resident_services(), ())

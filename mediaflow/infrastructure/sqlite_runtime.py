@@ -148,10 +148,17 @@ from mediaflow.domain.notification import (
 from mediaflow.domain.operations_run import (
     ATTENTION_RUN_STATUSES,
     COMMAND_LABELS,
+    RUN_RECORD_KINDS,
+    OperationsRunItemWindow,
     OperationsRunOverview,
+    OperationsRunProgress,
+    OperationsRunRecord,
+    OperationsRunRecordWindow,
     OperationsRunStatus,
     OperationsRunTrigger,
+    disposition_partition,
     known_command_label,
+    statuses_for_disposition,
 )
 from mediaflow.domain.processing_checkpoint import (
     CheckpointAudit,
@@ -256,7 +263,7 @@ from mediaflow.infrastructure.file_index_schema import (
 # selection, authorization, claim, execution or authority state changes — and a
 # legacy row without it stays explicitly unavailable with no Active fallback
 # and no read-time backfill.
-SCHEMA_VERSION = 41
+SCHEMA_VERSION = 42
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -374,6 +381,43 @@ def _run_search_identity(value: object) -> str | None:
     """
 
     return searchable_identity_text(value)
+
+
+def _bounded_scan_error_count(raw: object) -> int | None:
+    """The bounded count of scan-level errors kept outside primary items.
+
+    A malformed or legacy JSON value yields ``None`` (unknown), never a
+    fabricated zero that would read as "no errors".
+    """
+
+    if not isinstance(raw, str) or not raw.strip():
+        return 0
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if isinstance(value, (list, tuple)):
+        return len(value)
+    return None
+
+
+def _bounded_int_mapping(raw: object) -> dict[str, int]:
+    """A small bounded ``{name: count}`` mapping from persisted scan progress."""
+
+    if not isinstance(raw, str) or not raw.strip():
+        return {}
+    try:
+        value = json.loads(raw)
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    bounded: dict[str, int] = {}
+    for key, number in list(value.items())[:16]:
+        if isinstance(key, str) and isinstance(number, int) and not isinstance(number, bool):
+            if 0 <= number <= 10**9 and len(key) <= 64:
+                bounded[key] = number
+    return bounded
 
 
 def _sql_string(value: str) -> str:
@@ -1169,11 +1213,20 @@ class SQLiteTaskRepository:
         limit: int | None = None,
         after: tuple[datetime, str] | None = None,
         before: tuple[datetime, str] | None = None,
+        statuses: tuple[str, ...] | None = None,
     ) -> tuple[PersistentTaskItem, ...]:
         if after is not None and before is not None:
             raise ValueError("after and before are mutually exclusive")
         query = "SELECT * FROM task_items WHERE task_id = ?"
         parameters: tuple[object, ...] = (task_id,)
+        if statuses is not None:
+            if not statuses or any(not isinstance(value, str) or not value for value in statuses):
+                raise ValueError("task item status filter must be non-empty")
+            # A server-side filter over the exact raw statuses the caller's
+            # submitted disposition expands to; the page and its filtered
+            # count always run against the same predicate.
+            query += f" AND status IN ({', '.join('?' for _ in statuses)})"
+            parameters += tuple(statuses)
         reverse = before is not None
         if after is not None:
             timestamp = after[0].isoformat()
@@ -5216,6 +5269,581 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._operations_run_overview(row) if row is not None else None
 
+    # -- Selected-run detail reads (Slice 42 RO-3) --------------------------
+
+    #: Upper sanity bound for a persisted admission counter: a legacy or
+    #: externally written ``tasks.total_items`` beyond this is treated as
+    #: untrusted evidence instead of a published denominator.
+    _RUN_ADMITTED_ITEMS_MAXIMUM = 1_000_000
+
+    def resolve_operations_run_link(self, identifier: object) -> str | None:
+        """Resolve one durable identifier to the run anchor that owns it.
+
+        Accepts a run anchor (Job ID or standalone Task ID) or the Task ID of
+        a Job-linked Task and returns the exact anchor ID of that run.  The
+        only fallback is the persisted ``automation_jobs.task_id`` link —
+        never a filename, label or creation-time proximity — so a supported
+        detail link keeps resolving to the same stable run identity before
+        and after Job→Task linkage.  ``None`` means no run owns it.
+        """
+
+        if not isinstance(identifier, str) or not identifier.strip() or len(identifier) > 128:
+            return None
+        document = self._run_query_document()
+        with self._lock:
+            row = self._connection.execute(
+                f"SELECT anchor_id FROM ({document}) WHERE anchor_id = ? LIMIT 1",
+                (identifier,),
+            ).fetchone()
+            if row is not None:
+                return str(row["anchor_id"])
+            row = self._connection.execute(
+                "SELECT job_id FROM automation_jobs WHERE task_id = ? LIMIT 1",
+                (identifier,),
+            ).fetchone()
+        return str(row["job_id"]) if row is not None else None
+
+    def operations_run_with_progress(
+        self, run_id: object
+    ) -> tuple[OperationsRunOverview, OperationsRunProgress] | None:
+        """One run overview plus its durable progress from ONE read snapshot.
+
+        The run row and every progress fact a detail panel presents beside it
+        are read inside a single SQLite read transaction, so a concurrent
+        transition committed by any other connection can never make the
+        aggregate state and the disposition counts disagree.  Returns
+        ``None`` when no such run exists.
+        """
+
+        if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 128:
+            return None
+        document = self._run_query_document()
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                row = self._connection.execute(
+                    f"SELECT * FROM ({document}) WHERE anchor_id = ? LIMIT 1", (run_id,)
+                ).fetchone()
+                overview = self._operations_run_overview(row) if row is not None else None
+                progress = self._run_progress_locked(overview) if overview is not None else None
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if overview is None or progress is None:
+            return None
+        return overview, progress
+
+    def _run_status_counts_locked(self, task_id: str) -> dict[str, int]:
+        rows = self._connection.execute(
+            "SELECT status, COUNT(*) AS value_count FROM task_items "
+            "WHERE task_id = ? GROUP BY status",
+            (task_id,),
+        ).fetchall()
+        return {str(row["status"]): int(row["value_count"]) for row in rows}
+
+    def _run_uncertain_success_locked(self, task_id: str) -> int:
+        """Items whose status says success but whose latest Result is uncertain."""
+
+        row = self._connection.execute(
+            """
+            WITH latest AS (
+                SELECT item_id, effect_certainty,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY item_id
+                           ORDER BY created_at DESC, result_id DESC
+                       ) AS row_number
+                FROM task_results WHERE task_id = ?
+            )
+            SELECT COUNT(*) AS value_count
+            FROM task_items i
+            JOIN latest l ON l.item_id = i.item_id AND l.row_number = 1
+            WHERE i.task_id = ?
+              AND i.status IN ('success', 'dry_run')
+              AND l.effect_certainty = 'attempted_unverified'
+            """,
+            (task_id, task_id),
+        ).fetchone()
+        return int(row["value_count"] or 0)
+
+    def _run_progress_locked(self, overview: OperationsRunOverview) -> OperationsRunProgress:
+        """Derive the durable progress accounting of one run (AC-T2).
+
+        Every value comes from persisted rows of this one read snapshot:
+        mutually exclusive disposition counts over the primary item
+        population, the latest-Result effect facet, the uncertain-success
+        annotation, attachment steps and scan-level errors kept separate from
+        primary items, and the honest indeterminate state for a discovery
+        total that is genuinely unknown.
+        """
+
+        task_id = overview.task_id
+        if task_id is None:
+            return OperationsRunProgress(
+                available=False,
+                unavailable_reason=(
+                    "this run has no linked Task yet; item progress, records and results "
+                    "become available once the admission acquires its Task"
+                ),
+            )
+        task_row = self._connection.execute(
+            "SELECT execute_authorized FROM tasks WHERE task_id = ?", (task_id,)
+        ).fetchone()
+        execute_authorized = bool(task_row["execute_authorized"]) if task_row is not None else False
+        status_counts = self._run_status_counts_locked(task_id)
+        dispositions, total = disposition_partition(status_counts)
+        uncertain_success = self._run_uncertain_success_locked(task_id)
+        attachment_row = self._connection.execute(
+            "SELECT COALESCE(SUM(attachment_count), 0) AS value_count, COUNT(*) AS row_count "
+            "FROM task_results WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        attachment_steps = int(attachment_row["value_count"] or 0)
+        results_total = int(attachment_row["row_count"] or 0)
+        effect_rows = self._connection.execute(
+            """
+            WITH latest AS (
+                SELECT effect_certainty,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY item_id
+                           ORDER BY created_at DESC, result_id DESC
+                       ) AS row_number
+                FROM task_results WHERE task_id = ?
+            )
+            SELECT effect_certainty AS certainty, COUNT(*) AS value_count
+            FROM latest WHERE row_number = 1 GROUP BY effect_certainty
+            """,
+            (task_id,),
+        ).fetchall()
+        effect_counts = {
+            str(row["certainty"] or "unknown"): int(row["value_count"]) for row in effect_rows
+        }
+        scan_row = self._connection.execute(
+            "SELECT errors_json, reconciliation_complete, progress_json "
+            "FROM manual_scan_tasks WHERE task_id = ?",
+            (task_id,),
+        ).fetchone()
+        terminal = overview.status in {
+            OperationsRunStatus.COMPLETED,
+            OperationsRunStatus.PARTIAL_SUCCESS,
+            OperationsRunStatus.FAILED,
+            OperationsRunStatus.CANCELLED,
+        }
+        scan_errors: int | None = None
+        scan_discovery_complete: bool | None = None
+        scan_progress: dict[str, int] = {}
+        indeterminate = False
+        if scan_row is not None:
+            # A manual Scan discovers its population while it runs, so its
+            # total is honestly unknown until discovery reconciles; the scan
+            # keeps its own bounded error/progress evidence separate from the
+            # primary item counts.
+            scan_discovery_complete = bool(scan_row["reconciliation_complete"]) or terminal
+            indeterminate = not scan_discovery_complete
+            scan_errors = _bounded_scan_error_count(scan_row["errors_json"])
+            scan_progress = _bounded_int_mapping(scan_row["progress_json"])
+        elif not terminal:
+            admitted_raw = overview.total_items
+            admitted = (
+                int(admitted_raw)
+                if isinstance(admitted_raw, int)
+                and not isinstance(admitted_raw, bool)
+                and 0 <= admitted_raw <= self._RUN_ADMITTED_ITEMS_MAXIMUM
+                else None
+            )
+            if total == 0 and not admitted:
+                # Nothing admitted yet: a total would be invented.
+                indeterminate = True
+            elif admitted is not None and admitted > total:
+                # The admission counter proves more items than have
+                # materialized rows; the difference is published inside the
+                # pending disposition so the partition keeps reconciling.
+                dispositions["pending"] += admitted - total
+                total = admitted
+        known_total = None if indeterminate else total
+        if uncertain_success > dispositions.get("success", 0):
+            uncertain_success = dispositions.get("success", 0)
+        return OperationsRunProgress(
+            available=True,
+            known_total=known_total,
+            indeterminate=indeterminate,
+            dispositions=dispositions,
+            uncertain_success=uncertain_success,
+            attachment_steps=attachment_steps,
+            effect_counts=effect_counts,
+            results_total=results_total,
+            results_complete=True,
+            scan_errors=scan_errors,
+            scan_discovery_complete=scan_discovery_complete,
+            scan_progress=scan_progress,
+            primary_unit="discovered_files" if scan_row is not None else "task_items",
+            execute_authorized=execute_authorized,
+        )
+
+    def operations_run_items_window(
+        self,
+        task_id: str,
+        *,
+        limit: int = 20,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+        disposition: str | None = None,
+    ) -> OperationsRunItemWindow:
+        """One item page plus population totals from one read snapshot (AC-T3).
+
+        The page, the filtered total, the whole-population disposition
+        partition and the uncertain-success annotation are read inside one
+        SQLite read transaction, so concurrent item transitions can never
+        make a filtered count disagree with the page it describes, and the
+        reported totals stay page-independent while an operator pages.  The
+        cursor only bounds the page window — it never narrows the reported
+        population — and both directions keep one deterministic ordering.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("run item page limit must be between 1 and 100")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        expanded = statuses_for_disposition(disposition) if disposition is not None else None
+        reverse = before is not None
+        filter_clauses: list[str] = []
+        filter_parameters: list[object] = []
+        if expanded is not None:
+            filter_clauses.append(f"status IN ({', '.join('?' for _ in expanded)})")
+            filter_parameters.extend(expanded)
+        page_clauses = list(filter_clauses)
+        page_parameters = list(filter_parameters)
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append("(created_at > ? OR (created_at = ? AND item_id > ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append("(created_at < ? OR (created_at = ? AND item_id < ?))")
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        page_where = f" AND {' AND '.join(page_clauses)}" if page_clauses else ""
+        order = "created_at DESC, item_id DESC" if reverse else "created_at, item_id"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                status_counts = self._run_status_counts_locked(task_id)
+                dispositions, total = disposition_partition(status_counts)
+                uncertain_success = self._run_uncertain_success_locked(task_id)
+                matching_total = (
+                    sum(status_counts.get(status, 0) for status in expanded)
+                    if expanded is not None
+                    else total
+                )
+                rows = self._connection.execute(
+                    f"SELECT * FROM task_items WHERE task_id = ?{page_where} "
+                    f"ORDER BY {order} LIMIT ?",
+                    (task_id, *page_parameters, limit + 1),
+                ).fetchall()
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        return OperationsRunItemWindow(
+            page=tuple(self._item(row) for row in rows),
+            total=total,
+            matching_total=matching_total,
+            dispositions=dispositions,
+            uncertain_success=uncertain_success,
+            has_next=has_next,
+            has_previous=has_previous,
+        )
+
+    def operations_run_records_window(
+        self,
+        task_id: str | None,
+        job_id: str | None,
+        *,
+        kind: str | None = None,
+        limit: int = 20,
+        after: tuple[datetime, str] | None = None,
+        before: tuple[datetime, str] | None = None,
+    ) -> OperationsRunRecordWindow:
+        """One operation-record page plus kind totals from one read snapshot.
+
+        The stream unions durable item results, captured pipeline evidence,
+        exactly-linked operational logs (``task_id``/``job_id`` columns) and
+        control/recovery audit rows (``task_id`` links) — never a text
+        inference — ordered by ``(occurred_at, record_id)`` with the kind
+        prefixed into the record ID so mixed-kind paging stays deterministic.
+        The page, the kind partition and the filtered total come from one
+        SQLite read transaction.
+        """
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("run record page limit must be between 1 and 100")
+        if after is not None and before is not None:
+            raise ValueError("after and before are mutually exclusive")
+        if kind is not None and kind not in RUN_RECORD_KINDS:
+            raise ValueError("run record kind filter is invalid")
+        if task_id is None and job_id is None:
+            return OperationsRunRecordWindow(
+                page=(),
+                matching_total=0,
+                kind_counts={key: 0 for key in RUN_RECORD_KINDS},
+                has_next=False,
+                has_previous=False,
+            )
+        union, union_parameters = self._run_records_union(task_id, job_id)
+        filter_clauses: list[str] = []
+        filter_parameters: list[object] = []
+        if kind is not None:
+            filter_clauses.append("kind = ?")
+            filter_parameters.append(kind)
+        page_clauses = list(filter_clauses)
+        page_parameters = list(filter_parameters)
+        if after is not None:
+            timestamp = after[0].isoformat()
+            page_clauses.append("(occurred_at < ? OR (occurred_at = ? AND record_id < ?))")
+            page_parameters.extend((timestamp, timestamp, after[1]))
+        elif before is not None:
+            timestamp = before[0].isoformat()
+            page_clauses.append("(occurred_at > ? OR (occurred_at = ? AND record_id > ?))")
+            page_parameters.extend((timestamp, timestamp, before[1]))
+        page_where = f" WHERE {' AND '.join(page_clauses)}" if page_clauses else ""
+        filter_where = f" WHERE {' AND '.join(filter_clauses)}" if filter_clauses else ""
+        reverse = before is not None
+        order = "occurred_at ASC, record_id ASC" if reverse else "occurred_at DESC, record_id DESC"
+        with self._lock:
+            self._connection.execute("BEGIN")
+            try:
+                kind_counts = {
+                    str(row["kind"]): int(row["value_count"])
+                    for row in self._connection.execute(
+                        f"SELECT kind, COUNT(*) AS value_count FROM ({union}) GROUP BY kind",
+                        union_parameters,
+                    ).fetchall()
+                }
+                matching_total = int(
+                    self._connection.execute(
+                        f"SELECT COUNT(*) AS value_count FROM ({union}){filter_where}",
+                        (*union_parameters, *filter_parameters),
+                    ).fetchone()["value_count"]
+                )
+                rows = self._connection.execute(
+                    f"SELECT * FROM ({union}){page_where} ORDER BY {order} LIMIT ?",
+                    (*union_parameters, *page_parameters, limit + 1),
+                ).fetchall()
+                payloads = self._run_record_payloads_locked(rows)
+            except BaseException:
+                self._connection.execute("ROLLBACK")
+                raise
+            else:
+                self._connection.execute("COMMIT")
+        if reverse:
+            has_previous = len(rows) > limit
+            rows = list(reversed(rows[:limit]))
+            has_next = bool(rows)
+        else:
+            has_next = len(rows) > limit
+            rows = rows[:limit]
+            has_previous = after is not None
+        page = tuple(
+            OperationsRunRecord(
+                kind=str(row["kind"]),
+                record_id=str(row["record_id"]),
+                occurred_at=datetime.fromisoformat(str(row["occurred_at"])),
+                item_id=str(row["item_id"]) if row["item_id"] else None,
+                source=payloads.get(str(row["record_id"]), row),
+            )
+            for row in rows
+        )
+        for key in RUN_RECORD_KINDS:
+            kind_counts.setdefault(key, 0)
+        return OperationsRunRecordWindow(
+            page=page,
+            matching_total=matching_total,
+            kind_counts=kind_counts,
+            has_next=has_next,
+            has_previous=has_previous,
+        )
+
+    @staticmethod
+    def _run_records_union(
+        task_id: str | None, job_id: str | None
+    ) -> tuple[str, tuple[object, ...]]:
+        """The exactly-linked record stream as one UNION ALL subquery.
+
+        Every branch binds its linkage through a persisted foreign key or ID
+        column; the shared output columns are
+        ``(kind, record_id, occurred_at, item_id, action, state, actor, ref, link)``.
+        """
+
+        branches: list[str] = []
+        parameters: list[object] = []
+        if task_id is not None:
+            branches.append(
+                "SELECT 'result' AS kind, 'result:' || result_id AS record_id, "
+                "created_at AS occurred_at, item_id AS item_id, "
+                "operation AS action, status AS state, NULL AS actor, "
+                "effect_certainty AS ref, NULL AS link "
+                "FROM task_results WHERE task_id = ? AND created_at IS NOT NULL"
+            )
+            parameters.append(task_id)
+            branches.append(
+                "SELECT 'evidence' AS kind, 'evidence:' || evidence_id AS record_id, "
+                "captured_at AS occurred_at, item_id AS item_id, "
+                "'pipeline_evidence' AS action, outcome AS state, NULL AS actor, "
+                "attempts AS ref, NULL AS link "
+                "FROM pipeline_evidence WHERE task_id = ? AND captured_at IS NOT NULL"
+            )
+            parameters.append(task_id)
+        if task_id is not None and job_id is not None:
+            branches.append(
+                "SELECT 'log' AS kind, 'log:' || log_id AS record_id, "
+                "occurred_at AS occurred_at, NULL AS item_id, "
+                "event AS action, status AS state, component AS actor, "
+                "level AS ref, plan_id AS link "
+                "FROM operational_logs WHERE (task_id = ? OR job_id = ?) "
+                "AND occurred_at IS NOT NULL"
+            )
+            parameters.extend((task_id, job_id))
+        elif task_id is not None:
+            branches.append(
+                "SELECT 'log' AS kind, 'log:' || log_id AS record_id, "
+                "occurred_at AS occurred_at, NULL AS item_id, "
+                "event AS action, status AS state, component AS actor, "
+                "level AS ref, plan_id AS link "
+                "FROM operational_logs WHERE task_id = ? AND occurred_at IS NOT NULL"
+            )
+            parameters.append(task_id)
+        elif job_id is not None:
+            branches.append(
+                "SELECT 'log' AS kind, 'log:' || log_id AS record_id, "
+                "occurred_at AS occurred_at, NULL AS item_id, "
+                "event AS action, status AS state, component AS actor, "
+                "level AS ref, plan_id AS link "
+                "FROM operational_logs WHERE job_id = ? AND occurred_at IS NOT NULL"
+            )
+            parameters.append(job_id)
+        if task_id is not None:
+            simple_audits = (
+                ("task_retry_audit", "decision_id", "decided_at", "task_retry"),
+                ("manual_ignore_audit", "decision_id", "decided_at", "ignore_decision"),
+                ("recovery_requests", "request_id", "requested_at", "recovery_request"),
+                ("recovery_batches", "batch_id", "created_at", "recovery_batch"),
+                (
+                    "recovery_continuations",
+                    "continuation_id",
+                    "created_at",
+                    "recovery_continuation",
+                ),
+                ("recognition_retry_audit", "decision_id", "decided_at", "recognition_retry"),
+            )
+            for table, id_column, time_column, action in simple_audits:
+                item_column = (
+                    "source_item_id"
+                    if table == "recovery_continuations"
+                    else "NULL"
+                    if table == "recovery_batches"
+                    else "item_id"
+                )
+                scope_column = (
+                    "source_task_id"
+                    if table == "recovery_batches"
+                    else ("source_task_id" if table == "recovery_continuations" else "task_id")
+                )
+                state_column = (
+                    "status"
+                    if table
+                    in {
+                        "recovery_requests",
+                        "recovery_batches",
+                        "recovery_continuations",
+                    }
+                    else "NULL"
+                )
+                link_column = "request_id" if table == "recovery_continuations" else "NULL"
+                branches.append(
+                    f"SELECT 'audit' AS kind, 'audit:' || {id_column} AS record_id, "
+                    f"{time_column} AS occurred_at, {item_column} AS item_id, "
+                    f"'{action}' AS action, {state_column} AS state, actor AS actor, "
+                    f"NULL AS ref, {link_column} AS link "
+                    f"FROM {table} WHERE {scope_column} = ? AND {time_column} IS NOT NULL"
+                )
+                parameters.append(task_id)
+            joined_audits = (
+                (
+                    "recognition_review_decision_audit",
+                    "recognition_reviews",
+                    "recognition_decision",
+                ),
+                (
+                    "metadata_review_decision_audit",
+                    "metadata_reviews",
+                    "metadata_decision",
+                ),
+                (
+                    "metadata_correction_decision_audit",
+                    "metadata_corrections",
+                    "metadata_correction_decision",
+                ),
+                (
+                    "classification_review_decision_audit",
+                    "classification_reviews",
+                    "classification_decision",
+                ),
+                ("conflict_decision_audit", "conflict_confirmations", "conflict_decision"),
+            )
+            for audit_table, parent_table, action in joined_audits:
+                parent_id = (
+                    "confirmation_id" if parent_table == "conflict_confirmations" else "review_id"
+                )
+                branches.append(
+                    f"SELECT 'audit' AS kind, 'audit:' || a.audit_id AS record_id, "
+                    f"a.decided_at AS occurred_at, p.item_id AS item_id, "
+                    f"'{action}' AS action, NULL AS state, a.actor AS actor, "
+                    f"NULL AS ref, a.{parent_id} AS link "
+                    f"FROM {audit_table} a JOIN {parent_table} p "
+                    f"ON p.{parent_id} = a.{parent_id} "
+                    f"WHERE p.task_id = ? AND a.decided_at IS NOT NULL"
+                )
+                parameters.append(task_id)
+        return " UNION ALL ".join(branches), tuple(parameters)
+
+    def _run_record_payloads_locked(self, rows: list[sqlite3.Row]) -> dict[str, object]:
+        """Fetch the durable detail rows the projector needs for one page.
+
+        Bounded by the page size: at most one ``IN`` query per present kind.
+        """
+
+        payloads: dict[str, object] = {}
+        result_ids = [
+            str(row["record_id"]).split(":", 1)[1] for row in rows if str(row["kind"]) == "result"
+        ]
+        if result_ids:
+            placeholders = ", ".join("?" for _ in result_ids)
+            for detail in self._connection.execute(
+                f"SELECT * FROM task_results WHERE result_id IN ({placeholders})",
+                result_ids,
+            ).fetchall():
+                payloads[f"result:{detail['result_id']}"] = self._result(detail)
+        evidence_ids = [
+            str(row["record_id"]).split(":", 1)[1] for row in rows if str(row["kind"]) == "evidence"
+        ]
+        if evidence_ids:
+            placeholders = ", ".join("?" for _ in evidence_ids)
+            for detail in self._connection.execute(
+                f"SELECT * FROM pipeline_evidence WHERE evidence_id IN ({placeholders})",
+                evidence_ids,
+            ).fetchall():
+                payloads[f"evidence:{detail['evidence_id']}"] = self._evidence(detail)
+        return payloads
+
     def _operations_run_overview(self, row: sqlite3.Row) -> OperationsRunOverview:
         """One bounded inventory row from the joined population document."""
 
@@ -7038,6 +7666,40 @@ class SQLiteTaskRepository:
             for row in rows
         )
         return tuple(reversed(values)) if reverse else values
+
+    def list_operational_logs_for_plan(
+        self, plan_id: str, *, limit: int = 20
+    ) -> tuple[OperationalLogRecord, ...]:
+        """The operational logs exactly linked to one persisted plan ID.
+
+        The item evidence read joins through the persisted ``plan_id`` column
+        only — never through text matching — newest first and hard-bounded.
+        """
+
+        if not isinstance(plan_id, str) or not plan_id.strip() or len(plan_id) > 128:
+            raise ValueError("operational log plan ID is required")
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit < 1 or limit > 100:
+            raise ValueError("operational log plan limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM operational_logs WHERE plan_id = ? "
+                "ORDER BY occurred_at DESC, log_id DESC LIMIT ?",
+                (plan_id, limit),
+            ).fetchall()
+        return tuple(
+            OperationalLogRecord(
+                row["log_id"],
+                datetime.fromisoformat(row["occurred_at"]),
+                LogLevel(row["level"]),
+                row["component"],
+                row["event"],
+                row["task_id"],
+                row["job_id"],
+                row["plan_id"],
+                row["status"],
+            )
+            for row in rows
+        )
 
     def prune_operational_logs(self, *, before: datetime, maximum_records: int) -> int:
         if maximum_records < 1:
@@ -11374,6 +12036,53 @@ class SQLiteTaskRepository:
             }
             if "progress" not in item_columns:
                 self._connection.execute("ALTER TABLE task_items ADD COLUMN progress TEXT")
+            # Schema 42: the selected-run detail reads page/filter items by
+            # (task, created_at, item_id), page task results and exactly-linked
+            # operation records by task/plan/time, and counts dispositions per
+            # task — each as one bounded indexed query instead of a table scan.
+            # Indexes only: the read journey adds no column, no backfill and no
+            # second authority, so a Task-Base database upgrades in place with
+            # its pins, results, checkpoints and ownership unchanged.
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS task_items_task_created "
+                "ON task_items(task_id, created_at, item_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS task_results_task_created "
+                "ON task_results(task_id, created_at, result_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS operational_logs_task_time "
+                "ON operational_logs(task_id, occurred_at, log_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS operational_logs_job_time "
+                "ON operational_logs(job_id, occurred_at, log_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS operational_logs_plan_time "
+                "ON operational_logs(plan_id, occurred_at, log_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS recognition_reviews_task_created "
+                "ON recognition_reviews(task_id, created_at, review_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS metadata_reviews_task_created "
+                "ON metadata_reviews(task_id, created_at, review_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS metadata_corrections_task_created "
+                "ON metadata_corrections(task_id, created_at, review_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS classification_reviews_task_created "
+                "ON classification_reviews(task_id, created_at, review_id)"
+            )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS conflict_confirmations_task_created "
+                "ON conflict_confirmations(task_id, created_at, confirmation_id)"
+            )
             job_columns = {
                 row["name"]
                 for row in self._connection.execute("PRAGMA table_info(automation_jobs)").fetchall()

@@ -4120,3 +4120,126 @@ tr[aria-selected="true"] {
     overflow-y: auto;
   }
 }
+
+/* --- Selected-run detail: 任务详情 / 操作记录 (Slice 42 RO-3) --- */
+
+.mf-run-detail-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mf-run-tabs {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--line, #e2e7ef);
+  padding-bottom: 0.35rem;
+}
+
+.mf-run-tabs > button {
+  border: 1px solid #d8dee8;
+  background: #fff;
+  border-radius: 0.55rem 0.55rem 0 0;
+  padding: 0.55rem 0.9rem;
+  cursor: pointer;
+}
+
+.mf-run-tabs > button[aria-current="page"] {
+  color: #0b63ce;
+  border-color: #8db9ed;
+  background: #eef6ff;
+  font-weight: 700;
+}
+
+.mf-run-tab-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-run-tab-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mf-run-progress {
+  background: var(--panel, #fff);
+  border: 1px solid var(--line, #e2e7ef);
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mf-run-progress h4 {
+  margin: 0;
+}
+
+.mf-progress-track {
+  height: 8px;
+  background: #e5e7eb;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.mf-progress-fill {
+  height: 100%;
+  background: #0b63ce;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.mf-disposition-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  gap: 8px;
+}
+
+.mf-disposition-grid li {
+  background: #f8fafc;
+  border: 1px solid #e2e7ef;
+  border-radius: 8px;
+  padding: 6px 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+
+.mf-disposition-value {
+  font-size: 1.05rem;
+  font-weight: 700;
+}
+
+.mf-disposition-label {
+  font-size: 0.75rem;
+  color: #475569;
+}
+
+.mf-run-separate-counts {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mf-run-items-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mf-run-items-head h4 {
+  margin: 0;
+  margin-right: auto;
+}

@@ -188,13 +188,31 @@ test("Task detail separates the aggregate from items and results", async ({
   await expect(
     page.getByRole("heading", { name: "Task aggregate" }),
   ).toBeVisible();
-  await expect(page.getByRole("heading", { name: /TaskItems/ })).toBeVisible();
-  await expect(page.getByRole("heading", { name: /Results/ })).toBeVisible();
-  // A successful sibling stays visible next to the failed one.
-  await expect(page.getByText("item-001")).toBeVisible();
-  await expect(page.getByText("item-002")).toBeVisible();
   await expect(
     page.getByText("Pinned configuration", { exact: true }),
+  ).toBeVisible();
+
+  // The item/result evidence journey is the native run detail: the supported
+  // Task identity resolves to its run through the persisted Job→Task link and
+  // opens the 任务详情 / 操作记录 tabs.
+  await expect(page.getByRole("button", { name: "任务详情" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "操作记录" })).toBeVisible();
+  const items = page.getByRole("region", { name: "主条目" });
+  await expect(items).toBeVisible();
+  // A successful sibling stays visible next to the failed one.
+  await expect(items.getByText("item-001")).toBeVisible();
+  await expect(items.getByText("item-002")).toBeVisible();
+
+  // 操作记录 shows the exactly-linked durable results and logs separately.
+  await page.getByRole("button", { name: "操作记录" }).click();
+  await expect(page).toHaveURL(/tab=records/);
+  const records = page.getByRole("region", { name: "操作记录", exact: true });
+  await expect(records).toBeVisible();
+  await expect(
+    records.getByRole("cell", { name: "执行结果" }).first(),
+  ).toBeVisible();
+  await expect(
+    records.getByRole("cell", { name: "运行日志" }).first(),
   ).toBeVisible();
 });
 
@@ -548,9 +566,12 @@ test("the selected run detail is a right column on desktop and a full overlay wh
   await connect(page);
   await openOperations(page);
   await page.setViewportSize({ width: 1440, height: 900 });
-  await expect(page.getByRole("table")).toBeVisible();
+  // The selected run's detail adds its own item table, so the layout proof
+  // measures the inventory table explicitly.
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await expect(inventoryTable).toBeVisible();
 
-  await page.getByRole("table").getByRole("button").first().click();
+  await inventoryTable.getByRole("button").first().click();
   const detail = page.getByRole("region", { name: "运行详情" });
   await expect(detail).toBeVisible();
   // The panel is the right column of the detail-aware two-column layout.
@@ -558,7 +579,7 @@ test("the selected run detail is a right column on desktop and a full overlay wh
     page.locator(".mf-run-layout.mf-run-has-detail .mf-run-detail"),
   ).toHaveCount(1);
 
-  const tableBox = await page.getByRole("table").boundingBox();
+  const tableBox = await inventoryTable.boundingBox();
   const detailBox = await detail.boundingBox();
   expect(tableBox).not.toBeNull();
   expect(detailBox).not.toBeNull();
@@ -605,4 +626,209 @@ test("an unauthenticated deep entry reconnects to the selected run overview", as
   await expect(page.getByRole("row", { name: /job-005/ })).toBeVisible();
   const html = await page.content();
   expect(html).not.toContain(VIEWER_TOKEN);
+});
+
+test("the selected run detail shows truthful progress and its accounting basis", async ({
+  page,
+}) => {
+  await connect(page);
+  await openOperations(page);
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await inventoryTable
+    .getByRole("button", { name: /job-001/ })
+    .first()
+    .click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  // The 任务详情 tab carries the durable progress projection: a processed
+  // ratio explicitly labelled as processed work (never a success rate), the
+  // reconciling disposition counts and the accounting basis text.
+  const progress = detail.getByRole("region", { name: "整理进度" });
+  await expect(progress).toBeVisible();
+  await expect(progress.getByRole("progressbar")).toBeVisible();
+  await expect(progress.getByText(/已处理 \d+ \/ \d+ 个/)).toBeVisible();
+  await expect(progress.getByText(/处理进度,非成功率/)).toBeVisible();
+  await expect(
+    progress
+      .getByRole("list", { name: "条目处置分布" })
+      .getByText("已确认成功", { exact: true }),
+  ).toBeVisible();
+  await expect(progress.getByText(/口径:/)).toBeVisible();
+  await expect(progress.getByText(/成功含义:/)).toBeVisible();
+});
+
+test("item and record filters page on the server and survive a reload", async ({
+  page,
+}) => {
+  const requests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/api/v1/operations/runs/")) {
+      requests.push(request.url());
+    }
+  });
+  await connect(page);
+  await openOperations(page);
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await inventoryTable
+    .getByRole("button", { name: /job-001/ })
+    .first()
+    .click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  // The disposition filter is submitted to the server (never merged in the
+  // browser) and recorded in the URL for reconnect.
+  await page.getByLabel("状态筛选").selectOption("waiting");
+  await expect(page).toHaveURL(/istat=waiting/);
+  await expect
+    .poll(() =>
+      requests.some(
+        (url) => url.includes("/items") && url.includes("status=waiting"),
+      ),
+    )
+    .toBe(true);
+  // The whole-run partition stays visible beside the narrowed page.
+  await expect(detail.getByText(/运行共 \d+ 条/)).toBeVisible();
+
+  await page.getByLabel("状态筛选").selectOption("success");
+  await expect(page).toHaveURL(/istat=success/);
+  await expect(detail.getByText("item-001")).toBeVisible();
+
+  // The records kind filter is likewise server-side.
+  await detail.getByRole("button", { name: "操作记录" }).click();
+  await expect(page).toHaveURL(/tab=records/);
+  await page.getByLabel("类型筛选").selectOption("log");
+  await expect(page).toHaveURL(/rkind=log/);
+  await expect
+    .poll(() =>
+      requests.some(
+        (url) => url.includes("/records") && url.includes("kind=log"),
+      ),
+    )
+    .toBe(true);
+
+  // A reload drops the memory-only token, so the next connect continues back
+  // to the exact deep URL: the tab, both filters and the selection all
+  // survive authentication continuation.
+  const deepUrl = page.url();
+  await page.goto(deepUrl);
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(VIEWER_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/tab=records/);
+  await expect(page).toHaveURL(/rkind=log/);
+  await expect(page).toHaveURL(/istat=success/);
+  await expect(page).toHaveURL(/run=job-001/);
+  const detailAfter = page.getByRole("region", { name: "运行详情" });
+  await expect(detailAfter).toBeVisible();
+  const records = page.getByRole("region", { name: "操作记录", exact: true });
+  await expect(records).toBeVisible();
+});
+
+test("one item's evidence opens through exact links and closes again", async ({
+  page,
+}) => {
+  await connect(page);
+  await openOperations(page);
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await inventoryTable
+    .getByRole("button", { name: /job-001/ })
+    .first()
+    .click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByText("item-001")).toBeVisible();
+
+  await items.getByRole("button", { name: "查看证据" }).first().click();
+  await expect(page).toHaveURL(/item=item-001/);
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(evidence).toBeVisible();
+  await expect(
+    evidence.getByRole("heading", { name: "执行结果(1)" }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("heading", { name: "计划与分析证据(1)" }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("heading", { name: "精确关联日志(2)" }),
+  ).toBeVisible();
+  await expect(
+    evidence.getByRole("heading", { name: "控制与恢复审计(1)" }),
+  ).toBeVisible();
+  // A legacy-absent plan stays explicit; no digest or fingerprint appears.
+  const html = await page.content();
+  expect(html).not.toContain("snapshot_digest");
+  expect(html).not.toContain("fingerprint-value");
+
+  await evidence.getByRole("button", { name: "关闭证据" }).click();
+  await expect(page).not.toHaveURL(/item=item-001/);
+  await expect(detail.getByRole("region", { name: "条目证据" })).toHaveCount(0);
+});
+
+test("the native action downloads the eligible linked Task's result package", async ({
+  page,
+}) => {
+  await connect(page);
+  await openOperations(page);
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await inventoryTable
+    .getByRole("button", { name: /job-001/ })
+    .first()
+    .click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  const downloadPromise = page.waitForEvent("download");
+  await detail.getByRole("button", { name: "导出结果 JSON" }).click();
+  const download = await downloadPromise;
+  const stream = await download.createReadStream();
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.from(chunk));
+  }
+  const packageDocument = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  expect(packageDocument.packageKind).toBe("mediaflow.results.v1");
+  expect(packageDocument.source.taskId).toBe("task-001");
+  expect(packageDocument.source.ordering).toBe("created_at_asc,result_id_asc");
+  expect(packageDocument.results.length).toBeGreaterThan(0);
+  expect(typeof packageDocument.packageDigest).toBe("string");
+  await expect(detail.getByText(/已导出 \d+ 条结果/)).toBeVisible();
+});
+
+test("a pre-Task admission states queue truth and refuses an empty download", async ({
+  page,
+}) => {
+  const methods: string[] = [];
+  page.on("request", (request) => {
+    methods.push(`${request.method()} ${request.url()}`);
+  });
+  await connect(page);
+  await openOperations(page);
+  const inventoryTable = page.getByRole("table", { name: "运行清单" });
+  await inventoryTable
+    .getByRole("button", { name: /job-002/ })
+    .first()
+    .click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  // No Task yet: progress and items are explicitly unavailable, never a
+  // fabricated zero.
+  await expect(detail.getByText("进度证据不可用")).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByText("此运行暂无条目证据")).toBeVisible();
+
+  // Export is disabled with its reason, so a failed export can never become
+  // an empty successful download.
+  const exportButton = detail.getByRole("button", { name: "导出结果 JSON" });
+  await expect(exportButton).toBeDisabled();
+  await expect(detail.getByText(/暂无可导出的结果包/)).toBeVisible();
+
+  // Every detail read is a GET: reading admits no work.
+  const mutating = methods.filter(
+    (entry) =>
+      entry.includes("/api/v1/operations/runs/") && !entry.startsWith("GET "),
+  );
+  expect(mutating).toEqual([]);
 });

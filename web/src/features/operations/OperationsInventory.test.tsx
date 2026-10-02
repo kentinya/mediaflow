@@ -308,7 +308,9 @@ describe("Operations run inventory landing", () => {
     await waitFor(() => expect(overviewRead).toBe(true));
     const detail = await screen.findByRole("region", { name: "运行详情" });
     expect(await within(detail).findByText("手动")).toBeVisible();
-    expect(within(detail).getByText(/进行中/)).toBeVisible();
+    // The disposition filter option shares the status label text, so the
+    // bounded presence check uses the All* variant over the detail panel.
+    expect(within(detail).getAllByText(/进行中/).length).toBeGreaterThan(0);
     // The overview shows known durable facts and labels completed items as
     // not an organize-success claim while running.
     expect(within(detail).getByText(/不代表最终整理成功/)).toBeVisible();
@@ -354,7 +356,9 @@ describe("Operations run inventory landing", () => {
     renderApp("/ui-v2/operations?run=task-001&status=running");
 
     const detail = await screen.findByRole("region", { name: "运行详情" });
-    await within(detail).findByText(/进行中/);
+    expect(
+      (await within(detail).findAllByText(/进行中/)).length,
+    ).toBeGreaterThan(0);
     // The bounded list context survives beside the panel.
     expect(await screen.findByRole("table")).toBeVisible();
     expect(

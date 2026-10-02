@@ -356,7 +356,7 @@ function normalizeTaskItemCheckpoint(
   };
 }
 
-function normalizeTaskItemSummary(
+export function normalizeTaskItemSummary(
   source: Record<string, unknown>,
 ): TaskItemSummary {
   let status: TaskItemStatus;
@@ -384,7 +384,7 @@ function normalizeTaskItemSummary(
   };
 }
 
-function normalizeTaskResultSummary(
+export function normalizeTaskResultSummary(
   source: Record<string, unknown>,
 ): TaskResultSummary {
   let effectCertainty: ResultEffectCertainty;

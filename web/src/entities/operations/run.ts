@@ -34,6 +34,7 @@ import {
   normalizeOptionalText,
   readRecord,
 } from "../shared/normalize";
+import { normalizeRunProgress, type RunProgress } from "./run-detail";
 
 /** One honest aggregate state derived from actual queue/processing evidence. */
 export const RUN_STATUSES = [
@@ -112,6 +113,9 @@ export interface RunSummary {
   readonly attention: boolean;
   readonly configurationSnapshotId: string | null;
   readonly workerId: string | null;
+  /** The selected-run detail progress projection. Present on the overview
+   * read and absent (null) on inventory rows. */
+  readonly progress: RunProgress | null;
 }
 
 export interface RunInventoryPage {
@@ -341,6 +345,10 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     attention,
     configurationSnapshotId: optionalText(source, "configuration_snapshot_id"),
     workerId: optionalText(source, "worker_id"),
+    progress:
+      source["progress"] === null || source["progress"] === undefined
+        ? null
+        : normalizeRunProgress(source["progress"]),
   };
 }
 

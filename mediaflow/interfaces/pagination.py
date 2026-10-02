@@ -17,6 +17,8 @@ _KINDS = frozenset(
         "tasks",
         "jobs",
         "operations_runs",
+        "run_items",
+        "run_records",
         "task_items",
         "task_results",
         "notification_deliveries",
@@ -40,6 +42,12 @@ _SCOPED_KINDS = frozenset(
         "automation_definition_occurrences",
         "operational_logs",
         "operations_runs",
+        # The selected-run detail reads (Run 42.2): every item/record page is
+        # bound to the exact run/task it belongs to, the submitted filters and
+        # the reading principal, so a cursor minted for one run, one filter
+        # state or one principal is refused as soon as any of them differs.
+        "run_items",
+        "run_records",
     }
 )
 MAX_CURSOR_LENGTH = 512
