@@ -291,48 +291,36 @@ truth. Do not copy production config or modify reference/user files for a gate.
 
 ### Changed Files
 
-- Backend: `mediaflow/application/media_organizer.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`.
-- Browser proof: `scripts/operations_inventory_harness.py`, `web/tests/e2e/operations-inventory.python.spec.ts`.
-- Web: `web/src/entities/operations/preview.ts`, `web/src/entities/operations/run-detail.ts`, `web/src/entities/operations/run-detail.test.ts`, `web/src/features/operations/RunDetailTabs.tsx`, `web/src/features/operations/RunDetailTabs.test.tsx`.
-- Regression suites: `tests/test_operations_run_detail_plan_evidence.py`, `tests/test_operations_run_detail_log_isolation.py`.
+- Backend and persisted run-detail path: `mediaflow/application/automation.py`, `mediaflow/application/media_organizer.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/domain/operations_run.py`, `mediaflow/domain/task_persistence.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/pagination.py`, `mediaflow/interfaces/service_api.py`.
+- Regression coverage: `tests/test_configuration_classification.py`, `tests/test_configuration_destination.py`, `tests/test_configuration_destination_activation.py`, `tests/test_configuration_destination_precheck.py`, `tests/test_configuration_organize.py`, `tests/test_operations_run_detail.py`, `tests/test_operations_run_detail_log_isolation.py`, `tests/test_operations_run_detail_plan_evidence.py`, `tests/test_resident_correction.py`.
+- Browser harness: `scripts/operations_inventory_harness.py`, `web/tests/e2e/fake-server.mjs`, `web/tests/e2e/operations.spec.ts`, `web/tests/e2e/operations-inventory.python.spec.ts`.
+- Web run-detail and navigation: `web/src/entities/operations/preview.ts`, `run-detail.ts`, `run-detail.test.ts`, `run.ts`, `task.ts`; `web/src/features/operations/OperationsInventory.test.tsx`, `OperationsLanding.tsx`, `OperationsRouter.test.tsx`, `RunDetailTabs.tsx`, `RunDetailTabs.test.tsx`, `TaskDetailPage.tsx`, `run-detail-query.ts`, `run-detail-state.ts`, `run-detail-state.test.ts`; `web/src/shared/api/api-client.ts`, `operations-api.test.ts`; `web/src/shared/navigation/destination-model.ts`, `destination-model.test.ts`; `web/src/shared/ui/styles.css`.
+- This report: `TASK.md`.
 
 ### Implemented
 
-- Run-item evidence joins `manual_execution_items` only by its exact persisted `(task_id, task_item_id)` link. It projects the captured Preview plan, analysis, identity, policies, destination, conflicts, cleanup plan and durable execution effects through bounded allowlists; absent links state that the reviewed plan is unavailable. Reads do not call a Provider, Planner or media Storage.
-- Result cleanup status and step count are added only to the run-item evidence document, keeping existing Manual Preview/Execution response contracts intact. RecognitionType C stays C with Naming/Classification policy A.
-- Operational logs now require the reusable `plan_id` plus persisted Task or Job linkage. The Organizer stamps its Task ID when emitting tracked logs; no time or message inference attributes legacy unlinked logs.
-- Web detail preserves and renders evidence-section contents and the captured reviewed plan, effects and cleanup outcome. The Python-backed harness now admits an exact Preview through the real API and completes it with `ManualOrganizeExecutionWorker` using temporary managed configuration, Local Storage and synthetic metadata.
+- Added the persisted operations run/detail journey across the application service, API, SQLite, Web query/state and detail surfaces, including bounded pagination/filtering, per-item outcomes, logs, audit/result evidence, scoped export and restart-persistent history. Reads use persisted run/task evidence and do not invoke providers, planners or media Storage.
+- Kept plan evidence tied to the exact persisted Manual execution link and captured plan. Where no such link exists, the UI states that the reviewed Manual plan is unavailable.
+- Fixed B's blocker for standalone production execution: captured evidence arrays and objects render as bounded values; Result rows and the native evidence view now expose persisted completed operations and uncertain effects from checkpoint/Result data even when Manual plan evidence is unavailable. The real browser proof exercises the existing `PersistentTaskCoordinator → MediaOrganizerService → OrganizerExecutor` path against temporary Local Storage and synthetic metadata, then verifies evidence after refresh and restart.
+- Kept operational logs joined only through persisted plan and Task/Job linkage. RecognitionType C remains C when Naming and Classification use policy A. No migration, replay, new persistence, or production-service dependency was added.
 
 ### Tests and Results
 
-- Final Python regression: `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2,113 tests, 7 skipped. The earlier correction attempt failed one `test_manual_operations_contract` fixture comparison after broadening shared Manual API documents; I scoped the new fields to run-item evidence, reran that exact fixture test successfully, then reran the full suite successfully.
-- `.venv/bin/python -m unittest tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture` — first **FAIL** with that intermediate broad projection, then **PASS** after restoring the existing Manual API shape.
-- Focused run-detail/log-isolation tests after that correction: `.venv/bin/python -m unittest tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation` — **PASS**, 53 tests. The two new suites contain 10 plan-evidence and 7 log-isolation tests.
-- These focused integration commands passed (449 tests total); the final full Python regression above covers them again on the final source:
-  - `.venv/bin/python -m unittest discover -s tests -p test_operations_run_detail.py` — **PASS**, 36.
-  - `.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py` — **PASS**, 39.
-  - `.venv/bin/python -m unittest discover -s tests -p test_operations_workspace.py` — **PASS**, 20.
-  - `.venv/bin/python -m unittest discover -s tests -p test_task_persistence.py` — **PASS**, 13.
-  - `.venv/bin/python -m unittest discover -s tests -p test_processing_worker_readiness.py` — **PASS**, 19.
-  - `.venv/bin/python -m unittest discover -s tests -p test_v2_manual_organize.py` — **PASS**, 37.
-  - `.venv/bin/python -m unittest discover -s tests -p test_direct_file_operations.py` — **PASS**, 60.
-  - `.venv/bin/python -m unittest discover -s tests -p test_direct_file_transfers.py` — **PASS**, 100.
-  - `.venv/bin/python -m unittest discover -s tests -p test_operational_logging.py` — **PASS**, 6.
-  - `.venv/bin/python -m unittest discover -s tests -p test_configuration_package_exchange.py` — **PASS**, 13.
-  - `.venv/bin/python -m unittest discover -s tests -p test_recovery_continuation.py` — **PASS**, 28.
-  - `.venv/bin/python -m unittest discover -s tests -p test_recovery_batch.py` — **PASS**, 48.
-  - `.venv/bin/python -m unittest discover -s tests -p test_api_security.py` — **PASS**, 13.
-- Web focused command `npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes` — **PASS**, 33 files / 518 tests. Full Web command `npm run test -- --run` — **PASS**, 61 files / 936 tests. `npm run typecheck`, `npm run lint`, `npm run format:check` and `npm run build` — **PASS**; build retains the existing large-chunk warning.
-- Fake-response Playwright command `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts` — **63 passed / 2 failed**. The failures are `deep-link.spec.ts:209` and `:479`; B independently reproduced both at Task Base and recorded them as pre-existing/unrelated. The real Python-backed command `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS**, 11 tests, including real admission/Worker completion, C identity with A policies, completed CREATE_DIRECTORY/MOVE, disabled cleanup, scoped export and restart-persistent detail.
-- Earlier overlapping Web attempts exposed one Manual Organize intent timeout and two Storage page assertions before being interrupted; the isolated intent test and both final serial Web suites passed. The first Python-browser attempts exposed two harness startup issues and a Worker snapshot mismatch (10/11); after fixing the import/config path and pinning the Worker to the Active snapshot, the exact final Python-browser command passed 11/11.
-- T4 checks — **PASS**: `python3 scripts/check_governance.py`; `.venv/bin/python scripts/docker_release_security_smoke_test.py` (temporary project and context cleaned); `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required `config validate` commands; release security (6), release validation (3), migration rehearsal (6) and upgrade preflight (4) tests. `git diff --check` and `git diff --check cf7099a478a203f3f29ac57ef5b8acc295aadaa9` are clean. Reference image SHA-256 matches `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`; `config/alist.json` is ignored and neither tracked nor staged; `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` found no matches.
-- Wheel gate: `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w <temporary-output>` and `.venv/bin/python scripts/wheel_smoke_test.py <built-wheel>` — **PASS**, schema 42, with no migration required.
+- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2,113 tests, 7 skipped.
+- All 13 required focused Python discovery commands — **PASS**: `test_operations_run_detail.py` (36), `test_operations_run_inventory.py` (39), `test_operations_workspace.py` (20), `test_task_persistence.py` (13), `test_processing_worker_readiness.py` (19), `test_v2_manual_organize.py` (37), `test_direct_file_operations.py` (60), `test_direct_file_transfers.py` (100), `test_operational_logging.py` (6), `test_configuration_package_exchange.py` (13), `test_recovery_continuation.py` (28), `test_recovery_batch.py` (48), and `test_api_security.py` (13). Each was rerun serially on the correction source and returned exit 0. The previously recorded per-suite counts total 432; the full suite is the final aggregate gate.
+- `.venv/bin/python -m unittest tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture` — **FAIL** on an intermediate implementation that changed shared Manual API documents; after scoping the projection to run-item evidence, the same test **PASS**. The final full Python suite passed.
+- Web focused command `npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes` — **PASS**, 33 files / 521 tests. Final changed-model/component command `npm run test -- --run src/entities/operations/run-detail.test.ts src/features/operations/RunDetailTabs.test.tsx` — **PASS**, 2 files / 57 tests. `npm run test -- --run` — **PASS**, 61 files / 939 tests. An earlier overlapping run had one Storage page loading timeout (938 passed); the isolated case passed and the final serial full run passed.
+- `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run build` — **PASS**. The build reports the existing large JavaScript chunk warning.
+- Fake-response browser command `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts` — **63 PASS / 2 FAIL**. The failures are `deep-link.spec.ts:209` and `:479`; B independently reproduced both at Task Base and recorded them as pre-existing/unrelated. The real-Python command `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — final **PASS**, 12/12, including standalone execution, visible CREATE_DIRECTORY/MOVE evidence, read-only inspection, refresh and restart. Earlier attempts failed against stale `web/dist` and then exposed duplicate text locators; the harness/build and selectors were corrected before the final pass.
+- `python3 scripts/check_governance.py`, `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/python -m compileall -q mediaflow tests scripts`, `.venv/bin/python -m pip check`, and both required `config validate` commands — **PASS**. Release-security (6), release-validation (3), migration-rehearsal (6) and upgrade-preflight (4) suites — **PASS**.
+- Docker release-security smoke test — the default invocation first **FAIL**ed its health-check timeout; rerunning with an isolated daemon-visible `TMPDIR` — **PASS** and cleaned its task-owned containers/context. Wheel build and `wheel_smoke_test.py` — **PASS**, schema 42, no migration required; temporary wheel output was removed.
+- `git diff --check` and `git diff --check cf7099a478a203f3f29ac57ef5b8acc295aadaa9` — **PASS** before this report update; rechecked below at checkpoint. Reference image SHA-256 matches `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`. `config/alist.json` is ignored, untracked and unstaged. `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` found no matches. No external-service gate was needed or unavailable.
 
 ### Decisions
 
-- Reused the persisted Manual execution-item link and reviewed `plan_json`; made the log query require the exact run linkage alongside `plan_id`.
-- Kept the new Result cleanup facts and cleanup plan projection local to run-item evidence so existing Manual Preview/Execution documents do not change.
-- Used only temporary local paths and a synthetic provider in the browser harness. No migration or production service was needed.
+- Reused bounded, persisted checkpoint/Result facts for standalone execution evidence. Manual plan availability continues to reflect whether an exact Manual execution link and captured plan exist.
+- Kept the real browser proof isolated to temporary Local Storage and synthetic metadata. No production provider, user media or credential was used.
+- Committed implementation as `faabf20dc034c4c8da310928b3f39b0512616da6`; this report is a separate documentation checkpoint.
 
 ### Remaining In-Slice Work
 
@@ -340,13 +328,13 @@ RO-4's new organize-entry journey, RO-5's queued Continue/control authority and 
 
 ### Risks / Deviations
 
-- The two deep-link Playwright failures remain as the Base-proven, unrelated failures noted above. The Vite build emitted a large-chunk warning. The Python suite emits existing SQLite `ResourceWarning`s but completed successfully.
-- Preserved the three pre-existing untracked images under `docs/pics/`; they are not part of this checkpoint. No external service gate was unavailable.
+- The two deep-link Playwright failures are the Base-proven unrelated failures described above. The Docker smoke test needed an isolated `TMPDIR`; its retry passed. The final browser build retains the large-chunk warning, and the Python suite emitted existing SQLite `ResourceWarning`s while passing.
+- An initial `python scripts/check_governance.py` attempt could not start because this shell provides `python3`; the required `python3` command passed. Three pre-existing untracked images under `docs/pics/` were preserved and excluded from the checkpoint. No private config or unrelated file was staged.
 
 ### Checkpoint
 
 Status: READY FOR B REVIEW
-Head SHA: 186e61f850be69126997c948f544146c1198e78e
+Head SHA: faabf20dc034c4c8da310928b3f39b0512616da6
 
 ## B Review Result
 
