@@ -696,6 +696,16 @@ import {
   type RunSummary,
 } from "../../entities/operations/run";
 import {
+  normalizeRunItemsPage,
+  normalizeRunRecordsPage,
+  normalizeRunItemEvidence,
+  normalizeRunExportPackage,
+  type RunExportPackage,
+  type RunItemEvidence,
+  type RunItemsPage,
+  type RunRecordsPage,
+} from "../../entities/operations/run-detail";
+import {
   normalizeLifecycleProjection,
   type LifecycleActionName,
   type LifecycleProjection,
@@ -1348,6 +1358,250 @@ export async function fetchRunOverview(
   }
   try {
     return { ok: true, model: normalizeRunOverview(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+// --- Selected-run detail reads (Slice 42 RO-3) ---
+
+export interface RunItemsQueryOptions {
+  readonly runId: string;
+  /** One modelled disposition filter, or null for the whole population. */
+  readonly status?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+export interface RunRecordsQueryOptions {
+  readonly runId: string;
+  /** One modelled record-kind filter, or null for the whole stream. */
+  readonly kind?: string | null;
+  readonly limit?: number;
+  readonly cursor?: string | null;
+}
+
+function runDetailBase(runId: string): string {
+  return `/api/v1/operations/runs/${encodeURIComponent(runId)}`;
+}
+
+export function runItemsUrl(options: RunItemsQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.status) params.set("status", options.status);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `${runDetailBase(options.runId)}/items${qs ? `?${qs}` : ""}`;
+}
+
+export function runRecordsUrl(options: RunRecordsQueryOptions): string {
+  const params = new URLSearchParams();
+  if (options.kind) params.set("kind", options.kind);
+  if (options.limit !== undefined) params.set("limit", String(options.limit));
+  if (options.cursor) params.set("cursor", options.cursor);
+  const qs = params.toString();
+  return `${runDetailBase(options.runId)}/records${qs ? `?${qs}` : ""}`;
+}
+
+export function runItemEvidenceUrl(runId: string, itemId: string): string {
+  return `${runDetailBase(runId)}/items/${encodeURIComponent(itemId)}`;
+}
+
+export function runExportUrl(runId: string, limit: number): string {
+  return `${runDetailBase(runId)}/export?limit=${String(limit)}`;
+}
+
+/** One generic bounded parse of a selected-run detail sub-resource response. */
+async function parseRunDetailResponse<T>(
+  response: Response,
+  normalize: (payload: unknown) => T,
+): Promise<OperationsRead<T>> {
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalize(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
+
+export type RunItemsRead = OperationsRead<RunItemsPage>;
+
+export async function fetchRunItems(
+  token: string | null,
+  options: RunItemsQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunItemsRead> {
+  if (!isSafeIdentifier(options.runId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(runItemsUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeRunItemsPage);
+}
+
+export type RunRecordsRead = OperationsRead<RunRecordsPage>;
+
+export async function fetchRunRecords(
+  token: string | null,
+  options: RunRecordsQueryOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunRecordsRead> {
+  if (!isSafeIdentifier(options.runId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(runRecordsUrl(options), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeRunRecordsPage);
+}
+
+export type RunItemEvidenceRead = OperationsRead<RunItemEvidence>;
+
+export async function fetchRunItemEvidence(
+  token: string | null,
+  runId: string,
+  itemId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunItemEvidenceRead> {
+  if (!isSafeIdentifier(runId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(runItemEvidenceUrl(runId, itemId), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeRunItemEvidence);
+}
+
+/**
+ * The run-scoped result package download read.  The backend's bounded error
+ * code travels with the failure so the UI can distinguish "no linked Task
+ * yet" (409) from a rejected limit (422) or an unavailable export (503)
+ * instead of offering an empty download.
+ */
+export type RunExportRead =
+  | {
+      readonly ok: true;
+      readonly model: RunExportPackage;
+      /** The validated raw package exactly as received, kept for the
+       * browser-side file download (the normalized model alone would drop
+       * the result rows the file must contain). */
+      readonly payload: unknown;
+    }
+  | {
+      readonly ok: false;
+      readonly failure: OperationsFailure;
+      readonly code: string | null;
+    };
+
+const EXPORT_CODE_TOKEN = /^[a-z][a-z0-9_]{0,47}$/;
+
+async function exportErrorCode(response: Response): Promise<string | null> {
+  try {
+    const payload = (await response.json()) as { error?: { code?: unknown } };
+    const code = payload?.error?.code;
+    return typeof code === "string" && EXPORT_CODE_TOKEN.test(code)
+      ? code
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchRunExportPackage(
+  token: string | null,
+  runId: string,
+  limit = 100,
+  fetchImpl: FetchLike = fetch,
+): Promise<RunExportRead> {
+  if (!isSafeIdentifier(runId)) {
+    return {
+      ok: false,
+      failure: operationsFailure("not_found"),
+      code: null,
+    };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(runExportUrl(runId, limit), {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    return {
+      ok: false,
+      failure: operationsFailure("unavailable"),
+      code: null,
+    };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status >= 500) {
+    return {
+      ok: false,
+      failure: operationsFailure("unavailable"),
+      code: await exportErrorCode(response),
+    };
+  }
+  if (!response.ok) {
+    return {
+      ok: false,
+      failure: operationsFailure(
+        response.status === 404 ? "not_found" : "rejected",
+      ),
+      code: await exportErrorCode(response),
+    };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeRunExportPackage(payload), payload };
   } catch {
     throw new OperationsApiError("malformed");
   }

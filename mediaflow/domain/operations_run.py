@@ -37,6 +37,7 @@ from mediaflow.domain.task_persistence import (
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
     PersistentTask,
     PersistentTaskStatus,
+    TaskItemStatus,
 )
 
 
@@ -253,3 +254,228 @@ class OperationsRunOverview:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "attention", self.status in ATTENTION_RUN_STATUSES)
+
+
+# -- Selected-run detail: progress, items and operation records (RO-3) -------
+
+#: The mutually exclusive primary-item dispositions of one task's durable
+#: population.  Every persisted ``TaskItemStatus`` maps to exactly one of
+#: these, so a known total always reconciles: the disposition counts sum to
+#: the known item total.  They are an attention-style *partition of items*,
+#: never a claim about Storage success — see the accounting basis text the
+#: progress document publishes.
+RUN_DISPOSITIONS = (
+    "pending",
+    "active",
+    "waiting",
+    "success",
+    "skipped",
+    "failed_partial",
+    "ignored",
+    "cancelled",
+)
+
+#: Chinese business labels for the dispositions above (published, never
+#: invented at read time from raw status strings).
+RUN_DISPOSITION_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "pending": "待处理",
+        "active": "进行中",
+        "waiting": "等待中",
+        "success": "成功",
+        "skipped": "跳过",
+        "failed_partial": "失败或部分",
+        "ignored": "已忽略",
+        "cancelled": "已取消",
+    }
+)
+
+_ITEM_DISPOSITION: Mapping[str, str] = MappingProxyType(
+    {
+        TaskItemStatus.PENDING.value: "pending",
+        TaskItemStatus.PROCESSING.value: "active",
+        # A completed dry-run item is a completed *analysis* item.  It counts
+        # as success only against the analysis accounting basis the progress
+        # document publishes; analysis completion is never labelled organize
+        # or Storage success.
+        TaskItemStatus.DRY_RUN.value: "success",
+        TaskItemStatus.SUCCESS.value: "success",
+        TaskItemStatus.SKIPPED.value: "skipped",
+        TaskItemStatus.PARTIAL.value: "failed_partial",
+        TaskItemStatus.FAILED.value: "failed_partial",
+        TaskItemStatus.CANCELLED.value: "cancelled",
+        TaskItemStatus.IGNORED.value: "ignored",
+        TaskItemStatus.PAUSED.value: "waiting",
+        TaskItemStatus.WAITING_CONFIRM.value: "waiting",
+        TaskItemStatus.WAITING_RECOGNITION.value: "waiting",
+        TaskItemStatus.WAITING_METADATA.value: "waiting",
+        TaskItemStatus.WAITING_METADATA_CORRECTION.value: "waiting",
+        TaskItemStatus.WAITING_CLASSIFICATION.value: "waiting",
+    }
+)
+
+
+def item_disposition(status: object) -> str:
+    """Map one persisted item status to its mutually exclusive disposition.
+
+    An unknown/legacy status is ``failed_partial`` — never silently dropped
+    into success, and never omitted from the partition, so the reported
+    disposition counts keep reconciling with the known total even for a row
+    written by an older or external producer.
+    """
+
+    value = getattr(status, "value", status)
+    if isinstance(value, str):
+        return _ITEM_DISPOSITION.get(value, "failed_partial")
+    return "failed_partial"
+
+
+_RAW_DISPOSITION_STATUSES: Mapping[str, tuple[str, ...]] = MappingProxyType(
+    {
+        "pending": (TaskItemStatus.PENDING.value,),
+        "active": (TaskItemStatus.PROCESSING.value,),
+        "waiting": (
+            TaskItemStatus.PAUSED.value,
+            TaskItemStatus.WAITING_CONFIRM.value,
+            TaskItemStatus.WAITING_RECOGNITION.value,
+            TaskItemStatus.WAITING_METADATA.value,
+            TaskItemStatus.WAITING_METADATA_CORRECTION.value,
+            TaskItemStatus.WAITING_CLASSIFICATION.value,
+        ),
+        # ``dry_run`` belongs to success only against the analysis accounting
+        # basis (see ``item_disposition``); the raw statuses stay the single
+        # expansion point so the filtered count and the filtered page always
+        # run against the same predicate.
+        "success": (TaskItemStatus.DRY_RUN.value, TaskItemStatus.SUCCESS.value),
+        "skipped": (TaskItemStatus.SKIPPED.value,),
+        "failed_partial": (TaskItemStatus.PARTIAL.value, TaskItemStatus.FAILED.value),
+        "ignored": (TaskItemStatus.IGNORED.value,),
+        "cancelled": (TaskItemStatus.CANCELLED.value,),
+    }
+)
+
+
+def statuses_for_disposition(disposition: str) -> tuple[str, ...]:
+    """Expand one submitted disposition into its exact raw item statuses."""
+
+    try:
+        return _RAW_DISPOSITION_STATUSES[disposition]
+    except (KeyError, TypeError) as error:
+        raise ValueError("run disposition filter is invalid") from error
+
+
+def disposition_partition(
+    status_counts: Mapping[str, int],
+) -> tuple[dict[str, int], int]:
+    """Partition raw status counts into the mutually exclusive dispositions.
+
+    Returns the disposition counts (all keys always present, zero-filled)
+    and the grand total they reconcile to.
+    """
+
+    counts = {key: 0 for key in RUN_DISPOSITIONS}
+    total = 0
+    for status, value in status_counts.items():
+        numeric = int(value)
+        if numeric <= 0:
+            continue
+        counts[item_disposition(status)] += numeric
+        total += numeric
+    return counts, total
+
+
+@dataclass(frozen=True)
+class OperationsRunProgress:
+    """One snapshot of a run's durable progress accounting (AC-T2).
+
+    Read entirely inside one repository read transaction together with the
+    run row it belongs to, so the aggregate state and the progress facts a
+    panel presents together always share one read basis.
+
+    ``known_total`` is ``None`` when discovery totals are genuinely unknown
+    (a scan still discovering, or a task that has not admitted any item
+    yet): the caller must publish the progress as *indeterminate* instead of
+    inventing a total or a percentage.  ``dispositions`` partitions the
+    primary item population; ``uncertain_success`` counts items whose status
+    says success while their latest durable Result still declares uncertain
+    effects — those are never presented as success.  ``effect_counts``
+    summarizes the latest Result effect certainty per item (a non-exclusive
+    facet), ``scan_errors`` counts scan-level errors kept separate from
+    primary items, and ``attachment_steps`` counts attachment operations
+    kept separate from primary items.
+    """
+
+    available: bool
+    unavailable_reason: str | None = None
+    known_total: int | None = None
+    indeterminate: bool = False
+    dispositions: Mapping[str, int] = MappingProxyType({})
+    uncertain_success: int = 0
+    attachment_steps: int = 0
+    effect_counts: Mapping[str, int] = MappingProxyType({})
+    results_total: int = 0
+    results_complete: bool = True
+    scan_errors: int | None = None
+    scan_discovery_complete: bool | None = None
+    scan_progress: Mapping[str, int] = MappingProxyType({})
+    primary_unit: str = "task_items"
+    #: Whether this Task's durable admission authorized Storage execution —
+    #: the basis for distinguishing analysis completion from organize
+    #: success.  Read together with the counts in the same snapshot.
+    execute_authorized: bool = False
+
+
+@dataclass(frozen=True)
+class OperationsRunItemWindow:
+    """One item page plus population totals from one read snapshot."""
+
+    page: tuple[object, ...]
+    total: int
+    matching_total: int
+    dispositions: Mapping[str, int]
+    uncertain_success: int
+    has_next: bool
+    has_previous: bool
+
+
+#: The durable operation-record kinds of the ``操作记录`` stream.  Each row
+#: is joined to the run only through exact persisted IDs (task_id, job_id,
+#: item_id, plan_id) — never through text matching.
+RUN_RECORD_KINDS = ("result", "evidence", "log", "audit")
+
+RUN_RECORD_KIND_LABELS: Mapping[str, str] = MappingProxyType(
+    {
+        "result": "执行结果",
+        "evidence": "分析与计划",
+        "log": "运行日志",
+        "audit": "控制与恢复",
+    }
+)
+
+
+@dataclass(frozen=True)
+class OperationsRunRecord:
+    """One exactly-linked operation record of a run.
+
+    ``record_id`` is globally unique across kinds (``<kind>:<primary key>``)
+    and is the cursor tiebreak, so mixed-kind paging stays deterministic.
+    ``item_id`` is set when the record belongs to one exact TaskItem.
+    ``source`` carries the durable row the projector needs for ``kind``.
+    """
+
+    kind: str
+    record_id: str
+    occurred_at: datetime
+    item_id: str | None
+    source: object
+
+
+@dataclass(frozen=True)
+class OperationsRunRecordWindow:
+    """One record page plus kind totals from one read snapshot."""
+
+    page: tuple[OperationsRunRecord, ...]
+    matching_total: int
+    kind_counts: Mapping[str, int]
+    has_next: bool
+    has_previous: bool

@@ -69,6 +69,9 @@ from mediaflow.application.operations_lifecycle import (
     manual_scan_operator_document,
     manual_step_error_document,
     require_cancellable,
+    run_item_evidence_document,
+    run_progress_document,
+    run_record_document,
     task_item_operator_document,
     task_lifecycle_document,
     task_operator_document,
@@ -154,6 +157,9 @@ from mediaflow.domain.notification import (
 )
 from mediaflow.domain.operations_run import (
     ATTENTION_RUN_STATUSES,
+    RUN_DISPOSITIONS,
+    RUN_RECORD_KINDS,
+    OperationsRunRecord,
     OperationsRunStatus,
     known_command_label,
 )
@@ -9164,6 +9170,19 @@ class MediaFlowApi:
                     return "/api/v1/operations/workers/readiness"
                 return f"/api/v1/operations/{kind}/{{id}}"
             return "/api/v1/<unmatched>"
+        if len(parts) >= 4 and parts[:3] == ["api", "v1", "operations"] and parts[3] == "runs":
+            # The unified run detail reads name their own bounded operator
+            # surface without publishing run, Task, Job or item identifiers
+            # in audit evidence.
+            if len(parts) == 4:
+                return "/api/v1/operations/runs"
+            if len(parts) == 5:
+                return "/api/v1/operations/runs/{id}"
+            if len(parts) == 6 and parts[5] in {"items", "records", "export"}:
+                return f"/api/v1/operations/runs/{{id}}/{parts[5]}"
+            if len(parts) == 7 and parts[5] == "items":
+                return "/api/v1/operations/runs/{id}/items/{itemId}"
+            return "/api/v1/<unmatched>"
         exact = {
             ("api", "v1", "tasks"),
             ("api", "v1", "scans"),
@@ -10368,6 +10387,8 @@ class MediaFlowApi:
         attribute = {
             "tasks": "task_id",
             "jobs": "job_id",
+            "run_items": "item_id",
+            "run_records": "record_id",
             "task_items": "item_id",
             "task_results": "result_id",
             "notification_deliveries": "delivery_id",
@@ -10380,7 +10401,7 @@ class MediaFlowApi:
             record.emitted_at
             if kind in {"schedule_audit", "automation_definition_occurrences"}
             else record.occurred_at
-            if kind == "operational_logs"
+            if kind in {"operational_logs", "run_records"}
             else record.created_at
         )
         return encode_cursor(kind, timestamp, identifier, direction, scope=scope)
@@ -12441,14 +12462,16 @@ class MediaFlowApi:
         start_response: Callable,
         principal: ResolvedApiPrincipal,
     ):
-        """Dispatch the bounded unified run inventory (RO-1/RO-2, read-only).
+        """Dispatch the bounded unified run inventory and detail reads.
 
         The inventory reads one deduplicated population of Jobs and Tasks
         through their explicit persisted relationships.  Every read is
         side-effect-free: no admission, no Provider call, no Storage access
-        and no display backfill.  A run's overview is served from the same
-        repository projection; deeper per-item evidence stays on the existing
-        Task/Job detail routes, which remain the authoritative sources.
+        and no display backfill.  Besides the page and one run's overview,
+        the projection serves the selected-run detail reads (RO-3): the
+        server-filtered item pages, the exactly-linked operation records,
+        one item's durable evidence and the existing task-scoped result
+        package export resolved through the run's own durable link.
         """
 
         if method != "GET":
@@ -12458,6 +12481,16 @@ class MediaFlowApi:
             return self._operations_runs_page(environ, start_response, principal)
         if len(parts) == 5:
             return self._operations_run_overview(parts[4], start_response, principal)
+        if len(parts) == 6 and parts[5] == "items":
+            return self._operations_run_items(parts[4], environ, start_response, principal)
+        if len(parts) == 6 and parts[5] == "records":
+            return self._operations_run_records(parts[4], environ, start_response, principal)
+        if len(parts) == 6 and parts[5] == "export":
+            return self._operations_run_export(parts[4], environ, start_response, principal)
+        if len(parts) == 7 and parts[5] == "items":
+            return self._operations_run_item_evidence(
+                parts[4], parts[6], environ, start_response, principal
+            )
         return self._error(start_response, 404, "not_found", "route was not found")
 
     @classmethod
@@ -12679,7 +12712,13 @@ class MediaFlowApi:
     def _operations_run_overview(
         self, run_id: str, start_response: Callable, principal: ResolvedApiPrincipal
     ):
-        """One selected run's bounded overview (RO-1 selection journey)."""
+        """One selected run's bounded overview plus its durable progress.
+
+        The overview row and its progress facts come from one repository read
+        snapshot.  A supported Task detail identity also resolves here through
+        the exact persisted Job→Task link, so deep-opening either side of the
+        linkage reaches the same stable run without a manual join.
+        """
 
         repository = self._repository
         if repository is None or not callable(getattr(repository, "operations_run", None)):
@@ -12689,17 +12728,414 @@ class MediaFlowApi:
                 "service_unavailable",
                 "unified run inventory is unavailable for this runtime",
             )
-        # An exact bounded ID read of the same linked projection: whether a
-        # run is openable never depends on it being among the newest rows, so
-        # a real historical run (and its supported deep link) stays reachable.
-        overview = repository.operations_run(run_id)
+        overview, progress = self._operations_run_detail(repository, run_id)
         if overview is None:
             raise LookupError(f"operations run {run_id!r} was not found")
+        document = self._operations_run_document(overview)
+        document["progress"] = (
+            run_progress_document(progress, command=overview.command)
+            if progress is not None
+            else None
+        )
+        return self._response(start_response, 200, document)
+
+    @staticmethod
+    def _operations_run_detail(repository, identifier: str):
+        """Resolve one supported run/Task identity to ``(overview, progress)``.
+
+        The exact run anchor wins; a Job-linked Task ID resolves only through
+        the persisted ``automation_jobs.task_id`` link (never a filename,
+        label or time proximity).  When the repository has no combined
+        detail read, the plain overview read still answers with
+        ``progress=None`` instead of failing a supported deep link.
+        """
+
+        with_progress = getattr(repository, "operations_run_with_progress", None)
+        detail = None
+        if callable(with_progress):
+            detail = with_progress(identifier)
+        if detail is None:
+            resolver = getattr(repository, "resolve_operations_run_link", None)
+            if callable(resolver) and callable(with_progress):
+                anchor = resolver(identifier)
+                if anchor is not None and anchor != identifier:
+                    detail = with_progress(anchor)
+        if detail is not None:
+            return detail[0], detail[1]
+        return repository.operations_run(identifier), None
+
+    @classmethod
+    def _run_items_scope(cls, principal_id: str, overview, disposition: str | None) -> str:
+        """Deterministic cursor scope binding principal, run/task and filter."""
+
+        return (
+            f"principal={principal_id};run={overview.run_id};"
+            f"task={overview.task_id or '-'};status={disposition or 'all'}"
+        )
+
+    @classmethod
+    def _run_records_scope(cls, principal_id: str, overview, kind: str | None) -> str:
+        """Deterministic cursor scope binding principal, run/task/job and kind."""
+
+        return (
+            f"principal={principal_id};run={overview.run_id};"
+            f"task={overview.task_id or '-'};job={overview.job_id or '-'};"
+            f"kind={kind or 'all'}"
+        )
+
+    @classmethod
+    def _run_items_query(
+        cls, environ: dict, principal_id: str, overview
+    ) -> tuple[int, str | None, DecodedCursor | None, str]:
+        """Bounded item-page state plus its filter-bound cursor (AC-T3).
+
+        The submitted disposition filter, the exact run/task identity and the
+        reading principal are part of the cursor scope: a cursor minted for
+        another run, another filter state or another principal is refused as
+        soon as any of them differs.
+        """
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"limit", "cursor", "status"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("run item query accepts limit, cursor, and status once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["20"])[0], "run item")
+        raw_status = values.get("status", [""])[0]
+        if raw_status in {"", "all"}:
+            disposition = None
+        elif raw_status in set(RUN_DISPOSITIONS):
+            disposition = raw_status
+        else:
+            raise ValueError("run item status filter is invalid")
+        scope = cls._run_items_scope(principal_id, overview, disposition)
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(raw_cursor[0], "run_items", expected_scope=scope)
+            if raw_cursor and raw_cursor[0]
+            else None
+        )
+        return limit, disposition, cursor, scope
+
+    @classmethod
+    def _run_records_query(
+        cls, environ: dict, principal_id: str, overview
+    ) -> tuple[int, str | None, DecodedCursor | None, str]:
+        """Bounded record-page state plus its kind-filter-bound cursor."""
+
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        allowed = {"limit", "cursor", "kind"}
+        if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("run record query accepts limit, cursor, and kind once")
+        limit = MediaFlowApi._parse_bounded_limit(values.get("limit", ["20"])[0], "run record")
+        raw_kind = values.get("kind", [""])[0]
+        if raw_kind in {"", "all"}:
+            kind = None
+        elif raw_kind in set(RUN_RECORD_KINDS):
+            kind = raw_kind
+        else:
+            raise ValueError("run record kind filter is invalid")
+        scope = cls._run_records_scope(principal_id, overview, kind)
+        raw_cursor = values.get("cursor")
+        cursor = (
+            decode_directional_cursor(raw_cursor[0], "run_records", expected_scope=scope)
+            if raw_cursor and raw_cursor[0]
+            else None
+        )
+        return limit, kind, cursor, scope
+
+    def _operations_run_items(
+        self, run_id: str, environ: dict, start_response: Callable, principal
+    ):
+        """One bounded item page with page-independent population totals (AC-T3).
+
+        The page, the filtered total and the whole-population disposition
+        partition come from one repository read snapshot, so a concurrent
+        transition can never fabricate progress or drop a successful sibling,
+        and a status filter never hides the full population's counts.
+        """
+
+        repository = self._repository
+        if repository is None or not callable(
+            getattr(repository, "operations_run_items_window", None)
+        ):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "run detail items are unavailable for this runtime",
+            )
+        overview, progress = self._operations_run_detail(repository, run_id)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        limit, disposition, cursor, scope = self._run_items_query(
+            environ, principal.principal_id, overview
+        )
+        task_id = overview.task_id
+        if task_id is None:
+            # A pre-Task admission has honest queue/detail state and explicit
+            # item unavailability — never a fabricated empty success.
+            return self._response(
+                start_response,
+                200,
+                {
+                    "run_id": overview.run_id,
+                    "task_id": None,
+                    "filter": {"status": disposition},
+                    "limit": limit,
+                    "items": [],
+                    "total": 0,
+                    "matching_total": 0,
+                    "dispositions": {key: 0 for key in RUN_DISPOSITIONS},
+                    "uncertain_success": 0,
+                    "truncated": False,
+                    "previous_cursor": None,
+                    "next_cursor": None,
+                    "unavailable": (
+                        progress.unavailable_reason
+                        if progress is not None and progress.unavailable_reason
+                        else "this run has no linked Task yet"
+                    ),
+                    "sideEffects": "none",
+                },
+            )
+        window = repository.operations_run_items_window(
+            task_id,
+            limit=limit,
+            after=cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None,
+            before=(
+                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
+            ),
+            disposition=disposition,
+        )
+        items = [
+            self._task_item_document(
+                item,
+                bounded=True,
+                checkpoint=self._checkpoint_service.summary(item.item_id, task_id=task_id),
+            )
+            for item in window.page
+        ]
         return self._response(
             start_response,
             200,
-            self._operations_run_document(overview),
+            {
+                "run_id": overview.run_id,
+                "task_id": task_id,
+                "filter": {"status": disposition},
+                "limit": limit,
+                "items": items,
+                "total": window.total,
+                "matching_total": window.matching_total,
+                "dispositions": dict(window.dispositions),
+                "uncertain_success": window.uncertain_success,
+                "truncated": window.has_next,
+                "previous_cursor": self._page_cursor(
+                    "run_items",
+                    window.page,
+                    window.has_previous,
+                    CursorDirection.PREVIOUS,
+                    scope=scope,
+                ),
+                "next_cursor": self._page_cursor(
+                    "run_items",
+                    window.page,
+                    window.has_next,
+                    CursorDirection.NEXT,
+                    scope=scope,
+                ),
+                "sideEffects": "none",
+            },
         )
+
+    def _operations_run_records(
+        self, run_id: str, environ: dict, start_response: Callable, principal
+    ):
+        """One bounded operation-record page from exactly-linked evidence (AC-T4).
+
+        Results, captured plan/analysis evidence, task/job-linked operational
+        logs and control/recovery audit rows are joined only through persisted
+        IDs and paged on the server; the browser never merges truncated
+        collections and the global log collection is never fetched to filter
+        client-side.
+        """
+
+        repository = self._repository
+        if repository is None or not callable(
+            getattr(repository, "operations_run_records_window", None)
+        ):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "run operation records are unavailable for this runtime",
+            )
+        overview, _progress = self._operations_run_detail(repository, run_id)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        limit, kind, cursor, scope = self._run_records_query(
+            environ, principal.principal_id, overview
+        )
+        window = repository.operations_run_records_window(
+            overview.task_id,
+            overview.job_id,
+            kind=kind,
+            limit=limit,
+            after=cursor.position if cursor and cursor.direction is CursorDirection.NEXT else None,
+            before=(
+                cursor.position if cursor and cursor.direction is CursorDirection.PREVIOUS else None
+            ),
+        )
+        return self._response(
+            start_response,
+            200,
+            {
+                "run_id": overview.run_id,
+                "task_id": overview.task_id,
+                "job_id": overview.job_id,
+                "filter": {"kind": kind},
+                "limit": limit,
+                "records": [run_record_document(record) for record in window.page],
+                "matching_total": window.matching_total,
+                "kind_counts": dict(window.kind_counts),
+                "truncated": window.has_next,
+                "previous_cursor": self._page_cursor(
+                    "run_records",
+                    window.page,
+                    window.has_previous,
+                    CursorDirection.PREVIOUS,
+                    scope=scope,
+                ),
+                "next_cursor": self._page_cursor(
+                    "run_records",
+                    window.page,
+                    window.has_next,
+                    CursorDirection.NEXT,
+                    scope=scope,
+                ),
+                "sideEffects": "none",
+            },
+        )
+
+    def _operations_run_item_evidence(
+        self, run_id: str, item_id: str, environ: dict, start_response: Callable, principal
+    ):
+        """One exact item's durable evidence through its persisted links (AC-T4).
+
+        The item must belong to this run's linked Task — an item from another
+        run is an honest 404, never a cross-run join.  The document composes
+        the persisted checkpoint, Results, captured plan/analysis evidence and
+        exactly plan-linked operational logs without re-running any Provider,
+        planner or Storage read, and absent logs never erase a Result.
+        """
+
+        repository = self._repository
+        if repository is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "run item evidence is unavailable for this runtime",
+            )
+        self._require_empty_query(environ, "run item evidence")
+        overview, _progress = self._operations_run_detail(repository, run_id)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        task_id = overview.task_id
+        item = repository.get_item(item_id) if task_id is not None else None
+        if task_id is None or item is None or item.task_id != task_id:
+            raise LookupError(f"run item {item_id!r} was not found")
+        checkpoint_document = self._checkpoint_service.get(item.item_id, task_id=task_id).document()
+        results = repository.list_results_for_item(item.item_id, limit=32)
+        evidence_documents = [
+            value.document() for value in repository.list_evidence_for_item(item.item_id, limit=16)
+        ]
+        logs = []
+        plan_id = item.plan_id
+        log_reader = getattr(repository, "list_operational_logs_for_plan", None)
+        if plan_id and callable(log_reader):
+            logs = [
+                OperationsRunRecord(
+                    kind="log",
+                    record_id=f"log:{value.log_id}",
+                    occurred_at=value.occurred_at,
+                    item_id=None,
+                    source={
+                        "action": value.event,
+                        "state": value.status,
+                        "actor": value.component,
+                        "ref": int(value.level),
+                        "link": value.plan_id,
+                    },
+                )
+                for value in log_reader(plan_id, limit=20)
+            ]
+        document = run_item_evidence_document(
+            item=item,
+            checkpoint_document=checkpoint_document,
+            results=results,
+            evidence=evidence_documents,
+            logs=logs,
+        )
+        document["run_id"] = overview.run_id
+        document["task_id"] = task_id
+        document["item_id"] = item.item_id
+        return self._response(start_response, 200, redact_manual_value(document))
+
+    def _operations_run_export(
+        self, run_id: str, environ: dict, start_response: Callable, principal
+    ):
+        """Download the eligible linked Task's existing result package (AC-T5).
+
+        The server resolves the exact linked Task through the run's durable
+        link and delegates to the existing ``export_results`` authority, so
+        package ordering, redaction, limits, digest and truncation stay
+        truthful.  A pre-Task run is an explicit refusal — never an empty
+        successful download.
+        """
+
+        if self._package_exchange is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "result package export is unavailable for this runtime",
+            )
+        repository = self._repository
+        if repository is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "result package export is unavailable for this runtime",
+            )
+        values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+        if set(values).difference({"limit"}) or any(len(value) != 1 for value in values.values()):
+            raise ValueError("run export accepts one optional limit")
+        raw_limit = values.get("limit", ["100"])[0]
+        try:
+            limit = int(raw_limit)
+        except ValueError as error:
+            raise ValueError("run export limit must be an integer") from error
+        overview, _progress = self._operations_run_detail(repository, run_id)
+        if overview is None:
+            raise LookupError(f"operations run {run_id!r} was not found")
+        if overview.task_id is None:
+            raise PackageExchangeError(
+                "this run has no linked Task yet, so no eligible result package exists",
+                code="task_not_linked",
+                status=409,
+                durable_state="no_package_state_changed",
+                next_action=(
+                    "wait until the admission acquires its Task, then export the "
+                    "linked Task's result package"
+                ),
+            )
+        package = self._package_exchange.export_results(
+            actor=principal.principal_id,
+            task_id=overview.task_id,
+            limit=limit,
+        )
+        return self._response(start_response, 200, package)
 
     @staticmethod
     def _run_page_cursor(

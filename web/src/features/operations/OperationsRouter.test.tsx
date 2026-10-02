@@ -160,6 +160,90 @@ function taskListPayload(
   };
 }
 
+/** One run overview without a progress key: the tabs must render the
+ * bounded unavailable state instead of inventing progress. */
+function taskRunOverviewPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    run_kind: "task",
+    run_id: "task-run",
+    command: "preview",
+    command_label: "预览",
+    recognized_command: true,
+    status: "running",
+    trigger: "manual",
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:00:00+00:00",
+    job_id: null,
+    task_id: "task-run",
+    schedule_id: null,
+    definition_id: null,
+    source_scope: null,
+    target_scope: null,
+    library_kind: null,
+    total_items: 1,
+    completed_items: 0,
+    failed_items: 1,
+    pause_requested: false,
+    attention: false,
+    configuration_snapshot_id: null,
+    worker_id: null,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+/** A server-paged run-items page whose partition reconciles to its total. */
+function runItemsPayload(
+  items: readonly unknown[],
+  overrides: Record<string, unknown> = {},
+) {
+  const total = items.length;
+  return {
+    run_id: "task-run",
+    task_id: "task-run",
+    filter: { status: null },
+    limit: 20,
+    items,
+    total,
+    matching_total: total,
+    dispositions: {
+      pending: 0,
+      active: 0,
+      waiting: 0,
+      success: total,
+      skipped: 0,
+      failed_partial: 0,
+      ignored: 0,
+      cancelled: 0,
+    },
+    uncertain_success: 0,
+    truncated: false,
+    previous_cursor: null,
+    next_cursor: null,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+/** An empty but truthful operation-records page. */
+function runRecordsPayload(overrides: Record<string, unknown> = {}) {
+  return {
+    run_id: "task-run",
+    task_id: "task-run",
+    job_id: null,
+    filter: { kind: null },
+    limit: 20,
+    records: [],
+    matching_total: 0,
+    kind_counts: { result: 0, evidence: 0, log: 0, audit: 0 },
+    truncated: false,
+    previous_cursor: null,
+    next_cursor: null,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
 describe("Operations router journeys", () => {
   it("filters the Task list through the backend and resets to the unfiltered read", async () => {
     const user = userEvent.setup();
@@ -398,12 +482,38 @@ describe("Operations router journeys", () => {
       if (url.startsWith("/api/v1/operations/tasks/task-run")) {
         return jsonResponse(hostile);
       }
+      if (url === "/api/v1/operations/runs/task-run") {
+        return jsonResponse(taskRunOverviewPayload());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-run/items")) {
+        return jsonResponse(
+          runItemsPayload([hostile.items[0]], {
+            dispositions: {
+              pending: 0,
+              active: 0,
+              waiting: 0,
+              success: 0,
+              skipped: 0,
+              failed_partial: 1,
+              ignored: 0,
+              cancelled: 0,
+            },
+            uncertain_success: 0,
+          }),
+        );
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-run/records")) {
+        return jsonResponse(runRecordsPayload());
+      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     });
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/tasks/task-run");
 
     await screen.findByRole("heading", { name: "Task task-run" });
+    // The items now arrive through the run-scoped detail read; wait for the
+    // exact bounded row before snapshotting the rendered text.
+    await screen.findByText(/source:movie\.mkv/);
     const rendered = document.body.textContent ?? "";
     expect(rendered).not.toContain("topsecret");
     expect(rendered).not.toContain("/home/alice");

@@ -10,6 +10,7 @@
  */
 
 import { createServer } from "node:http";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -265,6 +266,190 @@ const TASK_RESULTS = [
     uncertain_effects: [],
   },
 ];
+
+// --- Selected-run detail fixtures (Slice 42 RO-3 / Task 42.2) ---
+//
+// The selected-run detail tabs read exactly-linked durable evidence: the
+// primary item population (TASK_ITEMS above), captured plan/analysis
+// evidence, operational logs, control audits and the plan identity that
+// joins one item to its log stream. Every run-detail document below is
+// derived from these fixture rows only — a legacy raw error, a configuration
+// snapshot digest or a fingerprint value never enters any projection.
+
+/** The persisted plan identity that exactly joins an item to its logs. */
+const TASK_ITEM_PLANS = {
+  "item-001": "plan-001",
+  "item-002": "plan-002",
+};
+
+/** Captured plan/analysis evidence with bounded, secret-free sections. */
+const TASK_EVIDENCE = [
+  {
+    evidence_id: "evidence-001",
+    task_id: "task-001",
+    item_id: "item-001",
+    attempts: 1,
+    outcome: "planned",
+    captured_at: "2026-08-22T12:03:00+00:00",
+    truncated: false,
+    sections: {
+      plan: { available: true, unavailableReason: null, truncated: false },
+      naming: {
+        available: false,
+        unavailableReason:
+          "该条目已完成计划,未产生独立的命名段证据(不会现算)。",
+        truncated: false,
+      },
+    },
+  },
+];
+
+/** Exactly-linked operational logs (closed LogLevel names only). */
+const TASK_LOGS = [
+  {
+    log_id: "log-001",
+    task_id: "task-001",
+    item_id: null,
+    plan_id: "plan-001",
+    level: "INFO",
+    event: "organizer.execution_result",
+    component: "organizer",
+    status: "success",
+    occurred_at: "2026-08-22T12:05:30+00:00",
+  },
+  {
+    log_id: "log-002",
+    task_id: "task-001",
+    item_id: null,
+    plan_id: "plan-001",
+    level: "ERROR",
+    event: "metadata.provider_failure",
+    component: "metadata",
+    status: "failed",
+    occurred_at: "2026-08-22T12:06:00+00:00",
+  },
+];
+
+/** Control/recovery audit rows (action/state/actor only, never a raw note). */
+const TASK_AUDITS = [
+  {
+    audit_id: "audit-001",
+    task_id: "task-001",
+    item_id: "item-001",
+    action: "recognition_decision",
+    state: "applied",
+    actor: "operator",
+    parent_id: null,
+    occurred_at: "2026-08-22T12:04:00+00:00",
+  },
+];
+
+/** Job-linked log evidence that exists before the admission has a Task. */
+const JOB_LOGS = [
+  {
+    log_id: "log-job-002",
+    job_id: "job-002",
+    task_id: null,
+    plan_id: null,
+    item_id: null,
+    level: "INFO",
+    event: "workflow.queued",
+    component: "workflow",
+    status: "pending",
+    occurred_at: "2026-08-22T12:15:10+00:00",
+  },
+];
+
+/** The mutually exclusive primary-item dispositions, in modelled order. */
+const RUN_DISPOSITIONS = [
+  "pending",
+  "active",
+  "waiting",
+  "success",
+  "skipped",
+  "failed_partial",
+  "ignored",
+  "cancelled",
+];
+
+/** Persisted TaskItem status → modelled disposition; unknown → failed_partial. */
+const RUN_ITEM_DISPOSITION = {
+  pending: "pending",
+  processing: "active",
+  dry_run: "success",
+  success: "success",
+  skipped: "skipped",
+  partial: "failed_partial",
+  failed: "failed_partial",
+  cancelled: "cancelled",
+  ignored: "ignored",
+  paused: "waiting",
+  waiting_confirm: "waiting",
+  waiting_recognition: "waiting",
+  waiting_metadata: "waiting",
+  waiting_metadata_correction: "waiting",
+  waiting_classification: "waiting",
+};
+
+/** The durable operation-record kinds of the `操作记录` stream. */
+const RUN_RECORD_KINDS = ["result", "evidence", "log", "audit"];
+const RUN_RECORD_KIND_LABELS = {
+  result: "执行结果",
+  evidence: "分析与计划",
+  log: "运行日志",
+  audit: "控制与恢复",
+};
+
+/** Bounded Chinese accounting copy per run kind (truthful per family). */
+const RUN_ACCOUNTING = {
+  scan: {
+    unit: "发现文件",
+    basis:
+      "扫描发现计数:发现仍在进行时总数不可知(标记为不确定);扫描级错误与附件步骤单独计数,不计入主条目。",
+    successMeans: "发现完成(发现完成不等于整理成功)",
+  },
+  analysis: {
+    unit: "分析条目",
+    basis:
+      "分析/预览计数:成功表示分析完成且零变更,不代表任何存储整理成功;附件步骤单独计数。",
+    successMeans: "分析完成(零变更,不是整理成功)",
+  },
+  organize: {
+    unit: "主条目",
+    basis:
+      "整理计数:成功表示已验证的存储操作结果;效果未确认的条目单独标注,不计为已确认成功;附件步骤单独计数。",
+    successMeans: "已验证的存储操作成功",
+  },
+  transfer: {
+    unit: "主条目",
+    basis:
+      "传输计数:成功表示已验证的传输结果;效果未确认的条目单独标注,不计为已确认成功;附件步骤单独计数。",
+    successMeans: "已验证的传输成功",
+  },
+  direct: {
+    unit: "主条目",
+    basis:
+      "文件操作计数:成功表示已验证的操作结果;效果未确认的条目单独标注,不计为已确认成功。",
+    successMeans: "已验证的文件操作成功",
+  },
+  recovery: {
+    unit: "主条目",
+    basis:
+      "恢复继续计数:本任务只记录其自身的持久条目与结果,原始历史不被改写;效果未确认的条目单独标注。",
+    successMeans: "该条目的持久处置为成功",
+  },
+  task: {
+    unit: "主条目",
+    basis:
+      "任务条目计数:互斥处置分区之和等于已知总数;未知的发现总数标记为不确定。",
+    successMeans: "该条目的持久处置为成功",
+  },
+};
+
+/** Honest pre-Task unavailability: never a fabricated empty success. */
+const RUN_PRE_TASK_REASON =
+  "this run has no linked Task yet; item progress, records and results " +
+  "become available once the admission acquires its Task";
 
 const FAKE_TASKS = [
   {
@@ -10651,7 +10836,7 @@ const server = createServer(async (req, res) => {
     );
   }
 
-  function runRunDocument(run) {
+  function runRunDocument(run, progress) {
     const attention = ATTENTION_RUN_STATUSES.includes(run.status);
     return {
       ...run,
@@ -10659,7 +10844,579 @@ const server = createServer(async (req, res) => {
       // run-level target scope, exactly like a legacy admission row.
       target_scope: null,
       attention,
+      // The selected-run overview carries the durable progress projection;
+      // the inventory page leaves it absent, exactly like the Python
+      // `_operations_runs_page` / `_operations_run_overview` split.
+      ...(progress !== undefined ? { progress } : {}),
     };
+  }
+
+  /**
+   * Resolve one supported run/Task identity to its run row. The exact run
+   * anchor wins; a supported Task detail identity resolves only through the
+   * persisted Job→Task link of the run population — never a textual join.
+   */
+  function resolveRunByIdentifier(identifier) {
+    const runs = buildRunInventory();
+    const exact = runs.find((item) => item.run_id === identifier);
+    if (exact !== undefined) {
+      return exact;
+    }
+    return (
+      runs.find(
+        (item) => item.task_id !== null && item.task_id === identifier,
+      ) ?? null
+    );
+  }
+
+  function runDispositionOf(status) {
+    return RUN_ITEM_DISPOSITION[status] ?? "failed_partial";
+  }
+
+  function emptyRunDispositions() {
+    const counts = {};
+    for (const disposition of RUN_DISPOSITIONS) {
+      counts[disposition] = 0;
+    }
+    return counts;
+  }
+
+  /** The truthful accounting family of one run command. */
+  function runAccountingKind(command) {
+    if (typeof command !== "string" || command.length === 0) {
+      return "task";
+    }
+    let family = command.startsWith("media_")
+      ? command.slice("media_".length)
+      : command;
+    family = family.split(":", 1)[0];
+    if (family === "scan") return "scan";
+    if (family === "preview") return "analysis";
+    if (family === "organize" || family === "manual_organize") {
+      return "organize";
+    }
+    if (family === "files_transfer") return "transfer";
+    if (family === "files_delete" || family === "files_direct_command") {
+      return "direct";
+    }
+    if (
+      [
+        "retry",
+        "retry-failed",
+        "recovery-continuation",
+        "metadata-correction-continuation",
+      ].includes(family)
+    ) {
+      return "recovery";
+    }
+    return "task";
+  }
+
+  function runItemsPopulation(taskId) {
+    return TASK_ITEMS.filter((item) => item.task_id === taskId);
+  }
+
+  /** The latest durable Result per item (created_at desc, result_id desc). */
+  function runLatestResultByItem(taskId) {
+    const latest = new Map();
+    for (const result of TASK_RESULTS) {
+      if (result.task_id !== taskId) continue;
+      const current = latest.get(result.item_id);
+      if (
+        current === undefined ||
+        result.created_at > current.created_at ||
+        (result.created_at === current.created_at &&
+          result.result_id > current.result_id)
+      ) {
+        latest.set(result.item_id, result);
+      }
+    }
+    return latest;
+  }
+
+  function runSortedResults(taskId, itemId) {
+    return TASK_RESULTS.filter(
+      (value) =>
+        value.task_id === taskId &&
+        (itemId === undefined || value.item_id === itemId),
+    ).sort((left, right) =>
+      left.created_at === right.created_at
+        ? left.result_id.localeCompare(right.result_id)
+        : left.created_at.localeCompare(right.created_at),
+    );
+  }
+
+  /**
+   * Success-status items whose latest durable Result still declares uncertain
+   * effects — never counted as confirmed success.
+   */
+  function runUncertainSuccess(taskId) {
+    const latest = runLatestResultByItem(taskId);
+    let success = 0;
+    let uncertain = 0;
+    for (const item of runItemsPopulation(taskId)) {
+      if (runDispositionOf(item.status) !== "success") continue;
+      success += 1;
+      const result = latest.get(item.item_id);
+      if (
+        result !== undefined &&
+        String(result.effect_certainty ?? "unknown") === "attempted_unverified"
+      ) {
+        uncertain += 1;
+      }
+    }
+    return Math.min(uncertain, success);
+  }
+
+  /**
+   * One run's durable progress projection (fail-closed arithmetic: the
+   * mutually exclusive partition reconciles to the known total, an honest
+   * indeterminate state nulls its total and processed counts, and the success
+   * status count splits exactly into confirmed plus uncertain).
+   */
+  function runProgressDocument(run) {
+    if (run.task_id === null) {
+      return {
+        available: false,
+        reason: RUN_PRE_TASK_REASON,
+        sideEffects: "none",
+      };
+    }
+    const task = FAKE_TASKS.find((value) => value.task_id === run.task_id);
+    if (task === undefined) {
+      return {
+        available: false,
+        reason: "the linked Task of this run is not readable in this runtime",
+        sideEffects: "none",
+      };
+    }
+    const items = runItemsPopulation(task.task_id);
+    const dispositions = emptyRunDispositions();
+    for (const item of items) {
+      dispositions[runDispositionOf(item.status)] += 1;
+    }
+    const terminal = TERMINAL_TASK_STATUSES.has(task.status);
+    let total = items.length;
+    let indeterminate = false;
+    if (!terminal) {
+      const admitted =
+        Number.isInteger(task.total_items) && task.total_items >= 0
+          ? task.total_items
+          : null;
+      if (total === 0 && !admitted) {
+        // Nothing admitted and nothing materialized: a total would be a lie.
+        indeterminate = true;
+      } else if (admitted !== null && admitted > total) {
+        // Admitted-but-not-yet-materialized rows are published inside
+        // `pending`, so the partition keeps reconciling to the known total.
+        dispositions.pending += admitted - total;
+        total = admitted;
+      }
+    }
+    const knownTotal = indeterminate ? null : total;
+    const processed = indeterminate
+      ? null
+      : Math.max(total - dispositions.pending - dispositions.active, 0);
+    const uncertainSuccess = runUncertainSuccess(task.task_id);
+    const results = runSortedResults(task.task_id);
+    const effectCounts = {};
+    const latestResults = runLatestResultByItem(task.task_id);
+    for (const item of items) {
+      const result = latestResults.get(item.item_id);
+      if (result === undefined) continue;
+      const certainty = String(result.effect_certainty ?? "unknown");
+      effectCounts[certainty] = (effectCounts[certainty] ?? 0) + 1;
+    }
+    const kind = runAccountingKind(task.command);
+    const accounting = RUN_ACCOUNTING[kind];
+    const scanKind = kind === "scan";
+    return {
+      available: true,
+      kind,
+      unit: accounting.unit,
+      unit_key: "task_items",
+      basis: accounting.basis,
+      success_means: accounting.successMeans,
+      known_total: knownTotal,
+      indeterminate,
+      processed,
+      dispositions,
+      confirmed_success: dispositions.success - uncertainSuccess,
+      uncertain_success: uncertainSuccess,
+      // Scan-level error/attachment counters stay separate from the primary
+      // partition; this fake fixtures no scan-error rows.
+      scan_errors: scanKind ? 0 : null,
+      scan_discovery_complete: scanKind ? terminal : null,
+      scan_progress: {},
+      attachment_steps: results.reduce(
+        (sum, value) =>
+          sum +
+          (Number.isInteger(value.attachment_count)
+            ? value.attachment_count
+            : 0),
+        0,
+      ),
+      effect_counts: effectCounts,
+      results_total: results.length,
+      results_complete: true,
+      sideEffects: "none",
+    };
+  }
+
+  function runLogRecord(log) {
+    return {
+      record_id: `log:${log.log_id}`,
+      kind: "log",
+      kind_label: RUN_RECORD_KIND_LABELS.log,
+      occurred_at: log.occurred_at,
+      item_id: log.item_id ?? null,
+      level: log.level,
+      event: log.event,
+      component: log.component,
+      status: log.status,
+      plan_id: log.plan_id ?? null,
+      action: null,
+      state: null,
+      actor: null,
+      parent_id: null,
+    };
+  }
+
+  function runAuditRecord(audit) {
+    return {
+      record_id: `audit:${audit.audit_id}`,
+      kind: "audit",
+      kind_label: RUN_RECORD_KIND_LABELS.audit,
+      occurred_at: audit.occurred_at,
+      item_id: audit.item_id ?? null,
+      level: null,
+      event: null,
+      component: null,
+      status: null,
+      plan_id: null,
+      action: audit.action,
+      state: audit.state,
+      actor: audit.actor ?? null,
+      parent_id: audit.parent_id ?? null,
+    };
+  }
+
+  /**
+   * The whole exactly-linked operation-record population of one run: Results,
+   * captured evidence, task/job-linked logs and control audits joined only
+   * through persisted IDs, ordered oldest first with a unique record id.
+   */
+  function runRecordsPopulation(run) {
+    const records = [];
+    if (run.task_id !== null) {
+      for (const result of runSortedResults(run.task_id)) {
+        records.push({
+          record_id: `result:${result.result_id}`,
+          kind: "result",
+          kind_label: RUN_RECORD_KIND_LABELS.result,
+          occurred_at: result.created_at,
+          item_id: result.item_id,
+          level: null,
+          event: null,
+          component: null,
+          status: null,
+          plan_id: null,
+          action: null,
+          state: null,
+          actor: null,
+          parent_id: null,
+          result,
+        });
+      }
+      for (const evidence of TASK_EVIDENCE) {
+        if (evidence.task_id !== run.task_id) continue;
+        records.push({
+          record_id: `evidence:${evidence.evidence_id}`,
+          kind: "evidence",
+          kind_label: RUN_RECORD_KIND_LABELS.evidence,
+          occurred_at: evidence.captured_at,
+          item_id: evidence.item_id,
+          level: null,
+          event: null,
+          component: null,
+          status: null,
+          plan_id: null,
+          action: null,
+          state: null,
+          actor: null,
+          parent_id: null,
+          evidence: {
+            evidence_id: evidence.evidence_id,
+            attempts: evidence.attempts,
+            outcome: evidence.outcome,
+            captured_at: evidence.captured_at,
+            truncated: evidence.truncated,
+            sections_available: Object.entries(evidence.sections)
+              .filter(([, section]) => section.available === true)
+              .map(([name]) => name),
+          },
+        });
+      }
+      for (const log of TASK_LOGS) {
+        if (log.task_id !== run.task_id) continue;
+        records.push(runLogRecord(log));
+      }
+      for (const audit of TASK_AUDITS) {
+        if (audit.task_id !== run.task_id) continue;
+        records.push(runAuditRecord(audit));
+      }
+    }
+    if (run.job_id !== null) {
+      for (const log of JOB_LOGS) {
+        if (log.job_id !== run.job_id) continue;
+        records.push(runLogRecord(log));
+      }
+    }
+    records.sort((left, right) =>
+      left.occurred_at === right.occurred_at
+        ? left.record_id.localeCompare(right.record_id)
+        : left.occurred_at.localeCompare(right.occurred_at),
+    );
+    return records;
+  }
+
+  /**
+   * One item's durable evidence document: the bounded checkpoint (never a
+   * snapshot digest), its Results, captured plan/analysis evidence and the
+   * exactly plan-linked logs.
+   */
+  function runItemEvidenceDocument(run, task, item) {
+    const planId = TASK_ITEM_PLANS[item.item_id] ?? null;
+    const results = runSortedResults(task.task_id, item.item_id);
+    const latestResult =
+      results.length > 0 ? results[results.length - 1] : null;
+    const evidenceDocuments = TASK_EVIDENCE.filter(
+      (value) =>
+        value.task_id === task.task_id && value.item_id === item.item_id,
+    ).map((value) => ({
+      evidenceId: value.evidence_id,
+      attempts: value.attempts,
+      outcome: value.outcome,
+      capturedAt: value.captured_at,
+      truncated: value.truncated,
+      sections: Object.fromEntries(
+        Object.entries(value.sections).map(([name, section]) => [
+          name,
+          {
+            available: section.available === true,
+            unavailableReason: section.unavailableReason ?? null,
+            truncated: section.truncated === true,
+          },
+        ]),
+      ),
+    }));
+    const logs = TASK_LOGS.filter(
+      (value) =>
+        value.task_id === task.task_id &&
+        planId !== null &&
+        value.plan_id === planId,
+    ).map(runLogRecord);
+    const audits = TASK_AUDITS.filter(
+      (value) =>
+        value.task_id === task.task_id && value.item_id === item.item_id,
+    );
+    const blocker =
+      item.checkpoint.blocker_kind !== null &&
+      item.checkpoint.blocker_kind !== undefined
+        ? {
+            kind: item.checkpoint.blocker_kind,
+            id: item.checkpoint.blocker_id ?? null,
+            status: "open",
+            task_id: task.task_id,
+            item_id: item.item_id,
+            resolution_path: null,
+          }
+        : null;
+    const checkpoint = {
+      task_id: task.task_id,
+      item_id: item.item_id,
+      status: item.checkpoint.status,
+      raw_stage: item.checkpoint.raw_stage,
+      stage: item.checkpoint.stage,
+      attempts: item.attempts,
+      source_storage_id: item.storage_id,
+      resource_library_id: item.resource_library_id,
+      source_path: item.source_path,
+      plan_id: planId,
+      destination_storage_id: item.destination_storage_id,
+      destination_path: item.destination_path,
+      // The snapshot digest is a fingerprint and never leaves the backend;
+      // the immutable snapshot ID remains as the pin evidence.
+      configuration: {
+        snapshot_id: task.configuration_snapshot_id ?? null,
+        resolvable: true,
+        reason: null,
+      },
+      latest_result: latestResult,
+      prior_results:
+        latestResult === null ? [] : results.slice(0, results.length - 1),
+      blockers: [],
+      blocker,
+      audits: audits.map((value) => ({
+        audit_id: value.audit_id,
+        kind: value.action,
+        occurred_at: value.occurred_at,
+        actor: value.actor ?? null,
+      })),
+      recovery_requests: [],
+      recovery_request: null,
+      recovery_continuation: null,
+      effects: {
+        certainty: item.checkpoint.effect_certainty,
+        completed_operations: latestResult?.completed_operations ?? [],
+        uncertain_effects: latestResult?.uncertain_effects ?? [],
+      },
+      error_category:
+        item.failure !== null && item.failure !== undefined
+          ? item.failure.category
+          : null,
+      failureExplanation: item.failure ?? null,
+      nextAction: item.failure?.nextAction ?? null,
+      retry_safety: item.checkpoint.retry_safety,
+      actions: [],
+      permitted_action_ids: item.checkpoint.permitted_action_ids ?? [],
+      refusal_reason: item.checkpoint.refusal_reason ?? null,
+      checkpoint_version: item.checkpoint.checkpoint_version ?? null,
+      updated_at: item.updated_at,
+    };
+    return {
+      run_id: run.run_id,
+      task_id: task.task_id,
+      item_id: item.item_id,
+      item,
+      checkpoint,
+      results,
+      evidence: evidenceDocuments,
+      logs,
+      sideEffects: "none",
+    };
+  }
+
+  /**
+   * Project one durable operator Result row into the committed
+   * `mediaflow.results.v1` camelCase interchange row (the same contract the
+   * Python `result_item_document` publishes). The package is an interchange
+   * format, not the operator document, so its rows are camelCase and every
+   * field the frontend package validator checks is present.
+   */
+  function packageResultRow(result) {
+    return {
+      resultId: result.result_id,
+      taskId: result.task_id,
+      itemId: result.item_id,
+      sourceStorageId: result.source_storage_id,
+      sourcePath: result.source_path,
+      destinationStorageId: result.destination_storage_id ?? null,
+      destinationPath: result.destination_path ?? null,
+      recognitionType: result.recognition_type ?? null,
+      provider: result.provider ?? null,
+      providerId: result.provider_id ?? null,
+      metadataPolicyId: result.metadata_policy_id ?? null,
+      namingPolicyId: result.naming_policy_id ?? null,
+      classificationPolicyId: result.classification_policy_id ?? null,
+      organizePolicyId: result.organize_policy_id ?? null,
+      operation: result.operation ?? null,
+      status: result.status,
+      createdAt: result.created_at,
+      title: result.title ?? null,
+      error:
+        result.failure !== null && result.failure !== undefined
+          ? `${result.failure.category}: [redacted]`
+          : null,
+      completedOperations: [...(result.completed_operations ?? [])],
+      attachmentCount: Number.isInteger(result.attachment_count)
+        ? result.attachment_count
+        : 0,
+      retryAttempts: Number.isInteger(result.retry_attempts)
+        ? result.retry_attempts
+        : 0,
+      retryCategory: result.retry_category ?? null,
+      cleanupStatus: result.cleanup_status ?? null,
+      cleanupStepCount: Number.isInteger(result.cleanup_step_count)
+        ? result.cleanup_step_count
+        : 0,
+      effectCertainty: result.effect_certainty ?? "unknown",
+      uncertainEffects: [...(result.uncertain_effects ?? [])],
+      sourceOccurrenceId: null,
+      sourceFingerprint: null,
+      sourceFingerprintState: "unverified",
+    };
+  }
+
+  /** The existing task-scoped result package, resolved through the run link. */
+  function runResultPackage(task, limit) {
+    const results = runSortedResults(task.task_id);
+    const page = results.slice(0, limit).map(packageResultRow);
+    const truncated = results.length > limit;
+    const source = {
+      scope: "task",
+      taskId: task.task_id,
+      taskCommand: task.command,
+      ordering: "created_at_asc,result_id_asc",
+      limit,
+    };
+    const packageDocument = {
+      packageKind: "mediaflow.results.v1",
+      packageSchemaVersion: 1,
+      packageVersion: 1,
+      generatedAt: "2026-08-22T12:07:00+00:00",
+      producer: { id: "mediaflow" },
+      source,
+      redaction: {
+        scope: "persisted_task_result_projection",
+        entryCount: 0,
+        entries: [],
+      },
+      results: page,
+      truncated,
+      warning: truncated
+        ? [
+            {
+              code: "results_truncated",
+              message:
+                "the requested result scope exceeds this package limit; " +
+                "export again with a larger bounded limit or a narrower scope",
+            },
+          ]
+        : [],
+      packageDigest: createHash("sha256")
+        .update(JSON.stringify({ results: page, source }))
+        .digest("hex"),
+    };
+    return packageDocument;
+  }
+
+  /** True when any query key is unknown or repeated (bounded grammar). */
+  function rejectUnknownRunDetailQuery(searchParams, allowed) {
+    for (const key of new Set(searchParams.keys())) {
+      if (!allowed.includes(key)) {
+        return true;
+      }
+      if (searchParams.getAll(key).length !== 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Bounded integer limit: null means the submitted value is refused. */
+  function parseRunDetailLimit(raw, fallback, max) {
+    if (raw === null) {
+      return fallback;
+    }
+    if (!/^\d{1,7}$/.test(raw)) {
+      return null;
+    }
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1 || value > max) {
+      return null;
+    }
+    return value;
   }
 
   function encodeCollectionCursor(kind, scope, index) {
@@ -11689,12 +12446,308 @@ const server = createServer(async (req, res) => {
       return;
     }
     const runId = decodeURIComponent(runsMatch[1]);
-    const run = buildRunInventory().find((item) => item.run_id === runId);
+    // A supported Task detail identity resolves to the same run through the
+    // persisted Job→Task link, so deep-opening either side of the linkage
+    // reaches the same stable overview with its durable progress.
+    const run = resolveRunByIdentifier(runId);
     if (!run) {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    sendJson(res, 200, runRunDocument(run));
+    sendJson(res, 200, runRunDocument(run, runProgressDocument(run)));
+    return;
+  }
+
+  // --- Selected-run detail reads (Slice 42 RO-3) ---
+  //
+  // The server-filtered primary items, the exactly-linked operation-record
+  // stream, one item's durable evidence and the task-scoped result package
+  // export, all resolved through the run's own durable link. Every read is a
+  // side-effect-free GET behind the same operationsGuard; filters, limits and
+  // cursors follow the bounded grammar the Python contract enforces (unknown
+  // or repeated query keys, an out-of-set filter, an out-of-range limit or a
+  // cursor minted for another run/filter state are all refused with
+  // `invalid_request`).
+  const runDetailMatch = url.pathname.match(
+    /^\/api\/v1\/operations\/runs\/([^/]+)\/(items|records|export)(?:\/([^/]+))?$/,
+  );
+  if (runDetailMatch) {
+    if (req.method !== "GET") {
+      sendJson(res, 405, { error: { code: "method_not_allowed" } });
+      return;
+    }
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const requestedRunId = decodeURIComponent(runDetailMatch[1]);
+    const section = runDetailMatch[2];
+    const itemSegment = runDetailMatch[3] ?? null;
+
+    if (section === "items" && itemSegment !== null) {
+      // --- One item's durable evidence, joined only by exact identity ---
+      if (rejectUnknownRunDetailQuery(url.searchParams, [])) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const evidenceRun = resolveRunByIdentifier(requestedRunId);
+      if (evidenceRun === null || evidenceRun.task_id === null) {
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      const evidenceTask = FAKE_TASKS.find(
+        (value) => value.task_id === evidenceRun.task_id,
+      );
+      const itemId = decodeURIComponent(itemSegment);
+      const evidenceItem = runItemsPopulation(evidenceRun.task_id).find(
+        (value) => value.item_id === itemId,
+      );
+      if (evidenceTask === undefined || evidenceItem === undefined) {
+        // An item from another run or a missing item is an honest 404 —
+        // never a cross-run join.
+        sendJson(res, 404, { error: { code: "not_found" } });
+        return;
+      }
+      sendJson(
+        res,
+        200,
+        runItemEvidenceDocument(evidenceRun, evidenceTask, evidenceItem),
+      );
+      return;
+    }
+    if (itemSegment !== null) {
+      // Only `items/{itemId}` carries a third segment.
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+
+    const detailRun = resolveRunByIdentifier(requestedRunId);
+    if (detailRun === null) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+
+    if (section === "items") {
+      if (
+        rejectUnknownRunDetailQuery(url.searchParams, [
+          "limit",
+          "cursor",
+          "status",
+        ])
+      ) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const limit = parseRunDetailLimit(url.searchParams.get("limit"), 20, 100);
+      if (limit === null) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const rawStatus = url.searchParams.get("status");
+      let disposition = null;
+      if (rawStatus !== null && rawStatus !== "" && rawStatus !== "all") {
+        if (!RUN_DISPOSITIONS.includes(rawStatus)) {
+          sendJson(res, 400, { error: { code: "invalid_request" } });
+          return;
+        }
+        disposition = rawStatus;
+      }
+      const itemsScope = `run=${detailRun.run_id};task=${
+        detailRun.task_id ?? "-"
+      };status=${disposition ?? "all"}`;
+      const rawItemsCursor = url.searchParams.get("cursor");
+      let itemsOffset = null;
+      if (rawItemsCursor !== null && rawItemsCursor !== "") {
+        itemsOffset = decodeCollectionCursor(
+          rawItemsCursor,
+          "run_items",
+          itemsScope,
+        );
+        if (itemsOffset === null) {
+          sendJson(res, 400, { error: { code: "invalid_request" } });
+          return;
+        }
+      }
+      if (detailRun.task_id === null) {
+        // A pre-Task admission has honest queue state and explicit item
+        // unavailability — never a fabricated empty success.
+        sendJson(res, 200, {
+          run_id: detailRun.run_id,
+          task_id: null,
+          filter: { status: disposition },
+          limit,
+          items: [],
+          total: 0,
+          matching_total: 0,
+          dispositions: emptyRunDispositions(),
+          uncertain_success: 0,
+          truncated: false,
+          previous_cursor: null,
+          next_cursor: null,
+          unavailable: RUN_PRE_TASK_REASON,
+          sideEffects: "none",
+        });
+        return;
+      }
+      const population = runItemsPopulation(detailRun.task_id);
+      const dispositions = emptyRunDispositions();
+      for (const item of population) {
+        dispositions[runDispositionOf(item.status)] += 1;
+      }
+      const filtered =
+        disposition === null
+          ? population
+          : population.filter(
+              (item) => runDispositionOf(item.status) === disposition,
+            );
+      const itemsPage = collectionPage(filtered, limit, itemsOffset);
+      sendJson(res, 200, {
+        run_id: detailRun.run_id,
+        task_id: detailRun.task_id,
+        filter: { status: disposition },
+        limit,
+        items: itemsPage.page,
+        total: population.length,
+        matching_total: filtered.length,
+        dispositions,
+        uncertain_success: runUncertainSuccess(detailRun.task_id),
+        truncated: itemsPage.next !== null,
+        previous_cursor:
+          itemsPage.previous === null
+            ? null
+            : encodeCollectionCursor(
+                "run_items",
+                itemsScope,
+                itemsPage.previous,
+              ),
+        next_cursor:
+          itemsPage.next === null
+            ? null
+            : encodeCollectionCursor("run_items", itemsScope, itemsPage.next),
+        sideEffects: "none",
+      });
+      return;
+    }
+
+    if (section === "records") {
+      if (
+        rejectUnknownRunDetailQuery(url.searchParams, [
+          "limit",
+          "cursor",
+          "kind",
+        ])
+      ) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const limit = parseRunDetailLimit(url.searchParams.get("limit"), 20, 100);
+      if (limit === null) {
+        sendJson(res, 400, { error: { code: "invalid_request" } });
+        return;
+      }
+      const rawKind = url.searchParams.get("kind");
+      let kind = null;
+      if (rawKind !== null && rawKind !== "" && rawKind !== "all") {
+        if (!RUN_RECORD_KINDS.includes(rawKind)) {
+          sendJson(res, 400, { error: { code: "invalid_request" } });
+          return;
+        }
+        kind = rawKind;
+      }
+      const recordsScope = `run=${detailRun.run_id};task=${
+        detailRun.task_id ?? "-"
+      };job=${detailRun.job_id ?? "-"};kind=${kind ?? "all"}`;
+      const rawRecordsCursor = url.searchParams.get("cursor");
+      let recordsOffset = null;
+      if (rawRecordsCursor !== null && rawRecordsCursor !== "") {
+        recordsOffset = decodeCollectionCursor(
+          rawRecordsCursor,
+          "run_records",
+          recordsScope,
+        );
+        if (recordsOffset === null) {
+          sendJson(res, 400, { error: { code: "invalid_request" } });
+          return;
+        }
+      }
+      const recordsPopulation = runRecordsPopulation(detailRun);
+      const kindCounts = { result: 0, evidence: 0, log: 0, audit: 0 };
+      for (const record of recordsPopulation) {
+        kindCounts[record.kind] += 1;
+      }
+      const filteredRecords =
+        kind === null
+          ? recordsPopulation
+          : recordsPopulation.filter((record) => record.kind === kind);
+      const recordsPage = collectionPage(filteredRecords, limit, recordsOffset);
+      sendJson(res, 200, {
+        run_id: detailRun.run_id,
+        task_id: detailRun.task_id,
+        job_id: detailRun.job_id,
+        filter: { kind },
+        limit,
+        records: recordsPage.page,
+        matching_total: filteredRecords.length,
+        kind_counts: kindCounts,
+        truncated: recordsPage.next !== null,
+        previous_cursor:
+          recordsPage.previous === null
+            ? null
+            : encodeCollectionCursor(
+                "run_records",
+                recordsScope,
+                recordsPage.previous,
+              ),
+        next_cursor:
+          recordsPage.next === null
+            ? null
+            : encodeCollectionCursor(
+                "run_records",
+                recordsScope,
+                recordsPage.next,
+              ),
+        sideEffects: "none",
+      });
+      return;
+    }
+
+    // --- The run-scoped result package export ---
+    if (
+      rejectUnknownRunDetailQuery(url.searchParams, ["limit"]) ||
+      (url.searchParams.get("limit") !== null &&
+        !/^\d{1,7}$/.test(url.searchParams.get("limit")))
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const rawExportLimit = url.searchParams.get("limit");
+    const exportLimit = rawExportLimit === null ? 100 : Number(rawExportLimit);
+    if (detailRun.task_id === null) {
+      // A pre-Task run is an explicit refusal — never an empty successful
+      // download.
+      sendJson(res, 409, {
+        error: {
+          code: "task_not_linked",
+          message: RUN_PRE_TASK_REASON,
+        },
+      });
+      return;
+    }
+    if (
+      !Number.isInteger(exportLimit) ||
+      exportLimit < 1 ||
+      exportLimit > 500
+    ) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    const exportTask = FAKE_TASKS.find(
+      (value) => value.task_id === detailRun.task_id,
+    );
+    if (exportTask === undefined) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    sendJson(res, 200, runResultPackage(exportTask, exportLimit));
     return;
   }
 

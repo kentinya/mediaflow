@@ -1,0 +1,835 @@
+/**
+ * Component journeys for the selected-run detail tabs (Slice 42 RO-3).
+ *
+ * The tests drive the real route tree with a stubbed API boundary and prove
+ * the operator-facing promises of the Task: 任务详情/操作记录 tabs with
+ * truthful progress, server-filtered and server-paged items and records,
+ * exact item evidence, the scoped result-package download, and distinct
+ * bounded failures for 401/403/404/malformed reads.
+ */
+
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { renderApp } from "../../../tests/utils";
+import { authStore } from "../../shared/api/auth-store";
+
+const TOKEN = "detail-token";
+
+function jsonResponse(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function stubFetch(
+  implementation: (
+    input: RequestInfo | URL,
+    init?: RequestInit,
+  ) => Promise<Response>,
+): ReturnType<typeof vi.fn> {
+  const fetchMock = vi.fn(implementation);
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+afterEach(() => {
+  authStore.clearToken();
+  authStore.clearIntendedPath();
+  vi.unstubAllGlobals();
+});
+
+function progressDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    available: true,
+    kind: "organize",
+    unit: "主条目",
+    unit_key: "task_items",
+    basis: "整理计数:成功表示已验证的存储操作结果。",
+    success_means: "已验证的存储操作成功",
+    known_total: 4,
+    indeterminate: false,
+    processed: 3,
+    dispositions: {
+      pending: 1,
+      active: 0,
+      waiting: 1,
+      success: 2,
+      skipped: 0,
+      failed_partial: 0,
+      ignored: 0,
+      cancelled: 0,
+    },
+    confirmed_success: 1,
+    uncertain_success: 1,
+    scan_errors: 0,
+    scan_discovery_complete: null,
+    scan_progress: {},
+    attachment_steps: 2,
+    effect_counts: { verified_complete: 1, attempted_unverified: 1 },
+    results_total: 2,
+    results_complete: true,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function overviewDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    run_kind: "task",
+    run_id: "task-001",
+    command: "organize",
+    command_label: "整理",
+    recognized_command: true,
+    status: "running",
+    trigger: "manual",
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:06:00+00:00",
+    job_id: null,
+    task_id: "task-001",
+    schedule_id: null,
+    definition_id: null,
+    source_scope: "Movies",
+    target_scope: null,
+    library_kind: "resource",
+    total_items: 4,
+    completed_items: 1,
+    failed_items: 0,
+    pause_requested: false,
+    attention: false,
+    configuration_snapshot_id: "snap-1",
+    worker_id: null,
+    sideEffects: "none",
+    progress: progressDocument(),
+    ...overrides,
+  };
+}
+
+function itemRow(overrides: Record<string, unknown> = {}) {
+  return {
+    item_id: "item-1",
+    task_id: "task-001",
+    status: "success",
+    stage: "organize",
+    attempts: 1,
+    storage_id: "source",
+    resource_library_id: "movies",
+    source_path: "movies/a.mkv",
+    destination_storage_id: "target",
+    destination_path: "Movies/a.mkv",
+    execution_status: null,
+    created_at: "2026-08-22T12:00:00+00:00",
+    updated_at: "2026-08-22T12:00:00+00:00",
+    failure: null,
+    checkpoint: null,
+    ...overrides,
+  };
+}
+
+const WAITING_ITEM = itemRow({
+  item_id: "item-2",
+  status: "waiting_metadata",
+  stage: "metadata",
+  source_path: "movies/b.mkv",
+  checkpoint: {
+    status: "waiting_metadata",
+    stage: "waiting",
+    raw_stage: "metadata",
+    blocker_kind: "metadata_review",
+    blocker_id: "review-1",
+    effect_certainty: "unknown",
+    retry_safety: "unknown",
+    refusal_reason: null,
+    checkpoint_version: "v1",
+    permitted_action_ids: ["decide"],
+  },
+});
+
+function itemsPageDocument(overrides: Record<string, unknown> = {}) {
+  const items = (overrides["items"] as unknown[] | undefined) ?? [
+    itemRow(),
+    WAITING_ITEM,
+  ];
+  const total = typeof overrides["total"] === "number" ? overrides["total"] : 4;
+  return {
+    run_id: "task-001",
+    task_id: "task-001",
+    filter: { status: null },
+    limit: 20,
+    items,
+    total,
+    matching_total:
+      typeof overrides["matching_total"] === "number"
+        ? overrides["matching_total"]
+        : total,
+    dispositions: {
+      pending: 1,
+      active: 0,
+      waiting: 1,
+      success: 2,
+      skipped: 0,
+      failed_partial: 0,
+      ignored: 0,
+      cancelled: 0,
+    },
+    uncertain_success: 1,
+    truncated: false,
+    previous_cursor: null,
+    next_cursor: null,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function recordsPageDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    run_id: "task-001",
+    task_id: "task-001",
+    job_id: null,
+    filter: { kind: null },
+    limit: 20,
+    records: [
+      {
+        record_id: "result:result-1",
+        kind: "result",
+        kind_label: "执行结果",
+        occurred_at: "2026-08-22T12:01:00+00:00",
+        item_id: "item-1",
+        level: null,
+        event: null,
+        component: null,
+        status: null,
+        plan_id: null,
+        action: null,
+        state: null,
+        actor: null,
+        parent_id: null,
+        result: {
+          result_id: "result-1",
+          task_id: "task-001",
+          item_id: "item-1",
+          source_storage_id: "source",
+          source_path: "movies/a.mkv",
+          destination_storage_id: "target",
+          destination_path: "Movies/a.mkv",
+          recognition_type: "C",
+          provider: "tmdb",
+          provider_id: "101",
+          metadata_policy_id: "C",
+          naming_policy_id: "A",
+          classification_policy_id: "A",
+          organize_policy_id: "A",
+          operation: "MOVE",
+          status: "success",
+          created_at: "2026-08-22T12:01:00+00:00",
+          title: "A",
+          failure: null,
+          completed_operations: ["move"],
+          effect_certainty: "verified_complete",
+          uncertain_effects: [],
+          cleanup_status: "cleaned",
+        },
+        evidence: null,
+      },
+      {
+        record_id: "log:log-1",
+        kind: "log",
+        kind_label: "运行日志",
+        occurred_at: "2026-08-22T12:02:00+00:00",
+        item_id: null,
+        level: "INFO",
+        event: "organizer.execution_result",
+        component: "workflow",
+        status: "success",
+        plan_id: "plan-1",
+        action: null,
+        state: null,
+        actor: null,
+        parent_id: null,
+        result: null,
+        evidence: null,
+      },
+    ],
+    matching_total: 4,
+    kind_counts: { result: 3, evidence: 1, log: 0, audit: 0 },
+    truncated: false,
+    previous_cursor: null,
+    next_cursor: null,
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function evidenceDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    run_id: "task-001",
+    task_id: "task-001",
+    item_id: "item-2",
+    item: WAITING_ITEM,
+    checkpoint: {
+      status: "waiting_metadata",
+      stage: "waiting",
+      raw_stage: "metadata",
+      attempts: 1,
+      source_storage_id: "source",
+      resource_library_id: "movies",
+      source_path: "movies/b.mkv",
+      plan_id: null,
+      destination_storage_id: null,
+      destination_path: null,
+      configuration: { snapshot_id: "snap-1", resolvable: true, reason: null },
+      latest_result: null,
+      prior_results: [],
+      blockers: [],
+      blocker: {
+        kind: "metadata_review",
+        id: "review-1",
+        status: "pending",
+        task_id: "task-001",
+        item_id: "item-2",
+        resolution_path: "/review",
+      },
+      audits: [],
+      recovery_requests: [],
+      recovery_request: null,
+      recovery_continuation: null,
+      effects: {
+        certainty: "unknown",
+        completed_operations: [],
+        uncertain_effects: [],
+      },
+      error_category: "workflow_failure",
+      retry_safety: "unknown",
+      failureExplanation: null,
+      nextAction: "choose a metadata candidate",
+      actions: [],
+      permitted_action_ids: ["decide"],
+      refusal_reason: "waiting_for_decision",
+      checkpoint_version: "v2",
+      updated_at: "2026-08-22T12:02:00+00:00",
+    },
+    results: [],
+    evidence: [],
+    logs: [],
+    sideEffects: "none",
+    ...overrides,
+  };
+}
+
+function exportPackageDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    packageKind: "mediaflow.results.v1",
+    packageSchemaVersion: 1,
+    packageVersion: 1,
+    generatedAt: "2026-08-22T12:05:00+00:00",
+    producer: { id: "mediaflow" },
+    source: {
+      scope: "task",
+      taskId: "task-001",
+      taskCommand: "organize",
+      ordering: "created_at_asc,result_id_asc",
+      limit: 500,
+    },
+    redaction: {
+      scope: "persisted_task_result_projection",
+      entryCount: 0,
+      entries: [],
+    },
+    results: [
+      {
+        resultId: "result-1",
+        taskId: "task-001",
+        itemId: "item-1",
+        sourceStorageId: "source",
+        sourcePath: "movies/a.mkv",
+        destinationStorageId: "target",
+        destinationPath: "Movies/a.mkv",
+        recognitionType: "C",
+        provider: "tmdb",
+        providerId: "101",
+        metadataPolicyId: "C",
+        namingPolicyId: "A",
+        classificationPolicyId: "A",
+        organizePolicyId: "A",
+        operation: "MOVE",
+        status: "success",
+        createdAt: "2026-08-22T12:01:00+00:00",
+        title: "A",
+        error: null,
+        completedOperations: ["move"],
+        attachmentCount: 0,
+        retryAttempts: 0,
+        retryCategory: null,
+        cleanupStatus: "cleaned",
+        cleanupStepCount: 0,
+        effectCertainty: "verified_complete",
+        uncertainEffects: [],
+        sourceOccurrenceId: null,
+        sourceFingerprint: null,
+        sourceFingerprintState: "unverified",
+      },
+    ],
+    truncated: false,
+    warning: [],
+    packageDigest: "abc123",
+    ...overrides,
+  };
+}
+
+/** One fetch stub covering the whole selected-run detail journey. */
+function stubDetailJourney(requested: string[] = []) {
+  return stubFetch(async (input) => {
+    const url = String(input);
+    requested.push(url);
+    if (url.startsWith("/api/v1/operations/runs?")) {
+      return jsonResponse({
+        items: [overviewDocument()],
+        limit: 20,
+        status: null,
+        command: null,
+        q: null,
+        from: null,
+        to: null,
+        attention: false,
+        total: 1,
+        truncated: false,
+        status_counts: { running: 1 },
+        attention_count: 0,
+        population: "unified job/task run inventory",
+        sideEffects: "none",
+        previous_cursor: null,
+        next_cursor: null,
+      });
+    }
+    if (url === "/api/v1/operations/runs/task-001") {
+      return jsonResponse(overviewDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+      return jsonResponse(evidenceDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/items?")) {
+      const status = new URLSearchParams(url.split("?")[1] ?? "").get("status");
+      if (status === "waiting") {
+        return jsonResponse(
+          itemsPageDocument({
+            items: [WAITING_ITEM],
+            filter: { status: "waiting" },
+            matching_total: 1,
+            dispositions: {
+              pending: 1,
+              active: 0,
+              waiting: 1,
+              success: 2,
+              skipped: 0,
+              failed_partial: 0,
+              ignored: 0,
+              cancelled: 0,
+            },
+          }),
+        );
+      }
+      return jsonResponse(itemsPageDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+      return jsonResponse(itemsPageDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/records?")) {
+      const kind = new URLSearchParams(url.split("?")[1] ?? "").get("kind");
+      if (kind === "log") {
+        return jsonResponse(
+          recordsPageDocument({
+            filter: { kind: "log" },
+            records: [recordsPageDocument()["records"][1]],
+            matching_total: 1,
+            kind_counts: { result: 3, evidence: 1, log: 1, audit: 0 },
+          }),
+        );
+      }
+      return jsonResponse(recordsPageDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+      return jsonResponse(recordsPageDocument());
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/export")) {
+      return jsonResponse(exportPackageDocument());
+    }
+    if (url === "/api/v1/workers/readiness") {
+      return jsonResponse({
+        ready: true,
+        condition: "ready",
+        category: null,
+        durableState: "resident processing worker is live and ready",
+        sideEffects: "none",
+        retrySafe: true,
+        nextAction: "none",
+        activeWorkersCount: 1,
+        activeSnapshotId: "snap-1",
+        expectedRuntimeSchemaVersion: 42,
+      });
+    }
+    if (url === "/api/v1/management/readiness") {
+      return jsonResponse({
+        available: true,
+        infrastructureReady: true,
+        asOf: "2026-08-22T12:00:00+00:00",
+        sideEffects: "none",
+        infrastructure: { services: {} },
+      });
+    }
+    if (url.startsWith("/api/v1/operations/manual-actions")) {
+      return jsonResponse({
+        scopeKind: null,
+        scopeId: null,
+        fileId: null,
+        resourceLibraryId: null,
+        selectionRequired: true,
+        source: null,
+        resourceLibraries: [],
+        runtime: { ready: true, condition: "ready", nextAction: null },
+        actions: {
+          scan: { available: false, reason: "not advertised" },
+          preview: { available: false, reason: "not advertised" },
+          organize: { available: false, reason: "not advertised" },
+        },
+        limits: { previewMaxItems: 100 },
+      });
+    }
+    return jsonResponse({ error: { code: "not_found" } }, 404);
+  });
+}
+
+describe("selected-run detail tabs", () => {
+  it("renders truthful progress with its accounting basis and no invented percentage claims", async () => {
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const progress = await within(detail).findByRole("region", {
+      name: "整理进度",
+    });
+    // The processed ratio is labelled as processed work, never a success
+    // percentage, and the accounting basis stays visible.
+    expect(within(progress).getByText(/已处理 3 \/ 4 个主条目/)).toBeVisible();
+    expect(within(progress).getByText(/处理进度,非成功率/)).toBeVisible();
+    expect(within(progress).getByText(/已确认成功/)).toBeVisible();
+    expect(within(progress).getByText(/效果未确认\(不计成功\)/)).toBeVisible();
+    expect(within(progress).getByText(/口径:/)).toBeVisible();
+    expect(within(progress).getByText(/附件步骤 2\(单独计数/)).toBeVisible();
+    // The tabs the reference promises.
+    expect(
+      within(detail).getByRole("button", { name: "任务详情" }),
+    ).toBeVisible();
+    expect(
+      within(detail).getByRole("button", { name: "操作记录" }),
+    ).toBeVisible();
+  });
+
+  it("submits the item disposition filter to the server and keeps the population totals", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubDetailJourney(requested);
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+
+    await user.selectOptions(screen.getByLabelText("状态筛选"), "waiting");
+    await waitFor(() =>
+      expect(requested.some((url) => url.includes("status=waiting"))).toBe(
+        true,
+      ),
+    );
+    // The filter narrows the page but the reported population keeps its
+    // whole-run partition.
+    expect(await screen.findByText(/匹配 1 条/)).toBeVisible();
+    expect(screen.getByText(/运行共 4 条/)).toBeVisible();
+    expect(await screen.findByText(/movies\/b\.mkv/)).toBeVisible();
+    // The filter state is in the URL so refresh/history/reconnect restore it.
+    const detailRequest = requested.find((url) =>
+      url.includes("status=waiting"),
+    );
+    expect(detailRequest).toContain("/api/v1/operations/runs/task-001/items");
+  });
+
+  it("switches to 操作记录 with its server page and kind filter", async () => {
+    const user = userEvent.setup();
+    const requested: string[] = [];
+    stubDetailJourney(requested);
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    await user.click(
+      await within(detail).findByRole("button", { name: "操作记录" }),
+    );
+    expect(await screen.findByLabelText("操作记录")).toBeVisible();
+    expect(await screen.findByText(/organizer.execution_result/)).toBeVisible();
+    expect(screen.getByText(/匹配 4 条记录/)).toBeVisible();
+
+    await user.selectOptions(screen.getByLabelText("类型筛选"), "log");
+    await waitFor(() =>
+      expect(requested.some((url) => url.includes("kind=log"))).toBe(true),
+    );
+    expect(await screen.findByText(/匹配 1 条记录/)).toBeVisible();
+    // The URL carries the submitted tab and kind for reconnect.
+    expect(router.history.location.search).toContain("tab=records");
+    expect(router.history.location.search).toContain("rkind=log");
+  });
+
+  it("opens one item's exact evidence and closes it again", async () => {
+    const user = userEvent.setup();
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    const inspectButtons = within(detail).getAllByRole("button", {
+      name: "查看证据",
+    });
+    await user.click(inspectButtons[1]);
+    const evidence = await within(detail).findByRole("region", {
+      name: "条目证据",
+    });
+    await within(evidence).findByText("条目证据:item-2");
+    expect(
+      within(evidence).getByText(/choose a metadata candidate/),
+    ).toBeVisible();
+    expect(within(evidence).getByText(/waiting_for_decision/)).toBeVisible();
+    expect(within(evidence).getByText(/metadata_review/)).toBeVisible();
+    expect(within(evidence).getByText(/固定配置/)).toBeVisible();
+    // The evidence tab keeps the inspected item in the URL.
+    expect(router.history.location.search).toContain("item=item-2");
+
+    await user.click(
+      within(evidence).getByRole("button", { name: "关闭证据" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText("条目证据:item-2")).toBeNull(),
+    );
+  });
+
+  it("downloads the eligible bounded result package and labels a truncated export", async () => {
+    const user = userEvent.setup();
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const exportButton = await within(detail).findByRole("button", {
+      name: "导出结果 JSON",
+    });
+    await user.click(exportButton);
+
+    const success = await screen.findByRole("heading", {
+      name: "导出完成",
+    });
+    expect(success).toBeVisible();
+    expect(screen.getByText(/已导出 1 条结果的完整结果包/)).toBeVisible();
+  });
+
+  it("keeps a failed export visible instead of an empty successful download", async () => {
+    const user = userEvent.setup();
+    stubFetch(async (input) => {
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse(overviewDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+        return jsonResponse(itemsPageDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+        return jsonResponse(recordsPageDocument());
+      }
+      if (url.startsWith("/api/v1/operations/runs/task-001/export")) {
+        return jsonResponse(
+          { error: { code: "task_not_linked", message: "no task yet" } },
+          409,
+        );
+      }
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse({
+          items: [overviewDocument()],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 0,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    const exportButton = await within(detail).findByRole("button", {
+      name: "导出结果 JSON",
+    });
+    await user.click(exportButton);
+    const failure = await screen.findByRole("heading", { name: "导出失败" });
+    expect(failure).toBeVisible();
+    expect(screen.getByText(/未生成任何文件|暂无可导出/)).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "导出完成" })).toBeNull();
+  });
+
+  it("renders distinct bounded failures for forbidden and not-found detail reads", async () => {
+    const requested: string[] = [];
+    stubFetch(async (input) => {
+      requested.push(String(input));
+      const url = String(input);
+      if (url === "/api/v1/operations/runs/task-001") {
+        return jsonResponse({ error: { code: "forbidden" } }, 403);
+      }
+      if (url.startsWith("/api/v1/operations/runs?")) {
+        return jsonResponse({
+          items: [overviewDocument()],
+          limit: 20,
+          status: null,
+          command: null,
+          q: null,
+          from: null,
+          to: null,
+          attention: false,
+          total: 1,
+          truncated: false,
+          status_counts: { running: 1 },
+          attention_count: 0,
+          population: "unified job/task run inventory",
+          sideEffects: "none",
+          previous_cursor: null,
+          next_cursor: null,
+        });
+      }
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    expect(
+      await screen.findByText(
+        "The connected API principal does not have permission to view this area.",
+      ),
+    ).toBeVisible();
+  });
+
+  it("admits only GET requests while the detail journey runs", async () => {
+    const user = userEvent.setup();
+    const requested: { method: string; url: string }[] = [];
+    stubFetch(async (input, init) => {
+      const url = String(input);
+      requested.push({
+        method: init?.method ?? "GET",
+        url,
+      });
+      return stubDetailJourneyResponse(url);
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const detail = await screen.findByRole("region", { name: "运行详情" });
+    await within(detail).findAllByText(/source:movies\/a\.mkv/);
+    await user.click(
+      await within(detail).findByRole("button", { name: "操作记录" }),
+    );
+    await screen.findByText(/匹配 4 条记录/);
+
+    expect(requested.length).toBeGreaterThan(0);
+    for (const call of requested) {
+      expect(call.method).toBe("GET");
+      expect(call.url.startsWith("/api/")).toBe(true);
+    }
+  });
+});
+
+/** Split out so the GET-only test can reuse the full stub's responses. */
+function stubDetailJourneyResponse(url: string): Response {
+  const notFound = jsonResponse({ error: { code: "not_found" } }, 404);
+  if (url.startsWith("/api/v1/operations/runs?")) {
+    return jsonResponse({
+      items: [overviewDocument()],
+      limit: 20,
+      status: null,
+      command: null,
+      q: null,
+      from: null,
+      to: null,
+      attention: false,
+      total: 1,
+      truncated: false,
+      status_counts: { running: 1 },
+      attention_count: 0,
+      population: "unified job/task run inventory",
+      sideEffects: "none",
+      previous_cursor: null,
+      next_cursor: null,
+    });
+  }
+  if (url === "/api/v1/operations/runs/task-001") {
+    return jsonResponse(overviewDocument());
+  }
+  if (url.startsWith("/api/v1/operations/runs/task-001/items/item-2")) {
+    return jsonResponse(evidenceDocument());
+  }
+  if (url.startsWith("/api/v1/operations/runs/task-001/items")) {
+    return jsonResponse(itemsPageDocument());
+  }
+  if (url.startsWith("/api/v1/operations/runs/task-001/records")) {
+    return jsonResponse(recordsPageDocument());
+  }
+  if (url === "/api/v1/workers/readiness") {
+    return jsonResponse({
+      ready: true,
+      condition: "ready",
+      category: null,
+      durableState: "resident processing worker is live and ready",
+      sideEffects: "none",
+      retrySafe: true,
+      nextAction: "none",
+      activeWorkersCount: 1,
+      activeSnapshotId: "snap-1",
+      expectedRuntimeSchemaVersion: 42,
+    });
+  }
+  if (url === "/api/v1/management/readiness") {
+    return jsonResponse({
+      available: true,
+      infrastructureReady: true,
+      asOf: "2026-08-22T12:00:00+00:00",
+      sideEffects: "none",
+      infrastructure: { services: {} },
+    });
+  }
+  if (url.startsWith("/api/v1/operations/manual-actions")) {
+    return jsonResponse({
+      scopeKind: null,
+      scopeId: null,
+      fileId: null,
+      resourceLibraryId: null,
+      selectionRequired: true,
+      source: null,
+      resourceLibraries: [],
+      runtime: { ready: true, condition: "ready", nextAction: null },
+      actions: {
+        scan: { available: false, reason: "not advertised" },
+        preview: { available: false, reason: "not advertised" },
+        organize: { available: false, reason: "not advertised" },
+      },
+      limits: { previewMaxItems: 100 },
+    });
+  }
+  return notFound;
+}

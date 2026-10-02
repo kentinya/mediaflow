@@ -43,9 +43,12 @@ from mediaflow.domain.manual_safety import (
 )
 from mediaflow.domain.manual_safety import (
     redact_manual_text,
+    redact_manual_value,
 )
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
+    FILES_DELETE_TASK_COMMAND,
+    FILES_DIRECT_COMMAND_TASK,
     FILES_TRANSFER_TASK_COMMAND,
     MANUAL_ORGANIZE_TASK_COMMAND,
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
@@ -2286,6 +2289,297 @@ def bounded_identity_path(value: object | None) -> str | None:
     return _bounded_identity_path(value)
 
 
+# -- Selected-run detail: progress, records and item evidence (RO-3) --------
+
+_RUN_ACCOUNTING_SCAN = "scan"
+_RUN_ACCOUNTING_ANALYSIS = "analysis"
+_RUN_ACCOUNTING_ORGANIZE = "organize"
+_RUN_ACCOUNTING_DIRECT = "direct"
+_RUN_ACCOUNTING_TRANSFER = "transfer"
+_RUN_ACCOUNTING_RECOVERY = "recovery"
+_RUN_ACCOUNTING_TASK = "task"
+
+_ANALYSIS_COMMAND_FAMILIES = frozenset({"preview"})
+_ORGANIZE_COMMAND_FAMILIES = frozenset({"organize", MANUAL_ORGANIZE_TASK_COMMAND})
+_DIRECT_COMMAND_FAMILIES = frozenset(
+    {
+        FILES_DIRECT_COMMAND_TASK,
+        FILES_DELETE_TASK_COMMAND,
+        "file-metadata-correction",
+    }
+)
+_RECOVERY_COMMAND_FAMILIES = frozenset(
+    {
+        "retry",
+        "retry-failed",
+        "recovery-continuation",
+        "metadata-correction-continuation",
+    }
+)
+
+
+def _command_family(command: object) -> str | None:
+    """The command family of one durable command, media-library prefix stripped."""
+
+    if not isinstance(command, str) or not command:
+        return None
+    if command.startswith(MEDIA_LIBRARY_TASK_COMMAND_PREFIX):
+        command = command[len(MEDIA_LIBRARY_TASK_COMMAND_PREFIX) :]
+    return command.split(":", 1)[0]
+
+
+def run_accounting_basis(
+    command: object, *, execute_authorized: bool, scan: bool
+) -> tuple[str, str, str, str]:
+    """Classify one run's durable accounting basis as bounded Chinese copy.
+
+    Returns ``(kind, unit, basis, success_means)``.  The basis states what
+    "success" means for this exact task kind, so an analysis completion is
+    never presented as organize or Storage success and a scan's live
+    discovery total never pretends to be a fixed denominator.
+    """
+
+    family = _command_family(command)
+    if scan or family == "scan":
+        return (
+            _RUN_ACCOUNTING_SCAN,
+            "发现文件",
+            "扫描发现计数:发现仍在进行时总数不可知(标记为不确定);扫描级错误与附件步骤单独计数,不计入主条目。",
+            "发现完成(发现完成不等于整理成功)",
+        )
+    if family in _ANALYSIS_COMMAND_FAMILIES or not execute_authorized:
+        return (
+            _RUN_ACCOUNTING_ANALYSIS,
+            "分析条目",
+            "分析/预览计数:成功表示分析完成且零变更,不代表任何存储整理成功;附件步骤单独计数。",
+            "分析完成(零变更,不是整理成功)",
+        )
+    if family in _ORGANIZE_COMMAND_FAMILIES:
+        return (
+            _RUN_ACCOUNTING_ORGANIZE,
+            "主条目",
+            "整理计数:成功表示已验证的存储操作结果;效果未确认的条目单独标注,不计为已确认成功;附件步骤单独计数。",
+            "已验证的存储操作成功",
+        )
+    if family == FILES_TRANSFER_TASK_COMMAND:
+        return (
+            _RUN_ACCOUNTING_TRANSFER,
+            "主条目",
+            "传输计数:成功表示已验证的传输结果;效果未确认的条目单独标注,不计为已确认成功;附件步骤单独计数。",
+            "已验证的传输成功",
+        )
+    if family in _DIRECT_COMMAND_FAMILIES:
+        return (
+            _RUN_ACCOUNTING_DIRECT,
+            "主条目",
+            "文件操作计数:成功表示已验证的操作结果;效果未确认的条目单独标注,不计为已确认成功。",
+            "已验证的文件操作成功",
+        )
+    if family in _RECOVERY_COMMAND_FAMILIES:
+        return (
+            _RUN_ACCOUNTING_RECOVERY,
+            "主条目",
+            "恢复继续计数:本任务只记录其自身的持久条目与结果,原始历史不被改写;效果未确认的条目单独标注。",
+            "该条目的持久处置为成功",
+        )
+    return (
+        _RUN_ACCOUNTING_TASK,
+        "主条目",
+        "任务条目计数:互斥处置分区之和等于已知总数;未知的发现总数标记为不确定。",
+        "该条目的持久处置为成功",
+    )
+
+
+def _source_value(source: object, key: str) -> object:
+    """Read one bound column from a record source row, fail-closed to ``None``."""
+
+    try:
+        return source[key]  # type: ignore[index]
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
+def _as_text(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _operational_level_name(value: object) -> str | None:
+    """The closed LogLevel name of one persisted log level, or ``None``."""
+
+    from mediaflow.domain.logging import LogLevel
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    try:
+        return LogLevel(value).name
+    except ValueError:
+        return None
+
+
+def run_progress_document(progress, *, command: object) -> dict[str, object]:
+    """The bounded, secret-free progress projection of one selected run.
+
+    Publishes the mutually exclusive disposition partition (which reconciles
+    to the known total), the confirmed-success/uncertain-success split, the
+    separate scan-error and attachment counts, the latest-Result effect facet
+    and an honest indeterminate state — never an ETA, never a fabricated
+    current file and never a "success percentage".
+    """
+
+    from mediaflow.domain.operations_run import (
+        RUN_DISPOSITION_LABELS,
+        RUN_DISPOSITIONS,
+        OperationsRunProgress,
+    )
+
+    if not isinstance(progress, OperationsRunProgress) or not progress.available:
+        reason = (
+            progress.unavailable_reason if isinstance(progress, OperationsRunProgress) else None
+        )
+        return {
+            "available": False,
+            "reason": reason or "durable progress evidence is unavailable for this run",
+            "sideEffects": "none",
+        }
+    kind, unit, basis, success_means = run_accounting_basis(
+        command,
+        execute_authorized=progress.execute_authorized,
+        scan=progress.primary_unit == "discovered_files",
+    )
+    dispositions = {key: int(progress.dispositions.get(key, 0)) for key in RUN_DISPOSITIONS}
+    uncertain = int(progress.uncertain_success)
+    if uncertain < 0:
+        uncertain = 0
+    if uncertain > dispositions["success"]:
+        uncertain = dispositions["success"]
+    known_total = progress.known_total
+    processed: int | None = None
+    if not progress.indeterminate and known_total is not None:
+        processed = max(known_total - dispositions["pending"] - dispositions["active"], 0)
+    return {
+        "available": True,
+        "kind": kind,
+        "unit": unit,
+        "unit_key": progress.primary_unit,
+        "basis": basis,
+        "success_means": success_means,
+        "known_total": known_total,
+        "indeterminate": bool(progress.indeterminate),
+        "processed": processed,
+        "dispositions": dispositions,
+        "disposition_labels": dict(RUN_DISPOSITION_LABELS),
+        "confirmed_success": dispositions["success"] - uncertain,
+        "uncertain_success": uncertain,
+        "scan_errors": progress.scan_errors,
+        "scan_discovery_complete": progress.scan_discovery_complete,
+        "scan_progress": dict(progress.scan_progress),
+        "attachment_steps": int(progress.attachment_steps),
+        "effect_counts": {str(key): int(value) for key, value in progress.effect_counts.items()},
+        "results_total": int(progress.results_total),
+        "results_complete": bool(progress.results_complete),
+        "sideEffects": "none",
+    }
+
+
+def run_record_document(record) -> dict[str, object]:
+    """One bounded operation record of the ``操作记录`` stream.
+
+    Every payload is the already-bounded operator projection of its durable
+    row: a Result publishes its full operator document, captured evidence a
+    compact summary (full sections stay on the exact item evidence read), a
+    log its closed event/level identity and an audit only its
+    action/state/actor — never a raw note, credential or host path.
+    """
+
+    from mediaflow.domain.media_evidence import PipelineEvidence
+    from mediaflow.domain.operations_run import RUN_RECORD_KIND_LABELS, OperationsRunRecord
+    from mediaflow.domain.task_persistence import PersistentResultRecord
+
+    if not isinstance(record, OperationsRunRecord):
+        raise ValueError("run record projection requires a durable record")
+    document: dict[str, object] = {
+        "record_id": record.record_id,
+        "kind": record.kind,
+        "kind_label": RUN_RECORD_KIND_LABELS.get(record.kind, "运行记录"),
+        "occurred_at": record.occurred_at.isoformat(),
+        "item_id": record.item_id,
+    }
+    if record.kind == "result" and isinstance(record.source, PersistentResultRecord):
+        document["result"] = task_result_operator_document(record.source)
+        return document
+    if record.kind == "evidence" and isinstance(record.source, PipelineEvidence):
+        document["evidence"] = {
+            "evidence_id": record.source.evidence_id,
+            "attempts": record.source.attempts,
+            "outcome": record.source.outcome,
+            "captured_at": record.source.captured_at.isoformat(),
+            "truncated": record.source.truncated,
+            "sections_available": [
+                name for name, section in record.source.sections.items() if section.available
+            ],
+        }
+        return document
+    source = record.source
+    action = _bounded_evidence_text(_as_text(_source_value(source, "action")), limit=96)
+    state = _bounded_evidence_text(_as_text(_source_value(source, "state")), limit=64)
+    actor = _bounded_label(_as_text(_source_value(source, "actor")))
+    link = _bounded_identifier(_source_value(source, "link"))
+    if record.kind == "log":
+        document["level"] = _operational_level_name(_source_value(source, "ref"))
+        document["event"] = action
+        document["component"] = actor
+        document["status"] = state
+        document["plan_id"] = link
+    elif record.kind == "audit":
+        document["action"] = action
+        document["state"] = state
+        document["actor"] = actor
+        document["parent_id"] = link
+    return document
+
+
+def run_item_evidence_document(
+    *,
+    item,
+    checkpoint_document: dict[str, object],
+    results,
+    evidence,
+    logs,
+) -> dict[str, object]:
+    """One exact item's durable evidence: checkpoint, results, plan and logs.
+
+    Composed only through the exact persisted ``item_id``/``task_id``/plan
+    links of this run's Task.  Absent logs or missing legacy evidence stay
+    visible as empty/unavailable facts — they never erase a durable Result,
+    and no Provider, planner or Storage read reconstructs history.
+    """
+
+    checkpoint = dict(checkpoint_document)
+    # The configuration snapshot *digest* is a fingerprint and stays out of
+    # the bounded operator document; the immutable snapshot ID remains as the
+    # pin evidence.
+    configuration = checkpoint.get("configuration")
+    if isinstance(configuration, dict):
+        configuration.pop("snapshot_digest", None)
+    return {
+        "item": task_item_operator_document(item),
+        "checkpoint": redact_manual_value(checkpoint),
+        "results": [task_result_operator_document(result) for result in results],
+        "evidence": [
+            redact_manual_value(
+                {
+                    key: value
+                    for key, value in document.items()
+                    if key != "configurationSnapshotDigest"
+                }
+            )
+            for document in evidence
+        ],
+        "logs": [run_record_document(log) for log in logs],
+        "sideEffects": "none",
+    }
+
+
 __all__ = [
     "EffectSummary",
     "OperationsLifecycleConflict",
@@ -2301,6 +2595,10 @@ __all__ = [
     "manual_action_matrix_operator_document",
     "manual_scan_operator_document",
     "require_cancellable",
+    "run_accounting_basis",
+    "run_item_evidence_document",
+    "run_progress_document",
+    "run_record_document",
     "summarize_effects",
     "task_item_operator_document",
     "task_lifecycle_document",

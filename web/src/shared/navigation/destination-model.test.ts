@@ -335,6 +335,44 @@ describe("destination model", () => {
       ).toBeNull();
     });
 
+    it("keeps the bounded selected-run detail context through continuation", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "run=task-1&tab=records&istat=waiting&rkind=log&item=item-01" +
+            "&icur=abc-_123&rcur=def-_456&idir=backward&rdir=backward",
+        ),
+      ).toBe(
+        "run=task-1&tab=records&istat=waiting&rkind=log&item=item-01" +
+          "&icur=abc-_123&rcur=def-_456&idir=backward&rdir=backward",
+      );
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/tasks/$taskId",
+          "q_status=failed&tab=records&istat=success&rkind=result&item=item-9",
+        ),
+      ).toBe(
+        "q_status=failed&tab=records&istat=success&rkind=result&item=item-9",
+      );
+    });
+
+    it("drops tampered detail values instead of replaying them", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "tab=admin&istat=half_done&rkind=mystery&item=bad%20value" +
+            "&icur=../../etc/passwd&idir=sideways&token=secret",
+        ),
+      ).toBeNull();
+      // A Job detail route never owns the run detail context.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/jobs/$jobId",
+          "tab=records&istat=waiting",
+        ),
+      ).toBeNull();
+    });
+
     it("drops credential-like values from an Operations collection link", () => {
       expect(
         allowlistedDestinationSearch(

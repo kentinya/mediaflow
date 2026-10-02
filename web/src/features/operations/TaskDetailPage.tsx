@@ -8,11 +8,25 @@
  * never labelled safe to repeat, and a rejected control is never replayed.
  */
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import { isTerminalTaskStatus } from "../../entities/operations/task";
+import { runOverviewQueryOptions } from "./run-query";
+import { RunDetailTabs } from "./RunDetailTabs";
+import {
+  RUN_DETAIL_SEARCH_KEYS,
+  readRunDetailState,
+  runDetailStateSearch,
+  type RunDetailState,
+} from "./run-detail-state";
+import { taskDetailQueryOptions, taskListQueryKey } from "./task-query";
 import {
   availableLifecycleAction,
   type LifecycleAction,
@@ -25,8 +39,6 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
-import { taskDetailQueryOptions, taskListQueryKey } from "./task-query";
-
 /** Bounded operator copy per normalized lifecycle rejection reason. */
 const LIFECYCLE_REJECTION_COPY: Readonly<Record<string, string>> = {
   stale_task_state:
@@ -124,30 +136,43 @@ function returnSearch(
 export function TaskDetailPage() {
   const { taskId } = useParams({ strict: false }) as { taskId: string };
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
+  const navigate = useNavigate();
   const listReturnSearch = returnSearch(searchParams);
   const token = useAuthToken();
   const queryClient = useQueryClient();
-  const [itemCursor, setItemCursor] = useState<string | null>(null);
-  const [resultCursor, setResultCursor] = useState<string | null>(null);
-  const [itemDirection, setItemDirection] = useState<"forward" | "backward">(
-    "forward",
-  );
-  const [resultDirection, setResultDirection] = useState<
-    "forward" | "backward"
-  >("forward");
+  // The compatibility detail read still supplies the Task aggregate,
+  // lifecycle projection and control authority; the items/results journey
+  // moved to the run-scoped detail tabs below, whose tab/filters/cursors and
+  // inspected item live in the URL for refresh/history/reconnect.
+  const detailState: RunDetailState = readRunDetailState(searchParams);
   const [controlResult, setControlResult] =
     useState<LifecycleMutationResult | null>(null);
   const [pendingAction, setPendingAction] = useState<string | null>(null);
 
   const query = useQuery(
-    taskDetailQueryOptions(token, {
-      taskId,
-      itemLimit: 20,
-      resultLimit: 20,
-      itemCursor,
-      resultCursor,
-    }),
+    taskDetailQueryOptions(token, { taskId, itemLimit: 20, resultLimit: 20 }),
   );
+  // The supported Task detail identity resolves to the same durable run the
+  // tabs read, through the persisted Job→Task link — never a manual join.
+  const overviewQuery = useQuery(runOverviewQueryOptions(token, taskId));
+
+  const applyDetailState = (next: Partial<RunDetailState>) => {
+    const base: Record<string, string> = {};
+    for (const [key, value] of Object.entries(searchParams)) {
+      if (!RUN_DETAIL_SEARCH_KEYS.has(key) && typeof value === "string") {
+        base[key] = value;
+      }
+    }
+    void navigate({
+      to: "/operations/tasks/$taskId",
+      params: { taskId },
+      search: {
+        ...base,
+        ...runDetailStateSearch({ ...detailState, ...next }),
+      },
+      replace: true,
+    });
+  };
 
   // A lifecycle mutation is submitted at most once per deliberate click. There
   // is no retry policy: a rejected, stale, 401 or 403 control requires the
@@ -177,34 +202,6 @@ export function TaskDetailPage() {
     },
     onSettled: () => setPendingAction(null),
   });
-
-  const goItemsForward = useCallback(() => {
-    if (query.data?.ok === true && query.data.model.nextItemCursor) {
-      setItemCursor(query.data.model.nextItemCursor);
-      setItemDirection("forward");
-    }
-  }, [query.data]);
-
-  const goItemsBackward = useCallback(() => {
-    if (query.data?.ok === true && query.data.model.previousItemCursor) {
-      setItemCursor(query.data.model.previousItemCursor);
-      setItemDirection("backward");
-    }
-  }, [query.data]);
-
-  const goResultsForward = useCallback(() => {
-    if (query.data?.ok === true && query.data.model.nextResultCursor) {
-      setResultCursor(query.data.model.nextResultCursor);
-      setResultDirection("forward");
-    }
-  }, [query.data]);
-
-  const goResultsBackward = useCallback(() => {
-    if (query.data?.ok === true && query.data.model.previousResultCursor) {
-      setResultCursor(query.data.model.previousResultCursor);
-      setResultDirection("backward");
-    }
-  }, [query.data]);
 
   return (
     <AuthorizedReadBoundary
@@ -236,7 +233,7 @@ export function TaskDetailPage() {
             </StatusBanner>
           );
         }
-        const { task, lifecycle, items, results } = data.model;
+        const { task, lifecycle, items } = data.model;
         const resumeWithheld = lifecycle.actions.find(
           (item) => item.action === "resume",
         );
@@ -360,150 +357,21 @@ export function TaskDetailPage() {
                 </div>
               </StatusBanner>
             )}
-            <section className="mf-count-section">
-              <h3>TaskItems ({items.length} on this page)</h3>
-              {items.length === 0 ? (
-                <p className="mf-dashboard-meta">
-                  No TaskItem is visible in this page window.
-                </p>
-              ) : (
-                <>
-                  <div style={{ overflowX: "auto" }}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Item ID</th>
-                          <th>Source</th>
-                          <th>Status</th>
-                          <th>Stage</th>
-                          <th>Attempts</th>
-                          <th>Destination</th>
-                          <th>Failure evidence</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((item) => (
-                          <tr key={item.itemId}>
-                            <td>{item.itemId}</td>
-                            <td>
-                              {item.storageId}:{item.sourcePath}
-                            </td>
-                            <td>
-                              <StatusBadge status={item.status} />
-                            </td>
-                            <td>{item.stage}</td>
-                            <td>{item.attempts}</td>
-                            <td>{item.destinationPath ?? "—"}</td>
-                            <td>
-                              {item.failure
-                                ? `${item.failure.category}: ${item.failure.nextAction}`
-                                : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mf-actions">
-                    <button
-                      type="button"
-                      className="mf-button mf-button-secondary"
-                      disabled={!data.model.previousItemCursor}
-                      onClick={goItemsBackward}
-                    >
-                      Previous items
-                    </button>
-                    <button
-                      type="button"
-                      className="mf-button mf-button-secondary"
-                      disabled={
-                        itemDirection === "forward"
-                          ? !data.model.itemsTruncated
-                          : !data.model.nextItemCursor
-                      }
-                      onClick={goItemsForward}
-                    >
-                      Next items
-                    </button>
-                  </div>
-                </>
-              )}
-            </section>
-            <section className="mf-count-section">
-              <h3>Results ({results.length} on this page)</h3>
-              <p className="mf-dashboard-meta">
-                Effect certainty: {lifecycle.effectCertainty ?? "unknown"}
-                {lifecycle.resultsComplete === false
-                  ? " (a partial Result view; MediaFlow does not claim the remaining effects are safe to repeat)"
-                  : ""}
-              </p>
-              {results.length === 0 ? (
-                <p className="mf-dashboard-meta">
-                  No Result is visible in this page window.
-                </p>
-              ) : (
-                <>
-                  <div style={{ overflowX: "auto" }}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Result ID</th>
-                          <th>Source</th>
-                          <th>Status</th>
-                          <th>Operation</th>
-                          <th>Effect certainty</th>
-                          <th>Cleanup</th>
-                          <th>Destination</th>
-                          <th>Failure evidence</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {results.map((result) => (
-                          <tr key={result.resultId}>
-                            <td>{result.resultId}</td>
-                            <td>{result.sourcePath}</td>
-                            <td>
-                              <StatusBadge status={result.status} />
-                            </td>
-                            <td>{result.operation ?? "—"}</td>
-                            <td>{result.effectCertainty}</td>
-                            <td>{result.cleanupStatus ?? "—"}</td>
-                            <td>{result.destinationPath ?? "—"}</td>
-                            <td>
-                              {result.failure
-                                ? `${result.failure.category}: ${result.failure.nextAction}`
-                                : "—"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="mf-actions">
-                    <button
-                      type="button"
-                      className="mf-button mf-button-secondary"
-                      disabled={!data.model.previousResultCursor}
-                      onClick={goResultsBackward}
-                    >
-                      Previous results
-                    </button>
-                    <button
-                      type="button"
-                      className="mf-button mf-button-secondary"
-                      disabled={
-                        resultDirection === "forward"
-                          ? !data.model.resultsTruncated
-                          : !data.model.nextResultCursor
-                      }
-                      onClick={goResultsForward}
-                    >
-                      Next results
-                    </button>
-                  </div>
-                </>
-              )}
-            </section>
+            <RunDetailTabs
+              runId={
+                overviewQuery.data?.ok === true
+                  ? overviewQuery.data.model.runId
+                  : taskId
+              }
+              progress={
+                overviewQuery.data?.ok === true
+                  ? overviewQuery.data.model.progress
+                  : null
+              }
+              state={detailState}
+              onStateChange={applyDetailState}
+              active={!isTerminalTaskStatus(task.status)}
+            />
             <div className="mf-actions">
               <Link
                 className="mf-button mf-button-secondary"

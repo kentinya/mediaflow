@@ -1,7 +1,9 @@
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 
 /**
- * Real-Python browser proof for the unified run inventory (Task 42.1).
+ * Real-Python browser proof for the unified run inventory (Task 42.1) and the
+ * selected-run detail journey (Task 42.2).
  *
  * This spec runs against `playwright.python.config.ts`, which starts
  * `scripts/operations_inventory_harness.py`: one Python process serving the
@@ -9,15 +11,20 @@ import { expect, test, type Page } from "@playwright/test";
  * runtime database. Every seeded run was created by a real supported
  * producer (API Job admission, the production Task coordinator, the
  * scheduler's admission method) and the Job→Task linkage below runs the real
- * `AutomationWorker` claim path. No production media, credential, Storage
- * adapter, Provider or external service is involved; the token is a
- * throwaway harness value.
+ * `AutomationWorker` claim path. The rich detail population (items, Results,
+ * operational logs, captured evidence) is written through the repository's
+ * own write paths, so every 任务详情/操作记录 assertion reads durable rows.
+ * No production media, credential, Storage adapter, Provider or external
+ * service is involved; the token is a throwaway harness value.
  *
  * Proven journeys: admission→Task linkage with stable run counts and
  * preserved identity, server-side filtered selection/return, Worker-waiting
  * evidence before a Worker runs, durable historical identity after a real
- * restart of the runtime database, and side-effect-free reads (the landing
- * only ever issues GET requests).
+ * restart of the runtime database, side-effect-free reads (the landing only
+ * ever issues GET requests), and the bounded detail read — progress
+ * accounting, server-filtered items, one item's evidence, the exactly-linked
+ * record stream, the result package download, and URL-owned tab/filter state
+ * that survives reload and history navigation.
  *
  * Tests run sequentially in declaration order against one harness database;
  * the linkage test deliberately runs after the Worker-waiting evidence is
@@ -30,6 +37,9 @@ const BASE = "http://127.0.0.1:4183";
 /** The four runs seeded by real producers: two Jobs and two Tasks. */
 const SEEDED_RUN_TOTAL = 4;
 
+/** The unique server-side command filter that isolates the rich detail run. */
+const RICH_RUN_COMMAND = "manual_organize";
+
 async function connect(page: Page): Promise<void> {
   await page.goto("/ui-v2/");
   await page.getByLabel("API token").fill(TOKEN);
@@ -40,12 +50,18 @@ async function connect(page: Page): Promise<void> {
 }
 
 /** Record every product API request the page issues (methods included). */
-function recordApiCalls(page: Page): { method: string; path: string }[] {
-  const api: { method: string; path: string }[] = [];
+function recordApiCalls(
+  page: Page,
+): { method: string; path: string; search: string }[] {
+  const api: { method: string; path: string; search: string }[] = [];
   page.on("request", (request) => {
-    const path = new URL(request.url()).pathname;
-    if (path.startsWith("/api/v1/")) {
-      api.push({ method: request.method(), path });
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/v1/")) {
+      api.push({
+        method: request.method(),
+        path: url.pathname,
+        search: url.search,
+      });
     }
   });
   return api;
@@ -65,6 +81,24 @@ async function expectRunTotal(page: Page, expected: number): Promise<void> {
   await expect(
     page.getByText(new RegExp(`第 1 页起共 ${expected} 条`)),
   ).toBeVisible();
+}
+
+/**
+ * Isolate and select the one real `manual_organize` run whose durable detail
+ * population (six items, two Results, two operational logs, one captured
+ * evidence row) the Task 42.2 journey reads, then wait for its overview panel.
+ */
+async function selectRichRun(page: Page): Promise<void> {
+  await page.getByLabel("操作类型").fill(RICH_RUN_COMMAND);
+  await expect(page).toHaveURL(/command=manual_organize/);
+  // The server applies the command filter: exactly this one run matches, so
+  // the row selection below can never address a different run.
+  await expectRunTotal(page, 1);
+  const richRow = page.getByRole("row").filter({ hasText: "手动整理" });
+  await expect(richRow).toHaveCount(1);
+  await richRow.getByRole("button").first().click();
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  await expect(page).toHaveURL(/run=/);
 }
 
 test("the inventory renders real producer runs with truthful labels", async ({
@@ -278,4 +312,276 @@ test("the selected run follows polling, header refresh and history navigation", 
     page.locator(".mf-run-layout.mf-run-has-detail .mf-run-detail"),
   ).toBeVisible();
   await expect(detail.getByRole("button", { name: "关闭详情" })).toBeVisible();
+});
+
+// -- Task 42.2: native run detail, progress and operation evidence ----------
+
+test("the selected run detail reads progress, filtered items, evidence and records", async ({
+  page,
+}) => {
+  const api = recordApiCalls(page);
+  await connect(page);
+  await openInventory(page);
+  await selectRichRun(page);
+
+  const detail = page.getByRole("region", { name: "运行详情" });
+
+  // 任务详情 (the default tab) publishes the durable organize accounting: a
+  // reconciling partition, the confirmed/uncertain success split of the two
+  // persisted Results, and the accounting basis an operator reads as 口径.
+  await expect(detail.getByRole("button", { name: "任务详情" })).toBeVisible();
+  const progress = detail.getByRole("region", { name: "整理进度" });
+  await expect(progress.getByText("已处理 5 / 6 个主条目")).toBeVisible();
+  // The disposition chips are scoped to their own list: the same words also
+  // appear inside the accounting-basis sentence, and a truthful proof names
+  // the exact chip.
+  const chips = progress.getByRole("list", { name: "条目处置分布" });
+  await expect(chips.getByText("已确认成功", { exact: true })).toBeVisible();
+  await expect(
+    chips.getByText("效果未确认(不计成功)", { exact: true }),
+  ).toBeVisible();
+  await expect(progress.getByText(/口径:整理计数/)).toBeVisible();
+  await expect(progress.getByText(/效果确定性\(基于已读结果\)/)).toBeVisible();
+
+  // The primary-item table renders every seeded durable item, with the
+  // server-reported page-independent population totals beneath it.
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByRole("row")).toHaveCount(7); // header + six items
+  await expect(items.getByText("Arrival.2016.2160p.mkv")).toBeVisible();
+  await expect(items.getByText("Dune.2021.2160p.mkv")).toBeVisible();
+  await expect(items.getByText("匹配 6 条 / 运行共 6 条")).toBeVisible();
+
+  // A status filter is submitted to the server and kept in the URL, while
+  // the whole-run totals stay page- and filter-independent.
+  await items.getByLabel("状态筛选").selectOption("success");
+  await expect(page).toHaveURL(/istat=success/);
+  await expect
+    .poll(
+      () =>
+        api.filter(
+          (entry) =>
+            entry.path.endsWith("/items") &&
+            entry.search.includes("status=success"),
+        ).length,
+    )
+    .toBeGreaterThan(0);
+  await expect(items.getByRole("row")).toHaveCount(3); // header + two successes
+  await expect(items.getByText("匹配 2 条 / 运行共 6 条")).toBeVisible();
+
+  // One exact item's durable evidence: the checkpoint facts, its persisted
+  // Result, the captured pipeline evidence and the plan-linked operational
+  // log — all read through persisted IDs, never recomputed.
+  await items.getByRole("button", { name: "查看证据" }).first().click();
+  await expect(page).toHaveURL(/item=/);
+  const evidence = detail.getByRole("region", { name: "条目证据" });
+  await expect(evidence.getByText("Arrival.2016.2160p.mkv")).toBeVisible();
+  await expect(evidence.getByText(/已验证完成 \/ 重试安全性/)).toBeVisible();
+  await expect(evidence.getByText("执行结果(1)")).toBeVisible();
+  await expect(evidence.getByText("计划与分析证据(1)")).toBeVisible();
+  await expect(evidence.getByText("精确关联日志(1)")).toBeVisible();
+
+  // 操作记录 pages exactly-linked records on the server: the seeded
+  // operational log, both Results and the captured evidence row.
+  await detail.getByRole("button", { name: "操作记录" }).click();
+  await expect(page).toHaveURL(/tab=records/);
+  await expect(
+    detail.getByRole("button", { name: "操作记录" }),
+  ).toHaveAttribute("aria-current", "page");
+  const records = detail.getByRole("region", {
+    name: "操作记录",
+    exact: true,
+  });
+  await expect(records.getByRole("row")).toHaveCount(6); // header + five records
+  await expect(records.getByText("organizer.execution_result")).toBeVisible();
+  // The kind labels also exist as options of the type filter, so the proof
+  // names the rendered table cells, not the hidden option nodes.
+  await expect(
+    records.getByRole("cell", { name: "运行日志" }).first(),
+  ).toBeVisible();
+  await expect(
+    records.getByRole("cell", { name: "执行结果" }).first(),
+  ).toBeVisible();
+  await expect(
+    records.getByRole("cell", { name: "分析与计划" }).first(),
+  ).toBeVisible();
+  await expect(records.getByText("匹配 5 条记录")).toBeVisible();
+
+  // The record kind filter is a server-side read bound into the URL.
+  await records.getByLabel("类型筛选").selectOption("log");
+  await expect(page).toHaveURL(/rkind=log/);
+  await expect
+    .poll(
+      () =>
+        api.filter(
+          (entry) =>
+            entry.path.endsWith("/records") &&
+            entry.search.includes("kind=log"),
+        ).length,
+    )
+    .toBeGreaterThan(0);
+  await expect(records.getByText("organizer.execution_result")).toBeVisible();
+  await expect(records.getByText("匹配 2 条记录")).toBeVisible();
+
+  // Every read of this journey — overview, items, records and item evidence —
+  // is a side-effect-free GET; no verb can admit, continue or retry work.
+  const detailReads = api.filter((entry) =>
+    entry.path.startsWith("/api/v1/operations/runs/"),
+  );
+  expect(detailReads.length).toBeGreaterThan(0);
+  expect(detailReads.filter((entry) => entry.method !== "GET")).toEqual([]);
+
+  // Browser Back returns to the filtered list with the run deselected: every
+  // detail-state change replaced the selected history entry instead of
+  // adding one of its own.
+  await page.goBack();
+  await expect(page).not.toHaveURL(/run=/);
+  await expect(page.getByRole("region", { name: "运行详情" })).toHaveCount(0);
+  await expectRunTotal(page, 1);
+});
+
+test("the eligible run exports its bounded result package as a real download", async ({
+  page,
+}) => {
+  const api = recordApiCalls(page);
+  await connect(page);
+  await openInventory(page);
+  await selectRichRun(page);
+
+  const detail = page.getByRole("region", { name: "运行详情" });
+  // A standalone Task run anchors on its own Task ID, so the task-scoped
+  // result package resolves from the selected run's durable link.
+  const runId = new URL(page.url()).searchParams.get("run");
+  expect(runId).toBeTruthy();
+
+  const downloadPromise = page.waitForEvent("download");
+  await detail.getByRole("button", { name: "导出结果 JSON" }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe(`mediaflow-results-${runId}.json`);
+  const packagePath = await download.path();
+  expect(packagePath).toBeTruthy();
+
+  // The downloaded file is the backend's own `mediaflow.results.v1` package:
+  // bounded rows, a truthful ordering and a digest over results + source.
+  const payload = JSON.parse(
+    readFileSync(packagePath as string, "utf8"),
+  ) as ResultPackage;
+  expect(payload.packageKind).toBe("mediaflow.results.v1");
+  expect(payload.packageSchemaVersion).toBe(1);
+  expect(payload.truncated).toBe(false);
+  expect(payload.source.scope).toBe("task");
+  expect(payload.source.taskId).toBe(runId);
+  expect(payload.source.ordering).toBe("created_at_asc,result_id_asc");
+  expect(payload.results).toHaveLength(2);
+  expect(payload.results.map((row) => row.effectCertainty)).toEqual([
+    "verified_complete",
+    "attempted_unverified",
+  ]);
+  expect(typeof payload.results[0].resultId).toBe("string");
+  expect(typeof payload.packageDigest).toBe("string");
+  expect(payload.packageDigest.length).toBeGreaterThan(16);
+
+  // The browser states exactly what it downloaded, and the export read —
+  // like every other run-detail read — is a side-effect-free GET.
+  await expect(detail.getByText(/已导出 2 条结果的完整结果包/)).toBeVisible();
+  const exportReads = api.filter((entry) => entry.path.endsWith("/export"));
+  expect(exportReads.length).toBeGreaterThan(0);
+  expect(exportReads.filter((entry) => entry.method !== "GET")).toEqual([]);
+});
+
+/** The wire shape of the downloaded `mediaflow.results.v1` result package. */
+type ResultPackage = {
+  readonly packageKind: string;
+  readonly packageSchemaVersion: number;
+  readonly truncated: boolean;
+  readonly packageDigest: string;
+  readonly source: {
+    readonly scope: string;
+    readonly taskId: string;
+    readonly taskCommand: string;
+    readonly ordering: string;
+    readonly limit: number;
+  };
+  readonly results: readonly {
+    readonly resultId: string;
+    readonly itemId: string;
+    readonly effectCertainty: string;
+    readonly uncertainEffects: readonly string[];
+  }[];
+};
+
+test("an indeterminate run states an unknown total instead of inventing one", async ({
+  page,
+}) => {
+  await connect(page);
+  await openInventory(page);
+
+  // Both non-terminal standalone runs have not admitted any durable item
+  // yet, so the backend publishes an honest indeterminate progress — never a
+  // fabricated denominator or success percentage.
+  await page.getByLabel("状态", { exact: true }).selectOption("running");
+  await expect(page).toHaveURL(/status=running/);
+  const runningRow = page
+    .getByRole("row")
+    .filter({ hasText: "进行中" })
+    .first();
+  await expect(runningRow).toBeVisible();
+  await runningRow.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  const progress = detail.getByRole("region", { name: "整理进度" });
+  await expect(progress.getByText(/总数未知/)).toBeVisible();
+  await expect(
+    progress.getByText(/下方为已记录主条目的持久处置/),
+  ).toBeVisible();
+  await expect(
+    progress
+      .getByRole("list", { name: "条目处置分布" })
+      .getByText("已确认成功", { exact: true }),
+  ).toBeVisible();
+});
+
+test("the detail tab and filter context survives a reload through auth continuation", async ({
+  page,
+}) => {
+  await connect(page);
+  await openInventory(page);
+  await selectRichRun(page);
+
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await detail.getByRole("button", { name: "操作记录" }).click();
+  await expect(page).toHaveURL(/tab=records/);
+  const records = detail.getByRole("region", {
+    name: "操作记录",
+    exact: true,
+  });
+  await records.getByLabel("类型筛选").selectOption("log");
+  await expect(page).toHaveURL(/rkind=log/);
+  await expect(records.getByText("organizer.execution_result")).toBeVisible();
+
+  // The API token lives in browser memory only: a reload returns to the
+  // entry boundary while the exact detail context (run, tab and record kind
+  // filter) travels as the allowlisted auth-continuation destination.
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+
+  await expect(page).toHaveURL(/\/ui-v2\/operations/);
+  await expect(page).toHaveURL(/command=manual_organize/);
+  await expect(page).toHaveURL(/run=/);
+  await expect(page).toHaveURL(/tab=records/);
+  await expect(page).toHaveURL(/rkind=log/);
+
+  const restored = page.getByRole("region", { name: "运行详情" });
+  await expect(restored).toBeVisible();
+  await expect(page.getByLabel("类型筛选")).toHaveValue("log");
+  const restoredRecords = restored.getByRole("region", {
+    name: "操作记录",
+    exact: true,
+  });
+  await expect(
+    restoredRecords.getByText("organizer.execution_result"),
+  ).toBeVisible();
+  await expect(restoredRecords.getByText("匹配 2 条记录")).toBeVisible();
 });

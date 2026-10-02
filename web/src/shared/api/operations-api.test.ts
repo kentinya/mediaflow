@@ -1,14 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchJobList,
+  fetchRunExportPackage,
   fetchRunInventory,
+  fetchRunItemEvidence,
+  fetchRunItems,
   fetchRunOverview,
+  fetchRunRecords,
   fetchTaskDetail,
   fetchTaskList,
   jobListUrl,
   mutateLifecycle,
   executeOrganizePreview,
+  runExportUrl,
   runInventoryUrl,
+  runItemEvidenceUrl,
+  runItemsUrl,
+  runRecordsUrl,
   taskDetailUrl,
   taskListUrl,
 } from "./api-client";
@@ -531,6 +539,196 @@ describe("unified run inventory reads", () => {
       ok: false,
       failure: expect.objectContaining({ kind: "not_found" }),
     });
+  });
+});
+
+describe("selected-run detail reads", () => {
+  function itemsPagePayload(overrides: Record<string, unknown> = {}) {
+    return {
+      run_id: "task-1",
+      task_id: "task-1",
+      filter: { status: null },
+      limit: 20,
+      items: [],
+      total: 0,
+      matching_total: 0,
+      dispositions: {
+        pending: 0,
+        active: 0,
+        waiting: 0,
+        success: 0,
+        skipped: 0,
+        failed_partial: 0,
+        ignored: 0,
+        cancelled: 0,
+      },
+      uncertain_success: 0,
+      truncated: false,
+      previous_cursor: null,
+      next_cursor: null,
+      sideEffects: "none",
+      ...overrides,
+    };
+  }
+
+  it("builds the exact bounded detail URLs from submitted state only", () => {
+    expect(runItemsUrl({ runId: "task-1" })).toBe(
+      "/api/v1/operations/runs/task-1/items",
+    );
+    expect(
+      runItemsUrl({
+        runId: "task-1",
+        status: "waiting",
+        limit: 20,
+        cursor: "c1",
+      }),
+    ).toBe(
+      "/api/v1/operations/runs/task-1/items?status=waiting&limit=20&cursor=c1",
+    );
+    expect(runRecordsUrl({ runId: "task-1", kind: "log", limit: 5 })).toBe(
+      "/api/v1/operations/runs/task-1/records?kind=log&limit=5",
+    );
+    expect(runItemEvidenceUrl("task-1", "item-1")).toBe(
+      "/api/v1/operations/runs/task-1/items/item-1",
+    );
+    expect(runExportUrl("task-1", 500)).toBe(
+      "/api/v1/operations/runs/task-1/export?limit=500",
+    );
+  });
+
+  it("refuses an unsafe identity before issuing any request", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(itemsPagePayload()));
+    const items = await fetchRunItems("token", { runId: "a/../b" });
+    const records = await fetchRunRecords("token", { runId: "a/../b" });
+    const evidence = await fetchRunItemEvidence("token", "a/../b", "item-1");
+    const exported = await fetchRunExportPackage("token", "a/../b");
+    expect(items.ok).toBe(false);
+    expect(records.ok).toBe(false);
+    expect(evidence.ok).toBe(false);
+    expect(exported.ok).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("normalizes one item page and maps a rejected cursor to the bounded read", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(itemsPagePayload()));
+    const result = await fetchRunItems("token", { runId: "task-1" });
+    expect(result.ok).toBe(true);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/v1/operations/runs/task-1/items",
+      expect.objectContaining({ method: "GET" }),
+    );
+
+    const rejected = stubFetch(async () =>
+      jsonResponse({ error: { code: "invalid_request" } }, 400),
+    );
+    const refused = await fetchRunItems("token", {
+      runId: "task-1",
+      cursor: "stale",
+    });
+    expect(refused).toEqual({
+      ok: false,
+      failure: expect.objectContaining({ kind: "rejected" }),
+    });
+    expect(rejected).toHaveBeenCalled();
+
+    const malformed = stubFetch(async () =>
+      jsonResponse({ run_id: "task-1", total: "lots" }),
+    );
+    await expect(fetchRunItems("token", { runId: "task-1" })).rejects.toThrow();
+    expect(malformed).toHaveBeenCalled();
+  });
+
+  it("raises the typed unauthorized boundary error on 401", async () => {
+    stubFetch(async () =>
+      jsonResponse({ error: { code: "unauthorized" } }, 401),
+    );
+    await expect(
+      fetchRunRecords("token", { runId: "task-1" }),
+    ).rejects.toBeInstanceOf(OperationsApiError);
+    await expect(
+      fetchRunItems("token", { runId: "task-1" }),
+    ).rejects.toBeInstanceOf(OperationsApiError);
+  });
+
+  it("carries the backend export code instead of an empty download", async () => {
+    stubFetch(async () =>
+      jsonResponse({ error: { code: "task_not_linked" } }, 409),
+    );
+    const refused = await fetchRunExportPackage("token", "task-1");
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.code).toBe("task_not_linked");
+    expect(refused.failure.kind).toBe("rejected");
+  });
+
+  it("keeps the exact package payload for the bounded download", async () => {
+    const payload = {
+      packageKind: "mediaflow.results.v1",
+      packageSchemaVersion: 1,
+      packageVersion: 1,
+      generatedAt: "2026-08-22T12:05:00+00:00",
+      producer: { id: "mediaflow" },
+      source: {
+        scope: "task",
+        taskId: "task-1",
+        taskCommand: "preview",
+        ordering: "created_at_asc,result_id_asc",
+        limit: 500,
+      },
+      redaction: {
+        scope: "persisted_task_result_projection",
+        entryCount: 0,
+        entries: [],
+      },
+      results: [
+        {
+          resultId: "result-1",
+          taskId: "task-1",
+          itemId: "item-1",
+          sourceStorageId: "source",
+          sourcePath: "a.mkv",
+          destinationStorageId: "target",
+          destinationPath: "A/a.mkv",
+          recognitionType: "C",
+          provider: "tmdb",
+          providerId: "1",
+          metadataPolicyId: "C",
+          namingPolicyId: "A",
+          classificationPolicyId: "A",
+          organizePolicyId: "A",
+          operation: "MOVE",
+          status: "success",
+          createdAt: "2026-08-22T12:01:00+00:00",
+          title: "A",
+          error: null,
+          completedOperations: [],
+          attachmentCount: 0,
+          retryAttempts: 0,
+          retryCategory: null,
+          cleanupStatus: null,
+          cleanupStepCount: 0,
+          effectCertainty: "verified_complete",
+          uncertainEffects: [],
+          sourceOccurrenceId: null,
+          sourceFingerprint: null,
+          sourceFingerprintState: "unverified",
+        },
+      ],
+      truncated: false,
+      warning: [],
+      packageDigest: "abc",
+    };
+    stubFetch(async () => jsonResponse(payload));
+    const result = await fetchRunExportPackage("token", "task-1", 500);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.model.resultCount).toBe(1);
+    expect(result.payload).toEqual(payload);
+  });
+
+  it("treats an unmodelled package as a malformed read, never a file", async () => {
+    stubFetch(async () => jsonResponse({ packageKind: "something.else" }));
+    await expect(fetchRunExportPackage("token", "task-1")).rejects.toThrow();
   });
 });
 
