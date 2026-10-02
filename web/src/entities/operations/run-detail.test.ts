@@ -856,6 +856,60 @@ describe("run item evidence normalization", () => {
     expect(evidence.evidence[0]?.sections).toHaveLength(2);
     expect(evidence.evidence[0]?.sections[1]?.available).toBe(false);
     expect(evidence.logs[0]?.level).toBe("ERROR");
+    // The checkpoint's durable step lists exist for every task kind, so a
+    // standalone item's steps are modelled, not just the Manual ones.
+    expect(evidence.checkpoint.completedOperations).toEqual([]);
+    expect(evidence.checkpoint.uncertainEffects).toEqual([]);
+  });
+
+  it("models the checkpoint's persisted completed steps and uncertain effects", () => {
+    const base = evidenceDocument();
+    const evidence = normalizeRunItemEvidence({
+      ...base,
+      checkpoint: {
+        ...(base["checkpoint"] as Record<string, unknown>),
+        effects: {
+          certainty: "attempted_unverified",
+          completed_operations: ["CREATE_DIRECTORY", "MOVE"],
+          uncertain_effects: ["mutation_outcome"],
+        },
+      },
+    });
+    expect(evidence.checkpoint.completedOperations).toEqual([
+      "CREATE_DIRECTORY",
+      "MOVE",
+    ]);
+    expect(evidence.checkpoint.uncertainEffects).toEqual(["mutation_outcome"]);
+  });
+
+  it("refuses a malformed checkpoint step list", () => {
+    const base = evidenceDocument();
+    expect(() =>
+      normalizeRunItemEvidence({
+        ...base,
+        checkpoint: {
+          ...(base["checkpoint"] as Record<string, unknown>),
+          effects: {
+            certainty: "unknown",
+            completed_operations: "MOVE",
+            uncertain_effects: [],
+          },
+        },
+      }),
+    ).toThrow(/invalid field|did not match/);
+    expect(() =>
+      normalizeRunItemEvidence({
+        ...base,
+        checkpoint: {
+          ...(base["checkpoint"] as Record<string, unknown>),
+          effects: {
+            certainty: "unknown",
+            completed_operations: [],
+            uncertain_effects: [42],
+          },
+        },
+      }),
+    ).toThrow(/invalid field|did not match/);
   });
 
   it("rejects a checkpoint configuration digest reaching the document", () => {

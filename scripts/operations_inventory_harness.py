@@ -24,12 +24,17 @@ path its real producer uses — so 任务详情 progress, the server-filtered it
 pages, 操作记录, one item's evidence and the result package export all serve
 only durable SQLite rows, never fixture JSON.
 
-Two test-only control routes exist for the browser journey (they are harness
+Four test-only control routes exist for the browser journey (they are harness
 infrastructure, not product endpoints, and never touch product documents):
 
 - ``POST /__harness__/run-worker`` runs one real Worker claim + linkage;
 - ``POST /__harness__/run-manual-organize`` admits one exact Preview through
   the real API and completes its MOVE through ``ManualOrganizeExecutionWorker``;
+- ``POST /__harness__/run-standalone-pipeline`` executes one file through the
+  real standalone ``PersistentTaskCoordinator → MediaOrganizerService →
+  OrganizerExecutor`` assembly (the supported `organize --execute` shape, with
+  no Manual preview/plan linkage), over temporary Local Storage and a local
+  synthetic MetadataProvider;
 - ``POST /__harness__/restart`` closes and reopens the runtime database and
   API object over the same file, which is exactly what a process restart does
   to durable state.
@@ -68,10 +73,18 @@ from mediaflow.application.file_catalog import FileCatalogService  # noqa: E402
 from mediaflow.application.manual_organize_worker import (  # noqa: E402
     ManualOrganizeExecutionWorker,
 )
+from mediaflow.application.media_organizer import (  # noqa: E402
+    MediaOrganizerBatchResult,
+    MediaOrganizerService,
+)
 from mediaflow.application.metadata import MetadataProviderRegistry  # noqa: E402
+from mediaflow.application.organizer import OrganizerExecutor  # noqa: E402
 from mediaflow.application.package_exchange import PackageExchangeService  # noqa: E402
 from mediaflow.application.scanner import StorageScanner  # noqa: E402
-from mediaflow.application.strategy_test import SyntheticMetadataProvider  # noqa: E402
+from mediaflow.application.strategy_test import (  # noqa: E402
+    SyntheticMetadataProvider,
+    strategy_runner_from_configuration,
+)
 from mediaflow.application.task_runtime import PersistentTaskCoordinator  # noqa: E402
 from mediaflow.domain.automation import (  # noqa: E402
     AutomationCommand,
@@ -98,6 +111,9 @@ from mediaflow.domain.task_persistence import (  # noqa: E402
 from mediaflow.infrastructure.configuration_snapshot import (  # noqa: E402
     build_configuration_snapshot,
 )
+from mediaflow.infrastructure.json_history import JsonLinesOperationHistoryRepository  # noqa: E402
+from mediaflow.infrastructure.local_storage import LocalStorage  # noqa: E402
+from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository  # noqa: E402
 from mediaflow.infrastructure.runtime_configuration import (  # noqa: E402
     load_managed_runtime_configuration,
     with_managed_snapshot,
@@ -334,11 +350,13 @@ class AppState:
         self._database = database
         self._lock = threading.Lock()
         self._manual_lock = threading.Lock()
+        self._pipeline_lock = threading.Lock()
         self.repository = repository
         self.api = api
         self.managed = managed
         self.file_index = file_index
         self.manual_run: dict[str, str] | None = None
+        self.pipeline_run: dict[str, str] | None = None
 
     @property
     def database(self) -> Path:
@@ -815,6 +833,130 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
         return dict(state.manual_run)
 
 
+#: The unique Task command of the real standalone processing-chain proof.  It
+#: is neither the Manual command nor a seeded command, so the browser spec can
+#: isolate its run with the existing server-side command filter without
+#: touching the seeded population's counts.
+PIPELINE_TASK_COMMAND = "harness-standalone-organize"
+
+#: The managed source file the standalone chain organizes.  Its path contains
+#: the `/电影/` directory the checked Active recognition rules match to
+#: RecognitionType A, and its identity ("Two", 2002, Animation/JP) is distinct
+#: from the Manual journey's "One" so no destination conflict can mask the
+#: executor's durable MOVE steps.
+PIPELINE_SOURCE_FILE = "电影/Two.2002.mkv"
+
+
+def run_standalone_pipeline_once(state: AppState) -> dict[str, str]:
+    """Execute one real standalone `organize --execute`-shape run.
+
+    This is the assembly the CLI wires for `organize --execute` on one file
+    path — and the one the reviewer's P1 names: ``PersistentTaskCoordinator``
+    → ``MediaOrganizerService`` → ``OrganizerExecutor`` over the managed
+    fixture's temporary Active configuration, Local Storage and a local
+    synthetic MetadataProvider.  No Manual intent/preview/execution is created,
+    so the TaskItem has no ``manual_execution_items`` linkage and
+    ``planEvidence`` correctly reports unavailable: the only durable proof of
+    its completed steps is the checkpoint/Result step lists the executor
+    itself persisted.  Every mutation stays inside the harness's temporary
+    roots; the run is idempotent for one harness lifetime.
+    """
+
+    with state._pipeline_lock:
+        if state.pipeline_run is not None:
+            return dict(state.pipeline_run)
+        managed = state.managed
+        source_root = managed.root / "source"
+        target_root = managed.root / "destination"
+        pipeline_file = source_root / PIPELINE_SOURCE_FILE
+        pipeline_file.parent.mkdir(parents=True, exist_ok=True)
+        pipeline_file.write_bytes(b"synthetic standalone media")
+
+        # The standalone chain opens its own Storage adapters over the same
+        # temporary roots, exactly as a second process would; the physical
+        # tree stays shared with the managed fixture.
+        storages = {
+            "source-storage": LocalStorage("source-storage", str(source_root)),
+            "media-target": LocalStorage("media-target", str(target_root)),
+        }
+        runtime = managed.runtime
+        resource_library = next(
+            item for item in runtime.resource_libraries if item.library_id == "source"
+        )
+        media_libraries = {item.library_id: item for item in runtime.media_libraries}
+        providers = MetadataProviderRegistry(
+            (
+                SyntheticMetadataProvider(
+                    (
+                        MediaCandidate(
+                            "tmdb",
+                            "102",
+                            MediaType.MOVIE,
+                            "Two",
+                            year=2002,
+                            genres=("Animation",),
+                            countries=("JP",),
+                        ),
+                    )
+                ),
+            )
+        )
+        strategy = strategy_runner_from_configuration(
+            runtime.strategy, providers, storages=storages
+        )
+        coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+        # Managed authority: like the CLI, the Task pins the Active snapshot.
+        task = coordinator.create(
+            PIPELINE_TASK_COMMAND,
+            execute_authorized=True,
+            scope_path=PIPELINE_SOURCE_FILE,
+            configuration_snapshot_id=runtime.configuration_snapshot_id,
+            configuration_snapshot_digest=runtime.configuration_snapshot_digest,
+            require_configuration_snapshot=runtime.configuration_authority == "MANAGED",
+        )
+        service = MediaOrganizerService(
+            strategy,
+            StorageScanner(storages, InMemoryFileIndexRepository()),
+            storages,
+            media_libraries,
+            runtime.strategy.recognition_type_policies,
+            JsonLinesOperationHistoryRepository(managed.root / "pipeline-history.jsonl"),
+            executor=OrganizerExecutor(),
+            source_display_roots=dict(runtime.resource_display_roots),
+            task_coordinator=coordinator,
+            task_id=task.task_id,
+        )
+        # The supported single-file branch of `organize --execute`: a bounded
+        # ResourceLibrary-relative display path plus its storage path.
+        item_result = service.process_file(
+            PIPELINE_SOURCE_FILE,
+            resource_library=resource_library,
+            storage_path=PIPELINE_SOURCE_FILE,
+            execute=True,
+        )
+        finished = coordinator.finish(task.task_id, MediaOrganizerBatchResult((item_result,)))
+
+        items = state.repository.list_items(task.task_id)
+        if len(items) != 1:
+            raise RuntimeError(
+                f"standalone pipeline run expected one durable item, got {len(items)}"
+            )
+        item = items[0]
+        if item.status is not TaskItemStatus.SUCCESS:
+            raise RuntimeError(f"standalone pipeline run did not succeed: {item.status.value}")
+        results = state.repository.list_results(task.task_id)
+        if not results or not results[0].completed_operations:
+            raise RuntimeError("standalone pipeline run persisted no completed steps")
+        state.pipeline_run = {
+            "runId": finished.task_id,
+            "taskId": finished.task_id,
+            "itemId": item.item_id,
+            "status": finished.status.value,
+            "sourcePath": PIPELINE_SOURCE_FILE,
+        }
+        return dict(state.pipeline_run)
+
+
 class QuietHandler(WSGIRequestHandler):
     def log_message(self, format, *args):  # noqa: A002 - wsgiref API
         return
@@ -832,6 +974,8 @@ def application(environ, start_response):
             document = run_worker_once(STATE)
         elif path == "/__harness__/run-manual-organize" and method == "POST":
             document = run_manual_organize_once(STATE)
+        elif path == "/__harness__/run-standalone-pipeline" and method == "POST":
+            document = run_standalone_pipeline_once(STATE)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}

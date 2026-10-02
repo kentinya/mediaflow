@@ -96,12 +96,43 @@ function safeValue(value: string | null): string {
   return value === null || value === "" ? "—" : value;
 }
 
+/** A captured durable list renders its bounded entries, never the whole DOM. */
+const MAX_EVIDENCE_LIST_ITEMS = 32;
+
+/**
+ * Render one captured evidence field.
+ *
+ * Strings, numbers and booleans are the simple case.  A list is *captured
+ * durable evidence* too — the executor's completed steps, the directories it
+ * created, unconfirmed effects, errors — so it renders its bounded entries
+ * joined for reading instead of collapsing to "—", which previously hid real
+ * persisted operations from the native 查看证据 view (Task 42.2 P1).  A truly
+ * absent or malformed value still renders as nothing rather than a guess.
+ */
 function evidenceFieldValue(value: unknown): string | null {
   if (typeof value === "string") {
     return value === "" ? null : value;
   }
   if (typeof value === "number" || typeof value === "boolean") {
     return String(value);
+  }
+  if (Array.isArray(value)) {
+    const entries = value
+      .slice(0, MAX_EVIDENCE_LIST_ITEMS)
+      .map((item) => evidenceFieldValue(item) ?? "—");
+    if (entries.length === 0) {
+      return "无";
+    }
+    return (
+      entries.join("、") +
+      (value.length > MAX_EVIDENCE_LIST_ITEMS ? "(仅显示前 32 项)" : "")
+    );
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>)
+      .slice(0, MAX_EVIDENCE_LIST_ITEMS)
+      .map(([key, item]) => `${key}=${evidenceFieldValue(item) ?? "—"}`);
+    return entries.length === 0 ? "无" : entries.join(", ");
   }
   return null;
 }
@@ -382,6 +413,94 @@ function PlanEvidenceBlock({
 
 function formatDateTime(value: string): string {
   return value.replace("T", " ").replace(/\+00:00|Z$/, " UTC");
+}
+
+/**
+ * The durable execution steps of an item that has no reviewed Manual plan.
+ *
+ * A standalone `organize --execute` (the coordinator → MediaOrganizerService
+ * → OrganizerExecutor chain), a scheduled job or a recovery attempt persists
+ * its completed steps, unconfirmed effects and cleanup outcome on the
+ * checkpoint and its Result rows — the same AC-T4 promise the reviewed-plan
+ * block makes for manual work.  This block reads only those already-durable,
+ * bounded, secret-free fields: it never re-runs the Provider, planner or
+ * Storage, and an item that truly recorded no steps says so instead of
+ * showing a fabricated empty explanation.
+ */
+function DurableExecutionSteps({
+  evidence,
+}: {
+  readonly evidence: RunItemEvidence;
+}) {
+  const completed = evidence.checkpoint.completedOperations;
+  const uncertain = evidence.checkpoint.uncertainEffects;
+  const cleanupResults = evidence.results.filter(
+    (result) => result.cleanupStatus !== null,
+  );
+  const hasSteps =
+    completed.length > 0 ||
+    uncertain.length > 0 ||
+    evidence.results.length > 0 ||
+    cleanupResults.length > 0;
+  if (!hasSteps) {
+    return (
+      <>
+        <h6>持久执行步骤(无审核计划来源)</h6>
+        <p className="mf-dashboard-meta">
+          该条目尚无持久记录的执行步骤、结果或清理事实(条目未执行、仍在处理或为
+          历史记录);不会从当前配置或其他条目推断。
+        </p>
+      </>
+    );
+  }
+  return (
+    <>
+      <h6>持久执行步骤(检查点与结果聚合)</h6>
+      <dl className="mf-dashboard-facts">
+        <div>
+          <dt>已完成操作</dt>
+          <dd>
+            {completed.length === 0
+              ? "无(最新持久结果未记录已完成步骤)"
+              : completed.join("、")}
+          </dd>
+        </div>
+        <div>
+          <dt>效果确定性</dt>
+          <dd>
+            {RUN_EFFECT_CERTAINTY_LABELS[evidence.checkpoint.effectCertainty] ??
+              evidence.checkpoint.effectCertainty}
+          </dd>
+        </div>
+        <div>
+          <dt>未确认效果</dt>
+          <dd>
+            {uncertain.length === 0
+              ? "无"
+              : uncertain.join("、") + "(效果不确定,仅供核查,不自动重放)"}
+          </dd>
+        </div>
+        <div>
+          <dt>清理结果</dt>
+          <dd>
+            {cleanupResults.length === 0
+              ? "无持久清理事实"
+              : cleanupResults
+                  .map(
+                    (result) =>
+                      `${result.resultId}: ${cleanupStatusLabel(result.cleanupStatus)}`,
+                  )
+                  .join(" · ")}
+          </dd>
+        </div>
+      </dl>
+      <p className="mf-dashboard-meta">
+        口径:上方数值来自该条目检查点聚合的最新持久结果与各执行结果行的已记录
+        步骤(见“执行结果”表),不是实时重算;逐步骤的捕获详情见下方“计划与分析
+        证据”的 operation 段。
+      </p>
+    </>
+  );
 }
 
 function percentOf(processed: number, total: number): number | null {
@@ -936,6 +1055,8 @@ function RunEvidenceSection({
                         <th>操作</th>
                         <th>状态</th>
                         <th>效果</th>
+                        <th>已完成步骤</th>
+                        <th>未确认效果</th>
                         <th>目标</th>
                         <th>清理</th>
                       </tr>
@@ -950,6 +1071,16 @@ function RunEvidenceSection({
                             {RUN_EFFECT_CERTAINTY_LABELS[
                               result.effectCertainty
                             ] ?? result.effectCertainty}
+                          </td>
+                          <td className="mf-run-result-steps">
+                            {result.completedOperations.length === 0
+                              ? "无"
+                              : `${result.completedOperations.length} 步: ${result.completedOperations.join("、")}`}
+                          </td>
+                          <td className="mf-run-result-effects">
+                            {result.uncertainEffects.length === 0
+                              ? "无"
+                              : result.uncertainEffects.join("、")}
                           </td>
                           <td>{result.destinationPath ?? "—"}</td>
                           <td>{cleanupStatusLabel(result.cleanupStatus)}</td>
@@ -966,13 +1097,16 @@ function RunEvidenceSection({
               {evidence.planEvidence.available ? (
                 <PlanEvidenceBlock plan={evidence.planEvidence} />
               ) : (
-                <p className="mf-dashboard-meta">
-                  {
-                    RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[
-                      evidence.planEvidence.reason ?? UNAVAILABLE_PLAN_REASON
-                    ]
-                  }
-                </p>
+                <>
+                  <p className="mf-dashboard-meta">
+                    {
+                      RUN_PLAN_EVIDENCE_UNAVAILABLE_LABELS[
+                        evidence.planEvidence.reason ?? UNAVAILABLE_PLAN_REASON
+                      ]
+                    }
+                  </p>
+                  <DurableExecutionSteps evidence={evidence} />
+                </>
               )}
               <h5>计划与分析证据({evidence.evidence.length})</h5>
               {evidence.evidence.length === 0 ? (
