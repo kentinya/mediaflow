@@ -472,7 +472,7 @@ synchronous fixture work and therefore cannot hold a real in-flight Provider cal
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: PENDING_COMMIT
+Head SHA: 8a60cab0a0f9306a434d785c35ebd26bac41a422
 ```
 
 ## B Review Result
