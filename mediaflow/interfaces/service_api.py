@@ -91,6 +91,10 @@ from mediaflow.application.rules_workspace_commands import (
     RulesWorkspaceCommandService,
     rules_family_section,
 )
+from mediaflow.application.scope_continuation import (
+    ScopeContinuationService,
+    definition_occurrence_authority,
+)
 from mediaflow.application.storage_browser import (
     RuntimeFilesBrowserService,
     StorageBrowserError,
@@ -175,6 +179,7 @@ from mediaflow.domain.recovery_continuation import (
     RecoveryContinuationReason,
 )
 from mediaflow.domain.scanner import FileScanStatus
+from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal, SecurityAuditRecord
 from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
@@ -302,6 +307,13 @@ class _ApiRuntimeBinding:
     direct_media_transfers: DirectFileTransferService | None = None
     manual_scans: ManualScanService | None = None
     runtime_settings: dict[str, object] | None = None
+    #: The saved Automation Task Definitions of this exact Active revision and a
+    #: checker that proves one mutation-authorized Task still holds its live
+    #: reusable authority.  Both belong to the revision, not to the process, so
+    #: a continuation can never be advertised or admitted under another
+    #: revision's definitions.
+    automation_task_definitions: tuple = ()
+    scope_continuation_authority: object | None = None
 
 
 class MediaFlowApi:
@@ -481,6 +493,18 @@ class MediaFlowApi:
         self._checkpoint_service = ProcessingCheckpointService(
             repository,
             snapshot_validator=snapshot_validator,
+        )
+        # The shared admission boundary for a Web "Continue" of one durably
+        # paused Task's exact remaining admitted scope.  It performs zero
+        # Storage work and revalidates the live pin, the exact durable Task state
+        # and the applicable execution authority before queueing anything.
+        self._scope_continuations = ScopeContinuationService(
+            repository,
+            snapshot_validator=snapshot_validator,
+            # The live authority checker is resolved per binding below, because
+            # the saved definitions it validates against belong to the exact
+            # Active revision the request is served under.
+            mutation_authority=None,
         )
         if self._file_catalog is not None:
             self._file_catalog.attach_checkpoint_service(self._checkpoint_service)
@@ -7300,7 +7324,11 @@ class MediaFlowApi:
             self._require_empty_query(environ, f"Task {parts[4]}")
             action = parts[4]
             expected_version = self._control_version(environ, f"Task {parts[4]} control")
-            service = TaskLifecycleService(self._repository)
+            service = TaskLifecycleService(
+                self._repository,
+                snapshot_validator=self._scope_continuations._snapshot_validator,
+                mutation_authority=binding.scope_continuation_authority,
+            )
             media_transfer_command = direct_command_task_command(
                 FILES_TRANSFER_TASK_COMMAND, media_library=True
             )
@@ -7354,18 +7382,59 @@ class MediaFlowApi:
                                 ),
                             },
                         )
-                # No durable queued continuation of one exact paused scope
-                # exists today, so the transition is refused with the same
-                # actionable reason the projection states.
-                raise OperationsLifecycleConflict(
-                    "resume_unavailable",
-                    "pausing is cooperative, but resuming one exact paused Task scope is not "
-                    "available through this API",
-                    durable_state="the Task keeps its paused state and its recorded item outcomes",
-                    next_action=(
-                        "continue the paused Task from the operator terminal "
-                        "(mediaflow tasks resume <task-id>), or leave it paused"
-                    ),
+                # The shared durable queued continuation of one exact paused
+                # Task's remaining admitted scope.  The request performs zero
+                # Storage work: it revalidates the exact durable state, the live
+                # pin and the applicable execution authority, then queues a
+                # bounded continuation Job for the resident Worker.  A Task kind
+                # without that boundary is refused with the same actionable
+                # reason the projection states.
+                try:
+                    submission = self._scope_continuations.submit(
+                        task.task_id,
+                        expected_version=expected_version,
+                        actor=principal.principal_id,
+                        maximum_active_jobs=binding.maximum_active_jobs,
+                        mutation_authority=binding.scope_continuation_authority,
+                    )
+                except ScopeContinuationError as error:
+                    raise OperationsLifecycleConflict(
+                        error.reason.value,
+                        str(error),
+                        durable_state=error.durable_state,
+                        next_action=error.next_action,
+                        retry_safe=error.retry_safe,
+                        current_version=error.current_version,
+                    ) from error
+                current = service.require(task.task_id)
+                lifecycle = self._task_lifecycle(
+                    service,
+                    current,
+                    principal,
+                    results=service.results(current.task_id),
+                )
+                return self._response(
+                    start_response,
+                    202,
+                    {
+                        "action": action,
+                        "taskId": current.task_id,
+                        "task": task_operator_document(current),
+                        "lifecycle": lifecycle,
+                        "continuation": submission.continuation.document(),
+                        "jobId": submission.job.job_id,
+                        "durableOutcome": next(
+                            (
+                                item["durableOutcome"]
+                                for item in lifecycle["actions"]
+                                if item["action"] == action
+                            ),
+                            None,
+                        ),
+                        "sideEffects": "none",
+                        "retrySafe": False,
+                        "nextAction": submission.continuation.next_action(),
+                    },
                 )
             if action == "pause":
                 task = service.pause(parts[3], expected_version=expected_version)
@@ -7502,7 +7571,15 @@ class MediaFlowApi:
                     ),
                     "lifecycle": redact_manual_value(
                         self._task_lifecycle(
-                            TaskLifecycleService(self._repository),
+                            TaskLifecycleService(
+                                self._repository,
+                                snapshot_validator=(self._scope_continuations._snapshot_validator),
+                                mutation_authority=(
+                                    binding.scope_continuation_authority
+                                    if binding is not None
+                                    else None
+                                ),
+                            ),
                             task,
                             principal,
                             results=tuple(result_page),
@@ -9208,6 +9285,16 @@ class MediaFlowApi:
             direct_media_transfers,
             manual_scans,
             runtime_settings,
+            tuple(getattr(runtime_configuration, "automation_task_definitions", ())),
+            (
+                definition_occurrence_authority(
+                    self._repository,
+                    getattr(runtime_configuration, "automation_task_definitions", ()),
+                    self._unattended_grants,
+                )
+                if runtime_configuration is not None
+                else None
+            ),
         )
 
     def _audit(
@@ -12823,7 +12910,51 @@ class MediaFlowApi:
             if progress is not None
             else None
         )
+        # The selected run's backend-computed lifecycle controls.  A run that
+        # resolves to a linked Task advertises that Task's exact controls; a
+        # pre-Task queue admission advertises its Job's controls.  The
+        # projection is computed for this exact principal and durable state, so
+        # the panel renders only what the backend would really accept, and a run
+        # with neither object publishes `null` instead of a guessed control.
+        document["lifecycle"] = self._operations_run_lifecycle(overview, principal)
         return self._response(start_response, 200, document)
+
+    def _operations_run_lifecycle(self, overview, principal) -> dict[str, object] | None:
+        """Backend-computed controls for one selected run, or ``None``."""
+
+        repository = self._repository
+        task_id = getattr(overview, "task_id", None)
+        if isinstance(task_id, str) and task_id:
+            task = repository.get_task(task_id)
+            if task is not None:
+                # The projection judges the same binding the control endpoint
+                # would use, so an advertised Continue and an accepted Continue
+                # can never disagree about the live authority.
+                binding = self._runtime_binding
+                service = TaskLifecycleService(
+                    repository,
+                    snapshot_validator=self._scope_continuations._snapshot_validator,
+                    mutation_authority=(
+                        binding.scope_continuation_authority if binding is not None else None
+                    ),
+                )
+                return redact_manual_value(
+                    self._task_lifecycle(
+                        service,
+                        task,
+                        principal,
+                        results=service.results(task.task_id),
+                    )
+                )
+        job_id = getattr(overview, "job_id", None)
+        if isinstance(job_id, str) and job_id:
+            reader = getattr(repository, "get_job", None)
+            job = reader(job_id) if callable(reader) else None
+            if job is not None:
+                return redact_manual_value(
+                    job_lifecycle_document(job, permissions=principal.permissions)
+                )
+        return None
 
     @staticmethod
     def _operations_run_detail(repository, identifier: str):

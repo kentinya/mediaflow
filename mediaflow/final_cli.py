@@ -59,6 +59,11 @@ from mediaflow.application.recovery_continuation import RecoveryContinuationWork
 from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.application.resident_services import ResidentServiceService
 from mediaflow.application.scanner import StorageScanner
+from mediaflow.application.scope_continuation import (
+    ScopeContinuationService,
+    ScopeContinuationWorkerService,
+    definition_occurrence_authority,
+)
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
 from mediaflow.application.task_retry import TaskRetryRequestService
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -86,6 +91,7 @@ from mediaflow.domain.organizer import ConflictStrategy
 from mediaflow.domain.recognition_review import RecognitionReviewStatus, RecognitionSelection
 from mediaflow.domain.resident_services import ResidentServiceWaiting
 from mediaflow.domain.scanner import FileScanStatus
+from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
@@ -2603,6 +2609,10 @@ def _run_queued_workflow(
         if resolved_configuration is None:
             raise RuntimeError("recovery continuation has no resolved configuration")
         return _run_recovery_continuation(job, resolved_configuration, cancellation_check)
+    if job.command is AutomationCommand.SCOPE_CONTINUATION:
+        if resolved_configuration is None:
+            raise RuntimeError("scope continuation has no resolved configuration")
+        return _run_scope_continuation(job, resolved_configuration, cancellation_check)
     args = []
     resolved = configured_path or os.environ.get("MEDIAFLOW_CONFIG")
     if resolved:
@@ -3124,6 +3134,420 @@ def _run_recovery_continuation(
             else:
                 continuation_service.failed(job.job_id, queued=True, preflight=True)
             raise
+
+
+def _resolved_continuation_snapshot(
+    configuration: RuntimeConfiguration,
+) -> Callable[[str, str], None]:
+    """Validate a continuation pin against the exact configuration the Worker resolved.
+
+    The Worker already proved the Job's immutable pin through managed authority
+    before it reached the continuation handler, so the continuation must be
+    validated against *that* resolution rather than re-reading configuration
+    from disk.  A pin that no longer matches the resolved revision is refused,
+    which is exactly the same fail-closed decision the projection and the API
+    admission make.
+    """
+
+    resolved_id = configuration.configuration_snapshot_id
+    resolved_digest = configuration.configuration_snapshot_digest
+
+    def validate(snapshot_id: str, digest: str) -> None:
+        if not resolved_id or not resolved_digest:
+            raise RuntimeSnapshotUnavailable(
+                "the Worker resolved no immutable configuration snapshot",
+                revision_id=snapshot_id,
+                digest=digest,
+                reason="snapshot_missing",
+            )
+        if snapshot_id != resolved_id or digest != resolved_digest:
+            raise RuntimeSnapshotUnavailable(
+                "the continuation pin does not match the configuration the Worker resolved",
+                revision_id=resolved_id,
+                digest=resolved_digest,
+                reason="snapshot_digest_mismatch",
+            )
+
+    return validate
+
+
+def _run_scope_continuation(
+    job, configuration: RuntimeConfiguration, cancellation_check: Callable[[], bool]
+) -> str | None:
+    """Continue one paused Task's exact remaining admitted scope.
+
+    This is the resident Worker's only entry point for a Web-admitted
+    continuation.  It reproduces the operator CLI's proven continuation
+    semantics — the original command, scope path, immutable pin and remaining
+    item budget, with every already-recorded source excluded — but it does so
+    under the Worker's own claim fence and without shelling out, so no long
+    continuation ever runs inside an HTTP request.
+
+    A continuation that would mutate media is revalidated against the live
+    durable authority at admission *and* again at every mutation boundary by
+    the same ``mutation_authority`` hook the definition-scoped execution path
+    uses.  A Task admitted under an unattended definition occurrence therefore
+    keeps its revocation semantics: a revoked grant stops the continuation with
+    zero new mutation, and completed sibling effects stay durable.
+    """
+
+    with (
+        SQLiteTaskRepository(configuration.database_path) as repository,
+        SQLiteFileIndexRepository(configuration.database_path) as file_index,
+    ):
+        # The Worker reached this handler only by resolving the Job's immutable
+        # pin through managed authority, so that resolution *is* the proof the
+        # pin is available.  Reusing it as the validator keeps the obstacle
+        # decision identical to the one the Web projection and the API admission
+        # make, and it never re-reads an unmanaged or client-supplied document.
+        service = ScopeContinuationService(
+            repository,
+            snapshot_validator=_resolved_continuation_snapshot(configuration),
+            mutation_authority=_scope_continuation_authority(configuration, repository),
+        )
+        worker_service = ScopeContinuationWorkerService(repository)
+        prepared = None
+        started = False
+        task_id: str | None = None
+        try:
+            if cancellation_check():
+                raise AutomationCancelled()
+            prepared = service.prepare(job.job_id)
+            worker_service.started(job.job_id)
+            started = True
+            if cancellation_check():
+                worker_service.cancelled(job.job_id)
+                raise AutomationCancelled()
+            original = prepared.source_task
+            if (
+                configuration.configuration_snapshot_id
+                != prepared.continuation.configuration_snapshot_id
+                or configuration.configuration_snapshot_digest
+                != prepared.continuation.configuration_snapshot_digest
+            ):
+                raise RuntimeSnapshotUnavailable(
+                    "runtime configuration snapshot does not match the continuation pin",
+                    revision_id=prepared.continuation.configuration_snapshot_id,
+                    digest=prepared.continuation.configuration_snapshot_digest,
+                    reason="snapshot_digest_mismatch",
+                )
+            coordinator = PersistentTaskCoordinator(repository, repository)
+            # The remaining item budget is the original admitted limit minus the
+            # already-recorded items: a continuation never broadens the scope the
+            # operator originally authorized.
+            remaining_limit = prepared.remaining_limit
+            continuation = coordinator.create(
+                original.command,
+                execute_authorized=original.execute_authorized,
+                scope_path=original.scope_path,
+                item_limit=original.item_limit,
+                configuration_snapshot_id=original.configuration_snapshot_id,
+                configuration_snapshot_digest=original.configuration_snapshot_digest,
+                require_configuration_snapshot=bool(original.configuration_snapshot_id),
+            )
+            task_id = continuation.task_id
+            worker_service.bind(job.job_id, continuation.task_id)
+            # The original Task's exclusion rows are released only for the exact
+            # sources the continuation may re-acquire, and only after the new Task
+            # owns the remaining scope: the continuation cannot be blocked by a
+            # stale lock from the paused predecessor it is completing.
+            repository.reclaim_task_locks(original.task_id)
+
+            def workflow_stop() -> bool:
+                return bool(
+                    cancellation_check()
+                    or coordinator.pause_requested(continuation.task_id)
+                    or coordinator.cancellation_observed(continuation.task_id)
+                )
+
+            mutation_authority = _scope_continuation_mutation_authority(
+                configuration, repository, original
+            )
+            if original.execute_authorized and mutation_authority is None:
+                # A mutation-authorized continuation must never reach the
+                # executor without a live authority hook: a ``None`` hook means
+                # "no check", which would mutate media under authority that was
+                # revoked, consumed or never provable.  The continuation Task is
+                # closed as a failure with zero new effect.
+                raise RuntimeSnapshotUnavailable(
+                    "the continuation's live execution authority is unavailable",
+                    revision_id=prepared.continuation.configuration_snapshot_id,
+                    digest=prepared.continuation.configuration_snapshot_digest,
+                    reason="authority_unavailable",
+                )
+            storages = configuration.create_storages()
+            resumed_scan = original.command == "scan"
+            providers = (
+                None if resumed_scan else metadata_provider_registry_from_environment(("tmdb",))
+            )
+            strategy = strategy_runner_from_configuration(
+                configuration.strategy, providers, storages=storages
+            )
+            operational_logger = (
+                SQLiteOperationalLogger(
+                    repository,
+                    "workflow",
+                    configuration.operational_logging_minimum_level,
+                )
+                if configuration.operational_logging_enabled
+                else None
+            )
+            organizer = MediaOrganizerService(
+                strategy,
+                StorageScanner(storages, file_index, logger=operational_logger),
+                storages,
+                {item.library_id: item for item in configuration.media_libraries},
+                configuration.strategy.recognition_type_policies,
+                JsonLinesOperationHistoryRepository(configuration.history_path),
+                executor=OrganizerExecutor(operational_logger),
+                source_display_roots=dict(configuration.resource_display_roots),
+                logger=operational_logger,
+                task_coordinator=coordinator,
+                task_id=continuation.task_id,
+                retry_policy=configuration.workflow_retry_policy,
+                retry_cancellation_check=workflow_stop,
+                secret_free_errors=True,
+                mutation_authority=mutation_authority,
+            )
+            summary = _continue_scope_from_admission(
+                organizer,
+                configuration,
+                original,
+                storages,
+                file_index,
+                coordinator,
+                continuation.task_id,
+                original.execute_authorized,
+                remaining_limit,
+                prepared.already_recorded,
+                workflow_stop,
+            )
+            if cancellation_check():
+                coordinator.cancel(continuation.task_id)
+                worker_service.cancelled(job.job_id)
+                raise AutomationCancelled(continuation.task_id)
+            if coordinator.cancellation_observed(continuation.task_id):
+                worker_service.cancelled(job.job_id)
+                raise AutomationCancelled(continuation.task_id)
+            if coordinator.pause_requested(continuation.task_id):
+                coordinator.acknowledge_pause(continuation.task_id)
+            else:
+                coordinator.finish(continuation.task_id, summary)
+            finished = worker_service.finish(job.job_id, continuation.task_id)
+            if finished.status.value == "failed":
+                raise RuntimeError("scope continuation did not complete its remaining scope")
+            return finished.new_task_id or continuation.task_id
+        except AutomationCancelled:
+            if task_id is not None:
+                active = repository.get_task(task_id)
+                if active is not None and active.status is PersistentTaskStatus.RUNNING:
+                    coordinator_cancel = PersistentTaskCoordinator(repository, repository)
+                    coordinator_cancel.cancel(task_id)
+            if started:
+                worker_service.cancelled(job.job_id)
+            raise
+        except Exception as error:
+            if task_id is not None:
+                failed_task = repository.get_task(task_id)
+                if failed_task is not None and failed_task.status is PersistentTaskStatus.RUNNING:
+                    now = datetime.now(UTC)
+                    repository.update_task(
+                        replace(
+                            failed_task,
+                            status=PersistentTaskStatus.FAILED,
+                            updated_at=now,
+                            completed_at=now,
+                            error="continuation failed before Task completion",
+                        )
+                    )
+            bounded = _bounded_scope_continuation_failure(error)
+            if started:
+                worker_service.failed(
+                    job.job_id, task_id=task_id, error=bounded[0], recovery=bounded[1]
+                )
+            else:
+                worker_service.failed(
+                    job.job_id, queued=True, error=bounded[0], recovery=bounded[1]
+                )
+            raise
+
+
+def _bounded_scope_continuation_failure(error: BaseException) -> tuple[str, str]:
+    """One bounded, secret-free failure pair for a refused continuation.
+
+    Only this backend's own refusal types contribute their operator-facing text;
+    any other exception is reported by category so a raw adapter message (which
+    may carry a credential, an endpoint or a host path) never reaches durable
+    evidence or the Web.
+    """
+
+    if isinstance(error, ScopeContinuationError):
+        return str(error), error.next_action
+    if isinstance(error, RuntimeSnapshotUnavailable):
+        return (
+            "the continuation's pinned configuration snapshot is unavailable",
+            "restore the pinned published configuration revision, then continue again",
+        )
+    return (
+        f"scope continuation failed before completion ({type(error).__name__})",
+        "inspect the linked continuation run and the Worker readiness evidence, then "
+        "continue again",
+    )
+
+
+def _scope_continuation_grants(configuration, repository):
+    """The production unattended-grant service over the Worker's own repository."""
+
+    return UnattendedExecutionGrantService(
+        repository,
+        preview_service=_PersistedPreviewReader(repository),
+        permission_authority=_ConfiguredPermissionAuthority(lambda: _configuration(None)),
+    )
+
+
+def _scope_continuation_authority(configuration, repository):
+    """The shared live-authority checker for one continuation.
+
+    It resolves the occurrence's own Job and the definition from the exact saved
+    revision the continuation is pinned to, then re-reads the definition-bound
+    unattended grant through the production grant service.  This is the same
+    decision the API admission and the Web projection make, so a continuation
+    can never be admitted under authority that the Worker would refuse.
+    """
+
+    return definition_occurrence_authority(
+        repository,
+        getattr(configuration, "automation_task_definitions", ()),
+        _scope_continuation_grants(configuration, repository),
+    )
+
+
+def _scope_continuation_mutation_authority(configuration, repository, original):
+    """The live mutation hook the pipeline calls at every mutation boundary.
+
+    A continuation that would mutate media must prove its authority again at
+    each boundary, exactly as the definition-scoped execution path does.  The
+    hook is returned **only** together with the exact ``(job, definition)`` pair
+    the continuation will re-verify, and it re-checks that same pair on every
+    call, so a grant revoked while the continuation is running stops the next
+    mutation with zero new effect.
+
+    A mutation-authorized Task whose authority cannot be resolved returns
+    ``None``.  The caller must then refuse the continuation outright: passing
+    ``None`` to the executor means "no authority check", which would silently
+    mutate media without live authority.
+    """
+
+    if not original.execute_authorized:
+        # Analysis-only work has nothing to authorize.
+        return None
+    checker = _scope_continuation_authority(configuration, repository)
+    if not checker(original):
+        return None
+    job = repository.get_job_for_task(original.task_id)
+    definitions = tuple(getattr(configuration, "automation_task_definitions", ()))
+    definition_id = getattr(job, "definition_id", None)
+    definition = next(
+        (
+            value
+            for value in definitions
+            if getattr(value, "definition_id", getattr(value, "id", None)) == definition_id
+        ),
+        None,
+    )
+    if definition is None:
+        return None
+    grants = _scope_continuation_grants(configuration, repository)
+
+    def authority(_plan, _boundary: str) -> None:
+        grants.assert_live(job, definition)
+
+    return authority
+
+
+def _continue_scope_from_admission(
+    service: MediaOrganizerService,
+    configuration: RuntimeConfiguration,
+    original: PersistentTask,
+    storages,
+    file_index,
+    coordinator: PersistentTaskCoordinator,
+    task_id: str,
+    execute: bool,
+    limit: int | None,
+    skip_sources: frozenset[tuple[str, str]],
+    cancellation_check: Callable[[], bool],
+) -> MediaOrganizerBatchResult:
+    """Walk only the original admitted scope that is not already recorded.
+
+    This mirrors the operator CLI's proven ``_continue_paused_scope`` semantics:
+    a scan rescans its libraries while skipping every already-discovered source,
+    and a preview/organize re-walks its exact recorded scope path with the same
+    exclusion set.  The remaining item budget is enforced by the caller, so
+    discovery can never broaden the originally admitted limits.
+    """
+
+    if limit == 0:
+        return MediaOrganizerBatchResult(())
+
+    def on_discovered(library, file) -> None:
+        coordinator.record_discovered(
+            task_id,
+            file.storage_id,
+            library.library_id,
+            file.path,
+            f"{file.storage_id}:{file.path}",
+        )
+
+    if original.command == "scan":
+        batch = ResourceLibraryScanner(
+            StorageScanner(storages, file_index),
+            configuration.resource_libraries,
+            storages,
+        ).scan_all(
+            limit=limit,
+            on_discovered=on_discovered,
+            include_discovered=lambda library, file: (
+                (library.storage_id, file.path) not in skip_sources
+            ),
+            cancellation_check=cancellation_check,
+        )
+        errors = tuple(error for result in batch.results for error in result.errors)
+        return MediaOrganizerBatchResult((), errors)
+    if original.command not in {"preview", "organize"}:
+        raise ValueError("paused task command cannot be continued")
+    if original.scope_path is None:
+        return service.process_all_libraries(
+            configuration.resource_libraries,
+            execute=execute,
+            limit=limit,
+            cancellation_check=cancellation_check,
+            skip_sources=set(skip_sources),
+        )
+    library, display_root = _resource_library(configuration, original.scope_path)
+    path = Path(original.scope_path).resolve(strict=False)
+    if path.is_dir():
+        return service.process_library(
+            library,
+            execute=execute,
+            limit=limit,
+            cancellation_check=cancellation_check,
+            skip_sources=set(skip_sources),
+        )
+    relative = path.relative_to(Path(display_root).resolve(strict=False)).as_posix()
+    storage_path = _storage_path(library.root_path, relative)
+    if (library.storage_id, storage_path) in skip_sources:
+        return MediaOrganizerBatchResult(())
+    return MediaOrganizerBatchResult(
+        (
+            service.process_file(
+                path.as_posix(),
+                resource_library=library,
+                storage_path=storage_path,
+                execute=execute,
+            ),
+        )
+    )
 
 
 def _automation_configuration_unavailable(

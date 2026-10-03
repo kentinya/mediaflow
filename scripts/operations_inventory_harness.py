@@ -171,6 +171,11 @@ class ManagedHarnessContext:
     active: object
     runtime: object
     metadata_registry: MetadataProviderRegistry
+    #: The exact JSON document path the resident Worker is given as
+    #: ``--config``.  The Worker resolves the continuation's immutable pin
+    #: through managed authority from this file, so it must point at the same
+    #: managed store the browser's API serves.
+    config_path: Path | None = None
 
 
 def build_api(
@@ -239,16 +244,21 @@ def build_managed_fixture(
     document = json.loads(
         (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
     )
-    document["persistence"]["databasePath"] = str(root / "configuration.sqlite3")
+    # The resident Worker opens the runtime Task database from the resolved
+    # configuration's own ``databasePath``, so the managed bootstrap store and
+    # the runtime rows must be the same SQLite file — exactly the production
+    # shape.  Keeping them apart would make the Worker read a different database
+    # than the browser and silently invalidate every Worker-driven journey.
+    document["persistence"]["databasePath"] = str(database)
     document["storages"][0]["rootPath"] = str(source_root)
     document["storages"][1]["rootPath"] = str(destination_root)
     document["resourceLibraries"][0]["storagePath"] = ""
     document["mediaLibraries"][0]["rootPath"] = "Movies"
 
-    configuration_repository = SQLiteConfigurationRepository(root / "configuration.sqlite3")
+    configuration_repository = SQLiteConfigurationRepository(database)
     configuration_service = ManagedConfigurationService(
         configuration_repository,
-        bootstrap_database_path=str(root / "configuration.sqlite3"),
+        bootstrap_database_path=str(database),
     )
     objects = ConfigurationObjectService(
         configuration_service,
@@ -301,7 +311,7 @@ def build_managed_fixture(
     runtime = with_managed_snapshot(
         load_managed_runtime_configuration(
             active.document,
-            bootstrap_database_path=str(root / "configuration.sqlite3"),
+            bootstrap_database_path=str(database),
         ),
         snapshot_id=active.revision_id,
         digest=active.digest,
@@ -360,6 +370,8 @@ def build_managed_fixture(
             ),
         )
     )
+    config_path = root / "harness-config.json"
+    config_path.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
     managed = ManagedHarnessContext(
         root=root,
         configuration_repository=configuration_repository,
@@ -367,6 +379,7 @@ def build_managed_fixture(
         bootstrap_document=document,
         active=active,
         runtime=runtime,
+        config_path=config_path,
         metadata_registry=registry,
     )
     api = build_api(repository, managed=managed, file_index=file_index)
@@ -395,6 +408,8 @@ class AppState:
         self.file_index = file_index
         self.manual_run: dict[str, str] | None = None
         self.pipeline_run: dict[str, str] | None = None
+        #: The paused scan Task of the AC-T7 continuation journey.
+        self.continuation_task_id: str | None = None
 
     @property
     def database(self) -> Path:
@@ -950,6 +965,201 @@ PIPELINE_TASK_COMMAND = "harness-standalone-organize"
 PIPELINE_SOURCE_FILE = "电影/Two.2002.mkv"
 
 
+#: The synthetic sources reserved for the paused-scope continuation journey.
+#: The recorded one is already owned by the paused Task (so the continuation
+#: must never repeat it) and the remaining one is the only work left.  Both are
+#: dedicated names, so the remaining-scope proof can never be confused with
+#: another journey's media.
+CONTINUATION_RECORDED_FILE = "Six.2006.mkv"
+CONTINUATION_SOURCE_FILE = "Five.2005.mkv"
+
+
+def seed_continuation_journey(state: AppState) -> dict[str, object]:
+    """Create one real paused scan Task with one already-recorded source.
+
+    This is a genuine durable state produced by the real production
+    coordinator: a scan Task that discovered exactly one source and was then
+    durably paused at a supported item boundary.  Its item budget is two, so
+    exactly one unit of remaining work exists — the continuation must process
+    that one and nothing else.
+    """
+
+    active = state.managed.active
+    source_root = state.managed.root / "source"
+    (source_root / CONTINUATION_SOURCE_FILE).write_bytes(b"continuation synthetic media")
+    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    task = coordinator.create(
+        "scan",
+        execute_authorized=False,
+        scope_path=None,
+        item_limit=2,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+    )
+    # One source is already recorded, so the continuation must never repeat it.
+    coordinator.record_discovered(
+        task.task_id,
+        "source-storage",
+        "source",
+        CONTINUATION_RECORDED_FILE,
+        f"source-storage:{CONTINUATION_RECORDED_FILE}",
+    )
+    state.repository.request_task_pause(task.task_id, datetime.now(UTC))
+    paused = coordinator.acknowledge_pause(task.task_id)
+    if paused.status is not PersistentTaskStatus.PAUSED:
+        raise RuntimeError("continuation fixture Task did not pause")
+    state.continuation_task_id = task.task_id
+    return {
+        "taskId": task.task_id,
+        "status": paused.status.value,
+        "itemLimit": paused.item_limit,
+        "recordedSource": CONTINUATION_RECORDED_FILE,
+        "remainingSource": CONTINUATION_SOURCE_FILE,
+    }
+
+
+def run_continuation_worker_once(state: AppState) -> dict[str, object]:
+    """Claim and run the queued continuation through the REAL Worker handler.
+
+    The Job is claimed by its exact identity through the production
+    ``AutomationWorker`` (registered with the managed Active pin, as a resident
+    Worker is), and the handler is the production ``_run_queued_workflow`` — the
+    same entry point the resident Worker uses.  Nothing here re-implements,
+    stubs or bypasses the continuation boundary.
+    """
+
+    from mediaflow.final_cli import _run_queued_workflow
+
+    active = state.managed.active
+    state.repository.register_worker(
+        WORKER_ID,
+        "harness-inventory-worker",
+        30.0,
+        ("scan", "preview", "organize", "scope-continuation"),
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        runtime_schema_version=SCHEMA_VERSION,
+        now=datetime.now(UTC),
+    )
+    continuation_job = None
+    for candidate in state.repository.list_jobs(limit=100):
+        if candidate.command.value == "scope-continuation" and candidate.status.value == "pending":
+            continuation_job = candidate
+            break
+    if continuation_job is None:
+        return {"ran": False, "reason": "no queued scope continuation"}
+
+    # The production claim has no command filter and orders by admission time,
+    # so the harness's own older seed Jobs are claimed first.  They are harness
+    # fixtures, not product work: each is closed through the production
+    # ``complete_claimed_job`` write path without running a workflow, and the
+    # loop continues until the real continuation Job owns the claim.  The
+    # continuation itself always goes through the production claim fence and the
+    # production Worker handler.
+    config_path = state.managed.config_path
+    claimed = state.repository.claim_next_job(datetime.now(UTC), worker_id=WORKER_ID)
+    skipped: list[str] = []
+    while claimed is not None and claimed.job_id != continuation_job.job_id:
+        skipped.append(claimed.job_id)
+        state.repository.complete_claimed_job(
+            dataclasses.replace(
+                claimed,
+                status=AutomationJobStatus.COMPLETED,
+                updated_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                error=None,
+            )
+        )
+        claimed = state.repository.claim_next_job(datetime.now(UTC), worker_id=WORKER_ID)
+    if claimed is None:
+        return {"ran": False, "reason": "the continuation Job was not claimable"}
+    task_id = _run_queued_workflow(
+        claimed,
+        str(config_path) if config_path is not None else None,
+        lambda: False,
+        repository=state.repository,
+    )
+    state.repository.complete_claimed_job(
+        dataclasses.replace(
+            claimed,
+            status=AutomationJobStatus.COMPLETED,
+            updated_at=datetime.now(UTC),
+            completed_at=datetime.now(UTC),
+            task_id=task_id,
+        )
+    )
+    continuation = state.repository.get_scope_continuation_for_job(claimed.job_id)
+    return {
+        "ran": True,
+        "jobId": claimed.job_id,
+        "taskId": task_id,
+        "continuationStatus": continuation.status.value if continuation else None,
+        "newTaskId": continuation.new_task_id if continuation else None,
+        "skippedSeedJobs": skipped,
+    }
+
+
+def seed_authority_refusal(state: AppState) -> dict[str, object]:
+    """Create one real paused Task that was admitted as a mutation.
+
+    Its ``execute_authorized`` boolean records the original admission, but no
+    live reusable execution authority exists for it: it has no definition-linked
+    occurrence Job and therefore no unattended grant.  The backend must refuse a
+    native Continue and name the exact-Preview/explicit-intent journey instead of
+    continuing under the stored boolean.
+    """
+
+    active = state.managed.active
+    coordinator = PersistentTaskCoordinator(state.repository, state.repository)
+    task = coordinator.create(
+        "preview",
+        execute_authorized=True,
+        scope_path="Movies/Harness/Authority",
+        item_limit=2,
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+    )
+    state.repository.request_task_pause(task.task_id, datetime.now(UTC))
+    paused = coordinator.acknowledge_pause(task.task_id)
+    if paused.status is not PersistentTaskStatus.PAUSED:
+        raise RuntimeError("authority-refusal fixture Task did not pause")
+    return {"taskId": task.task_id, "status": paused.status.value}
+
+
+def continuation_journey_state(state: AppState) -> dict[str, object]:
+    """Report the durable state of the continuation journey (bounded reads only)."""
+
+    source_task_id = state.continuation_task_id
+    if source_task_id is None:
+        return {"seeded": False}
+    source = state.repository.get_task(source_task_id)
+    continuations = state.repository.list_scope_continuations(source_task_id)
+    linked = [
+        task for task in state.repository.list_tasks(limit=100) if task.task_id != source_task_id
+    ]
+    return {
+        "seeded": True,
+        "sourceTaskId": source_task_id,
+        "sourceStatus": source.status.value if source else None,
+        "sourceItemPaths": sorted(
+            item.source_path for item in state.repository.list_items(source_task_id)
+        ),
+        "continuations": [item.document() for item in continuations],
+        "linkedTasks": [
+            {
+                "taskId": task.task_id,
+                "status": task.status.value,
+                "itemPaths": sorted(
+                    item.source_path for item in state.repository.list_items(task.task_id)
+                ),
+            }
+            for task in linked
+        ],
+    }
+
+
 def run_standalone_pipeline_once(state: AppState) -> dict[str, str]:
     """Execute one real standalone `organize --execute`-shape run.
 
@@ -1087,6 +1297,14 @@ def application(environ, start_response):
             document = manual_file_state(STATE, filename=requested_file)
         elif path == "/__harness__/run-standalone-pipeline" and method == "POST":
             document = run_standalone_pipeline_once(STATE)
+        elif path == "/__harness__/seed-continuation" and method == "POST":
+            document = seed_continuation_journey(STATE)
+        elif path == "/__harness__/run-continuation-worker" and method == "POST":
+            document = run_continuation_worker_once(STATE)
+        elif path == "/__harness__/seed-authority-refusal" and method == "POST":
+            document = seed_authority_refusal(STATE)
+        elif path == "/__harness__/continuation-state" and method == "GET":
+            document = continuation_journey_state(STATE)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}
@@ -1134,6 +1352,11 @@ def main(argv: list[str] | None = None) -> int:
         managed=managed,
         file_index=file_index,
     )
+    # The AC-T7 continuation fixture is deliberately NOT seeded here: the
+    # existing inventory assertions depend on the exact four-run population.
+    # The browser seeds it explicitly through ``POST /__harness__/seed-continuation``
+    # when the continuation journey starts, and that seed still goes through the
+    # real production coordinator.
 
     with make_server(
         args.host,

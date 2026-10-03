@@ -22,6 +22,11 @@ class AutomationCommand(StrEnum):
     ORGANIZE = "organize"
     FILE_METADATA_CORRECTION = "file-metadata-correction"
     RECOVERY_CONTINUATION = "recovery-continuation"
+    #: The durable queued continuation of one safely paused Task's exact
+    #: remaining admitted scope.  It is admitted only by the Operations
+    #: lifecycle boundary for an existing paused Task and never by the generic
+    #: Job submission service, so it cannot be used to start new work.
+    SCOPE_CONTINUATION = "scope-continuation"
 
 
 class AutomationTaskRunMode(StrEnum):

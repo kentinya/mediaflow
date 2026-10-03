@@ -14,7 +14,7 @@ from unittest.mock import patch
 from mediaflow.application.notification import NotificationPublisher, NotificationWorker
 from mediaflow.container_probe import resident_service_readiness_error
 from mediaflow.domain.notification import NotificationEvent, NotificationEventType
-from mediaflow.infrastructure.sqlite_runtime import SQLiteTaskRepository
+from mediaflow.infrastructure.sqlite_runtime import SCHEMA_VERSION, SQLiteTaskRepository
 from tests.test_notifications import FakeTransport, webhook
 from tests.test_resident_services import ResidentDeploymentFixture
 
@@ -266,5 +266,5 @@ class ResidentCorrectionTests(ResidentDeploymentFixture):
         # Explicit initialization is the migration boundary; the probe itself
         # above cannot install schema, create a DB or advance its version.
         with SQLiteTaskRepository(self.database) as migrated:
-            self.assertEqual(migrated.schema_version, 42)
+            self.assertEqual(migrated.schema_version, SCHEMA_VERSION)
             self.assertEqual(migrated.list_resident_services(), ())

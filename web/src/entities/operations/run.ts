@@ -24,6 +24,17 @@
  * `attention` is true the server applied the overlapping facet, so every
  * partition is an attention status and the whole filtered total is that
  * population. A server that echoes the flag without applying it is rejected.
+ *
+ * The single-run overview read may additionally carry a backend-computed
+ * `lifecycle` projection for the exact durable object the run resolves to. It
+ * is fail-closed in both directions: an absent or explicitly null projection
+ * normalizes to `null` (inventory rows legitimately carry none), while a
+ * present projection must name the run's own `task_id` (objectType `task`) or
+ * `job_id` (objectType `job`) and its raw state must be one of that object
+ * kind's modelled states. A projection for another object, an unknown object
+ * type or state, a missing identity or a malformed inner shape makes the whole
+ * response malformed — an approximate control is never rendered, and frontend
+ * state never grants authority the backend did not advertise.
  */
 
 import {
@@ -35,6 +46,10 @@ import {
   readRecord,
 } from "../shared/normalize";
 import { normalizeRunProgress, type RunProgress } from "./run-detail";
+import {
+  normalizeLifecycleProjection,
+  type LifecycleProjection,
+} from "./lifecycle";
 
 /** One honest aggregate state derived from actual queue/processing evidence. */
 export const RUN_STATUSES = [
@@ -83,6 +98,33 @@ export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 export const RUN_LIBRARY_KINDS = ["resource", "media"] as const;
 export type RunLibraryKind = (typeof RUN_LIBRARY_KINDS)[number];
 
+/**
+ * The raw persistent Task states a linked-Task run lifecycle projection may
+ * carry. This is deliberately the *raw* Task state set, never the run's own
+ * derived aggregate `status`: the two are not required to be equal (a run may
+ * aggregate to `waiting` while its linked Task is `running`, for example), so
+ * the projection is validated against the states its object kind can really
+ * hold rather than against the aggregate row.
+ */
+export const RUN_TASK_LIFECYCLE_STATES = [
+  "pending",
+  "running",
+  "paused",
+  "completed",
+  "partial_success",
+  "failed",
+  "cancelled",
+] as const;
+
+/** The raw Job states a pre-Task run lifecycle projection may carry. */
+export const RUN_JOB_LIFECYCLE_STATES = [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+
 /** The backend-submitted status filter values (exactly the modelled set). */
 export const RUN_STATUS_FILTERS = RUN_STATUSES;
 
@@ -116,6 +158,11 @@ export interface RunSummary {
   /** The selected-run detail progress projection. Present on the overview
    * read and absent (null) on inventory rows. */
   readonly progress: RunProgress | null;
+  /** The backend-advertised lifecycle controls for the durable object this run
+   * resolves to, or `null` when the run has neither a linked Task nor a Job.
+   * Only the single-run overview read publishes it; inventory rows carry
+   * `null`. It is the only source of a rendered control. */
+  readonly lifecycle: LifecycleProjection | null;
 }
 
 export interface RunInventoryPage {
@@ -260,6 +307,59 @@ function commandFamily(command: string | null): string | null {
   return family.length > 0 ? family : null;
 }
 
+/**
+ * Normalize one run's optional lifecycle projection against the run's own
+ * durable identities.
+ *
+ * The projection must describe exactly the object this run resolves to: a
+ * linked Task (`objectType: "task"`, matching `taskId`) or a Job
+ * (`objectType: "job"`, matching `jobId`). A run that does not carry the
+ * identity the projection names cannot own that projection at all, so the
+ * whole response fails closed instead of attaching a control to an approximate
+ * object. The raw `state` is validated against the closed set of states its
+ * own object kind can hold; an unknown state or a malformed inner shape fails
+ * the whole response closed.
+ */
+function normalizeRunLifecycle(
+  value: unknown,
+  taskId: string | null,
+  jobId: string | null,
+): LifecycleProjection | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  try {
+    // The projection claims its own object type; the run must really carry
+    // that identity, otherwise the control would target another object.
+    const source = readRecord(value, "run.lifecycle");
+    const rawObjectType = source["objectType"];
+    if (rawObjectType === "task") {
+      if (taskId === null) {
+        return fail();
+      }
+      return normalizeLifecycleProjection(value, {
+        objectType: "task",
+        objectId: taskId,
+        state: RUN_TASK_LIFECYCLE_STATES,
+      });
+    }
+    if (rawObjectType === "job") {
+      if (jobId === null) {
+        return fail();
+      }
+      return normalizeLifecycleProjection(value, {
+        objectType: "job",
+        objectId: jobId,
+        state: RUN_JOB_LIFECYCLE_STATES,
+      });
+    }
+    // An unknown object type can never supply a run control.
+    return fail();
+  } catch {
+    return fail();
+  }
+}
+
 export function normalizeRunSummary(payload: unknown): RunSummary {
   const source = readRecord(payload, "run");
   let status: RunStatus;
@@ -321,6 +421,9 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     // The backend attention facet and the modelled facet must agree exactly.
     fail();
   }
+  const jobId = optionalText(source, "job_id");
+  const taskId = optionalText(source, "task_id");
+  const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId, jobId);
   return {
     runId: text(source, "run_id"),
     runKind: text(source, "run_kind"),
@@ -331,8 +434,8 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
     trigger,
     createdAt: text(source, "created_at"),
     updatedAt: text(source, "updated_at"),
-    jobId: optionalText(source, "job_id"),
-    taskId: optionalText(source, "task_id"),
+    jobId,
+    taskId,
     scheduleId: optionalText(source, "schedule_id"),
     definitionId: optionalText(source, "definition_id"),
     sourceScope: optionalText(source, "source_scope"),
@@ -349,6 +452,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
       source["progress"] === null || source["progress"] === undefined
         ? null
         : normalizeRunProgress(source["progress"]),
+    lifecycle,
   };
 }
 

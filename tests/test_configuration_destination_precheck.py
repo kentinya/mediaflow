@@ -2017,10 +2017,10 @@ class ManagedDestinationPrecheckTests(unittest.TestCase):
                 self.assertIsNotNone(repository.get_classification_preview(draft.revision_id))
                 self.assertIsNotNone(repository.get_organize_authority(draft.revision_id))
                 self.assertIsNotNone(repository.get_local_setup_check(draft.revision_id))
-                # Runtime schema 38 adds the durable owner generation on
-                # file_locks so a stale Worker can never release a
-                # replacement Worker's source exclusion.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 42)
+                # Runtime schema 43 adds the durable scope_continuations
+                # boundary so a paused Task's exact remaining admitted scope
+                # can be continued by the resident Worker.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 43)
 
 
 if __name__ == "__main__":

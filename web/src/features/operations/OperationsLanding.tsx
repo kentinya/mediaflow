@@ -24,10 +24,14 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
-import type { RunOverviewRead } from "../../shared/api/api-client";
+import {
+  mutateLifecycle,
+  type LifecycleMutationResult,
+  type RunOverviewRead,
+} from "../../shared/api/api-client";
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
@@ -54,6 +58,11 @@ import {
   type RunDetailState,
 } from "./run-detail-state";
 import { runItemsQueryKey, runRecordsQueryKey } from "./run-detail-query";
+import {
+  RunLifecycleControls,
+  isUnknownLifecycleOutcome,
+} from "./RunLifecycleControls";
+import type { LifecycleAction } from "../../entities/operations/lifecycle";
 import { ResidentServiceStatus } from "./ResidentServiceStatus";
 import { manualActionsQueryOptions } from "./manual-actions-query";
 import {
@@ -587,6 +596,11 @@ export function OperationsLanding() {
               </div>
               {selectedId !== "" && (
                 <RunDetailPanel
+                  // A different selected run is a different control object:
+                  // remounting resets the pending/result/reconciliation state
+                  // so a lock or an accepted outcome can never carry over to
+                  // another run's controls.
+                  key={selectedId}
                   query={overviewQuery}
                   onClose={closeRun}
                   detailState={detailState}
@@ -815,6 +829,16 @@ function RunDetailPanel({
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
+  const token = useAuthToken();
+  const queryClient = useQueryClient();
+  const [pendingAction, setPendingAction] = useState<string | null>(null);
+  const [controlResult, setControlResult] =
+    useState<LifecycleMutationResult | null>(null);
+  // An unknown control outcome locks every control until one explicit,
+  // successful reconciliation read proves the durable state again. The lock is
+  // never cleared by a poll, a cache event or a second submission attempt.
+  const [locked, setLocked] = useState(false);
+  const [reconciling, setReconciling] = useState(false);
 
   useEffect(() => {
     const opener =
@@ -838,6 +862,64 @@ function RunDetailPanel({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, [onClose]);
+
+  // Exactly one authenticated POST per deliberate click, carrying the version
+  // of the projection that was rendered at click time. There is no retry
+  // policy: an unknown or refused outcome requires the operator to reconcile
+  // and act again deliberately.
+  const lifecycleMutation = useMutation({
+    mutationFn: (request: {
+      readonly action: LifecycleAction;
+      readonly objectType: "task" | "job";
+      readonly objectId: string;
+      readonly expectedVersion: string;
+    }) =>
+      mutateLifecycle(token, {
+        objectType: request.objectType,
+        objectId: request.objectId,
+        action: request.action.action,
+        expectedVersion: request.expectedVersion,
+      }),
+    retry: false,
+    onMutate: (request) => {
+      setPendingAction(request.action.action);
+      setControlResult(null);
+    },
+    onSuccess: (result) => {
+      setControlResult(result);
+      if (result.ok) {
+        // The accepted control changed durable state: re-read the overview
+        // (which carries the new projection/version) and invalidate the open
+        // detail tabs' bounded reads. Nothing is replayed.
+        void query.refetch();
+        void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+        void queryClient.invalidateQueries({ queryKey: [runRecordsQueryKey] });
+        return;
+      }
+      if (isUnknownLifecycleOutcome(result)) {
+        setLocked(true);
+      }
+    },
+    onSettled: () => setPendingAction(null),
+  });
+
+  /** One explicit reconciliation read; the lock clears only on success. */
+  const reconcile = () => {
+    setReconciling(true);
+    void query
+      .refetch()
+      .then((outcome) => {
+        if (outcome.data !== undefined && outcome.data.ok) {
+          setLocked(false);
+          setControlResult(null);
+          void queryClient.invalidateQueries({ queryKey: [runItemsQueryKey] });
+          void queryClient.invalidateQueries({
+            queryKey: [runRecordsQueryKey],
+          });
+        }
+      })
+      .finally(() => setReconciling(false));
+  };
 
   return (
     <section className="mf-run-detail" aria-label="运行详情">
@@ -878,15 +960,39 @@ function RunDetailPanel({
               </StatusBanner>
             );
           }
+          const run = data.model;
           return (
-            <RunDetailTabs
-              runId={data.model.runId}
-              progress={data.model.progress}
-              state={detailState}
-              onStateChange={onDetailStateChange}
-              active={!TERMINAL_RUN_STATUSES.includes(data.model.status)}
-              facts={<RunDetailFacts run={data.model} />}
-            />
+            <>
+              {/* The controls render from the run overview document itself:
+                  the exact backend projection for this run's durable object
+                  and the exact version the overview read published. */}
+              {run.lifecycle !== null && (
+                <RunLifecycleControls
+                  projection={run.lifecycle}
+                  pendingAction={pendingAction}
+                  result={controlResult}
+                  locked={locked}
+                  reconciling={reconciling}
+                  onReconcile={reconcile}
+                  onInvoke={(action, expectedVersion) =>
+                    lifecycleMutation.mutate({
+                      action,
+                      objectType: run.lifecycle?.objectType ?? "task",
+                      objectId: run.lifecycle?.objectId ?? run.runId,
+                      expectedVersion,
+                    })
+                  }
+                />
+              )}
+              <RunDetailTabs
+                runId={run.runId}
+                progress={run.progress}
+                state={detailState}
+                onStateChange={onDetailStateChange}
+                active={!TERMINAL_RUN_STATUSES.includes(run.status)}
+                facts={<RunDetailFacts run={run} />}
+              />
+            </>
           );
         }}
       </AuthorizedReadBoundary>

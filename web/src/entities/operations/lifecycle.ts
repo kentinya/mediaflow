@@ -154,16 +154,24 @@ function readAction(
 /**
  * Normalize one projection for the exact object it claims to describe.
  *
- * `objectType`/`objectId`/`state` must match the enclosing entity, so a
- * projection for another object, a stale cached projection or a contradictory
- * state can never supply a control.
+ * `objectType`/`objectId` must match the enclosing entity, so a projection for
+ * another object or a stale cached projection can never supply a control.
+ *
+ * `state` is the *raw durable object state* the projection belongs to. It is
+ * accepted against a closed set of allowed values rather than one literal,
+ * because a caller may legitimately hold several truthful raw states for the
+ * same object: the unified run overview derives its own aggregate `status`
+ * (which may differ from the linked Task's raw state) and therefore passes the
+ * whole modelled raw-state set. A caller that knows one exact state passes the
+ * single string, which is the same fail-closed check. An unknown state is
+ * malformed data, never a rendered control.
  */
 export function normalizeLifecycleProjection(
   value: unknown,
   expected: {
     readonly objectType: LifecycleObjectType;
     readonly objectId: string;
-    readonly state: string;
+    readonly state: string | readonly string[];
   },
 ): LifecycleProjection {
   const source = readRecord(value, "lifecycle");
@@ -177,9 +185,15 @@ export function normalizeLifecycleProjection(
     "lifecycle.objectId",
   );
   const state = normalizeBoundedText(source["state"], "lifecycle.state");
+  const allowedStates =
+    typeof expected.state === "string" ? [expected.state] : expected.state;
+  if (allowedStates.length === 0) {
+    // An empty allow-set cannot describe any real object state.
+    fail();
+  }
   if (objectType !== expected.objectType) fail();
   if (objectId !== expected.objectId) fail();
-  if (state !== expected.state) fail();
+  if (!allowedStates.includes(state)) fail();
   const permitted = normalizeBoolean(
     source["permitted"],
     "lifecycle.permitted",

@@ -913,10 +913,10 @@ class DestinationPrecheckActivationTests(unittest.TestCase):
                 self.assertEqual(activated.status.value, "active")
                 self._assert_runtime_empty(runtime_database)
                 self.assertEqual(CONFIGURATION_SCHEMA_VERSION, 10)
-                # Runtime schema 38 adds the durable owner generation on
-                # file_locks so a stale Worker can never release a
-                # replacement Worker's source exclusion.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 42)
+                # Runtime schema 43 adds the durable scope_continuations
+                # boundary so a paused Task's exact remaining admitted scope
+                # can be continued by the resident Worker.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 43)
 
     def test_api_blocked_and_satisfied_use_existing_contract(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

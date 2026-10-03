@@ -61,6 +61,53 @@ function pageDocument(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function lifecycleAction(
+  name: string,
+  available: boolean,
+  unavailableReason: string | null,
+) {
+  return {
+    action: name,
+    label: `${name} label`,
+    method: "POST",
+    path: `/api/v1/tasks/{id}/${name}`,
+    available,
+    unavailableReason,
+    confirmationRequired: false,
+    cooperative: true,
+    durableOutcome: "a durable request is stored",
+    sideEffects: "no Storage mutation",
+    retrySafe: false,
+    nextAction: "refresh the Task",
+  };
+}
+
+function lifecycleProjection(overrides: Record<string, unknown> = {}) {
+  return {
+    objectType: "task",
+    objectId: "task-1",
+    state: "running",
+    version: "2026-08-22T12:06:00+00:00",
+    executionPath: "operator_workflow",
+    terminal: false,
+    permitted: true,
+    permission: "cancel_job",
+    pauseRequested: false,
+    effectCertainty: "none",
+    resultsObserved: 0,
+    resultsComplete: true,
+    uncertainResults: 0,
+    knownEffects: "no Storage effect is recorded for this Task",
+    nextAction: "refresh the Task to read the durable state",
+    actions: [
+      lifecycleAction("cancel", true, null),
+      lifecycleAction("pause", true, null),
+      lifecycleAction("resume", false, "no durable queued continuation exists"),
+    ],
+    ...overrides,
+  };
+}
+
 describe("run summary normalization", () => {
   it("normalizes a bounded run document", () => {
     const run = normalizeRunSummary(runDocument());
@@ -346,5 +393,213 @@ describe("run overview normalization", () => {
     // readRecord rejects the payload before the typed normalization runs;
     // either way the caller sees one failed read, never a partial model.
     expect(() => normalizeRunOverview("task-1")).toThrow(/invalid field/);
+  });
+});
+
+describe("run lifecycle projection normalization", () => {
+  it("accepts a valid linked-Task lifecycle and exposes its advertised actions", () => {
+    const run = normalizeRunSummary(
+      runDocument({
+        task_id: "task-1",
+        job_id: null,
+        lifecycle: lifecycleProjection(),
+      }),
+    );
+    expect(run.lifecycle).not.toBeNull();
+    expect(run.lifecycle?.objectType).toBe("task");
+    expect(run.lifecycle?.objectId).toBe("task-1");
+    expect(
+      run.lifecycle?.actions
+        .filter((item) => item.available)
+        .map((i) => i.action),
+    ).toEqual(["cancel", "pause"]);
+  });
+
+  it("accepts a valid pre-Task Job lifecycle advertising only cancel", () => {
+    const run = normalizeRunSummary(
+      runDocument({
+        run_kind: "job",
+        run_id: "job-1",
+        task_id: null,
+        job_id: "job-1",
+        lifecycle: {
+          ...lifecycleProjection(),
+          objectType: "job",
+          objectId: "job-1",
+          actions: [lifecycleAction("cancel", true, null)],
+        },
+      }),
+    );
+    expect(run.lifecycle?.objectType).toBe("job");
+    expect(run.lifecycle?.actions.map((item) => item.action)).toEqual([
+      "cancel",
+    ]);
+  });
+
+  it("accepts every modelled raw Task state and rejects an unknown one", () => {
+    for (const state of [
+      "pending",
+      "running",
+      "paused",
+      "completed",
+      "partial_success",
+      "failed",
+      "cancelled",
+    ]) {
+      const run = normalizeRunSummary(
+        runDocument({ lifecycle: lifecycleProjection({ state }) }),
+      );
+      expect(run.lifecycle?.state).toBe(state);
+    }
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ lifecycle: lifecycleProjection({ state: "unknown" }) }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("accepts every modelled raw Job state and rejects a Task-only state", () => {
+    for (const state of [
+      "pending",
+      "running",
+      "completed",
+      "failed",
+      "cancelled",
+    ]) {
+      const run = normalizeRunSummary(
+        runDocument({
+          run_kind: "job",
+          run_id: "job-1",
+          task_id: null,
+          job_id: "job-1",
+          lifecycle: {
+            ...lifecycleProjection(),
+            objectType: "job",
+            objectId: "job-1",
+            state,
+            actions: [lifecycleAction("cancel", false, "terminal")],
+            permitted: false,
+          },
+        }),
+      );
+      expect(run.lifecycle?.state).toBe(state);
+    }
+    // `paused` is a raw Task state, never a Job state.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          run_kind: "job",
+          run_id: "job-1",
+          task_id: null,
+          job_id: "job-1",
+          lifecycle: {
+            ...lifecycleProjection(),
+            objectType: "job",
+            objectId: "job-1",
+            state: "paused",
+            actions: [lifecycleAction("cancel", false, "not cancellable")],
+            permitted: false,
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects a lifecycle for another object identity", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          lifecycle: lifecycleProjection({ objectId: "task-other" }),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          job_id: "job-1",
+          lifecycle: {
+            ...lifecycleProjection(),
+            objectType: "job",
+            objectId: "job-other",
+            actions: [lifecycleAction("cancel", true, null)],
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects an unknown lifecycle object type", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          lifecycle: lifecycleProjection({ objectType: "workflow" }),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects a lifecycle on a run with no matching identity", () => {
+    // A run with no Task cannot own a Task projection...
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ task_id: null, lifecycle: lifecycleProjection() }),
+      ),
+    ).toThrow(RunNormalizationError);
+    // ...and a run with no Job cannot own a Job projection.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          task_id: null,
+          job_id: null,
+          lifecycle: {
+            ...lifecycleProjection(),
+            objectType: "job",
+            objectId: "job-1",
+            actions: [lifecycleAction("cancel", true, null)],
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("rejects a malformed inner projection, including a contradictory action", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ lifecycle: lifecycleProjection({ actions: "cancel" }) }),
+      ),
+    ).toThrow(RunNormalizationError);
+    // A withheld action must carry its own refusal reason (delegated to the
+    // lifecycle normalizer), so the run fails closed rather than rendering a
+    // reasonless control.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          lifecycle: lifecycleProjection({
+            actions: [lifecycleAction("cancel", false, null)],
+          }),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+    // An available action that also carries a refusal reason is contradictory.
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          lifecycle: lifecycleProjection({
+            actions: [lifecycleAction("cancel", true, "because")],
+          }),
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
+
+  it("normalizes an absent or explicit null lifecycle to null", () => {
+    expect(normalizeRunSummary(runDocument()).lifecycle).toBeNull();
+    expect(
+      normalizeRunSummary(runDocument({ lifecycle: null })).lifecycle,
+    ).toBeNull();
+    // The inventory page rows legitimately carry no lifecycle projection at
+    // all, so a whole page still normalizes.
+    const page = normalizeRunInventoryPage(pageDocument());
+    expect(page.items[0]?.lifecycle).toBeNull();
   });
 });
