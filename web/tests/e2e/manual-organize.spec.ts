@@ -29,6 +29,8 @@ const DESTRUCTIVE_PREVIEW_ID = "organize-preview-destructive-e2e-001";
 const HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
 const SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
+const LOST_PREVIEW_ID = "organize-preview-lost-e2e-001";
+const LOST_UNADMITTED_PREVIEW_ID = "organize-preview-lost-unadmitted-e2e-001";
 const EXECUTION_ID = "organize-execution-e2e-001";
 const FAILED_EXECUTION_ID = "organize-execution-failed-e2e-001";
 
@@ -76,37 +78,31 @@ test.describe("manual organize journey", () => {
     await page.goto(`/ui-v2/operations/organize/intent/${INTENT_ID}`);
     await connect(page, VIEWER_TOKEN);
 
+    await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Manual organize intent" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Create exact Preview" }),
+      page.getByRole("button", { name: "生成精确预览" }),
     ).toBeEnabled();
 
     // The downstream policy controls only display the RecognitionType's pinned
     // mapping; they are never independently editable in the normal journey.
     await expect(
-      page.getByLabel("Naming policy organize-item-e2e-001"),
+      page.getByLabel("命名策略 organize-item-e2e-001"),
     ).toBeDisabled();
     await expect(
-      page.getByLabel("Classification policy organize-item-e2e-001"),
+      page.getByLabel("分类策略 organize-item-e2e-001"),
     ).toBeDisabled();
     await expect(
-      page.getByLabel("Organize policy organize-item-e2e-001"),
+      page.getByLabel("整理策略 organize-item-e2e-001"),
     ).toBeDisabled();
 
     // Selecting the RecognitionType brings out its exact configured naming,
     // classification and organize policies automatically.
-    await page
-      .getByLabel("RecognitionType organize-item-e2e-001")
-      .selectOption("A");
-    await expect(
-      page.getByLabel("Naming policy organize-item-e2e-001"),
-    ).toHaveValue("A");
-    await page.getByRole("button", { name: "Save choice" }).click();
-    await expect(
-      page.getByText(/Every earlier Preview of this intent is now historical/),
-    ).toBeVisible();
+    await page.getByLabel("识别类型 organize-item-e2e-001").selectOption("A");
+    await expect(page.getByLabel("命名策略 organize-item-e2e-001")).toHaveValue(
+      "A",
+    );
+    await page.getByRole("button", { name: "保存选择" }).click();
+    await expect(page.getByText(/预览已成为历史证据/)).toBeVisible();
 
     const afterChoice = await manualEvidence(page);
     const choice = afterChoice.filter(
@@ -123,12 +119,10 @@ test.describe("manual organize journey", () => {
     });
     expect(JSON.stringify(choice)).not.toContain("Bearer");
 
-    await page.getByRole("button", { name: "Create exact Preview" }).click();
-    await expect(
-      page.getByRole("heading", { name: "Exact manual organize Preview" }),
-    ).toBeVisible();
-    await expect(page.getByText(/Zero Storage mutation/)).toBeVisible();
-    await expect(page.getByText(/Proposed destination/)).toBeVisible();
+    await page.getByRole("button", { name: "生成精确预览" }).click();
+    await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+    await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
+    await expect(page.getByText(/预期目标/)).toBeVisible();
 
     const afterPreview = await manualEvidence(page);
     const preview = afterPreview.filter(
@@ -144,23 +138,21 @@ test.describe("manual organize journey", () => {
     await page.goto(`/ui-v2/operations/organize/preview/${PREVIEW_ID}`);
     await connect(page, VIEWER_TOKEN);
 
-    await expect(
-      page.getByRole("heading", { name: "Exact manual organize Preview" }),
-    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
     const execute = page.getByRole("button", {
-      name: "Execute selected exact items",
+      name: "确认执行所选条目",
     });
     await expect(execute).toBeEnabled();
     await execute.click();
 
     await expect(
-      page.getByRole("heading", { name: "Manual organize execution" }),
+      page.getByRole("heading", { name: "整理执行情况" }),
     ).toBeVisible();
     await expect(
-      page.getByText(/Execution organize-execution-e2e-001/),
+      page.getByText(/执行记录 organize-execution-e2e-001/),
     ).toBeVisible();
-    await expect(page.getByText(/Verified Complete/)).toBeVisible();
-    await expect(page.getByText("TaskItem")).toBeVisible();
+    await expect(page.getByText("已验证完成", { exact: true })).toBeVisible();
+    await expect(page.getByText("任务条目")).toBeVisible();
 
     const evidence = await manualEvidence(page);
     const admissions = evidence.filter(
@@ -179,6 +171,153 @@ test.describe("manual organize journey", () => {
     );
   });
 
+  test("reconciles a lost admitted response and selects its durable Operations run", async ({
+    page,
+  }) => {
+    const returnOps = encodeURIComponent("command=manual_organize&status=all");
+    await page.goto(
+      `/ui-v2/operations/organize/preview/${LOST_PREVIEW_ID}?returnOps=${returnOps}`,
+    );
+    await connect(page, VIEWER_TOKEN);
+
+    const execute = page.getByRole("button", {
+      name: "确认执行所选条目",
+    });
+    await expect(execute).toBeEnabled();
+    await execute.click();
+    await expect(
+      page.getByRole("heading", { name: "执行结果未知" }),
+    ).toBeVisible();
+    await expect(execute).toBeDisabled();
+
+    // The fake server returns an ambiguous 503 after it persists the exact
+    // admission. The browser must wait for an explicit read and may not send
+    // a second Execute while that outcome is unresolved.
+    let evidence = await manualEvidence(page);
+    expect(
+      evidence.filter(
+        (entry) =>
+          entry.objectType === "organize_execute" && entry.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(
+      evidence.filter(
+        (entry) => entry.objectType === "organize_admission_read",
+      ),
+    ).toHaveLength(0);
+
+    await page.getByRole("button", { name: "核对提交结果" }).click();
+    await expect(
+      page.getByRole("heading", { name: "操作与任务", exact: true }),
+    ).toBeVisible();
+    await expect(page).toHaveURL(/command=manual_organize/);
+    await expect(page).toHaveURL(/run=organize-task-e2e-001/);
+    await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+
+    evidence = await manualEvidence(page);
+    expect(
+      evidence.filter(
+        (entry) =>
+          entry.objectType === "organize_execute" && entry.method === "POST",
+      ),
+    ).toHaveLength(1);
+    expect(
+      evidence.filter(
+        (entry) =>
+          entry.objectType === "organize_admission_read" &&
+          entry.method === "GET",
+      ),
+    ).toHaveLength(1);
+    expect(page.url()).not.toMatch(/token|digest|fingerprint|authorization/i);
+  });
+
+  test("a page reload cannot reopen Execute when the Preview already has an admission", async ({
+    page,
+  }) => {
+    await page.goto(`/ui-v2/operations/organize/preview/${LOST_PREVIEW_ID}`);
+    await connect(page, VIEWER_TOKEN);
+
+    const execute = page.getByRole("button", {
+      name: "确认执行所选条目",
+    });
+    await execute.click();
+    await expect(
+      page.getByRole("heading", { name: "执行结果未知" }),
+    ).toBeVisible();
+    await expect(execute).toBeDisabled();
+
+    // Reload clears component state and the memory-only API token. The
+    // Preview's bounded durable execution read must still keep Execute closed
+    // and expose the existing record for inspection without claiming it is
+    // equivalent to a selection the reloaded page no longer holds.
+    await page.reload();
+    await expect(page.getByLabel("API token")).toBeVisible();
+    await connect(page, VIEWER_TOKEN);
+    await expect(
+      page.getByRole("heading", { name: "此预览已有持久执行记录" }),
+    ).toBeVisible();
+    await expect(execute).toBeDisabled();
+    await expect(
+      page.getByRole("link", { name: /查看已有执行/ }),
+    ).toBeVisible();
+
+    const evidence = await manualEvidence(page);
+    expect(
+      evidence.filter(
+        (entry) =>
+          entry.objectType === "organize_execute" && entry.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
+  test("keeps Execute locked after a proven absence until the exact Preview is refreshed", async ({
+    page,
+  }) => {
+    await page.goto(
+      `/ui-v2/operations/organize/preview/${LOST_UNADMITTED_PREVIEW_ID}`,
+    );
+    await connect(page, VIEWER_TOKEN);
+
+    const execute = page.getByRole("button", {
+      name: "确认执行所选条目",
+    });
+    await execute.click();
+    await expect(
+      page.getByRole("heading", { name: "执行结果未知" }),
+    ).toBeVisible();
+    await expect(execute).toBeDisabled();
+    await page.getByRole("button", { name: "核对提交结果" }).click();
+    await expect(page.getByText(/持久受理记录证明/)).toBeVisible();
+    await expect(execute).toBeDisabled();
+
+    const evidenceBeforeRefresh = await manualEvidence(page);
+    expect(
+      evidenceBeforeRefresh.filter(
+        (entry) =>
+          entry.objectType === "organize_execute" && entry.method === "POST",
+      ),
+    ).toHaveLength(1);
+
+    await page.getByRole("button", { name: "刷新预览后再决定" }).click();
+    await expect(
+      page.getByRole("heading", { name: "预览已刷新，可以重新审阅" }),
+    ).toBeVisible();
+    await expect(execute).toBeEnabled();
+
+    // Only the operator's second explicit click may submit again.
+    await execute.click();
+    await expect(
+      page.getByRole("heading", { name: "执行结果未知" }),
+    ).toBeVisible();
+    const evidenceAfterResubmit = await manualEvidence(page);
+    expect(
+      evidenceAfterResubmit.filter(
+        (entry) =>
+          entry.objectType === "organize_execute" && entry.method === "POST",
+      ),
+    ).toHaveLength(2);
+  });
+
   test("requires separate destructive confirmations for the exact Preview selection", async ({
     page,
   }) => {
@@ -187,25 +326,23 @@ test.describe("manual organize journey", () => {
     );
     await connect(page, VIEWER_TOKEN);
 
-    await expect(
-      page.getByRole("heading", { name: "Exact manual organize Preview" }),
-    ).toBeVisible();
-    await expect(page.getByText("COPY")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+    await expect(page.getByText("复制")).toBeVisible();
     await expect(
       page.getByText(
-        /this exact plan would replace an existing destination file and delete the emptied source directories/,
+        /此精确方案会替换已有目标文件，并在整理后删除已清空的来源目录；需要分别明确授权。/,
       ),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     const execute = page.getByRole("button", {
-      name: "Execute selected exact items",
+      name: "确认执行所选条目",
     });
     await expect(execute).toBeDisabled();
 
     const overwrite = page.getByRole("checkbox", {
-      name: /replace an existing destination file/,
+      name: /按已审阅方案替换现有目标文件/,
     });
     const cleanup = page.getByRole("checkbox", {
-      name: /delete emptied source directories/,
+      name: /删除整理后为空的来源目录/,
     });
     await overwrite.check();
     await expect(execute).toBeDisabled();
@@ -213,7 +350,7 @@ test.describe("manual organize journey", () => {
     await expect(execute).toBeEnabled();
     await execute.click();
     await expect(
-      page.getByRole("heading", { name: "Manual organize execution" }),
+      page.getByRole("heading", { name: "整理执行情况" }),
     ).toBeVisible();
 
     const evidence = await manualEvidence(page);
@@ -236,17 +373,17 @@ test.describe("manual organize journey", () => {
     await page.goto(`/ui-v2/operations/organize/execution/${EXECUTION_ID}`);
     await connect(page, VIEWER_TOKEN);
     await expect(
-      page.getByRole("heading", { name: "Manual organize execution" }),
+      page.getByRole("heading", { name: "整理执行情况" }),
     ).toBeVisible();
     await page.reload();
     // Bearer material is memory-only, so a reload returns to the shared
     // connection boundary; connecting again returns to the same durable route.
     await connect(page, VIEWER_TOKEN);
     await expect(
-      page.getByRole("heading", { name: "Manual organize execution" }),
+      page.getByRole("heading", { name: "整理执行情况" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Open the durable Task" }),
+      page.getByRole("link", { name: "查看关联任务" }),
     ).toBeVisible();
     expect(page.url()).toContain(EXECUTION_ID);
     expect(page.url()).not.toMatch(/token|digest|fingerprint|authorization/i);
@@ -261,6 +398,11 @@ test.describe("manual organize journey", () => {
     await expect(
       page.getByRole("heading", { name: "操作与任务", exact: true }),
     ).toBeVisible();
+    // The task-center entry is the native `新建整理任务` journey start; a
+    // read-only principal is offered neither the old nor the new control.
+    await expect(page.getByRole("link", { name: "新建整理任务" })).toHaveCount(
+      0,
+    );
     await expect(page.getByRole("link", { name: "准备手动整理" })).toHaveCount(
       0,
     );
@@ -290,7 +432,7 @@ test.describe("manual organize journey", () => {
       page.getByText(/could not be understood as the expected contract/i),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Execute selected exact items" }),
+      page.getByRole("button", { name: "确认执行所选条目" }),
     ).toHaveCount(0);
     const rendered = (await page.locator("main").textContent()) ?? "";
     expect(rendered).not.toContain("attacker.example");
@@ -319,7 +461,7 @@ test.describe("manual organize journey", () => {
       page.getByText(/could not be understood as the expected contract/i),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Execute selected exact items" }),
+      page.getByRole("button", { name: "确认执行所选条目" }),
     ).toHaveCount(0);
     // No execute request was ever submitted for this Preview.
     const evidence = await manualEvidence(page);
@@ -343,7 +485,7 @@ test.describe("manual organize journey", () => {
       page.getByText(/could not be understood as the expected contract/i),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Execute selected exact items" }),
+      page.getByRole("button", { name: "确认执行所选条目" }),
     ).toHaveCount(0);
     const evidence = await manualEvidence(page);
     expect(
@@ -364,7 +506,7 @@ test.describe("manual organize journey", () => {
     await connect(page, VIEWER_TOKEN);
 
     await expect(
-      page.getByRole("heading", { name: "Manual organize execution" }),
+      page.getByRole("heading", { name: "整理执行情况" }),
     ).toBeVisible();
     // The bounded finding renders on the execution and on the failed item.
     await expect(
@@ -378,7 +520,7 @@ test.describe("manual organize journey", () => {
       ),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "Open Review & Recovery" }),
+      page.getByRole("link", { name: "打开复核与恢复" }),
     ).toBeVisible();
     // The recovery handoff is a destination, not a mutation: this journey only
     // ever read the execution, never submitted anything. (The evidence merges

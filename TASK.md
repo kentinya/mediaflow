@@ -1,13 +1,13 @@
-# Task 42.2 — Native run detail, progress and operation evidence
+# Task 42.3 — Native live-file organize admission and selected-run return
 
 This Task follows [the development workflow](docs/development-workflow.md) and is subordinate to
 the current [`SLICE.md`](SLICE.md).
 
 ```text
-Task ID: 42.2
+Task ID: 42.3
 Parent Slice: 42
-Status: FIX REQUIRED
-Task Base: cf7099a478a203f3f29ac57ef5b8acc295aadaa9
+Status: IN PROGRESS
+Task Base: c55bb3cef6efa8b51158831f4136d7bc3d5fd490
 Difficulty: High
 Test Level: T4
 Planner / Reviewer: B
@@ -15,227 +15,215 @@ Planner / Reviewer: B
 
 ## Goal
 
-An authenticated operator selects a run in `操作与任务`, understands its actual progress and each
-item's outcome in `任务详情`, inspects its durable plan/results/steps in `操作记录`, and exports the
-eligible task-scoped JSON result package without leaving the native V2 journey. Complete RO-3 and
-its RO-1/RO-7 detail, context and privacy integration; this Task does not complete RO-4–RO-6.
+Complete Slice RO-4 and its RO-1/RO-7 navigation, admission-reconciliation and privacy integration:
+an authenticated operator starts `新建整理任务` in the task center, selects a single or bounded
+multiple eligible live ResourceLibrary files, reviews the existing exact Preview, explicitly
+authorizes execution and returns to the same task center with the admitted run selected. Preserve
+the ordinary Files-originated journey and its return context.
 
 ## Why This Task Exists
 
-At Task Base, the inventory has one linked Job/Task population, historical scope and an exact
-selected-run overview. `OperationsLanding.tsx::RunDetailFacts` still shows aggregate counters and
-links to separate Task/Job pages rather than the reference's complete detail/records journey.
-`TaskDetailPage.tsx` has separately paged items/results and backend lifecycle facts, but lacks
-task-kind-specific reconcilable progress, server item filters, integrated operation evidence/logs
-and native result-package export. `SQLiteTaskRepository.list_items` supports cursors without item
-filters; its status-count helper is not a complete progress/effect projection. Operational logs
-currently page a global population. The existing `PackageExchangeService.export_results` already
-produces bounded, ordered, secret-free task result packages and must remain the export authority.
+At Task Base, `OperationsLanding.tsx` links to `OrganizeNewPage.tsx`, which presents an English
+explanation and generic Files link without passing the chosen ResourceLibrary or operations
+context. The live bounded Files selection, server-held intent, choice, Preview and queued execution
+already exist. `StorageFilesPage.tsx` carries only Files return context through intent/Preview;
+`OrganizePreviewPage.tsx` navigates known admission to the separate execution page rather than the
+selected unified run. Its network-error copy claims nothing was submitted without proving that.
 
-This is one coherent inspect-and-explain journey through the existing task engine. It supplies the
-durable evidence needed by later control/recovery Tasks without implementing those commands or
-creating a new task engine. High/T4 reflects interpretation of partial/uncertain effects, privacy
-of joined evidence/export, consistent repository aggregation and any necessary additive migration.
-Keep the existing bounded read/projection approach; do not add a generic reporting framework or
-one Task per field, tab or command family.
+The next coherent unit is the complete new-task → live files → exact Preview → admitted run journey,
+including its safe failure/return behavior. Reuse these existing surfaces and application services;
+do not build another file browser, task engine, generalized workflow or execution authority.
+High/T4 reflects exact admission, unknown command outcomes, immutable pins and permission isolation.
 
-Previous Task 42.1 B review (completed before replacing this file):
+Previous Task 42.2 B review (completed before replacing TASK.md):
 
 ```text
-Reviewed: f1806d3a13c0ab0538c07749ff82621782d91a24..ac5a43ed89d5d782809569ce5e58aedb8f2b03cb; completion report at cf7099a478a203f3f29ac57ef5b8acc295aadaa9
+Reviewed: cf7099a478a203f3f29ac57ef5b8acc295aadaa9..faabf20dc034c4c8da310928b3f39b0512616da6; completion report at c55bb3cef6efa8b51158831f4136d7bc3d5fd490
 Decision: PASS
 Slice Required Outcomes all satisfied: NO
 Next: NEXT TASK
 ```
 
-B inspected the full actual range and the third correction and independently verified the former
-P1 through both real resource/media Files command APIs: new runs retain historical library/scope
-and remain searchable. Admission display evidence commits with the Task; authority/execution is
-unchanged. AC-T1–AC-T8 passed. Task 42.1's original contract/report remains in Git at the report SHA;
-B's full final review copy is `/tmp/mediaflow-b-task42-1-pass.md`.
+B audited the actual full range and both correction checkpoints against AC-T1–AC-T8. The former
+Manual explanation and cross-run log blockers are resolved through exact durable links; the final
+standalone correction reuses existing checkpoint/Result/PipelineEvidence, preserving honest Manual
+plan unavailability. B reran the unchanged legal production Local Storage processing-chain repro:
+CREATE_DIRECTORY/MOVE, created directories, C identity/A downstream policies and cleanup are visible
+in the native browser; all inspection requests are GET. No execution authority or second persistence
+was added by this correction. Original dirty Task review is preserved at
+`/tmp/mediaflow-b-task42-2-before-pass.md`; final Task/review copy is
+`/tmp/mediaflow-b-task42-2-pass.md`. Developer's complete report remains in Git at the report SHA.
 
-B independent evidence (logs `/tmp/mediaflow-b-r4-*`): Python full regression Ran 2060, OK
-(skipped=7; 2053 passed); direct commands 60, transfers 100, inventory 39 and related integration/
-release/migration/security 121 passed. Web original-command serial reruns passed 869 full / 453
-focused; real Python-backed browser serial rerun passed 6. Docker release-security passed with
-isolated daemon-visible TMPDIR, its resources cleaned; wheel smoke passed at schema 41. Python/Web
-quality/build, governance, two example configs, Base..Head whitespace/private/dependency checks and
-unchanged reference checksum passed. No implementation file was edited by B.
+Independent B evidence (logs `/tmp/mediaflow-b42-2-r3-*`): Python full Ran 2113, OK (7 skipped;
+2106 passed); all 13 exact focused commands passed, 432 total; detail/plan/log suites 53 passed;
+release/security/migration/preflight 19 passed. Web full 61 files / 939 passed; original focused command serial rerun 33 files / 521 passed.
+Real Python browser 12/12 passed, covering producer/Worker linkage, Manual and standalone durable
+explanations/export/refresh/restart. Docker release-security passed using an isolated daemon-visible
+TMPDIR and cleaned its resources; wheel smoke passed, schema 42. Python/Web quality/build, two
+example config validations, governance, whitespace/manifest/private/dependency checks and unchanged
+reference checksum passed. The 7 pre-existing isolated Storage real-service/endurance skips remain
+explicit; no required local gate was unavailable. Existing chunk/SQLite ResourceWarnings remain.
 
-Preserved failure facts: first parallel Web runs were 865 passed / 4 failed full and 449 passed /
-4 failed focused, followed by the unchanged complete serial passes above. First real-browser run
-was 5 passed / 1 failed due to Playwright trace/artifact ENOENT from B's concurrent invocations
-sharing output, then the original six cases passed serially. Required fake browser four-spec run
-remained 58 passed / 2 failed (`deep-link.spec.ts:209` explicit route choice and `:479` V1 handoff).
-B previously independently exported/built the complete immutable Task Base and reproduced exactly
-these two errors (12 passed / 2 failed), log `/tmp/mediaflow-b-r3-base-deeplink.log`; original specs
-and package/lockfile were unchanged. These two are proven pre-existing/unrelated, not claimed PASS.
-No assertions, skips or timeouts were changed.
+Preserved failures: the first overlapping Web focused run was 520 passed / 1 failed (Automation
+heading timeout), followed by unchanged complete serial passes above. Required fake browser run
+remains 63 passed / 2 failed, deep-link.spec.ts:209 and :479. B's prior accepted-code run at ac5a43e
+(which differs from this Task Base only in TASK.md) was 58 passed / these same 2 failed
+(`/tmp/mediaflow-b-r4-e2e.log`); the clean earlier Base export reproduced them independently
+(`/tmp/mediaflow-b-r3-base-deeplink.log`, 12 passed / 2 failed). These are proven pre-existing,
+unrelated failures, never labelled PASS. Their spec/package/lockfile remain unchanged. No assertions,
+skips or timeouts were relaxed. All Developer intermediate failures remain in its Git report. An intermediate B governance call
+after setting the completed Task header to PASS refused that unsupported active-Task status;
+archive/replacement with PLANNED resolves the transition without changing the guard or product.
+Final governance below is evaluated against the new actual active Task.
 
-After PASS B reevaluated RO-1–RO-7: inventory/selection, unified current run/query/historical identity
-and the read/privacy portion are delivered; RO-3 remains incomplete, RO-4's organize entry still
-has an explanation/link gap, RO-5 lacks non-transfer safe queued Web Continue, and RO-6 lacks native
-task-linked decisions/failed-analysis recovery. RO-7's future journey integration/restart proof is
-still open. No Contract question awaits A; Slice Final is not authorized yet. The next coherent
-unit is RO-3 rather than another inventory fix. Three correction rounds reused one bounded display
-context/schema and existing authority, with no new engine; later Tasks must retain that simplicity.
-
+After PASS B reevaluated all RO-1–RO-7: native inventory/detail/navigation, unified query/history and
+RO-3 explanation/export are delivered; RO-4 still has the new-entry/return gap, RO-5 lacks safe queued
+native Continue and RO-6 lacks native task-linked decisions/failed-analysis recovery. RO-7's read/
+privacy integration is delivered; later admission/control/recovery integration is still open.
+No Contract issue awaits A. Slice remains ACTIVE, so Slice Final is not applicable. The two
+correction rounds retained the bounded read boundary and existing execution authority; the next
+Task likewise reuses complete existing behaviors. No production implementation file or unrelated
+user image was edited by B.
 
 ## Implementation Scope
 
 ```text
-Domain read/effect contracts → bounded Persistence queries and explicit durable links
-→ shared Application projection/export → authenticated typed API → V2 panel/router/query → Tests
+Existing live-source/intent/Preview/admission contracts → bounded durable linkage/reconciliation
+→ shared Application/API behavior → Files and Operations routing/forms → Tests
 ```
 
 ### Operator journey
 
-- **Entry:** select an inventory row or open a supported run/Task/Job detail link in the shared shell.
-- **Visible state:** historical identity, queue/Worker conditions, aggregate state, pipeline stages,
-  known/unknown totals, reconciled item dispositions, durable effects and bounded explanations.
-- **Action:** switch `任务详情` / `操作记录`, filter/page items and records independently, inspect one
-  item's evidence, refresh and explicitly download the eligible task-scoped JSON result package.
-- **Success:** the selected run and its items/results remain traceable before/after linkage,
-  refresh/restart and Active changes; close/back returns to the same bounded inventory context.
-- **Failure:** no Task yet, legacy missing evidence, unknown totals/effects, denied permission,
-  unavailable/malformed/stale reads, missing pin and export failure stay distinct and actionable.
-- **Recovery:** refresh the affected read, reset an invalid cursor/filter, restore the named
-  prerequisite or follow an existing safe evidence/configuration destination. Reading/export never
-  admits, continues, executes or retries media work; unknown effects remain investigation-only.
+- **Entry:** `新建整理任务` from `操作与任务`, with optional existing ResourceLibrary scope;
+  direct new-task URLs and ordinary Files organize remain supported.
+- **Visible state:** actual enabled ResourceLibrary and live bounded directory/file selection,
+  eligibility and limits, pinned intent/choices, exact Preview targets/operations/attachments/
+  conflicts and destructive implications; admission/Worker waiting and eventual item outcomes.
+- **Action:** select eligible live files, supply only necessary human choices, review Preview,
+  explicitly execute the exact selected candidates, or cancel/back to preserved bounded context.
+- **Success:** known durable admission resolves its exact unified run, selected in the task center
+  before or after Worker linkage; its independent items/results are inspectable without raw tokens.
+- **Failure:** missing setup/policy/permission, Storage read failure, invalid selection, stale source/
+  intent/Preview, conflict and failed or unknown submission remain distinct; no empty-success claim.
+- **Recovery:** retain safe selection/input or the known durable intent/Preview/execution; refresh
+  prerequisites or exact durable evidence, explicitly revise/re-Preview when needed, and reconcile
+  unknown admission before allowing another command. No automatic submission or mutation replay.
 
 ### Required behavior and boundaries
 
-1. Extend the selected-run read boundary using persisted Job→Task/manual-execution/transfer links,
-   never filename/time matching. Pending or failed pre-Task admissions have truthful queue/detail
-   state and explicit item/evidence unavailability. Standalone Tasks and both library kinds' direct
-   commands/transfers remain inspectable. Follow linkage without losing selected run/list context.
-2. Define task-kind-specific progress from durable records. Separate aggregate state, pipeline stage,
-   item disposition and Storage outcome. Unknown discovery totals remain indeterminate; known
-   populations reconcile mutually exclusive pending/active/waiting/success/skipped/failed-partial/
-   ignored/cancelled dispositions as applicable. Explain the unit and accounting basis. Keep scan
-   errors and attachment/operation steps separate from primary-item counts. Analysis/Preview
-   completion is not organize success; no invented current file, ETA or success percentage.
-3. Fetch bounded independently paged/filterable items and operation records on the server. Reuse
-   deterministic ordering and cursor conventions; bind new cursors to their exact run/task,
-   submitted filters and principal context. Counts/aggregates cover the authorized population,
-   not just the fetched page, and facts presented as one snapshot have a consistent read basis.
-   Concurrent transitions and reads cannot fabricate progress or drop successful siblings.
-4. Compose persisted item checkpoint, plan/Preview, Result and operation-step evidence through exact
-   links. Explain available recognition/metadata identity, policies, target, operation/conflict,
-   completed/pending/failed steps, cleanup and effect certainty. Label genuine legacy gaps as
-   unavailable. Reuse existing stored analysis and redaction; never re-run Provider/planning/Storage
-   to reconstruct history or use current Active as a historical fallback.
-5. Query task-linked operational logs and bounded related persisted control/recovery audit evidence
-   on the server; do not fetch the global collection and filter it in the browser or infer a link
-   from text. Result/checkpoint truth remains independent of log presence. Existing global log,
-   audit and recovery APIs remain compatible; missing old linkage is explicit unavailable evidence.
-6. Integrate the existing result export behavior into the selected native detail. Server resolves
-   the exact linked Task; package ordering, redaction, maximum limits, schema/digest and truncation
-   remain truthful. Clearly label a bounded/truncated download. Missing export capability/evidence
-   has a safe next action; a failed export never becomes an empty successful download.
-7. Deliver reference-aligned Chinese `任务详情` / `操作记录` in the current right panel and complete
-   narrow-screen detail, with keyboard/focus/return behavior. Preserve list filters, cursors,
-   selection, tab and bounded item context through history, refresh and authentication continuation.
-   Strict models reject malformed data; each failed read retains its own stale/unavailable state.
-   Reuse bounded active/terminal/hidden-page polling and clear principal-owned data on auth change.
-8. Preserve existing backend-advertised control paths and compatibility detail links. It is acceptable
-   to retain existing controls or their safe destinations during this Task; no new Continue,
-   Recognition/Metadata/Classification/conflict decision or failed-item admission is authorized.
-   Explain durable blockers/effects from existing services without promising later capabilities.
+1. Replace the explanation-only entry with a working native bounded selection journey. Reusing
+   the existing ResourceLibrary Files route is preferred and explicitly allowed by RO-4. Preserve
+   the task-center filters/selected run/detail state through validated bounded return context.
+   The selected ResourceLibrary is meaningful; unavailable/deleted scope offers a safe choice.
+   MediaLibrary remains a destination/browser, never an organize source.
+2. Reuse live Storage/ResourceLibrary admission and eligibility for single/bounded multi-file
+   selection. Server resolves SourceIdentity and RecognitionType-bound policies; a FileIndex row,
+   client path or frontend eligibility flag never authorizes physical selection or execution.
+   Preserve independent choices and explain refusals without losing unaffected input.
+3. Integrate the existing intent/choice/Preview/confirm surfaces into the Chinese native journey.
+   Show exact target, operation, attachments, conflicts and applicable overwrite/source-cleanup
+   implications. Preview and choice-only actions remain zero-mutation. No unnecessary repeated
+   confirmation, raw authority-token entry, CLI or V1 fallback for this ordinary journey.
+4. Explicit execute submits only the reviewed selection and server-held exact authority. Resolve
+   known admission to the durable run through existing execution/Job/Task links; queue waiting is
+   visible and does not require Task creation first. Preserve list context while selecting the
+   admitted run. Files-originated users retain a meaningful return to their library/directory.
+5. Treat transport/malformed/lost responses as unknown until exact durable evidence proves the
+   outcome. Reuse existing exact admission-equivalence checks and bounded persisted relations;
+   any necessary read projection/correlation must bind principal, Preview, item set, versions,
+   pin and destructive permissions, and cannot admit work or mint/reissue authority. Do not match
+   by filenames, time, current Active or merely overlapping selections. If exact reconciliation
+   is unavailable, explain the uncertainty and retain investigation actions without resubmission.
+6. Preserve selection/input on known refusal and keep accepted intent/Preview/execution after
+   refresh, auth continuation and process restart. Permission/principal changes clear owned forms,
+   selections and caches; return URLs contain no secrets, host roots or authority material. Stale
+   configuration/source requires the existing safe refresh/re-Preview path, not silent repinning.
+7. Keep keyboard/focus/back and narrow-screen behavior usable. Failed reads cannot authorize
+   commands. Preserve Scan/Preview, inventory/detail/export, both library kinds' Files/direct
+   commands/transfers, existing control paths, Rules/Settings return, Automation and Notifications.
 
-Frozen: Slice Contract/Base, Roadmap, canonical requirements/Product Experience and reference images;
-pipeline/rule semantics, physical source/Preview/execution authority, grants/tickets, queue/Worker
-ownership, leases/fences, Storage adapters and OrganizerExecutor mutation behavior. Necessary
-additive evidence/query/index persistence may be added only within this read journey, preserving
-old pins/results/checkpoints/authority and never maintaining a second authoritative lifecycle.
+Frozen: Slice Contract/Base, Roadmap, canonical requirements, Product Experience and reference
+images; pipeline/rule semantics, physical source authority, policy/type mapping, authorization
+consumption/destructive permissions, Worker ownership/leases/fences, Storage adapters and
+OrganizerExecutor mutation behavior. Use existing persistence. A minimal compatible additive
+link/correlation is permitted only if required for this exact admission/reconciliation journey;
+it is never a second lifecycle or execution authority.
 
 ## Acceptance Criteria
 
-- [ ] **AC-T1 — Native exact detail:** selecting or deep-opening a run yields `任务详情` /
-      `操作记录` in the existing shell, including pre-Task, linked, standalone and both-library
-      work. Exact durable links survive Job→Task linkage and return/navigation; no manual joins.
-- [ ] **AC-T2 — Reconcilable progress:** legal production Scan/Preview/Organize, direct commands,
-      transfer and recovery-attempt records use their actual durable accounting basis. Beyond one
-      page, known primary-item disposition totals reconcile; unknown totals are indeterminate.
-      Concurrent active stages, waiting/ignored/skipped/partial/uncertain states, independent scan
-      errors and attachments never become fabricated success or a universal completed-items ratio.
-- [ ] **AC-T3 — Bounded independent queries:** item/record filters and cursor paging operate on the
-      server, reject invalid/cross-run/filter/principal cursors and preserve siblings. Summary and
-      presented totals remain page-independent and consistent under concurrent updates. No unbounded
-      materialization, per-row Active resolution or browser merging of truncated collections.
-- [ ] **AC-T4 — Durable explanations:** one item's available identity/policies/plan/result/steps,
-      conflict/cleanup/effect certainty and exactly linked audit/log evidence are inspectable.
-      Absent logs cannot erase a Result; legacy unavailable evidence is not invented. Restart,
-      missing pin and Active rename/delete/root changes do not reinterpret known history.
-- [ ] **AC-T5 — Scoped truthful export:** the native action downloads the existing eligible linked
-      Task's secret-free JSON package, with truthful limit/order/truncation and verified package
-      contract. Pre-Task/no-results/unavailable/denied/malformed/export failures are safe and visible.
-- [ ] **AC-T6 — Complete presentation/recovery:** Chinese tabs, narrow/keyboard/focus, closed detail
-      on entry, history/return, refresh/auth continuation and bounded polling preserve context.
-      Loading, empty, stale, malformed, 401/403 and independent read failures offer meaningful next
-      actions. A successful sibling stays visible when another item is blocked; unknown effects
-      remain investigation-only. Existing Scan/Preview/Files/Task/Job/Automation links still work.
-- [ ] **AC-T7 — Read safety/compatibility:** reads/filter/refresh/export create no media work, invoke
-      no Provider or media Storage operations, backfill no historical state and grant no authority.
-      Backend RBAC/redaction and cache isolation protect all joined paths, errors, logs and export.
-      Existing control, retry/continuation, retired endpoints and C identity invariants survive.
-- [ ] **AC-T8 — Reviewable tested delivery:** assigned T4 evidence, real Python-backed browser,
-      package/static serving and any affected compatible migration pass with honest totals/skips/
-      unavailable results. No private config, credentials, reference changes, unrelated files,
-      removed coverage, weakened assertions or hidden skips enter the checkpoint.
+- [ ] **AC-T1 — Complete new-task entry:** task-center new organize starts actual bounded live
+      ResourceLibrary selection, carries valid current scope/return context, and works from direct
+      URLs. Single/multiple eligible files reach existing intent/Preview without a generic link gap.
+- [ ] **AC-T2 — Exact explained Preview:** server-derived identity, C identity under A downstream
+      policies, choices, targets, operations, attachments and conflicts remain correct. Destructive
+      permission is explicit only where applicable. Read/choice/Preview performs zero media mutation.
+- [ ] **AC-T3 — Selected durable run:** one explicit exact execution admits at most one equivalent
+      execution; known admission returns to its exact selected unified run, including pre-Task/Worker
+      waiting and later linkage/results. Narrower/overlapping/differently bound submissions cannot
+      resolve to unrelated work. No raw execution tokens or avoidable CLI/V1 handoff.
+- [ ] **AC-T4 — Safe actionable failure:** missing setup/policy/permission, read failure, invalid/
+      stale selection or Preview and conflicts preserve safe input/durable evidence and identify
+      a meaningful next action. Unknown/lost/malformed admission responses never claim no submission,
+      auto-repeat, silently broaden scope or authorize another execution before exact reconciliation.
+- [ ] **AC-T5 — Context and privacy:** cancel/back, browser history, refresh/auth continuation and
+      restart preserve the appropriate bounded Operations/Files context and durable work. Forms,
+      selection and caches clear across principals; malformed return context fails safely; no
+      secret, physical root or authority appears in URLs, errors, DOM or exports.
+- [ ] **AC-T6 — Compatibility and safety:** existing Files-originated organize, Scan/Preview,
+      inventory/detail/records/export and direct commands/transfers remain usable. Backend RBAC,
+      source revalidation, immutable pins, exact authority, duplicate/fencing/Worker gates and
+      OrganizerExecutor-only mutation remain unchanged. No uncertain replay or operation fallback.
+- [ ] **AC-T7 — Production journey proof:** real Python-backed browser starts from the new task
+      entry, selects temporary live files, creates/reviews Preview, explicitly admits execution,
+      inspects the selected run and completes through the real Worker. Verify return/auth/restart
+      and unknown-admission reconciliation using actual production admission/services and legal
+      configuration; fixture-only successful navigation is insufficient.
+- [ ] **AC-T8 — Reviewable T4 checkpoint:** required focused/full, quality/security/package and
+      affected migration gates have honest commands/totals/skips/failures/unavailable results.
+      No private config/credentials, reference edits, unrelated changes or weakened coverage.
 
 ## Required Tests
 
-Use `.venv` or equivalent declared dependencies; Web commands run from `web/`. Tests use temporary
-SQLite/storage and fake/local dependencies, never production credentials/media or remote services.
-Record every actual attempt, command, failure, total, skip and unavailable gate. Preserve baseline
-failures only with real independent attribution; do not relax assertions or hide skips.
+Use temporary SQLite/storage and synthetic/local Provider dependencies. Never use real credentials
+or user media. Record every attempt and its actual result; unchanged serial reruns are allowed,
+but do not hide failures, weaken assertions/timeouts or label unavailable gates PASS.
 
-### Focused and affected integration
+### Focused and integration
 
-Add `tests/test_operations_run_detail.py` (or an explicitly reported equivalent coherent suite)
-covering AC-T1–AC-T5/AC-T7 through real SQLite/Application/API: legal producer/Worker links, pre-Task
-and missing evidence, all current task-kind accounting, multiple pages, filtered item counts,
-concurrent updates, principal/run/filter cursor binding, exact logs/audit linkage, result/export
-truth, restart/pins, redaction and zero read side effects. Additive persistence requires a real
-Task-Base schema fixture with unchanged pins/results/ownership/authority and fail-closed upgrades.
+Extend existing suites, adding a coherent new-entry/admission suite only when needed. Cover legal
+live selection with/without FileIndex, bounded/mixed eligibility, policies/C identity, exact choice/
+Preview and execution, stale source/Active/pins, RBAC, concurrent/duplicate/lost-response admission,
+exact principal/selection/permission reconciliation, pending Job→Task linkage, Worker wait/restart,
+zero mutation before explicit execution, unknown effects and preserved independent results.
 
 ```sh
-.venv/bin/python -m unittest discover -s tests -p test_operations_run_detail.py
-.venv/bin/python -m unittest discover -s tests -p test_operations_run_inventory.py
-.venv/bin/python -m unittest discover -s tests -p test_operations_workspace.py
-.venv/bin/python -m unittest discover -s tests -p test_task_persistence.py
-.venv/bin/python -m unittest discover -s tests -p test_processing_worker_readiness.py
-.venv/bin/python -m unittest discover -s tests -p test_v2_manual_organize.py
-.venv/bin/python -m unittest discover -s tests -p test_direct_file_operations.py
-.venv/bin/python -m unittest discover -s tests -p test_direct_file_transfers.py
-.venv/bin/python -m unittest discover -s tests -p test_operational_logging.py
-.venv/bin/python -m unittest discover -s tests -p test_configuration_package_exchange.py
-.venv/bin/python -m unittest discover -s tests -p test_recovery_continuation.py
-.venv/bin/python -m unittest discover -s tests -p test_recovery_batch.py
-.venv/bin/python -m unittest discover -s tests -p test_api_security.py
+.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_manual_operations_contract
+.venv/bin/python -m unittest tests.test_operations_workspace tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_processing_worker_readiness
+.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_file_catalog_api tests.test_api_security
 ```
 
-Web model/query/router/component coverage must exercise independent tabs/pages/filters/failures,
-truthful progress/effects, export, bounded polling, principal clearing and preserved return context.
-Extend the existing real-Python browser harness for a real supported producer/Worker run→selected
-detail→item/result evidence→scoped JSON download and history/restart, including partial/unknown
-effects and zero side effects on reads. Fake responses supplement rather than replace this proof.
+Web models/API/router/forms cover new entry through admission/selected run, bounded validated return
+context, multi-file choices, independent refusal, malformed/401/403 responses, unknown admission,
+no automatic repeat, permission/principal change, keyboard/narrow/history and compatibility.
+
+From `web/`:
 
 ```sh
-npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes
-npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts
+npm run test -- --run src/entities/operations src/features/operations src/features/library src/shared/api src/shared/navigation src/routes
+npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/deep-link.spec.ts
 npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
 ```
 
-If adding a separate real detail spec, run it under the same Python configuration and report the
-exact command. Run Playwright invocations sequentially because they share the artifact directory.
+Extend the real Python harness/spec above to drive the new-task Files journey, not only create work
+through a harness control route. A separate real spec is allowed under the same isolated boundary;
+report its exact command. Run all Playwright invocations sequentially to preserve shared artifacts.
+The two Base-proven deep-link failures remain reportable pre-existing failures unless this Task's
+changes actually affect them; no automatic waiver for any new failure.
 
-### T4 regression, quality, safety and packaging
+### Full, quality, safety and packaging
 
 ```sh
 python3 scripts/check_governance.py
-.venv/bin/python scripts/docker_release_security_smoke_test.py
 .venv/bin/python -m unittest discover -s tests
 .venv/bin/ruff format --check .
 .venv/bin/ruff check .
@@ -243,23 +231,21 @@ python3 scripts/check_governance.py
 .venv/bin/python -m pip check
 .venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate
 .venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate
-.venv/bin/python -m unittest discover -s tests -p test_release_security.py
-.venv/bin/python -m unittest discover -s tests -p test_release_validation.py
-.venv/bin/python -m unittest discover -s tests -p test_migration_rehearsal.py
-.venv/bin/python -m unittest discover -s tests -p test_upgrade_preflight.py
+.venv/bin/python -m unittest tests.test_release_security tests.test_release_validation tests.test_migration_rehearsal tests.test_upgrade_preflight
+.venv/bin/python scripts/docker_release_security_smoke_test.py
 git diff --check
-git diff --check cf7099a478a203f3f29ac57ef5b8acc295aadaa9
+git diff --check c55bb3cef6efa8b51158831f4136d7bc3d5fd490
 sha256sum docs/pics/操作与任务.png
 git check-ignore config/alist.json
 git ls-files config/alist.json
 rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml
 ```
 
-Docker gate may use an isolated daemon-visible TMPDIR when required by the environment; record the
-actual invocation/result and remove only gate-owned temporary resources. Unavailable is not PASS.
-Reference SHA-256 stays `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`.
-Private config must stay ignored/untracked/unstaged; forbidden-dependency search returns no matches.
-Audit complete Base..Head/staged manifests without printing private configuration.
+Docker may use an isolated daemon-visible TMPDIR; report the actual invocation and clean only
+gate-owned resources. Build a wheel with `.venv/bin/python -m pip wheel . --no-deps
+--no-build-isolation -w <temporary-output>` and run `.venv/bin/python scripts/wheel_smoke_test.py
+<built-wheel>`. Any additive persistence requires a real Task-Base schema fixture preserving pins,
+existing admissions/results/ownership/authority and fail-closed incompatible/failed upgrades.
 
 From `web/`:
 
@@ -271,117 +257,83 @@ npm run format:check
 npm run build
 ```
 
-Build a wheel into an isolated temporary output directory with
-`.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w <temporary-output>` and run
-`.venv/bin/python scripts/wheel_smoke_test.py <built-wheel>`. Keep package/static and current schema
-truth. Do not copy production config or modify reference/user files for a gate.
+Reference SHA-256 remains `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`.
+Private config stays ignored/untracked/unstaged; forbidden dependency search has no matches. Audit
+the complete Base..Head/staged manifest without printing private configuration.
 
 ## Non-goals
 
-- Work outside Slice 42, material Contract/architecture changes, Slice closure or next Slice.
-- RO-4's new organize-entry journey, RO-5's new queued Continue/control authority and RO-6's new
-  native review/failed-analysis commands. Preserve existing paths; report these remaining outcomes.
-- Any retired direct-file retry/re-recognition/rematch/re-plan endpoint, automatic replay, new
-  Provider/Storage operation, destructive authority, task engine or scheduler.
-- Reconstructing legacy absent plans by running current policy/Provider/Storage, history deletion,
-  universal rollback, required ETA, WebSocket/SSE, posters, dashboard/Automation/Notifications redesign.
-- Optional proof, wording-only work or unrelated refactors promoted to separate Tasks.
+- Work outside Slice 42; changing Contract/Base, Roadmap, canonical requirements/reference or closing
+  the Slice; implementing the next Slice.
+- RO-5's new async Continue/control authority and RO-6's task-linked decisions/failed-analysis
+  recovery commands. Existing choices necessary for a new organize intent stay in this Task.
+- New file browser/task engine/providers/operations, unbounded or MediaLibrary source organization,
+  scheduling, history deletion, bulk cross-task recovery, universal rollback, SSE/WebSocket or V1 retirement.
+- Recreating consumed execution authority, changed-plan autoexecution, uncertain mutation replay,
+  silent fallback, unrelated refactors, wording-only or optional-proof cleanup.
 
 ## Developer Completion Report
 
 ### Changed Files
 
-- Backend and persisted run-detail path: `mediaflow/application/automation.py`, `mediaflow/application/media_organizer.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/domain/operations_run.py`, `mediaflow/domain/task_persistence.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/pagination.py`, `mediaflow/interfaces/service_api.py`.
-- Regression coverage: `tests/test_configuration_classification.py`, `tests/test_configuration_destination.py`, `tests/test_configuration_destination_activation.py`, `tests/test_configuration_destination_precheck.py`, `tests/test_configuration_organize.py`, `tests/test_operations_run_detail.py`, `tests/test_operations_run_detail_log_isolation.py`, `tests/test_operations_run_detail_plan_evidence.py`, `tests/test_resident_correction.py`.
-- Browser harness: `scripts/operations_inventory_harness.py`, `web/tests/e2e/fake-server.mjs`, `web/tests/e2e/operations.spec.ts`, `web/tests/e2e/operations-inventory.python.spec.ts`.
-- Web run-detail and navigation: `web/src/entities/operations/preview.ts`, `run-detail.ts`, `run-detail.test.ts`, `run.ts`, `task.ts`; `web/src/features/operations/OperationsInventory.test.tsx`, `OperationsLanding.tsx`, `OperationsRouter.test.tsx`, `RunDetailTabs.tsx`, `RunDetailTabs.test.tsx`, `TaskDetailPage.tsx`, `run-detail-query.ts`, `run-detail-state.ts`, `run-detail-state.test.ts`; `web/src/shared/api/api-client.ts`, `operations-api.test.ts`; `web/src/shared/navigation/destination-model.ts`, `destination-model.test.ts`; `web/src/shared/ui/styles.css`.
-- This report: `TASK.md`.
+- Backend admission evidence: `mediaflow/application/manual_organize_execution.py`, `mediaflow/interfaces/service_api.py`.
+- Real browser harness and backend coverage: `scripts/operations_inventory_harness.py`, `tests/test_v2_manual_organize.py`.
+- Web journey and API/models: `web/src/entities/operations/organize.ts`, `web/src/shared/api/api-client.ts`, `web/src/features/library/StorageFilesPage.tsx`, `web/src/features/operations/OperationsLanding.tsx`, `web/src/features/operations/OrganizeExecutionPage.tsx`, `web/src/features/operations/OrganizeIntentPage.tsx`, `web/src/features/operations/OrganizeNewPage.tsx`, `web/src/features/operations/OrganizePreviewPage.tsx`.
+- Navigation and Web tests: `web/src/shared/navigation/destination-model.ts`, `web/src/shared/navigation/destination-model.test.ts`, `web/src/shared/navigation/operations-return.ts`, `web/src/shared/navigation/operations-return.test.ts`, `web/src/features/operations/OrganizeRouter.test.tsx`, `web/src/routes/router.test.tsx`, `web/tests/e2e/deep-link.spec.ts`, `web/tests/e2e/library-files.spec.ts`, `web/tests/e2e/manual-operations.spec.ts`, `web/tests/e2e/manual-organize.spec.ts`, `web/tests/e2e/operations-inventory.python.spec.ts`, `web/tests/fake-server.mjs`.
+- This Task’s Developer Completion Report in `TASK.md`.
 
 ### Implemented
 
-- Added the persisted operations run/detail journey across the application service, API, SQLite, Web query/state and detail surfaces, including bounded pagination/filtering, per-item outcomes, logs, audit/result evidence, scoped export and restart-persistent history. Reads use persisted run/task evidence and do not invoke providers, planners or media Storage.
-- Kept plan evidence tied to the exact persisted Manual execution link and captured plan. Where no such link exists, the UI states that the reviewed Manual plan is unavailable.
-- Fixed B's blocker for standalone production execution: captured evidence arrays and objects render as bounded values; Result rows and the native evidence view now expose persisted completed operations and uncertain effects from checkpoint/Result data even when Manual plan evidence is unavailable. The real browser proof exercises the existing `PersistentTaskCoordinator → MediaOrganizerService → OrganizerExecutor` path against temporary Local Storage and synthetic metadata, then verifies evidence after refresh and restart.
-- Kept operational logs joined only through persisted plan and Task/Job linkage. RecognitionType C remains C when Naming and Classification use policy A. No migration, replay, new persistence, or production-service dependency was added.
+- Added a bounded read-only admission reconciliation endpoint. A `known` result requires the exact principal, Preview, selected item set, intent version, immutable configuration pin, per-item versions/fingerprints, and destructive permissions from the consumed persisted authority. The read does not admit work, mint authority, or mutate Storage.
+- Replaced the task-center explanation link with a Chinese native `新建整理任务` journey through enabled ResourceLibrary choice, live Files selection, the existing intent and exact Preview, explicit execution, and the exact selected unified run. Validated bounded Operations and Files return context survives navigation and authentication continuation.
+- Unknown, lost, malformed and 5xx Execute responses stay locked until the exact durable read resolves them. A Preview reads its bounded durable execution history before exposing Execute, so reloading after an ambiguous response cannot erase the lock; existing work is inspectable and a failed history read keeps Execute closed.
+- Localized the manual organize intent, Preview and execution surfaces, including the operation and destructive-effect labels and action-oriented recovery copy.
+- Extended the real Python harness and browser spec to select a temporary live source file from the new task entry, lose the actual production admission response, reconcile it, inspect the selected run, complete it with the real Worker, and verify durable C identity with A downstream policies after restart.
 
 ### Tests and Results
 
-- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2,113 tests, 7 skipped. `.venv/bin/python -m unittest tests.test_operations_run_detail tests.test_operations_run_detail_plan_evidence tests.test_operations_run_detail_log_isolation` — **PASS**, 53 tests.
-- All 13 required focused Python discovery commands — **PASS**: `test_operations_run_detail.py` (36), `test_operations_run_inventory.py` (39), `test_operations_workspace.py` (20), `test_task_persistence.py` (13), `test_processing_worker_readiness.py` (19), `test_v2_manual_organize.py` (37), `test_direct_file_operations.py` (60), `test_direct_file_transfers.py` (100), `test_operational_logging.py` (6), `test_configuration_package_exchange.py` (13), `test_recovery_continuation.py` (28), `test_recovery_batch.py` (48), and `test_api_security.py` (13). Each was rerun serially on the correction source and returned exit 0. The previously recorded per-suite counts total 432; the full suite is the final aggregate gate.
-- `.venv/bin/python -m unittest tests.test_manual_operations_contract.ManualOperationsContractTests.test_real_api_documents_match_the_frontend_fixture` — **FAIL** on an intermediate implementation that changed shared Manual API documents; after scoping the projection to run-item evidence, the same test **PASS**. The final full Python suite passed.
-- Web focused command `npm run test -- --run src/entities/operations src/features/operations src/shared/api src/routes` first passed at 33 files / 518 tests and passed again on the final source at 33 files / 521 tests. Final changed-model/component command `npm run test -- --run src/entities/operations/run-detail.test.ts src/features/operations/RunDetailTabs.test.tsx` — **PASS**, 2 files / 57 tests. `npm run test -- --run` passed at 61 files / 936 tests before the correction and at 61 files / 939 tests on the final source. An overlapping full run had one Storage page loading timeout (938 passed); the isolated case passed. An earlier interrupted overlapping run also exposed one Manual Organize intent timeout and two Storage page assertions; the isolated intent case and final serial suites passed.
-- `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run build` — **PASS**. The build reports the existing large JavaScript chunk warning.
-- Fake-response browser command `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/deep-link.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/manual-organize.spec.ts` — **63 PASS / 2 FAIL**. The failures are `deep-link.spec.ts:209` and `:479`; B independently reproduced both at Task Base and recorded them as pre-existing/unrelated. The real-Python command `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` passed 11/11 on the pre-correction proof and final **PASS**, 12/12, with the standalone evidence case. During the earlier harness work, two startup attempts failed and a Worker snapshot mismatch produced 10/11; after those fixes the prior proof passed 11/11. Correction attempts first used stale `web/dist`, then failed 11/12 on duplicate cleanup and source-path locators; after rebuilding and narrowing selectors, the final run passed 12/12, including visible CREATE_DIRECTORY/MOVE evidence, read-only inspection, refresh and restart.
-- `python3 scripts/check_governance.py`, `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/python -m compileall -q mediaflow tests scripts`, `.venv/bin/python -m pip check`, and both required `config validate` commands — **PASS**. Release-security (6), release-validation (3), migration-rehearsal (6) and upgrade-preflight (4) suites — **PASS**.
-- Docker release-security smoke test — the default invocation first failed its health-check timeout; rerunning with an isolated daemon-visible `TMPDIR` — **PASS** and cleaned its task-owned containers/context. Wheel build and `wheel_smoke_test.py` — **PASS**, schema 42, no migration required; temporary wheel output was removed.
-- `git diff --check` and `git diff --check cf7099a478a203f3f29ac57ef5b8acc295aadaa9` — **PASS** before this report update; rechecked below at checkpoint. Reference image SHA-256 matches `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`. `config/alist.json` is ignored, untracked and unstaged. `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` found no matches. No external-service gate was needed or unavailable.
+- `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_manual_operations_contract` — **PASS**, 103 tests.
+- `.venv/bin/python -m unittest tests.test_operations_workspace tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_processing_worker_readiness` — **PASS**, 114 tests.
+- `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_file_catalog_api tests.test_api_security` — **PASS**, 176 tests.
+- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2119 tests, 7 skips (existing isolated Storage real-service/endurance cases).
+- `.venv/bin/ruff format --check .` — **PASS**, 335 files formatted. `.venv/bin/ruff check .` — **PASS**. `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**. `.venv/bin/python -m pip check` — **PASS**.
+- `python3 scripts/check_governance.py` — **PASS**. `.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate` and `.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate` — **PASS**.
+- `.venv/bin/python -m unittest tests.test_release_security tests.test_release_validation tests.test_migration_rehearsal tests.test_upgrade_preflight` — **PASS**, 19 tests.
+- `TMPDIR=/tmp/mediaflow-task42-3-docker-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task42.3-developer-local` — **PASS**. The isolated Compose stack, unique image and temporary directory were removed after the run.
+- `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task42-3-wheel-output` and `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task42-3-wheel-output/mediaflow-2.0.0.dev0-py3-none-any.whl` — **PASS**. Temporary wheel output was removed after the smoke test.
+- From `web/`, `npm run test -- --run src/entities/operations src/features/operations src/features/library src/shared/api src/shared/navigation src/routes` — **PASS**, 41 files / 657 tests; `npm run test -- --run` — **PASS**, 62 files / 950 tests; `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run build` — **PASS**. Build emitted a >500 kB chunk-size warning.
+- From `web/`, `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/deep-link.spec.ts` — **FAIL / PRE-EXISTING / UNRELATED**, 66 passed / 2 failed; `npm run test:e2e -- tests/e2e/library-files.spec.ts` — **PASS**, 40 tests; `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS**, 13 tests.
+- `git diff --check` and `git diff --check c55bb3cef6efa8b51158831f4136d7bc3d5fd490` — **PASS**. Reference image SHA-256 — **PASS**, `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`. `config/alist.json` is ignored and untracked. The required FFmpeg/FFprobe search returned no matches.
 
 ### Decisions
 
-- Reused bounded, persisted checkpoint/Result facts for standalone execution evidence. Manual plan availability continues to reflect whether an exact Manual execution link and captured plan exist.
-- Kept the real browser proof isolated to temporary Local Storage and synthetic metadata. No production provider, user media or credential was used.
-- Committed implementation as `faabf20dc034c4c8da310928b3f39b0512616da6`; this report is a separate documentation checkpoint.
+- Reused the existing Preview, execution, unified Operations run and persisted authorization records. Reconciliation is an exact, side-effect-free read and does not add another execution authority or lifecycle.
+- Kept the Operations return state as a bounded, revalidated search context and reused the current ResourceLibrary Files browse path rather than adding a new file browser.
+- Added the Preview-history read gate so an existing admission or an unavailable read cannot leave a reopened Preview executable. A new Preview is required to continue after existing work.
 
 ### Remaining In-Slice Work
 
-RO-4's new organize-entry journey, RO-5's queued Continue/control authority and RO-6's native review/failed-analysis commands remain outside this Task.
+- The Task’s stated non-goals remain: RO-5 native queued Continue/control recovery and RO-6 task-linked decisions and failed-analysis recovery.
 
 ### Risks / Deviations
 
-- The two deep-link Playwright failures are the Base-proven unrelated failures described above. The Docker smoke test needed an isolated `TMPDIR`; its retry passed. The final browser build retains the large-chunk warning, and the Python suite emitted existing SQLite `ResourceWarning`s while passing.
-- An initial `python scripts/check_governance.py` attempt could not start because this shell provides `python3`; the required `python3` command passed. Three pre-existing untracked images under `docs/pics/` were preserved and excluded from the checkpoint. No private config or unrelated file was staged.
+- The two fake Playwright failures are the Base-proven `deep-link.spec.ts:211` (“Review & Recovery” route choice) and `deep-link.spec.ts:481` (retired Configuration heading). B’s accepted-code run and clean Base export reproduce the same failures in `/tmp/mediaflow-b-r4-e2e.log` and `/tmp/mediaflow-b-r3-base-deeplink.log`. They are unchanged and unrelated to this Task; no gate is represented as fully passing while they remain.
+- Earlier test attempts were corrected and retained in the final evidence: the first focused Python tool output was truncated with no observable exit, then the exact rerun passed (102 tests before the two additional binding cases); the first Web focused attempt had 3 selector/text assertion failures, then `OrganizeRouter.test.tsx` passed 17/17, the focused bundle passed 655/655, and the final focused bundle passed 657/657; initial fake E2E ran against stale `web/dist` (57 passed / 10 failed), and the next run had 5 failures from fake-route/locator defects plus the two Base failures. The fake defects were fixed; the intermediate `manual-organize.spec.ts` rerun passed 13/13 and Files rerun passed 40/40, before the final combined 66/68 run. The real Python browser spec first failed on requiring a default library choice (11/13), then on a broad filename locator/fixture destination collision (11/13), fixed before the final 13/13 run.
+- Initial formatter/linter checks required formatting the new Python and Web code; initial typecheck found a string-key lookup against a closed reconciliation-label map. These were fixed and all final formatter, lint and typecheck commands passed. Existing SQLite `ResourceWarning`s and the full-suite’s 7 stated skips remain.
+- Three pre-existing untracked reference images under `docs/pics/` were preserved and excluded from the Task checkpoint. No real credentials or `config/alist.json` were staged.
 
 ### Checkpoint
 
+```text
 Status: READY FOR B REVIEW
-Head SHA: faabf20dc034c4c8da310928b3f39b0512616da6
+Head SHA: [implementation checkpoint SHA recorded before the completion-report-only commit]
+```
 
 ## B Review Result
 
 ```text
-Reviewed: cf7099a478a203f3f29ac57ef5b8acc295aadaa9..4edc41534ea767b72ad0b217ff66bf9ba1ec381c
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
+Reviewed: PENDING
+Decision: PENDING
+Slice Required Outcomes all satisfied: PENDING
+Next: PENDING
 ```
-
-- **P1 — 原生条目证据没有完成持久解释旅程（AC-T4；Scope 4；Slice RO-3 / AC-6）。**
-  当前合法入口是 ResourceLibrary Files 整理 → 已审核 Preview → 明确执行 → Worker 完成
-  → `操作与任务` 选中运行 → `查看证据`。B 使用已通过 Storage check / strategy test /
-  destination precheck 并 checked activation 的真实 Managed 配置、SQLite FileIndex/Task、
-  原有完整能力的 LocalStorage 和本地合成 MetadataProvider，经过真实 API 准入和
-  `ManualOrganizeExecutionWorker` 完成一项 MOVE；未手工补写 TaskItem、Result 或分析证据。
-  `.venv/bin/python /tmp/mediaflow-b-t42-2-managed-detail.py` 与
-  `node /tmp/mediaflow-b-t42-2-managed-browser.mjs` 可重复该旅程。持久 Result 的
-  `recognition_type=C`、`metadata_policy_id=C`、Naming/Classification/Organize policy A、
-  `completed_operations=[CREATE_DIRECTORY, MOVE]` 均存在，checkpoint 还有
-  `cleanup_status=disabled`；原生详情未展示这些身份、策略、步骤，并把清理显示为 `—`。
-  同一执行精确关联的持久 Preview GET 返回 200，含 recognition/metadata/naming/
-  classification 分析、operationPolicy 和 conflicts；新条目证据却返回 `evidence=[]`，
-  Web 显示“该条目没有持久化的计划/分析证据”。`操作记录` 只有摘要，`查看条目` 回到同一
-  不完整详情。证据在 `/tmp/mediaflow-b-t42-2-managed-evidence.json`、
-  `/tmp/mediaflow-b-t42-2-managed-persisted-preview.json` 和
-  `/tmp/mediaflow-b-t42-2-managed-browser.json`。实际代码位于
-  `service_api.py::_operations_run_item_evidence`、
-  `run-detail.ts::normalizeEvidenceDocument`（丢弃 section 内容）和
-  `RunDetailTabs.tsx::RunEvidenceSection`（只显示段名/摘要）。修正方向：复用已有持久
-  Manual execution→Preview/item 关联及安全解释投影，在同一有界只读旅程展示适用的身份、
-  策略、计划/冲突、已完成/未确认步骤与清理；真正缺失才标 unavailable，不重跑 Provider、
-  Planner 或 Storage。补足现有真实 Python 浏览器用例的生产准入/Worker→详情解释验证，
-  不能仅靠仓库补写的 rich fixture 或断言段名证明完成。
-- **P1 — “精确关联日志”混入另一运行的记录（AC-T4；Scope 5；Slice RO-3 / AC-6）。**
-  在同一 checked-active Managed 配置及完整 LocalStorage 上，当前生产
-  `PersistentTaskCoordinator` / `MediaOrganizerService` / `OrganizerExecutor` /
-  `SQLiteOperationalLogger` 对同一合法源先后执行两次零变更 Preview，得到两个独立 Task。
-  `.venv/bin/python /tmp/mediaflow-b-t42-2-log-link.py` 返回两项相同的确定性
-  `plan_id=4b79249fb44270c6f5f1`；第一项的
-  `GET /api/v1/operations/runs/{taskA}/items/{itemA}` 返回 4 条日志，其中 2 条由第二次
-  运行实际生成，证据在 `/tmp/mediaflow-b-t42-2-log-link.log` 与
-  `/tmp/mediaflow-b-t42-2-log-link.json`。操作员查看第一项任务证据时，另一运行的时间和
-  execution/plan 事件被标成该项的“精确关联日志”，无法正确区分两次尝试。
-  `organizer.py::_plan_id` 只哈希源/目标 Storage 与路径，不是运行唯一键；新增
-  `SQLiteTaskRepository.list_operational_logs_for_plan` 仅按 plan_id 查询，API 未附加
-  当前 Task/Job 边界。修正方向：在现有有界查询上同时约束该运行的真实持久 Task/Job
-  关联和计划，不能仅凭可复用 plan ID 归属日志；没有足够运行关联的历史日志明确不可用，
-  不按时间/文本猜测或补写关联。加入两次真实生产 Preview 的隔离回归，保持 Result 独立
-  于日志，不改变任务引擎、执行权限或媒体行为。

@@ -193,15 +193,17 @@ test("no supported page emits a retired Library address into the DOM", async ({
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
-  // The Organize compatibility landing links to the supported Files address.
-  // Memory-only authority is re-established after the direct navigation.
+  // The native `新建整理任务` entry replaces the old explanation landing;
+  // memory-only authority is re-established after the direct navigation.
   await page.goto("/ui-v2/operations/organize/new");
   await page.getByLabel("API token").fill(VIEWER_TOKEN);
   await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("link", { name: "Open Files" })).toHaveAttribute(
-    "href",
-    "/ui-v2/resourcelib/files",
-  );
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "返回操作与任务" }),
+  ).toHaveAttribute("href", "/ui-v2/operations");
   const retiredLinks = await page.locator('a[href^="/ui-v2/library"]').count();
   expect(retiredLinks).toBe(0);
 });

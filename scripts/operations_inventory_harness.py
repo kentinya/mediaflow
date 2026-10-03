@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated real-Python browser harness for V2 Operations (Tasks 42.1–42.2).
+"""Isolated real-Python browser harness for V2 Operations (Tasks 42.1–42.3).
 
 One process serves both the built V2 artifact (``/ui-v2/*`` through the
 production static-serving boundary) and the real ``MediaFlowApi`` over one
@@ -30,6 +30,10 @@ infrastructure, not product endpoints, and never touch product documents):
 - ``POST /__harness__/run-worker`` runs one real Worker claim + linkage;
 - ``POST /__harness__/run-manual-organize`` admits one exact Preview through
   the real API and completes its MOVE through ``ManualOrganizeExecutionWorker``;
+- ``POST /__harness__/register-manual-worker`` makes the real Worker readiness
+  projection available to a browser-admitted organize run;
+- ``POST /__harness__/run-manual-worker`` claims and completes one already
+  admitted browser execution through ``ManualOrganizeExecutionWorker``;
 - ``POST /__harness__/run-standalone-pipeline`` executes one file through the
   real standalone ``PersistentTaskCoordinator → MediaOrganizerService →
   OrganizerExecutor`` assembly (the supported `organize --execute` shape, with
@@ -224,6 +228,8 @@ def build_managed_fixture(
     source_root.mkdir(parents=True, exist_ok=True)
     source_file = source_root / "One.2001.mkv"
     source_file.write_bytes(b"synthetic browser media")
+    (source_root / "Two.2002.mkv").write_bytes(b"second synthetic browser media")
+    (source_root / "Three.2003.mkv").write_bytes(b"new-task synthetic browser media")
 
     document = json.loads(
         (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
@@ -315,6 +321,24 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "One",
                         year=2001,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "102",
+                        MediaType.MOVIE,
+                        "Two",
+                        year=2002,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "103",
+                        MediaType.MOVIE,
+                        "Three",
+                        year=2003,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -833,6 +857,61 @@ def run_manual_organize_once(state: AppState) -> dict[str, str]:
         return dict(state.manual_run)
 
 
+def register_manual_worker(state: AppState) -> dict[str, object]:
+    """Register the real Worker before the browser's explicit Execute action."""
+
+    active = state.managed.active
+    state.api._worker_service.register_worker(
+        "harness-manual-worker",
+        "Harness Manual Organize Worker",
+        10.0,
+        ("scan", "preview", "organize"),
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        runtime_schema_version=SCHEMA_VERSION,
+    )
+    return {"registered": True}
+
+
+def run_manual_worker_once(state: AppState) -> dict[str, object]:
+    """Claim one UI-admitted execution and complete it with the real Worker."""
+
+    with state._manual_lock:
+        completed = ManualOrganizeExecutionWorker(
+            state.api._manual_execution,
+            worker_id="harness-manual-worker",
+            notice=lambda _line: None,
+        ).run_next()
+        if completed is None:
+            return {"completed": False, "reason": "no admitted manual execution"}
+        durable = state.repository.get_manual_execution(completed.execution_id)
+        if durable is None or durable.task_id != completed.task_id:
+            raise RuntimeError("Manual Organize Worker lost its durable Task linkage")
+        return {
+            "completed": completed.status.value == "completed",
+            "executionId": durable.execution_id,
+            "taskId": durable.task_id,
+            "status": completed.status.value,
+            "itemCount": len(durable.items),
+        }
+
+
+def manual_file_state(state: AppState) -> dict[str, object]:
+    """Return relative-only state for the new-task synthetic source file."""
+
+    source = state.managed.root / "source" / "Three.2003.mkv"
+    destination = state.managed.root / "destination"
+    targets = sorted(
+        path.relative_to(destination).as_posix()
+        for path in destination.rglob("Three*.mkv")
+        if path.is_file()
+    )
+    return {
+        "sourceExists": source.is_file(),
+        "destinationTargets": targets,
+    }
+
+
 #: The unique Task command of the real standalone processing-chain proof.  It
 #: is neither the Manual command nor a seeded command, so the browser spec can
 #: isolate its run with the existing server-side command filter without
@@ -974,6 +1053,12 @@ def application(environ, start_response):
             document = run_worker_once(STATE)
         elif path == "/__harness__/run-manual-organize" and method == "POST":
             document = run_manual_organize_once(STATE)
+        elif path == "/__harness__/register-manual-worker" and method == "POST":
+            document = register_manual_worker(STATE)
+        elif path == "/__harness__/run-manual-worker" and method == "POST":
+            document = run_manual_worker_once(STATE)
+        elif path == "/__harness__/manual-file-state" and method == "GET":
+            document = manual_file_state(STATE)
         elif path == "/__harness__/run-standalone-pipeline" and method == "POST":
             document = run_standalone_pipeline_once(STATE)
         elif path == "/__harness__/restart" and method == "POST":

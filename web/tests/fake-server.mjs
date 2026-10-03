@@ -451,6 +451,8 @@ const RUN_PRE_TASK_REASON =
   "this run has no linked Task yet; item progress, records and results " +
   "become available once the admission acquires its Task";
 
+const ORGANIZE_TASK_ID = "organize-task-e2e-001";
+
 const FAKE_TASKS = [
   {
     // This first fixture deliberately also carries the historical legacy fields
@@ -523,6 +525,24 @@ const FAKE_TASKS = [
     failure: null,
     pause_requested: false,
     configuration_snapshot_id: "snap-1",
+    item_limit: null,
+  },
+  {
+    task_id: ORGANIZE_TASK_ID,
+    command: "manual_organize",
+    status: "completed",
+    execute_authorized: true,
+    created_at: "2026-08-20T12:00:00+00:00",
+    updated_at: "2026-08-20T12:05:00+00:00",
+    started_at: "2026-08-20T12:01:00+00:00",
+    completed_at: "2026-08-20T12:05:00+00:00",
+    total_items: 1,
+    completed_items: 1,
+    failed_items: 0,
+    failure: null,
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    scope_path: "Movies",
     item_limit: null,
   },
   {
@@ -3025,7 +3045,12 @@ function manualActionMatrixDocument(request, permitted) {
       }),
     },
     fileId: fileScope ? request.fileId : null,
-    limits: { previewMaxItems: MANUAL_PREVIEW_MAX_ITEMS },
+    // The preview bound is a permission fact of the same matrix the real
+    // backend publishes: a principal without the manage-manual-organize
+    // permission advertises no bounded preview population at all.
+    limits: {
+      previewMaxItems: permitted ? MANUAL_PREVIEW_MAX_ITEMS : 0,
+    },
     resourceLibraries: MANUAL_RESOURCE_LIBRARY_CHOICES,
     resourceLibraryId: discovery ? null : request.resourceLibraryId,
     runtime: {
@@ -3058,9 +3083,11 @@ const ORGANIZE_DESTRUCTIVE_PREVIEW_ID = "organize-preview-destructive-e2e-001";
 const ORGANIZE_HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const ORGANIZE_MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
 const ORGANIZE_SUFFIX_PREVIEW_ID = "organize-preview-suffix-e2e-001";
+const ORGANIZE_LOST_PREVIEW_ID = "organize-preview-lost-e2e-001";
+const ORGANIZE_LOST_UNADMITTED_PREVIEW_ID =
+  "organize-preview-lost-unadmitted-e2e-001";
 const ORGANIZE_EXECUTION_ID = "organize-execution-e2e-001";
 const ORGANIZE_FAILED_EXECUTION_ID = "organize-execution-failed-e2e-001";
-const ORGANIZE_TASK_ID = "organize-task-e2e-001";
 // One mutable organize state per browser session: every Playwright test owns
 // exactly one context, so two parallel workers can never observe or advance
 // another test's intent/item versions.
@@ -3070,9 +3097,17 @@ function organizeState(session) {
   const key = session ?? "shared";
   let value = ORGANIZE_STATES.get(key);
   if (value === undefined) {
-    value = { executed: false, intentVersion: 1, itemVersion: 1 };
+    value = {
+      executed: false,
+      intentVersion: 1,
+      itemVersion: 1,
+      // Durable admission evidence for the bounded reconciliation read:
+      // each entry is one previously admitted execution the fake stores.
+      admitted: [],
+    };
     ORGANIZE_STATES.set(key, value);
   }
+  if (value.admitted === undefined) value.admitted = [];
   return value;
 }
 
@@ -3321,6 +3356,110 @@ function organizeDestructivePreviewDocument(state) {
     },
   }));
   return value;
+}
+
+/**
+ * One Preview whose Execute receives a 503 after its durable outcome may have
+ * changed. The response cannot prove whether the command committed, so the
+ * browser must reconcile. The real Python browser test also drops a production
+ * API response after admission.
+ */
+function organizeLostPreviewDocument(state) {
+  const value = organizePreviewDocument(state);
+  value.previewId = ORGANIZE_LOST_PREVIEW_ID;
+  value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}/execute`;
+  return value;
+}
+
+function organizeLostUnadmittedPreviewDocument(state) {
+  const value = organizePreviewDocument(state);
+  value.previewId = ORGANIZE_LOST_UNADMITTED_PREVIEW_ID;
+  value.actions.execute.path = `/api/v1/operations/organize/previews/${ORGANIZE_LOST_UNADMITTED_PREVIEW_ID}/execute`;
+  return value;
+}
+
+/** The durable admission outcome document the Python contract publishes. */
+function organizeAdmissionOutcomeDocument(state, url, previewId) {
+  const itemIds = (url.searchParams.get("itemIds") ?? "")
+    .split(",")
+    .filter((value) => value !== "");
+  const version = url.searchParams.get("expectedIntentVersion");
+  const allowOverwrite = url.searchParams.get("allowOverwrite");
+  const allowSourceCleanup = url.searchParams.get("allowSourceCleanup");
+  const base = {
+    journey: "organize",
+    sideEffects: "none",
+    completedItemCount: 0,
+    failedItemCount: 0,
+  };
+  if (
+    itemIds.length === 0 ||
+    version === null ||
+    (allowOverwrite !== "true" && allowOverwrite !== "false") ||
+    (allowSourceCleanup !== "true" && allowSourceCleanup !== "false")
+  ) {
+    return { error: { code: "invalid_request" }, status: 400 };
+  }
+  const scoped = state.admitted.filter(
+    (entry) => entry.previewId === previewId,
+  );
+  const matches = scoped.filter(
+    (entry) =>
+      entry.selection.join(",") === itemIds.join(",") &&
+      entry.intentVersion === Number(version) &&
+      entry.allowOverwrite === (allowOverwrite === "true") &&
+      entry.allowSourceCleanup === (allowSourceCleanup === "true"),
+  );
+  if (matches.length > 0) {
+    const entry = matches[matches.length - 1];
+    return {
+      status: 200,
+      document: {
+        ...base,
+        outcome: "known",
+        reason: null,
+        executionId: entry.executionId,
+        taskId: entry.taskId,
+        status: entry.status,
+        selectedItemIds: [...entry.selection],
+        completedItemCount: entry.completedItemCount ?? 0,
+        failedItemCount: entry.failedItemCount ?? 0,
+        nextAction:
+          "open the unified Operations run for this admitted work; the outcome is durable and this read never replayed it",
+      },
+    };
+  }
+  if (scoped.length > 0) {
+    const newest = scoped[scoped.length - 1];
+    return {
+      status: 200,
+      document: {
+        ...base,
+        outcome: "not_equivalent",
+        reason: "selection_or_binding_mismatch",
+        executionId: newest.executionId,
+        taskId: newest.taskId,
+        status: newest.status,
+        selectedItemIds: [...newest.selection],
+        nextAction:
+          "the durable admission under this Preview does not match the submitted reviewed selection: inspect both durable records before any further command; nothing is admitted, broadened or replayed automatically",
+      },
+    };
+  }
+  return {
+    status: 200,
+    document: {
+      ...base,
+      outcome: "not_admitted",
+      reason: null,
+      executionId: null,
+      taskId: null,
+      status: null,
+      selectedItemIds: [],
+      nextAction:
+        "the durable admission records contain no execution for this reviewed submission; resubmit only through an explicit action after refreshing the current Preview state",
+    },
+  };
 }
 
 function organizeFileIndexReconciliation(
@@ -13035,14 +13174,137 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  if (
+    url.pathname === `/api/v1/organize/previews/${ORGANIZE_LOST_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_LOST_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    sendJson(res, 200, organizeLostPreviewDocument(state));
+    return;
+  }
+
+  if (
+    url.pathname ===
+      `/api/v1/organize/previews/${ORGANIZE_LOST_UNADMITTED_PREVIEW_ID}` &&
+    req.method === "GET"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: ORGANIZE_LOST_UNADMITTED_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/organize/previews/:previewId",
+    });
+    sendJson(res, 200, organizeLostUnadmittedPreviewDocument(state));
+    return;
+  }
+
+  // Durable admissions for a Preview are listed before Execute is offered;
+  // this makes a page reload fail closed when an ambiguous command had already
+  // committed. The projection remains a bounded read, never command authority.
+  if (url.pathname === "/api/v1/organize/executions" && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const state = organizeState(session);
+    const previewId = url.searchParams.get("previewId");
+    const limit = Math.min(100, Number(url.searchParams.get("limit") ?? "50"));
+    if (previewId === null || !Number.isInteger(limit) || limit < 1) {
+      sendJson(res, 400, { error: { code: "invalid_request" } });
+      return;
+    }
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: previewId,
+      objectType: "organize_execution_list",
+      path: "/api/v1/organize/executions",
+    });
+    const matching = state.admitted.filter(
+      (entry) => entry.previewId === previewId,
+    );
+    const items = matching.slice(0, limit).map((entry) => {
+      const base = organizeExecutionDocument(entry.status ?? "admitted", state);
+      const selectedItemIds = [...entry.selection];
+      const template = base.items[0];
+      return {
+        ...base,
+        executionId: entry.executionId,
+        previewId: entry.previewId,
+        taskId: entry.taskId,
+        intentVersion: entry.intentVersion,
+        selectedItemIds,
+        selectedItemCount: selectedItemIds.length,
+        unselectedItemIds: [],
+        unselectedItemCount: 0,
+        items: selectedItemIds.map((itemId, position) => ({
+          ...template,
+          itemId,
+          position,
+          taskId: entry.taskId,
+        })),
+      };
+    });
+    sendJson(res, 200, {
+      journey: "organize",
+      items,
+      limit,
+      total: matching.length,
+      truncated: matching.length > items.length,
+    });
+    return;
+  }
+
+  // The bounded admission-outcome reconciliation read. GET only: it mirrors
+  // the Python contract exactly (selection, version and both effect flags
+  // required; unknown keys, repeats and missing pieces rejected), admits no
+  // work and replays nothing.
+  const admissionMatch = url.pathname.match(
+    /^\/api\/v1\/organize\/previews\/([^/]+)\/admission$/,
+  );
+  if (admissionMatch && req.method === "GET") {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const admissionPreviewId = decodeURIComponent(admissionMatch[1]);
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "GET",
+      objectId: admissionPreviewId,
+      objectType: "organize_admission_read",
+      path: "/api/v1/organize/previews/:previewId/admission",
+    });
+    const outcome = organizeAdmissionOutcomeDocument(
+      state,
+      url,
+      admissionPreviewId,
+    );
+    sendJson(res, outcome.status, outcome.document ?? outcome.error);
+    return;
+  }
+
   const organizeExecuteMatch = url.pathname.match(
     /^\/api\/v1\/organize\/previews\/([^/]+)\/execute$/,
   );
   if (
     organizeExecuteMatch &&
-    [ORGANIZE_PREVIEW_ID, ORGANIZE_DESTRUCTIVE_PREVIEW_ID].includes(
-      organizeExecuteMatch[1],
-    ) &&
+    [
+      ORGANIZE_PREVIEW_ID,
+      ORGANIZE_DESTRUCTIVE_PREVIEW_ID,
+      ORGANIZE_LOST_PREVIEW_ID,
+      ORGANIZE_LOST_UNADMITTED_PREVIEW_ID,
+    ].includes(organizeExecuteMatch[1]) &&
     req.method === "POST"
   ) {
     if (!operationsGuard(res)) {
@@ -13069,11 +13331,22 @@ const server = createServer(async (req, res) => {
       objectType: "organize_execute",
       path: "/api/v1/organize/previews/:previewId/execute",
     });
+    const lostVariant =
+      executePreviewId === ORGANIZE_LOST_PREVIEW_ID ||
+      executePreviewId === ORGANIZE_LOST_UNADMITTED_PREVIEW_ID;
+    const admittedSelected =
+      Array.isArray(fields.itemIds) &&
+      fields.itemIds.length === 1 &&
+      fields.itemIds[0] === ORGANIZE_ITEM_ID
+        ? [ORGANIZE_ITEM_ID]
+        : Array.isArray(fields.itemIds) &&
+            fields.itemIds.length === 1 &&
+            fields.itemIds[0] === `${ORGANIZE_ITEM_ID}-other`
+          ? [`${ORGANIZE_ITEM_ID}-other`]
+          : null;
     if (
       fields.confirmation !== true ||
-      !Array.isArray(fields.itemIds) ||
-      fields.itemIds.length !== 1 ||
-      fields.itemIds[0] !== ORGANIZE_ITEM_ID ||
+      admittedSelected === null ||
       fields.expectedIntentVersion !== state.intentVersion ||
       typeof fields.allowOverwrite !== "boolean" ||
       typeof fields.allowSourceCleanup !== "boolean" ||
@@ -13083,9 +13356,44 @@ const server = createServer(async (req, res) => {
       sendJson(res, 400, { error: { code: "invalid_request" } });
       return;
     }
+    if (lostVariant) {
+      const loseAsAdmitted =
+        url.searchParams.get("organizeLost") === "admitted" ||
+        (executePreviewId === ORGANIZE_LOST_PREVIEW_ID &&
+          url.searchParams.get("organizeLost") !== "refused");
+      if (loseAsAdmitted) {
+        // Durable admission happened before the ambiguous error response.
+        state.admitted.push({
+          previewId: executePreviewId,
+          selection: admittedSelected,
+          intentVersion: state.intentVersion,
+          allowOverwrite: fields.allowOverwrite === true,
+          allowSourceCleanup: fields.allowSourceCleanup === true,
+          executionId: ORGANIZE_EXECUTION_ID,
+          taskId: ORGANIZE_TASK_ID,
+          status: "admitted",
+        });
+      }
+      // This error cannot prove whether an execution was admitted; only exact
+      // reconciliation can determine the next safe action.
+      sendJson(res, 503, { error: { code: "unavailable" } });
+      return;
+    }
     // One repeated submission resolves to the same durable execution.
     const first = state.executed === false;
     state.executed = true;
+    if (first) {
+      state.admitted.push({
+        previewId: executePreviewId,
+        selection: admittedSelected,
+        intentVersion: state.intentVersion,
+        allowOverwrite: fields.allowOverwrite === true,
+        allowSourceCleanup: fields.allowSourceCleanup === true,
+        executionId: ORGANIZE_EXECUTION_ID,
+        taskId: ORGANIZE_TASK_ID,
+        status: "admitted",
+      });
+    }
     sendJson(
       res,
       first ? 202 : 200,
@@ -14842,9 +15150,8 @@ const server = createServer(async (req, res) => {
     // while two workers drive the same fake server.
     sendJson(res, 200, {
       items: [
-        ...RECORDED_MANUAL_REQUESTS,
         ...(session === null
-          ? []
+          ? RECORDED_MANUAL_REQUESTS
           : (RECORDED_MANUAL_REQUESTS_BY_SESSION.get(session) ?? [])),
       ],
     });
@@ -14863,6 +15170,7 @@ const server = createServer(async (req, res) => {
       executed: false,
       intentVersion: 1,
       itemVersion: 1,
+      admitted: [],
     });
     res.setHeader(
       "Set-Cookie",

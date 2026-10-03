@@ -54,13 +54,20 @@ describe("retired Library routes", () => {
     },
   );
 
-  it("keeps the Organize compatibility landing on the supported Files address", async () => {
+  it("renders the native new-task entry without any retired Library address", async () => {
+    // The new-task page reads the bounded action matrix; a failed read keeps
+    // its bounded unavailable state and starts no work. Nothing on the page
+    // may address a retired Library route.
     stubJson({ error: { code: "unexpected" } }, 500);
     authStore.setToken("route-separation-token");
     renderApp("/ui-v2/operations/organize/new");
 
-    const openFiles = await screen.findByRole("link", { name: "Open Files" });
-    expect(openFiles).toHaveAttribute("href", "/ui-v2/resourcelib/files");
-    expect(openFiles).not.toHaveAttribute("href", "/ui-v2/library/files");
+    expect(
+      await screen.findByRole("heading", { name: "新建整理任务" }),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "返回操作与任务" }),
+    ).toHaveAttribute("href", "/ui-v2/operations");
+    expect(document.querySelector('a[href^="/ui-v2/library"]')).toBeNull();
   });
 });

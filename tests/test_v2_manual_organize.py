@@ -1263,6 +1263,314 @@ class ExactAdmissionResolutionTests(_JourneyFixtureMixin, _ExactAdmissionMixin, 
             )
 
 
+class AdmissionReconciliationReadTests(
+    _JourneyFixtureMixin, _ExactAdmissionMixin, unittest.TestCase
+):
+    """The bounded admission-outcome read proves a submitted Execute from durable evidence.
+
+    A transport error, lost response or malformed answer after Execute leaves
+    the outcome unknown. The reconciliation read answers only from the durable
+    admission records, binds the answer to the exact submitted reviewed
+    selection and reading principal, admits no work and mints, reissues or
+    replays nothing. Narrower, overlapping, differently bound or
+    differently-owned evidence never confirms the submission.
+    """
+
+    def _executions(self, value, preview_id):
+        return value.repository.list_manual_executions_for_preview(preview_id)
+
+    def _reconcile(
+        self,
+        value,
+        preview_id,
+        *,
+        item_ids,
+        intent_version,
+        token=OPERATOR_TOKEN,
+        allow_overwrite="false",
+        allow_source_cleanup="false",
+    ):
+        query = (
+            f"itemIds={','.join(item_ids)}"
+            f"&expectedIntentVersion={intent_version}"
+            f"&allowOverwrite={allow_overwrite}"
+            f"&allowSourceCleanup={allow_source_cleanup}"
+        )
+        return self._request(
+            value,
+            f"/api/v1/operations/organize/previews/{preview_id}/admission?{query}",
+            token=token,
+        )
+
+    def test_known_admission_resolves_the_exact_submitted_selection(self) -> None:
+        with self.journey(names=("One.2001.mkv", "Two.2002.mkv")) as value:
+            intent = self._reviewed_multi_item(value, ("One", "Two"))
+            preview = self._create_preview(value, intent)
+            status, admitted = self._execute(value, preview, intent)
+            self.assertEqual(202, status, admitted)
+
+            item_ids = [item["itemId"] for item in preview["items"]]
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("known", outcome["outcome"])
+            self.assertEqual(admitted["executionId"], outcome["executionId"])
+            self.assertEqual(admitted["taskId"], outcome["taskId"])
+            self.assertEqual("admitted", outcome["status"])
+            self.assertEqual(set(item_ids), set(outcome["selectedItemIds"]))
+            self.assertEqual("none", outcome["sideEffects"])
+            self._assert_secret_free(outcome, "admission outcome")
+
+            # The read is side-effect free: it admits nothing and replays
+            # nothing; the one execution stays the one execution and the
+            # consumed authority is untouched.
+            self.assertEqual(1, len(self._executions(value, preview["previewId"])))
+            completed = value.worker.run_next()
+            self.assertIsNotNone(completed)
+            self.assertIsNone(value.worker.run_next())
+
+            # After the Worker completes, the same read reports the durable
+            # progress of the one admitted run, never a second admission.
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("known", outcome["outcome"])
+            self.assertEqual("completed", outcome["status"])
+            self.assertEqual(2, outcome["completedItemCount"])
+
+    def test_unsubmitted_selection_is_not_admitted_not_a_success_claim(self) -> None:
+        """Before any admission, the read proves nothing was admitted."""
+
+        with self.journey(names=("One.2001.mkv",)) as value:
+            intent = self._reviewed_multi_item(value, ("One",))
+            preview = self._create_preview(value, intent)
+            item_ids = [item["itemId"] for item in preview["items"]]
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("not_admitted", outcome["outcome"])
+            self.assertIsNone(outcome["executionId"])
+            self.assertIsNone(outcome["taskId"])
+            self.assertEqual("none", outcome["sideEffects"])
+            self.assertIn("resubmit", outcome["nextAction"])
+            self._assert_secret_free(outcome, "not-admitted outcome")
+            # Still zero admissions and zero mutations.
+            self.assertEqual((), self._executions(value, preview["previewId"]))
+            self.assertEqual([], value.source.mutations)
+            self.assertEqual([], value.target.mutations)
+
+    def test_narrower_or_overlapping_claim_never_confirms_the_submission(self) -> None:
+        with self.journey(names=("One.2001.mkv", "Two.2002.mkv")) as value:
+            intent = self._reviewed_multi_item(value, ("One", "Two"))
+            preview = self._create_preview(value, intent)
+            status, admitted = self._execute(
+                value, preview, intent, itemIds=[preview["items"][0]["itemId"]]
+            )
+            self.assertEqual(202, status, admitted)
+
+            # The exact single-item submission reconciles to its own execution.
+            exact = [preview["items"][0]["itemId"]]
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=exact,
+                intent_version=intent["version"],
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("known", outcome["outcome"])
+            self.assertEqual(admitted["executionId"], outcome["executionId"])
+
+            # A broader claim over the same Preview is not this admission and
+            # never resolves to (or from) it.
+            broader = [item["itemId"] for item in preview["items"]]
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=broader,
+                intent_version=intent["version"],
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("not_equivalent", outcome["outcome"])
+            self.assertEqual(admitted["executionId"], outcome["executionId"])
+            self.assertNotIn(broader[1], outcome["selectedItemIds"])
+
+            # A stale intent-version claim is not equivalent either.
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=exact,
+                intent_version=intent["version"] + 1,
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("not_equivalent", outcome["outcome"])
+
+            # Destructive permissions are part of the exact reviewed binding;
+            # either broader claim stays unexplained and grants nothing.
+            for effects in (
+                {"allow_overwrite": "true"},
+                {"allow_source_cleanup": "true"},
+            ):
+                status, outcome = self._reconcile(
+                    value,
+                    preview["previewId"],
+                    item_ids=exact,
+                    intent_version=intent["version"],
+                    **effects,
+                )
+                self.assertEqual(200, status, outcome)
+                self.assertEqual("not_equivalent", outcome["outcome"])
+            # Nothing was admitted or mutated by any of these reads.
+            self.assertEqual(1, len(self._executions(value, preview["previewId"])))
+            self.assertEqual([], value.source.mutations)
+
+    def test_reconciliation_fails_closed_for_a_changed_configuration_pin(self) -> None:
+        with self.journey(names=("One.2001.mkv",)) as value:
+            intent = self._reviewed_multi_item(value, ("One",))
+            preview = self._create_preview(value, intent)
+            status, admitted = self._execute(value, preview, intent)
+            self.assertEqual(202, status, admitted)
+            value.repository._connection.execute(
+                "UPDATE manual_executions SET configuration_snapshot_digest=? WHERE execution_id=?",
+                ("b" * 64, admitted["executionId"]),
+            )
+
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=[item["itemId"] for item in preview["items"]],
+                intent_version=intent["version"],
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("not_equivalent", outcome["outcome"])
+            self.assertEqual(admitted["executionId"], outcome["executionId"])
+            self.assertEqual(1, len(self._executions(value, preview["previewId"])))
+            self.assertEqual([], value.source.mutations)
+
+    def test_read_binds_principal_and_refuses_malformed_claims(self) -> None:
+        with self.journey(names=("One.2001.mkv", "Two.2002.mkv")) as value:
+            intent = self._reviewed_multi_item(value, ("One", "Two"))
+            preview = self._create_preview(value, intent)
+            status, admitted = self._execute(value, preview, intent)
+            self.assertEqual(202, status, admitted)
+            item_ids = [item["itemId"] for item in preview["items"]]
+
+            # Another principal's identical claim never resolves to the first
+            # operator's durable admission.
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+                token=OPERATOR_2_TOKEN,
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("not_admitted", outcome["outcome"])
+            self.assertIsNone(outcome["executionId"])
+
+            # The submitter still resolves exactly.
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+            )
+            self.assertEqual("known", outcome["outcome"])
+
+            # Malformed claims fail closed at the route boundary.
+            status, error = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=[],
+                intent_version=intent["version"],
+            )
+            self.assertEqual(400, status, error)
+            status, error = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=0,
+            )
+            self.assertEqual(400, status, error)
+            status, error = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+                allow_overwrite="1",
+            )
+            self.assertEqual(400, status, error)
+            query = (
+                f"itemIds={','.join(item_ids)}&expectedIntentVersion={intent['version']}"
+                "&allowOverwrite=false&allowSourceCleanup=false&unknownField=1"
+            )
+            status, error = self._request(
+                value,
+                f"/api/v1/operations/organize/previews/{preview['previewId']}/admission?{query}",
+            )
+            self.assertEqual(400, status, error)
+            # The read binds the executing principal: even a READ principal
+            # submitting the identical claim never resolves another
+            # operator's admission; only the submitter's own evidence answers.
+            status, outcome = self._reconcile(
+                value,
+                preview["previewId"],
+                item_ids=item_ids,
+                intent_version=intent["version"],
+                token=VIEWER_TOKEN,
+            )
+            self.assertEqual(200, status, outcome)
+            self.assertEqual("not_admitted", outcome["outcome"])
+            self.assertIsNone(outcome["executionId"])
+
+    def test_reconciliation_survives_a_reopened_runtime_database(self) -> None:
+        """The answer is durable evidence, not a process-local guess."""
+
+        names = ("One.2001.mkv", "Two.2002.mkv")
+        with self.journey(names=names) as value:
+            intent = self._reviewed_multi_item(value, names)
+            preview = self._create_preview(value, intent)
+            status, admitted = self._execute(value, preview, intent)
+            self.assertEqual(202, status, admitted)
+            item_ids = [item["itemId"] for item in preview["items"]]
+            runtime_path = value.runtime_path
+            original = value.repository
+            original.close()
+
+            reopened = SQLiteTaskRepository(runtime_path)
+            value.execution._repository = reopened
+            try:
+                outcome = value.execution.admission_outcome(
+                    preview["previewId"],
+                    item_ids=item_ids,
+                    intent_version=intent["version"],
+                    actor="operator",
+                )
+                self.assertEqual("known", outcome["outcome"])
+                self.assertEqual(admitted["executionId"], outcome["executionId"])
+                self.assertEqual(admitted["taskId"], outcome["taskId"])
+                # Reopening the process admitted nothing new.
+                self.assertEqual(
+                    1,
+                    len(reopened.list_manual_executions_for_preview(preview["previewId"])),
+                )
+            finally:
+                value.execution._repository = original
+                reopened.close()
+            value.repository = SQLiteTaskRepository(runtime_path)
+
+
 class SchemaAndRestartRecoveryTests(_JourneyFixtureMixin, unittest.TestCase):
     """Copied-fixture migration proof and real repository/service reopen proof.
 

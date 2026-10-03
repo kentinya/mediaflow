@@ -60,6 +60,18 @@ function recordingFetch(respond: (call: Call) => Response | undefined): {
       if (response !== undefined) {
         return response;
       }
+      if (
+        call.method === "GET" &&
+        call.url.startsWith("/api/v1/operations/organize/executions?previewId=")
+      ) {
+        return jsonResponse({
+          journey: "organize",
+          items: [],
+          limit: 100,
+          total: 0,
+          truncated: false,
+        });
+      }
       return jsonResponse({ error: { code: "not_found" } }, 404);
     }),
   );
@@ -255,30 +267,26 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/intent/intent-1");
 
-    await screen.findByRole("heading", { name: "Manual organize intent" });
-    expect(screen.getByText(/version 2/)).toBeVisible();
+    await screen.findByRole("heading", { name: "整理意图" });
+    expect(screen.getByText(/版本 2/)).toBeVisible();
 
     // The three downstream policy controls are never independently editable:
     // they only display the selected RecognitionType's exact pinned mapping.
-    expect(await screen.findByLabelText("Naming policy item-1")).toBeDisabled();
-    expect(
-      screen.getByLabelText("Classification policy item-1"),
-    ).toBeDisabled();
-    expect(screen.getByLabelText("Organize policy item-1")).toBeDisabled();
+    expect(await screen.findByLabelText("命名策略 item-1")).toBeDisabled();
+    expect(screen.getByLabelText("分类策略 item-1")).toBeDisabled();
+    expect(screen.getByLabelText("整理策略 item-1")).toBeDisabled();
 
     // Selecting a different RecognitionType brings out its exact configured
     // naming, classification and organize policies, replacing the stale stored
     // combination without any independent downstream edit.
     await user.selectOptions(
-      await screen.findByLabelText("RecognitionType item-1"),
+      await screen.findByLabelText("识别类型 item-1"),
       "B",
     );
-    expect(screen.getByLabelText("Naming policy item-1")).toHaveValue("B");
-    expect(screen.getByLabelText("Classification policy item-1")).toHaveValue(
-      "B",
-    );
-    expect(screen.getByLabelText("Organize policy item-1")).toHaveValue("B");
-    await user.click(screen.getByRole("button", { name: "Save choice" }));
+    expect(screen.getByLabelText("命名策略 item-1")).toHaveValue("B");
+    expect(screen.getByLabelText("分类策略 item-1")).toHaveValue("B");
+    expect(screen.getByLabelText("整理策略 item-1")).toHaveValue("B");
+    await user.click(screen.getByRole("button", { name: "保存选择" }));
 
     await waitFor(() =>
       expect(
@@ -307,7 +315,7 @@ describe("V2 manual Organize journey", () => {
     );
 
     await user.click(
-      await screen.findByRole("button", { name: "Create exact Preview" }),
+      await screen.findByRole("button", { name: "生成精确预览" }),
     );
     await waitFor(() =>
       expect(
@@ -321,7 +329,7 @@ describe("V2 manual Organize journey", () => {
     );
     // The journey continues to the exact Preview route.
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
   });
 
@@ -347,20 +355,18 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/intent/intent-1");
 
-    await screen.findByRole("heading", { name: "Manual organize intent" });
+    await screen.findByRole("heading", { name: "整理意图" });
     // RecognitionType C maps to A naming/classification/organize policies in
     // the pinned configuration; the identity stays C while the A policies show.
     await user.selectOptions(
-      await screen.findByLabelText("RecognitionType item-1"),
+      await screen.findByLabelText("识别类型 item-1"),
       "C",
     );
-    expect(screen.getByLabelText("Naming policy item-1")).toHaveValue("A");
-    expect(screen.getByLabelText("Classification policy item-1")).toHaveValue(
-      "A",
-    );
-    expect(screen.getByLabelText("Organize policy item-1")).toHaveValue("A");
+    expect(screen.getByLabelText("命名策略 item-1")).toHaveValue("A");
+    expect(screen.getByLabelText("分类策略 item-1")).toHaveValue("A");
+    expect(screen.getByLabelText("整理策略 item-1")).toHaveValue("A");
 
-    await user.click(screen.getByRole("button", { name: "Save choice" }));
+    await user.click(screen.getByRole("button", { name: "保存选择" }));
     await waitFor(() =>
       expect(
         calls.some((call) => call.url.includes("/items/item-1/choice")),
@@ -399,13 +405,11 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/intent/intent-1");
 
-    await screen.findByRole("heading", { name: "Manual organize intent" });
+    await screen.findByRole("heading", { name: "整理意图" });
     // Without touching the RecognitionType, the displayed naming policy is the
     // pinned A mapping, not the stale stored B value.
-    expect(await screen.findByLabelText("Naming policy item-1")).toHaveValue(
-      "A",
-    );
-    await user.click(screen.getByRole("button", { name: "Save choice" }));
+    expect(await screen.findByLabelText("命名策略 item-1")).toHaveValue("A");
+    await user.click(screen.getByRole("button", { name: "保存选择" }));
 
     await waitFor(() =>
       expect(
@@ -441,9 +445,9 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/intent/intent-1");
 
-    await screen.findByRole("heading", { name: "Manual organize intent" });
-    await screen.findByText(/missing a configured naming, classification/i);
-    expect(screen.getByRole("button", { name: "Save choice" })).toBeDisabled();
+    await screen.findByRole("heading", { name: "整理意图" });
+    await screen.findByText(/缺少命名、分类或整理策略/);
+    expect(screen.getByRole("button", { name: "保存选择" })).toBeDisabled();
     expect(
       calls.some((call) => call.url.includes("/items/item-1/choice")),
     ).toBe(false);
@@ -470,9 +474,9 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/intent/intent-1");
 
-    await screen.findByRole("heading", { name: "Manual organize intent" });
-    await screen.findByText(/not in the current pinned configuration options/i);
-    expect(screen.getByRole("button", { name: "Save choice" })).toBeDisabled();
+    await screen.findByRole("heading", { name: "整理意图" });
+    await screen.findByText(/没有识别类型“Z”/);
+    expect(screen.getByRole("button", { name: "保存选择" })).toBeDisabled();
     expect(
       calls.some((call) => call.url.includes("/items/item-1/choice")),
     ).toBe(false);
@@ -506,17 +510,16 @@ describe("V2 manual Organize journey", () => {
     renderApp("/ui-v2/operations/organize/preview/preview-1");
 
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
-    expect(screen.getByText(/Zero Storage mutation/)).toBeVisible();
-    expect(screen.getByText("MOVE")).toBeVisible();
+    expect(screen.getByText(/预览不会修改文件/)).toBeVisible();
+    expect(screen.getByText("移动")).toBeVisible();
     expect(
-      screen.getAllByText(
-        /this exact plan replaces and deletes nothing; source media is preserved/,
-      ),
-    ).toHaveLength(2);
+      screen.getByText("此方案不会替换或删除文件，整理后会保留来源媒体。"),
+    ).toBeVisible();
+    expect(screen.queryByText(/this exact plan/)).toBeNull();
     const executeButton = await screen.findByRole("button", {
-      name: "Execute selected exact items",
+      name: "确认执行所选条目",
     });
     expect(executeButton).toBeEnabled();
     await user.click(executeButton);
@@ -547,10 +550,84 @@ describe("V2 manual Organize journey", () => {
     );
 
     await screen.findByRole("heading", {
-      name: "Manual organize execution",
+      name: "整理执行情况",
     });
-    expect(screen.getByText(/Execution execution-1/)).toBeVisible();
-    expect(screen.getByText("Result")).toBeVisible();
+    expect(screen.getByText(/执行记录 execution-1/)).toBeVisible();
+    expect(screen.getByText("结果记录")).toBeVisible();
+  });
+
+  it("locks a reopened Preview that already has durable execution history", async () => {
+    const existing = executionDocument();
+    existing["previewId"] = "preview-1";
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+        return jsonResponse(previewDocument());
+      }
+      if (
+        call.url.startsWith(
+          "/api/v1/operations/organize/executions?previewId=preview-1",
+        )
+      ) {
+        return jsonResponse({
+          journey: "organize",
+          items: [existing],
+          limit: 100,
+          total: 1,
+          truncated: false,
+        });
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+    const execute = await screen.findByRole("button", {
+      name: "确认执行所选条目",
+    });
+    await screen.findByRole("heading", {
+      name: "此预览已有持久执行记录",
+    });
+    expect(execute).toBeDisabled();
+    expect(screen.getByRole("link", { name: /查看已有执行/ })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/operations/organize/execution/execution-1"),
+    );
+    expect(
+      calls.some(
+        (call) => call.url.endsWith("/execute") && call.method === "POST",
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps Execute closed when durable execution history cannot be read", async () => {
+    const { calls } = recordingFetch((call) => {
+      if (call.url === "/api/v1/operations/organize/previews/preview-1") {
+        return jsonResponse(previewDocument());
+      }
+      if (
+        call.url.startsWith(
+          "/api/v1/operations/organize/executions?previewId=preview-1",
+        )
+      ) {
+        return jsonResponse({ error: { code: "unavailable" } }, 503);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations/organize/preview/preview-1");
+
+    const execute = await screen.findByRole("button", {
+      name: "确认执行所选条目",
+    });
+    await screen.findByRole("heading", {
+      name: "无法确认预览的执行记录",
+    });
+    expect(execute).toBeDisabled();
+    expect(
+      calls.some(
+        (call) => call.url.endsWith("/execute") && call.method === "POST",
+      ),
+    ).toBe(false);
   });
 
   it("renders each bounded destructive variant with exactly its required controls", async () => {
@@ -562,6 +639,7 @@ describe("V2 manual Organize journey", () => {
           sourceCleanupRequired: false,
           statement: "this exact plan replaces and deletes nothing",
         },
+        expectedStatement: "此方案不会替换或删除文件，整理后会保留来源媒体。",
         requiresOverwrite: false,
         requiresCleanup: false,
       },
@@ -573,6 +651,7 @@ describe("V2 manual Organize journey", () => {
           statement:
             "this exact plan would replace an existing destination file",
         },
+        expectedStatement: "此精确方案会替换已有目标文件；需要明确授权覆盖。",
         requiresOverwrite: true,
         requiresCleanup: false,
       },
@@ -584,6 +663,8 @@ describe("V2 manual Organize journey", () => {
           statement:
             "this exact plan would delete the emptied source directories",
         },
+        expectedStatement:
+          "此精确方案会在整理后删除已清空的来源目录；需要明确授权来源清理。",
         requiresOverwrite: false,
         requiresCleanup: true,
       },
@@ -595,6 +676,8 @@ describe("V2 manual Organize journey", () => {
           statement:
             "this exact plan would replace an existing destination file and delete the emptied source directories",
         },
+        expectedStatement:
+          "此精确方案会替换已有目标文件，并在整理后删除已清空的来源目录；需要分别明确授权。",
         requiresOverwrite: true,
         requiresCleanup: true,
       },
@@ -615,23 +698,21 @@ describe("V2 manual Organize journey", () => {
       renderApp("/ui-v2/operations/organize/preview/preview-1");
 
       await screen.findByRole("heading", {
-        name: /Exact manual organize Preview/,
+        name: /整理预览/,
       });
-      expect(screen.getByText("COPY")).toBeVisible();
-      expect(screen.getAllByText(variant.implications.statement)).toHaveLength(
-        2,
-      );
+      expect(screen.getByText("复制")).toBeVisible();
+      expect(screen.getByText(variant.expectedStatement)).toBeVisible();
       const overwrite = screen.queryByRole("checkbox", {
-        name: /replace an existing destination file/,
+        name: /按已审阅方案替换现有目标文件/,
       });
       const cleanupConfirmation = screen.queryByRole("checkbox", {
-        name: /delete emptied source directories/,
+        name: /删除整理后为空的来源目录/,
       });
       expect(overwrite !== null).toBe(variant.requiresOverwrite);
       expect(cleanupConfirmation !== null).toBe(variant.requiresCleanup);
 
       const execute = screen.getByRole("button", {
-        name: "Execute selected exact items",
+        name: "确认执行所选条目",
       });
       if (variant.requiresOverwrite || variant.requiresCleanup) {
         expect(execute).toBeDisabled();
@@ -674,16 +755,14 @@ describe("V2 manual Organize journey", () => {
     renderApp("/ui-v2/operations/organize/preview/preview-1");
 
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
     const overwrite = screen.getByRole("checkbox", {
-      name: /replace an existing destination file/,
+      name: /按已审阅方案替换现有目标文件/,
     });
     await user.click(overwrite);
-    await user.click(
-      screen.getByRole("button", { name: "Execute selected exact items" }),
-    );
-    await screen.findByRole("heading", { name: "Manual organize execution" });
+    await user.click(screen.getByRole("button", { name: "确认执行所选条目" }));
+    await screen.findByRole("heading", { name: "整理执行情况" });
 
     const execute = calls.find((call) => call.url.endsWith("/execute"));
     expect(execute?.body).toMatchObject({
@@ -722,36 +801,40 @@ describe("V2 manual Organize journey", () => {
     renderApp("/ui-v2/operations/organize/preview/preview-1");
 
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
     const overwrite = screen.getByRole("checkbox", {
-      name: /replace an existing destination file/,
+      name: /按已审阅方案替换现有目标文件/,
     });
     await user.click(overwrite);
     expect(
-      screen.getByRole("button", { name: "Execute selected exact items" }),
+      screen.getByRole("button", { name: "确认执行所选条目" }),
     ).toBeEnabled();
 
-    await user.click(screen.getByRole("checkbox", { name: "Select item-1" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "选择 One.2001.mkv" }),
+    );
     expect(
       screen.queryByRole("checkbox", {
-        name: /replace an existing destination file/,
+        name: /按已审阅方案替换现有目标文件/,
       }),
     ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Execute selected exact items" }),
+      screen.getByRole("button", { name: "确认执行所选条目" }),
     ).toBeEnabled();
 
     // Re-selecting the destructive item is a new review boundary; the prior
     // confirmation is not reused even though the exact set is restored.
-    await user.click(screen.getByRole("checkbox", { name: "Select item-1" }));
+    await user.click(
+      screen.getByRole("checkbox", { name: "选择 One.2001.mkv" }),
+    );
     expect(
       screen.getByRole("checkbox", {
-        name: /replace an existing destination file/,
+        name: /按已审阅方案替换现有目标文件/,
       }),
     ).not.toBeChecked();
     expect(
-      screen.getByRole("button", { name: "Execute selected exact items" }),
+      screen.getByRole("button", { name: "确认执行所选条目" }),
     ).toBeDisabled();
   });
 
@@ -774,10 +857,10 @@ describe("V2 manual Organize journey", () => {
     renderApp("/ui-v2/operations/organize/preview/preview-1");
 
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
     expect(screen.getByText("C")).toBeVisible();
-    expect(screen.getByText("MOVE")).toBeVisible();
+    expect(screen.getByText("移动")).toBeVisible();
   });
 
   it("renders no executable control when the backend withholds the Execute action", async () => {
@@ -799,13 +882,13 @@ describe("V2 manual Organize journey", () => {
     renderApp("/ui-v2/operations/organize/preview/preview-1");
 
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
     const executeButton = screen.getByRole("button", {
-      name: "Execute selected exact items",
+      name: "确认执行所选条目",
     });
     expect(executeButton).toBeDisabled();
-    expect(screen.getByText(/Not ready:/)).toBeVisible();
+    expect(screen.getByText(/尚未就绪：/)).toBeVisible();
   });
 
   it("never retries a rejected admission and keeps the durable Preview visible", async () => {
@@ -826,13 +909,13 @@ describe("V2 manual Organize journey", () => {
     renderApp("/ui-v2/operations/organize/preview/preview-1");
 
     await screen.findByRole("heading", {
-      name: /Exact manual organize Preview/,
+      name: /整理预览/,
     });
-    await user.click(
-      screen.getByRole("button", { name: "Execute selected exact items" }),
-    );
+    await user.click(screen.getByRole("button", { name: "确认执行所选条目" }));
 
-    await screen.findByText(/Execution not admitted/);
+    // A refused admission is honest: it names the refused code, states that
+    // nothing was admitted or mutated, and never retries automatically.
+    await screen.findByText(/执行未获受理/);
     expect(screen.getByText(/authorization_expired/)).toBeVisible();
     expect(calls.filter((call) => call.url.endsWith("/execute")).length).toBe(
       1,
@@ -921,7 +1004,7 @@ describe("V2 manual Organize journey", () => {
       );
       expect(
         screen.queryByRole("button", {
-          name: "Execute selected exact items",
+          name: "确认执行所选条目",
         }),
       ).toBeNull();
       const rendered = (await screen.findByRole("main")).textContent ?? "";
@@ -1034,7 +1117,7 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/execution/execution-1");
 
-    await screen.findByRole("heading", { name: "Manual organize execution" });
+    await screen.findByRole("heading", { name: "整理执行情况" });
     const rendered = (await screen.findByRole("main")).textContent ?? "";
     expect(rendered).toContain("UNCERTAIN_EXECUTOR_INVOCATION");
     expect(rendered).not.toMatch(/could not be understood as the expected/);
@@ -1103,7 +1186,7 @@ describe("V2 manual Organize journey", () => {
       );
       expect(
         screen.queryByRole("button", {
-          name: "Execute selected exact items",
+          name: "确认执行所选条目",
         }),
       ).toBeNull();
       cleanup();
@@ -1126,7 +1209,7 @@ describe("V2 manual Organize journey", () => {
     authStore.setToken(TOKEN);
     renderApp("/ui-v2/operations/organize/execution/execution-1");
 
-    await screen.findByRole("heading", { name: "Manual organize execution" });
+    await screen.findByRole("heading", { name: "整理执行情况" });
     const rendered = (await screen.findByRole("main")).textContent ?? "";
     expect(rendered).not.toMatch(/could not be understood as the expected/);
     // The per-item evidence is rendered, not swallowed by a malformed state:
@@ -1138,9 +1221,7 @@ describe("V2 manual Organize journey", () => {
       ),
     ).toBeVisible();
     // The safe Slice 34 destination is offered exactly once as a handoff.
-    expect(
-      screen.getByRole("link", { name: "Open Review & Recovery" }),
-    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "打开复核与恢复" })).toBeVisible();
     // Recovery is a destination, not a mutation: nothing was ever submitted.
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });

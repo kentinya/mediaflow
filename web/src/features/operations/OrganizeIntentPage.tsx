@@ -39,12 +39,25 @@ import {
   filesReturnSearch,
   readFilesReturnContext,
 } from "../../shared/navigation/files-return";
+import {
+  operationsLandingSearch,
+  operationsReturnSearch,
+  readOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 
 function displayEnum(value: string): string {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  const labels: Readonly<Record<string, string>> = {
+    blocked: "受阻",
+    cancelled: "已取消",
+    completed: "已完成",
+    failed: "失败",
+    pending: "等待中",
+    previewed: "预览完成",
+    ready: "就绪",
+    running: "处理中",
+    unknown: "未知",
+  };
+  return labels[value.toLowerCase()] ?? value;
 }
 
 function safeValue(value: string | null): string {
@@ -144,7 +157,7 @@ function ChoiceEditor({
       if (value.ok) {
         setResult(null);
         onSaved(
-          "Choice saved durably. Every earlier Preview of this intent is now historical evidence; create a fresh Preview before executing.",
+          "选择已持久保存；此意图此前生成的预览已成为历史证据。执行前请生成新的预览。",
         );
         void queryClient.invalidateQueries({
           queryKey: [organizeIntentQueryKey],
@@ -153,8 +166,8 @@ function ChoiceEditor({
       }
       setResult(
         value.status === 409
-          ? "Another change was saved first, so this edit was rejected without overwriting it. Reload the intent and apply the choice again."
-          : `The choice was rejected (${value.code}). Nothing was changed.`,
+          ? "其他更改已先保存；本次编辑未覆盖它。请刷新意图后重新选择。"
+          : `选择被拒绝（${value.code}），没有保存任何更改。`,
       );
     },
   });
@@ -163,36 +176,36 @@ function ChoiceEditor({
     <section className="mf-count-section">
       <h3>{item.filename ?? item.itemId}</h3>
       <dl>
-        <dt>Source identity</dt>
+        <dt>来源身份</dt>
         <dd>{safeValue(item.sourceFileId)}</dd>
-        <dt>Storage-relative path</dt>
+        <dt>Storage 相对路径</dt>
         <dd>{safeValue(item.sourcePath)}</dd>
-        <dt>ResourceLibrary / Storage</dt>
+        <dt>资源库 / Storage</dt>
         <dd>
           {safeValue(item.resourceLibraryId)} /{" "}
           {safeValue(item.sourceStorageId)}
         </dd>
-        <dt>Scan / occurrence</dt>
+        <dt>扫描状态 / 文件版本</dt>
         <dd>
           {displayEnum(item.scanStatus ?? "unknown")} /{" "}
           {displayEnum(item.occurrenceState ?? "unknown")}
         </dd>
-        <dt>Item status / version</dt>
+        <dt>条目状态 / 版本</dt>
         <dd>
           {displayEnum(item.status)} / {item.version}
         </dd>
       </dl>
       {item.failure !== null && (
-        <StatusBanner variant="error" title="Item finding">
+        <StatusBanner variant="error" title="条目问题">
           <p>{item.failure.message}</p>
           <p className="mf-dashboard-meta">{item.failure.nextAction}</p>
         </StatusBanner>
       )}
       <div className="mf-field-group">
         <label>
-          RecognitionType
+          识别类型（RecognitionType）
           <select
-            aria-label={`RecognitionType ${item.itemId}`}
+            aria-label={`识别类型 ${item.itemId}`}
             value={recognitionTypeId}
             disabled={!editable}
             onChange={(event) => {
@@ -200,7 +213,7 @@ function ChoiceEditor({
               setRecognitionTypeId(event.target.value);
             }}
           >
-            <option value="">Choose a RecognitionType</option>
+            <option value="">选择识别类型</option>
             {recognitionTypes.map((value) => (
               <option key={value.id} value={value.id}>
                 {value.name ?? value.id}
@@ -209,9 +222,9 @@ function ChoiceEditor({
           </select>
         </label>
         <label>
-          Naming policy
+          命名策略
           <select
-            aria-label={`Naming policy ${item.itemId}`}
+            aria-label={`命名策略 ${item.itemId}`}
             value={projectedChoice?.namingPolicyId ?? ""}
             disabled
           >
@@ -225,9 +238,9 @@ function ChoiceEditor({
           </select>
         </label>
         <label>
-          Classification policy
+          分类策略
           <select
-            aria-label={`Classification policy ${item.itemId}`}
+            aria-label={`分类策略 ${item.itemId}`}
             value={projectedChoice?.classificationPolicyId ?? ""}
             disabled
           >
@@ -241,9 +254,9 @@ function ChoiceEditor({
           </select>
         </label>
         <label>
-          Organize policy
+          整理策略
           <select
-            aria-label={`Organize policy ${item.itemId}`}
+            aria-label={`整理策略 ${item.itemId}`}
             value={projectedChoice?.organizePolicyId ?? ""}
             disabled
           >
@@ -257,29 +270,22 @@ function ChoiceEditor({
           </select>
         </label>
         <p className="mf-dashboard-meta">
-          RecognitionType determines the naming, classification and organize
-          policies. Selecting a RecognitionType applies its exact pinned
-          configuration mapping; these downstream policies cannot be chosen
-          independently.
+          识别类型决定命名、分类和整理策略。选择识别类型后会应用当前预览固定的精确策略映射，不能单独修改下游策略。
         </p>
       </div>
       {failClosed && (
-        <StatusBanner
-          variant="error"
-          title="RecognitionType mapping unavailable"
-        >
+        <StatusBanner variant="error" title="识别类型策略映射不可用">
           <p>
             {selectionUnavailable
-              ? `The selected RecognitionType "${recognitionTypeId}" is not in the current pinned configuration options, so its policies cannot be applied.`
-              : `The selected RecognitionType "${recognitionTypeId}" is missing a configured naming, classification or organize policy in the current pinned configuration.`}
+              ? `当前固定配置中没有识别类型“${recognitionTypeId}”，无法应用其策略。`
+              : `当前固定配置中，识别类型“${recognitionTypeId}”缺少命名、分类或整理策略。`}
           </p>
           <p className="mf-dashboard-meta">
-            Reload the intent to load the current options and choose an
-            available RecognitionType. No choice was submitted.
+            请刷新意图并从当前可用选项中重新选择。本次没有提交任何选择。
           </p>
           <div className="mf-actions">
             <Button type="button" variant="secondary" onClick={onReload}>
-              Reload options
+              刷新选项
             </Button>
           </div>
         </StatusBanner>
@@ -300,11 +306,11 @@ function ChoiceEditor({
             }
           }}
         >
-          {mutation.isPending ? "Saving choice…" : "Save choice"}
+          {mutation.isPending ? "正在保存选择…" : "保存选择"}
         </Button>
       </div>
       {result !== null && (
-        <StatusBanner variant="error" title="Choice not saved">
+        <StatusBanner variant="error" title="选择未保存">
           <p>{result}</p>
         </StatusBanner>
       )}
@@ -318,6 +324,7 @@ export function OrganizeIntentPage() {
   });
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const filesReturn = readFilesReturnContext(searchParams);
+  const operationsReturn = readOperationsReturnContext(searchParams);
   const token = useAuthToken();
   const navigate = useNavigate();
   const [notice, setNotice] = useState<string | null>(null);
@@ -334,12 +341,15 @@ export function OrganizeIntentPage() {
         void navigate({
           to: "/operations/organize/preview/$previewId",
           params: { previewId: value.model.previewId },
-          search: filesReturn === null ? {} : filesReturnSearch(filesReturn),
+          search: {
+            ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
+            ...operationsReturnSearch(operationsReturn),
+          },
         });
         return;
       }
       setPreviewError(
-        `The exact Preview was rejected (${value.code}). Nothing was changed; reload the intent and request a fresh Preview.`,
+        `精确预览被拒绝（${value.code}），没有保存更改。请刷新意图后重新生成预览。`,
       );
     },
   });
@@ -347,13 +357,13 @@ export function OrganizeIntentPage() {
   return (
     <AuthorizedReadBoundary
       query={intentQuery}
-      unavailableTitle="Manual intent unavailable"
+      unavailableTitle="整理意图不可用"
     >
       {({ data, isFetching, refresh }) => {
         if (data === undefined) {
           return (
-            <StatusBanner variant="info" title="Loading durable intent">
-              <p>Reading the current durable manual intent.</p>
+            <StatusBanner variant="info" title="正在读取持久整理意图">
+              <p>正在读取当前整理意图。</p>
             </StatusBanner>
           );
         }
@@ -365,8 +375,13 @@ export function OrganizeIntentPage() {
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations"
+                  search={
+                    operationsReturn === null
+                      ? {}
+                      : operationsLandingSearch(operationsReturn, null)
+                  }
                 >
-                  Back to Operations
+                  返回操作与任务
                 </Link>
                 <RefreshControl onRefresh={refresh} refreshing={isFetching} />
               </div>
@@ -378,27 +393,26 @@ export function OrganizeIntentPage() {
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
               <div>
-                <h2>Manual organize intent</h2>
+                <h2>整理意图</h2>
                 <p className="mf-dashboard-meta">
-                  Intent {intent.intentId} · version {intent.version} ·{" "}
-                  {displayEnum(intent.status)} · configuration{" "}
+                  意图 {intent.intentId} · 版本 {intent.version} ·{" "}
+                  {displayEnum(intent.status)} · 配置{" "}
                   {safeValue(intent.configurationSnapshotId)}
                 </p>
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
             <p className="mf-dashboard-meta">
-              This intent changes no Storage. Editing a choice invalidates every
-              earlier Preview of this intent, so the operator always executes
-              evidence that matches the current choices.
+              此意图不会修改
+              Storage。更改选择会使此前预览失效；执行前必须使用与当前选择一致的预览。
             </p>
             {notice !== null && (
-              <StatusBanner variant="info" title="Choice updated">
+              <StatusBanner variant="info" title="选择已更新">
                 <p>{notice}</p>
               </StatusBanner>
             )}
             {intent.failure !== null && (
-              <StatusBanner variant="error" title="Intent finding">
+              <StatusBanner variant="error" title="意图问题">
                 <p>{intent.failure.message}</p>
                 <p className="mf-dashboard-meta">{intent.failure.nextAction}</p>
               </StatusBanner>
@@ -415,11 +429,11 @@ export function OrganizeIntentPage() {
               />
             ))}
             <section className="mf-count-section">
-              <h3>Exact Preview</h3>
+              <h3>精确预览</h3>
               <p className="mf-dashboard-meta">
                 {intent.actions.preview.available
-                  ? "The backend advertises a zero-mutation Preview for the current reviewed choices."
-                  : `Unavailable: ${intent.actions.preview.reason ?? "the backend does not advertise it"}`}
+                  ? "后端已提供针对当前选择的零变更预览。"
+                  : `暂不可用：${intent.actions.preview.reason ?? "后端未提供预览操作"}`}
               </p>
               {intent.actions.preview.durableOutcome && (
                 <p className="mf-dashboard-meta">
@@ -436,14 +450,19 @@ export function OrganizeIntentPage() {
                   onClick={() => previewMutation.mutate(intent.version)}
                 >
                   {previewMutation.isPending
-                    ? "Creating exact Preview…"
-                    : "Create exact Preview"}
+                    ? "正在生成精确预览…"
+                    : "生成精确预览"}
                 </Button>
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations"
+                  search={
+                    operationsReturn === null
+                      ? {}
+                      : operationsLandingSearch(operationsReturn, null)
+                  }
                 >
-                  Back to Operations
+                  返回操作与任务
                 </Link>
                 {filesReturn !== null && (
                   <Link
@@ -453,9 +472,18 @@ export function OrganizeIntentPage() {
                     返回文件
                   </Link>
                 )}
+                {operationsReturn !== null && (
+                  <Link
+                    className="mf-button mf-button-secondary"
+                    to="/operations"
+                    search={operationsLandingSearch(operationsReturn, null)}
+                  >
+                    返回任务中心
+                  </Link>
+                )}
               </div>
               {previewError !== null && (
-                <StatusBanner variant="error" title="Preview not created">
+                <StatusBanner variant="error" title="预览未生成">
                   <p>{previewError}</p>
                 </StatusBanner>
               )}

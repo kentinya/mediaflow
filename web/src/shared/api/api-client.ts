@@ -1672,10 +1672,12 @@ import {
   type ManualPreviewListPage,
 } from "../../entities/operations/preview";
 import {
+  normalizeOrganizeAdmissionOutcome,
   normalizeOrganizeExecution,
   normalizeOrganizeExecutionList,
   normalizeOrganizeIntent,
   normalizeOrganizePreview,
+  type OrganizeAdmissionOutcomeModel,
   type OrganizeExecutionListPage,
   type OrganizeExecutionModel,
   type OrganizeIntentModel,
@@ -2444,6 +2446,91 @@ export async function executeOrganizePreview(
 export type OrganizeExecutionRead =
   | { readonly ok: true; readonly model: OrganizeExecutionModel }
   | { readonly ok: false; readonly failure: OperationsFailure };
+
+export interface OrganizeAdmissionReconciliationOptions {
+  readonly previewId: string;
+  readonly itemIds: readonly string[];
+  readonly expectedIntentVersion: number;
+  readonly allowOverwrite: boolean;
+  readonly allowSourceCleanup: boolean;
+}
+
+export type OrganizeAdmissionOutcomeRead =
+  | { readonly ok: true; readonly model: OrganizeAdmissionOutcomeModel }
+  | { readonly ok: false; readonly failure: OperationsFailure };
+
+/**
+ * The one bounded admission-outcome reconciliation read for a submitted
+ * Execute whose response was lost, malformed or never arrived.
+ *
+ * The browser re-submits only the reviewed selection it already submitted
+ * (never authority material), and the server answers strictly from durable
+ * admission records bound to the reading principal. This read admits no work,
+ * mints or reissues no authority and never replays a mutation: it exists so a
+ * transport failure is never answered with an unproven "nothing was
+ * submitted" claim or an automatic second Execute.
+ */
+export async function fetchOrganizeAdmissionOutcome(
+  token: string | null,
+  options: OrganizeAdmissionReconciliationOptions,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeAdmissionOutcomeRead> {
+  if (
+    !isSafeIdentifier(options.previewId) ||
+    options.itemIds.length === 0 ||
+    options.itemIds.length > 100 ||
+    options.itemIds.some((itemId) => !isSafeIdentifier(itemId)) ||
+    !Number.isInteger(options.expectedIntentVersion) ||
+    options.expectedIntentVersion < 1
+  ) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  const params = new URLSearchParams();
+  params.set("itemIds", [...options.itemIds].join(","));
+  params.set("expectedIntentVersion", String(options.expectedIntentVersion));
+  params.set("allowOverwrite", options.allowOverwrite ? "true" : "false");
+  params.set(
+    "allowSourceCleanup",
+    options.allowSourceCleanup ? "true" : "false",
+  );
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/operations/organize/previews/${encodeURIComponent(
+        options.previewId,
+      )}/admission?${params.toString()}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (response.status === 401) {
+    throw new OperationsApiError("unauthorized");
+  }
+  if (response.status === 403) {
+    throw new OperationsApiError("forbidden");
+  }
+  if (response.status === 404) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  if (response.status >= 500) {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  if (!response.ok) {
+    return { ok: false, failure: operationsFailure("rejected") };
+  }
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+  try {
+    return { ok: true, model: normalizeOrganizeAdmissionOutcome(payload) };
+  } catch {
+    throw new OperationsApiError("malformed");
+  }
+}
 
 export interface OrganizeFileIndexReconciliationOptions {
   readonly executionId: string;
