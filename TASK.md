@@ -429,7 +429,7 @@ are not part of this checkpoint):
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: <filled by the report update after this commit>
+Head SHA: c0559eba2585fc6cd5650e21e24b3125f7526e01
 ```
 
 ## B Review Result
