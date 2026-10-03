@@ -21,11 +21,16 @@ existing Job repository.
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 
 from mediaflow.application.failure_explanation import classify_failure
+from mediaflow.application.scope_continuation import (
+    continuation_obstacle,
+    is_continuable_task_command,
+)
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import (
     AutomationCommand,
@@ -45,6 +50,7 @@ from mediaflow.domain.manual_safety import (
     redact_manual_text,
     redact_manual_value,
 )
+from mediaflow.domain.scope_continuation import ScopeContinuationReason
 from mediaflow.domain.security import ApiPermission
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
@@ -162,20 +168,54 @@ _REDACTED_EVIDENCE = (
     "endpoint or absolute host path]"
 )
 
-# The reason resume is withheld.  The existing architecture has no durable
-# queued command that continues one exact paused Task scope: the resident
-# Worker executes a fresh queued workflow, and paused-scope continuation with
-# successful-item exclusions exists only as the operator CLI workflow.
-# Advertising it here would fabricate support, so the backend states the truth
-# and names the surface that can really continue the Task.
+# The reason a continuable Task cannot be continued *yet*.  The durable queued
+# continuation boundary exists for this Task kind (see
+# ``mediaflow.application.scope_continuation``); the control is merely not
+# available in the current durable state, so the projection states that instead
+# of claiming no continuation exists.
+CONTINUATION_STATE_REASON = {
+    "pending": (
+        "the continuation is already queued and owned by the resident Worker; "
+        "submitting again would duplicate the remaining scope"
+    ),
+    "running": (
+        "the Task is still running; request a pause and continue only after the pause is "
+        "acknowledged at a supported item boundary"
+    ),
+}
+# The reason resume is withheld for a Task kind that has no supported durable
+# queued continuation of its exact remaining scope.  Advertising one would
+# fabricate support, so the backend states the truth and names the real surface.
 RESUME_UNAVAILABLE_REASON = (
-    "continuing one exact paused Task scope with its pinned configuration and "
-    "successful-item exclusions is currently an operator CLI workflow; no durable queued "
-    "command reproduces it, so MediaFlow does not advertise resume here"
+    "this Task kind has no durable queued continuation of its exact remaining scope; "
+    "MediaFlow does not advertise Continue where it cannot safely reproduce the "
+    "original admitted scope"
 )
 RESUME_NEXT_ACTION = (
-    "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), "
-    "or leave it paused; the Slice 34 Review & Recovery workspace owns Web media recovery"
+    "inspect this run's recorded per-item evidence and outcomes, or start a new bounded run "
+    "from 操作与任务; MediaFlow never replays a completed or uncertain effect"
+)
+# The reason a *paused* continuable Task cannot be continued because the live
+# execution authority is gone.  A stored execute flag is not authority, so the
+# operator is routed through the native exact Preview and a fresh explicit
+# intent for only the eligible remaining scope.
+RESUME_AUTHORITY_REASON = (
+    "continuing this remaining scope would mutate media, but the original execution authority "
+    "was one-shot, expired or revoked; a stored execute flag is not authority"
+)
+RESUME_AUTHORITY_NEXT_ACTION = (
+    "open the run's exact Preview, review the remaining scope, and authorize execution again "
+    "from 操作与任务"
+)
+# The reason a paused continuable Task cannot be continued because its immutable
+# configuration pin no longer resolves.
+RESUME_SNAPSHOT_REASON = (
+    "the Task's immutable configuration pin cannot be resolved, so its exact original scope "
+    "cannot be reproduced"
+)
+RESUME_SNAPSHOT_NEXT_ACTION = (
+    "restore the pinned published configuration revision, or start a new bounded run under "
+    "the current Active configuration"
 )
 
 
@@ -206,8 +246,8 @@ class TaskExecutionContext:
     #: Whether the manual Scan service already stores a cancellation request.
     cancellation_requested: bool = False
     #: Whether this Task kind has a durable queued continuation authority, so
-    #: a paused Task may be re-queued for the resident Worker (currently only
-    #: the bounded Files Copy/Move transfer Tasks).
+    #: a paused Task may be re-queued for the resident Worker (the bounded Files
+    #: Copy/Move transfer Tasks and the continuable operator workflows).
     resumable: bool = False
     #: Whether this Task kind owns a durable continuation authority at all,
     #: independent of its current state.  A bounded transfer keeps that
@@ -215,6 +255,16 @@ class TaskExecutionContext:
     #: available yet, so the projection must say so instead of claiming that no
     #: continuation exists.
     durable_continuation: bool = False
+    #: Whether this exact Task kind can continue its remaining admitted scope
+    #: through the shared durable queued continuation boundary.  It is
+    #: independent of the current state: a queued or running continuable Task
+    #: still has that boundary, the control is merely not available yet.
+    continuable: bool = False
+    #: Why a continuable Task cannot be continued in its exact current state,
+    #: as a bounded operator reason with its own next action.  ``None`` means
+    #: the state itself offers no obstacle.
+    continuation_blocked_reason: str | None = None
+    continuation_blocked_next_action: str | None = None
 
 
 class OperationsLifecycleConflict(RuntimeError):
@@ -1949,7 +1999,7 @@ def task_lifecycle_document(
                 "or Operations"
             ),
         )
-    elif execution.durable_continuation:
+    elif execution.durable_continuation and not execution.continuable:
         # The same durable continuation authority exists, but the current
         # durable state offers nothing to continue: a queued/running transfer is
         # already owned by its Worker and a terminal one has no remaining work.
@@ -1977,6 +2027,54 @@ def task_lifecycle_document(
             ),
             next_action=(
                 "follow the transfer's durable progress in the Files workspace or Operations"
+            ),
+        )
+    elif execution.continuable:
+        # The shared durable queued continuation boundary: a paused Task of a
+        # continuable kind admits exactly its remaining admitted scope for
+        # resident-Worker pickup.  The request itself performs zero Storage work
+        # and the Worker revalidates the live source, capability, permission and
+        # execution authority before any effect.
+        # Availability and its explanation are one decision: an advertised
+        # control must never also carry a reason, and a withheld one must always
+        # state its bounded obstacle (the Web contract rejects either mismatch).
+        continuation_available = (
+            permitted
+            and task.status is PersistentTaskStatus.PAUSED
+            and execution.continuation_blocked_reason is None
+        )
+        continuation_reason = (
+            None
+            if continuation_available
+            else (
+                permission_reason
+                or execution.continuation_blocked_reason
+                or (
+                    "the Task already reached a terminal state and has no remaining scope"
+                    if terminal
+                    else "only a durably paused Task has a remaining scope to continue; this "
+                    f"Task is {task.status.value}"
+                )
+            )
+        )
+        resume = _action(
+            action="resume",
+            label="Continue remaining scope",
+            path=f"/api/v1/tasks/{task.task_id}/resume",
+            available=continuation_available,
+            unavailable_reason=continuation_reason,
+            durable_outcome=(
+                "a durable continuation of this Task's exact remaining admitted scope is "
+                "queued for the resident Worker, which preserves the original immutable pin "
+                "and excludes every completed, ignored, waiting or uncertain item"
+            ),
+            side_effects=(
+                "no Storage mutation in this request; the Worker later continues the remaining "
+                "scope through OrganizerExecutor under its own claim and revalidated authority"
+            ),
+            next_action=(
+                execution.continuation_blocked_next_action
+                or "follow the linked continuation run for its independent per-item outcomes"
             ),
         )
     else:
@@ -2087,8 +2185,16 @@ class TaskLifecycleService:
     what the owning execution path really observes at a supported boundary.
     """
 
-    def __init__(self, repository: PersistentTaskRepository) -> None:
+    def __init__(
+        self,
+        repository: PersistentTaskRepository,
+        *,
+        snapshot_validator: Callable[[str, str], None] | None = None,
+        mutation_authority: Callable[[PersistentTask], bool] | None = None,
+    ) -> None:
         self._repository = repository
+        self._snapshot_validator = snapshot_validator
+        self._mutation_authority = mutation_authority
         self._coordinator = PersistentTaskCoordinator(repository, repository)
 
     def require(self, task_id: str) -> PersistentTask:
@@ -2117,14 +2223,59 @@ class TaskLifecycleService:
             )
         if task.command == MANUAL_ORGANIZE_TASK_COMMAND:
             return TaskExecutionContext(TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE)
-        return TaskExecutionContext(
-            TaskExecutionPath.OPERATOR_WORKFLOW,
-            resumable=(
-                is_files_transfer_task_command(task.command)
-                and task.status is PersistentTaskStatus.PAUSED
-            ),
-            durable_continuation=is_files_transfer_task_command(task.command),
+        if is_files_transfer_task_command(task.command):
+            return TaskExecutionContext(
+                TaskExecutionPath.OPERATOR_WORKFLOW,
+                resumable=task.status is PersistentTaskStatus.PAUSED,
+                durable_continuation=True,
+            )
+        if is_continuable_task_command(task.command):
+            # The shared durable queued continuation boundary.  Whether it is
+            # *available* also depends on the exact paused state, the immutable
+            # pin and the applicable execution authority, which this projection
+            # resolves from the same durable evidence the admission revalidates.
+            reason, next_action = self.continuation_obstacle(task)
+            return TaskExecutionContext(
+                TaskExecutionPath.OPERATOR_WORKFLOW,
+                durable_continuation=True,
+                continuable=True,
+                continuation_blocked_reason=reason,
+                continuation_blocked_next_action=next_action,
+            )
+        return TaskExecutionContext(TaskExecutionPath.OPERATOR_WORKFLOW)
+
+    def continuation_obstacle(self, task: PersistentTask) -> tuple[str | None, str | None]:
+        """Why a continuable Task cannot be continued now, and its next action.
+
+        This delegates to the exact same decision the admission boundary and the
+        resident Worker make (``scope_continuation.continuation_obstacle``), so
+        the advertised control, the POST and the Worker can never disagree about
+        whether the remaining scope may really be continued.  The projection
+        reads only durable evidence: the exact Task state, the immutable pin and
+        the existence of a live reusable execution authority for a Task that
+        would mutate media.  A stored ``execute_authorized`` flag is never
+        treated as authority.
+        """
+
+        reason, message, next_action = continuation_obstacle(
+            self._repository, task, self._snapshot_validator, self._mutation_authority
         )
+        if reason is None:
+            return None, None
+        if reason is ScopeContinuationReason.AUTHORITY_REQUIRED:
+            return RESUME_AUTHORITY_REASON, RESUME_AUTHORITY_NEXT_ACTION
+        if reason is ScopeContinuationReason.SNAPSHOT_UNAVAILABLE:
+            return message, next_action
+        # A state-only obstacle keeps the projection's own state-aware copy.
+        state_reason = CONTINUATION_STATE_REASON.get(task.status.value)
+        if state_reason is not None:
+            return state_reason, None
+        if task.status in TASK_TERMINAL_STATUSES:
+            return (
+                "the Task already reached a terminal state and has no remaining scope",
+                "inspect the recorded per-item outcomes, or start a new bounded run",
+            )
+        return message, next_action
 
     def require_version(self, task: PersistentTask, expected_version: str | None) -> None:
         """Reject a control submitted against a state that is no longer current."""

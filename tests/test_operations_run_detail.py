@@ -63,6 +63,10 @@ from tests.test_operations_run_inventory import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 TASK_BASE_SHA = "cf7099a478a203f3f29ac57ef5b8acc295aadaa9"
+#: The runtime schema that exact historical commit shipped.  It is a fixed
+#: fact about an immutable commit, not ``SCHEMA_VERSION - 1``: a later additive
+#: migration must not silently retarget this fixture at a different Base.
+TASK_BASE_SCHEMA_VERSION = 41
 
 ADMIN = ResolvedApiPrincipal("admin", "admin-token", frozenset(ApiPermission))
 SILENT = ResolvedApiPrincipal("silent", "silent-token", frozenset())
@@ -1426,7 +1430,7 @@ class RunDetailSchemaUpgradeTests(unittest.TestCase):
                 "    PersistentTask, PersistentTaskStatus, PersistentTaskItem,\n"
                 "    TaskItemStatus, PersistentResultRecord,\n"
                 ")\n"
-                f"assert SCHEMA_VERSION == {SCHEMA_VERSION - 1}, SCHEMA_VERSION\n"
+                f"assert SCHEMA_VERSION == {TASK_BASE_SCHEMA_VERSION}, SCHEMA_VERSION\n"
                 "NOW = datetime(2026, 1, 1, tzinfo=UTC)\n"
                 "with SQLiteTaskRepository(sys.argv[1]) as repository:\n"
                 "    repository.create_task(PersistentTask(\n"

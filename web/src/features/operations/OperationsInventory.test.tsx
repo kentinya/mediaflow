@@ -764,3 +764,233 @@ describe("Operations run inventory landing", () => {
     );
   });
 });
+
+const LIFECYCLE_VERSION = "2026-08-22T12:06:00+00:00";
+
+function lifecycleAction(
+  name: string,
+  available: boolean,
+  unavailableReason: string | null,
+) {
+  return {
+    action: name,
+    label: `${name} label`,
+    method: "POST",
+    path: `/api/v1/tasks/{id}/${name}`,
+    available,
+    unavailableReason,
+    confirmationRequired: false,
+    cooperative: true,
+    durableOutcome: `${name} durable outcome`,
+    sideEffects: "no Storage mutation",
+    retrySafe: false,
+    nextAction: `${name} next action`,
+  };
+}
+
+function runLifecycleDocument(overrides: Record<string, unknown> = {}) {
+  return {
+    objectType: "task",
+    objectId: "task-001",
+    state: "running",
+    version: LIFECYCLE_VERSION,
+    executionPath: "operator_workflow",
+    terminal: false,
+    permitted: true,
+    permission: "cancel_job",
+    pauseRequested: false,
+    cancellationRequested: false,
+    commandKind: null,
+    effectCertainty: "none",
+    resultsObserved: 0,
+    resultsComplete: true,
+    uncertainResults: 0,
+    knownEffects: "当前没有已记录的存储效果",
+    nextAction: "刷新读取持久状态",
+    actions: [
+      lifecycleAction("cancel", true, null),
+      lifecycleAction("pause", true, null),
+      lifecycleAction(
+        "resume",
+        false,
+        "没有可用的持久排队继续边界;请在终端继续该暂停范围",
+      ),
+    ],
+    ...overrides,
+  };
+}
+
+/**
+ * A fetch stub for the selected-run control journey: the inventory page, the
+ * selected run overview carrying a lifecycle projection, and the bounded
+ * landing reads. `submit` decides the POST outcome and records every POST.
+ */
+function stubLifecycleJourney(options: {
+  readonly lifecycle?: Record<string, unknown>;
+  readonly overview?: Record<string, unknown>;
+  readonly respond: (
+    url: string,
+    init: RequestInit | undefined,
+    attempt: number,
+  ) => Response;
+  readonly posts: { readonly url: string; readonly body: unknown }[];
+}): {
+  readonly fetchMock: ReturnType<typeof vi.fn>;
+  readonly overviewReads: () => number;
+} {
+  let overviewReads = 0;
+  const fetchMock = stubFetch(async (input, init) => {
+    const url = String(input);
+    if (init?.method === "POST") {
+      options.posts.push({
+        url,
+        body:
+          typeof init.body === "string"
+            ? (JSON.parse(init.body) as unknown)
+            : null,
+      });
+      return options.respond(url, init, options.posts.length);
+    }
+    if (
+      url.startsWith("/api/v1/operations/runs?") ||
+      url === "/api/v1/operations/runs"
+    ) {
+      return jsonResponse(pageDocument());
+    }
+    if (url === "/api/v1/operations/runs/task-001") {
+      overviewReads += 1;
+      return jsonResponse(
+        runDocument({
+          ...options.overview,
+          lifecycle: options.lifecycle ?? runLifecycleDocument(),
+        }),
+      );
+    }
+    if (url.startsWith("/api/v1/operations/runs/task-001/")) {
+      // The invalidated detail tabs re-read their own bounded pages.
+      return jsonResponse({ error: { code: "not_found" } }, 404);
+    }
+    if (url === "/api/v1/workers/readiness") {
+      return jsonResponse(readinessPayload());
+    }
+    if (url === "/api/v1/management/readiness") {
+      return jsonResponse(managementReadinessPayload());
+    }
+    if (url.startsWith("/api/v1/operations/manual-actions")) {
+      return jsonResponse(manualActionsPayload());
+    }
+    return jsonResponse({ error: { code: "not_found" } }, 404);
+  });
+  return { fetchMock, overviewReads: () => overviewReads };
+}
+
+describe("selected run lifecycle controls", () => {
+  it("submits exactly one authenticated POST with the displayed version", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const { fetchMock } = stubLifecycleJourney({
+      posts,
+      respond: () =>
+        jsonResponse({
+          action: "pause",
+          taskId: "task-001",
+          task: {
+            task_id: "task-001",
+            command: "scan",
+            status: "running",
+            execute_authorized: false,
+            created_at: "2026-08-22T12:00:00+00:00",
+            updated_at: "2026-08-22T12:07:00+00:00",
+            started_at: "2026-08-22T12:00:01+00:00",
+            completed_at: null,
+            total_items: 4,
+            completed_items: 1,
+            failed_items: 0,
+            failure: null,
+            pause_requested: true,
+            configuration_snapshot_id: "snap-1",
+            item_limit: null,
+          },
+          lifecycle: runLifecycleDocument({
+            version: "2026-08-22T12:07:00+00:00",
+            pauseRequested: true,
+          }),
+          durableOutcome: "暂停请求已持久保存",
+        }),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    // The withheld Resume is explained, never rendered as a control.
+    expect(
+      within(controls).queryByRole("button", { name: "继续剩余范围" }),
+    ).toBeNull();
+    expect(
+      within(controls).getByText(/没有可用的持久排队继续边界/),
+    ).toBeVisible();
+
+    await user.click(
+      within(controls).getByRole("button", { name: "请求暂停" }),
+    );
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]?.url).toBe("/api/v1/tasks/task-001/pause");
+    expect(posts[0]?.body).toEqual({ expectedUpdatedAt: LIFECYCLE_VERSION });
+    // The accepted envelope is reported truthfully, and a click never becomes
+    // more than one submission.
+    expect(
+      await within(controls).findByText(/暂停请求已持久保存/),
+    ).toBeVisible();
+    expect(posts).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalled();
+  });
+
+  it("locks resubmission after a malformed control response until refresh", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    const { overviewReads } = stubLifecycleJourney({
+      posts,
+      // A 200 whose body cannot describe the accepted control: the durable
+      // outcome is unknown, so no second command may be sent.
+      respond: () => jsonResponse({ action: "pause" }),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    await waitFor(() => expect(overviewReads()).toBeGreaterThanOrEqual(1));
+    const pause = within(controls).getByRole("button", { name: "请求暂停" });
+    await user.click(pause);
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    // Unknown outcome: the reconciliation copy is shown and every control is
+    // disabled, so a resubmission cannot be clicked.
+    expect(await within(controls).findByText(/控制结果未知/)).toBeVisible();
+    expect(
+      within(controls).getByRole("button", { name: "请求暂停" }),
+    ).toBeDisabled();
+    expect(
+      within(controls).getByRole("button", { name: "取消运行" }),
+    ).toBeDisabled();
+    await user.click(
+      within(controls).getByRole("button", { name: "请求暂停" }),
+    );
+    expect(posts).toHaveLength(1);
+
+    // One explicit successful reconciliation reads the overview again and
+    // clears the lock, re-enabling the advertised controls without ever
+    // resubmitting the command.
+    const readsBefore = overviewReads();
+    await user.click(
+      within(controls).getByRole("button", { name: "刷新核对持久状态" }),
+    );
+    await waitFor(() => expect(overviewReads()).toBeGreaterThan(readsBefore));
+    await waitFor(() =>
+      expect(
+        within(controls).getByRole("button", { name: "请求暂停" }),
+      ).toBeEnabled(),
+    );
+    expect(posts).toHaveLength(1);
+  });
+});

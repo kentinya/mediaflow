@@ -603,6 +603,26 @@ const FAKE_TASKS = [
     configuration_snapshot_id: "snap-1",
     item_limit: null,
   },
+  {
+    // A durably paused Files transfer: the one Task kind whose paused scope
+    // has a real queued continuation boundary, so its run overview advertises
+    // an available Resume (Slice 38 RO-6 / Slice 42 RO-5).
+    task_id: "task-007",
+    command: "files_transfer",
+    status: "paused",
+    execute_authorized: true,
+    created_at: "2026-08-22T12:35:00+00:00",
+    updated_at: "2026-08-22T12:40:00+00:00",
+    started_at: "2026-08-22T12:35:01+00:00",
+    completed_at: null,
+    total_items: 3,
+    completed_items: 1,
+    failed_items: 0,
+    failure: null,
+    pause_requested: false,
+    configuration_snapshot_id: "snap-1",
+    item_limit: null,
+  },
 ];
 
 const FAKE_JOBS = [
@@ -10975,7 +10995,7 @@ const server = createServer(async (req, res) => {
     );
   }
 
-  function runRunDocument(run, progress) {
+  function runRunDocument(run, progress, lifecycle) {
     const attention = ATTENTION_RUN_STATUSES.includes(run.status);
     return {
       ...run,
@@ -10987,7 +11007,38 @@ const server = createServer(async (req, res) => {
       // the inventory page leaves it absent, exactly like the Python
       // `_operations_runs_page` / `_operations_run_overview` split.
       ...(progress !== undefined ? { progress } : {}),
+      // Only the single-run overview read publishes the lifecycle controls,
+      // for the exact durable object the run resolves to (linked Task, else
+      // pre-Task Job, else none) — inventory rows never carry it.
+      ...(lifecycle !== undefined ? { lifecycle } : {}),
     };
+  }
+
+  /**
+   * The backend-advertised lifecycle projection of one run overview.
+   *
+   * The projection belongs to the exact durable object the run resolves to:
+   * the linked Task when the run acquired one, otherwise the pre-Task Job
+   * admission. A run with neither identity carries no projection at all, so
+   * the frontend can never attach an approximate control.
+   */
+  function runLifecycleDocument(run) {
+    if (run.task_id !== null) {
+      const task = FAKE_TASKS.find((value) => value.task_id === run.task_id);
+      if (task !== undefined) {
+        return taskLifecycle(
+          task,
+          TASK_RESULTS.filter((result) => result.task_id === task.task_id),
+        );
+      }
+    }
+    if (run.job_id !== null) {
+      const job = FAKE_JOBS.find((value) => value.job_id === run.job_id);
+      if (job !== undefined) {
+        return jobLifecycle(job);
+      }
+    }
+    return null;
   }
 
   /**
@@ -12238,7 +12289,45 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (action === "resume") {
-      sendJson(res, 409, { error: { code: "lifecycle_conflict" } });
+      // Only a durably paused bounded transfer has a real queued continuation
+      // boundary; every other paused scope is withheld with a bounded reason
+      // and an actionable next step, exactly like the Python contract.
+      const resumable =
+        task.status === "paused" &&
+        (task.command === "files_transfer" ||
+          task.command === "media_files_transfer");
+      if (!resumable) {
+        sendJson(res, 409, {
+          error: {
+            code: "resume_unavailable",
+            details: {
+              reason: "resume_unavailable",
+              durableState: `a ${task.status} ${task.command} Task has no durable queued continuation`,
+              nextAction:
+                "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), or leave it paused",
+            },
+          },
+        });
+        return;
+      }
+      task.status = "pending";
+      task.completed_at = null;
+      task.updated_at = bumpTimestamp(task.updated_at);
+      sendJson(res, 202, {
+        action,
+        taskId: task.task_id,
+        task,
+        lifecycle: taskLifecycle(
+          task,
+          TASK_RESULTS.filter((result) => result.task_id === task.task_id),
+        ),
+        durableOutcome:
+          "the paused scope is re-queued for the resident Worker; it continues only from each item's recorded known-safe checkpoint and never replays completed or uncertain mutations",
+        sideEffects: "none",
+        retrySafe: false,
+        nextAction:
+          "the continuation is queued for the resident Worker; follow its progress here",
+      });
       return;
     }
     if (action === "pause") {
@@ -12593,7 +12682,11 @@ const server = createServer(async (req, res) => {
       sendJson(res, 404, { error: { code: "not_found" } });
       return;
     }
-    sendJson(res, 200, runRunDocument(run, runProgressDocument(run)));
+    sendJson(
+      res,
+      200,
+      runRunDocument(run, runProgressDocument(run), runLifecycleDocument(run)),
+    );
     return;
   }
 

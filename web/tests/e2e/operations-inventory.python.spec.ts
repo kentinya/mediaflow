@@ -1293,3 +1293,201 @@ test("the default unfiltered task-center origin selects its admitted run through
     ),
   ).toHaveLength(1);
 });
+
+/**
+ * Task 42.4 (Slice 42 RO-5) — the real native paused-scope continuation journey.
+ *
+ * Every case here runs against the same real-Python harness as the journeys
+ * above, so the browser drives the packaged Python stack: the paused Task is
+ * created by the production `PersistentTaskCoordinator`, the Pause and Continue
+ * clicks are the *rendered* native controls of the selected unified run, the
+ * continuation is admitted by the real `MediaFlowApi` and executed by the real
+ * resident-Worker handler (`_run_queued_workflow`), and the linked results are
+ * re-read from durable SQLite rows after a real restart.
+ *
+ * Harness `__harness__/*` routes coordinate *when* the Worker runs; they never
+ * replace production admission, the real claim/lease fence, the real
+ * continuation scope logic or the real authority decision.
+ */
+
+/** The paused scan fixture's already-recorded and remaining sources. */
+const CONTINUATION_RECORDED_SOURCE = "Six.2006.mkv";
+const CONTINUATION_REMAINING_SOURCE = "Five.2005.mkv";
+
+test("a paused run continues only its remaining scope through the real Worker", async ({
+  page,
+  request,
+}) => {
+  // Seed the genuine paused scope through the production coordinator.
+  const seeded = await (
+    await request.post(`${BASE}/__harness__/seed-continuation`)
+  ).json();
+  expect(seeded.status).toBe("paused");
+  expect(seeded.recordedSource).toBe(CONTINUATION_RECORDED_SOURCE);
+  const sourceTaskId = seeded.taskId as string;
+
+  await connect(page);
+  await openInventory(page);
+  // The paused fixture is one more durable run in the same population, but the
+  // harness database is shared by the sequential tests above, so the exact
+  // total is not asserted here: this journey addresses its own run by identity.
+  await expect(page.getByRole("table")).toBeVisible();
+  await expect(
+    page.getByRole("row").filter({ hasText: sourceTaskId }),
+  ).toHaveCount(1);
+
+  // Select exactly the paused fixture run by its own identity.
+  const pausedRow = page.getByRole("row").filter({ hasText: sourceTaskId });
+  await expect(pausedRow).toHaveCount(1);
+  await pausedRow.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+
+  // The native control panel is the backend's own projection for this run.
+  const controls = detail.getByRole("region", { name: "运行控制" });
+  await expect(controls).toBeVisible();
+  await expect(controls).toContainText("已暂停");
+
+  // Continue is advertised for this exact paused scope, and the operator clicks
+  // the real rendered control — never a direct API call.
+  const continueButton = controls.getByRole("button", {
+    name: "继续剩余范围",
+  });
+  await expect(continueButton).toBeEnabled();
+  const admitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${sourceTaskId}/resume`,
+  );
+  await continueButton.click();
+  const admission = await admitted;
+  // The admission itself performs zero Storage work and answers 202.
+  expect(admission.status()).toBe(202);
+  const admissionBody = await admission.json();
+  expect(admissionBody.sideEffects).toBe("none");
+  expect(admissionBody.retrySafe).toBe(false);
+  expect(admissionBody.continuation.status).toBe("queued");
+  expect(admissionBody.continuation.source_task_id).toBe(sourceTaskId);
+  // The continuation preserves the original command, scope and item budget.
+  expect(admissionBody.continuation.command).toBe("scan");
+  expect(admissionBody.continuation.item_limit).toBe(2);
+  expect(admissionBody.continuation.boundary).toBe(
+    "paused_remaining_admitted_scope",
+  );
+  const continuationJobId = admissionBody.jobId as string;
+  expect(continuationJobId).toBeTruthy();
+
+  // The accepted control reports the backend's own durable outcome.
+  await expect(controls).toContainText("控制已受理");
+
+  // Now the REAL resident-Worker handler claims and runs the continuation.
+  const worker = await (
+    await request.post(`${BASE}/__harness__/run-continuation-worker`)
+  ).json();
+  expect(worker.ran).toBe(true);
+  expect(worker.jobId).toBe(continuationJobId);
+  expect(worker.continuationStatus).toBe("completed");
+  const continuedTaskId = worker.newTaskId as string;
+  expect(continuedTaskId).toBeTruthy();
+
+  // The durable proof: the continuation processed exactly the one remaining
+  // source, never the already-recorded one, and the original Task keeps its own
+  // recorded item and its paused state.
+  const state = await (
+    await request.get(`${BASE}/__harness__/continuation-state`)
+  ).json();
+  expect(state.sourceStatus).toBe("paused");
+  expect(state.sourceItemPaths).toEqual([CONTINUATION_RECORDED_SOURCE]);
+  const continued = state.linkedTasks.find(
+    (item: { taskId: string }) => item.taskId === continuedTaskId,
+  );
+  expect(continued).toBeTruthy();
+  expect(continued.status).toBe("completed");
+  expect(continued.itemPaths).toEqual([CONTINUATION_REMAINING_SOURCE]);
+  expect(continued.itemPaths).not.toContain(CONTINUATION_RECORDED_SOURCE);
+  expect(state.continuations).toHaveLength(1);
+  expect(state.continuations[0].new_task_id).toBe(continuedTaskId);
+
+  // The linked continuation is independently inspectable in the browser after a
+  // real restart of the runtime database, and the original run is unchanged.
+  const restarted = await request.post(`${BASE}/__harness__/restart`);
+  expect(restarted.ok()).toBeTruthy();
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  await expect(
+    page.getByRole("row").filter({ hasText: sourceTaskId }),
+  ).toHaveCount(1);
+  // The continuation is its own visible run. A Job-backed run keeps its
+  // admission identity, so it is addressed by the continuation Job ID while its
+  // durable Task identity stays available for the evidence reads below.
+  await expect(
+    page.getByRole("row").filter({ hasText: continuationJobId }),
+  ).toHaveCount(1);
+  const afterRestart = await (
+    await request.get(`${BASE}/__harness__/continuation-state`)
+  ).json();
+  expect(afterRestart.sourceStatus).toBe("paused");
+  expect(afterRestart.sourceItemPaths).toEqual([CONTINUATION_RECORDED_SOURCE]);
+  expect(
+    afterRestart.linkedTasks.find(
+      (item: { taskId: string }) => item.taskId === continuedTaskId,
+    ).itemPaths,
+  ).toEqual([CONTINUATION_REMAINING_SOURCE]);
+  // No continuation was duplicated by the restart.
+  expect(afterRestart.continuations).toHaveLength(1);
+});
+
+test("a mutation-authorized paused run without live authority is refused natively", async ({
+  page,
+  request,
+}) => {
+  // A paused Task that was admitted as a mutation but owns no live reusable
+  // authority. Its `execute_authorized` boolean is NOT authority, so the
+  // backend must refuse Continue and name the native exact-Preview journey.
+  const created = await (
+    await request.post(`${BASE}/__harness__/seed-authority-refusal`)
+  ).json();
+  const taskId = created.taskId as string;
+  expect(taskId).toBeTruthy();
+
+  await connect(page);
+  await openInventory(page);
+  const row = page.getByRole("row").filter({ hasText: taskId });
+  await expect(row).toHaveCount(1);
+  await row.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const controls = detail.getByRole("region", { name: "运行控制" });
+  await expect(controls).toBeVisible();
+
+  // Continue is withheld with the real obstacle and the native next action, and
+  // the operator is never routed to the CLI.
+  await expect(
+    controls.getByRole("button", { name: "继续剩余范围" }),
+  ).toHaveCount(0);
+  const withheld = controls.getByRole("list", { name: "不可用的运行控制" });
+  await expect(withheld).toContainText("继续剩余范围");
+  await expect(withheld).toContainText("stored execute flag is not authority");
+  await expect(controls).toContainText("继续不可用的下一步");
+  await expect(controls).toContainText("exact Preview");
+  await expect(controls).not.toContainText("mediaflow tasks");
+
+  // A direct deliberate POST is refused atomically with the same reason, and it
+  // queues no work.
+  const projectionResponse = await request.get(
+    `${BASE}/api/v1/tasks/${taskId}`,
+    { headers: { Authorization: `Bearer ${TOKEN}` } },
+  );
+  expect(projectionResponse.ok()).toBeTruthy();
+  const projection = await projectionResponse.json();
+  const refused = await request.post(`${BASE}/api/v1/tasks/${taskId}/resume`, {
+    data: { expectedUpdatedAt: projection.lifecycle.version },
+    headers: { Authorization: `Bearer ${TOKEN}` },
+  });
+  expect(refused.status()).toBe(409);
+  const refusal = await refused.json();
+  expect(refusal.error.details.reason).toBe("authority_required");
+  expect(refusal.error.details.sideEffects).toBe("none");
+  expect(refusal.error.details.nextAction).toContain("exact Preview");
+  expect(refusal.error.details.nextAction).not.toContain("mediaflow tasks");
+});

@@ -82,6 +82,33 @@ describe("normalizeLifecycleProjection", () => {
     ).toThrow();
   });
 
+  it("accepts the raw state against a closed allow-set", () => {
+    // A caller that cannot know one exact raw state (the unified run overview,
+    // whose own aggregate status is derived) passes the modelled set; the
+    // projection's own raw state must still be one of them.
+    const model = normalizeLifecycleProjection(projection(), {
+      objectType: "task",
+      objectId: "task-1",
+      state: ["pending", "running", "paused"],
+    });
+    expect(model.state).toBe("running");
+    expect(() =>
+      normalizeLifecycleProjection(projection({ state: "unknown" }), {
+        objectType: "task",
+        objectId: "task-1",
+        state: ["pending", "running", "paused"],
+      }),
+    ).toThrow();
+    // An empty allow-set cannot describe any real object state.
+    expect(() =>
+      normalizeLifecycleProjection(projection(), {
+        objectType: "task",
+        objectId: "task-1",
+        state: [],
+      }),
+    ).toThrow();
+  });
+
   it("rejects an unknown action name", () => {
     expect(() =>
       normalizeLifecycleProjection(

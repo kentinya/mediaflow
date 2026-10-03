@@ -197,6 +197,12 @@ from mediaflow.domain.resident_services import (
     validate_resident_waiting_reason,
 )
 from mediaflow.domain.scanner import FileChange, FileScanStatus
+from mediaflow.domain.scope_continuation import (
+    ScopeContinuation,
+    ScopeContinuationError,
+    ScopeContinuationReason,
+    ScopeContinuationStatus,
+)
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
     MEDIA_LIBRARY_TASK_COMMAND_PREFIX,
@@ -263,7 +269,18 @@ from mediaflow.infrastructure.file_index_schema import (
 # selection, authorization, claim, execution or authority state changes — and a
 # legacy row without it stays explicitly unavailable with no Active fallback
 # and no read-time backfill.
-SCHEMA_VERSION = 42
+# Schema 42 adds the read-supporting item ordering index of the selected-run
+# detail journey.  It is indexes only: the read path adds no column, no
+# backfill and no second execution authority.
+# Schema 43 adds the additive ``scope_continuations`` table: one explicit
+# admission record per Web "Continue" of a durably paused Task's exact
+# remaining admitted scope.  The row copies the original command, scope path,
+# item limit and immutable configuration pin, is linked to exactly one queued
+# continuation Job, and is display/claim evidence only — the resident Worker
+# still owns the running boundary and revalidates live source, capability and
+# mutation authority before any effect.  A legacy database simply has no
+# continuation rows, so nothing is backfilled and no authority is invented.
+SCHEMA_VERSION = 43
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -2391,6 +2408,292 @@ class SQLiteTaskRepository:
         continuation = self.get_recovery_continuation_for_job(job_id)
         if continuation is None:
             raise LookupError(f"recovery continuation for Job {job_id!r} was not found")
+        return continuation
+
+    # -- Durable queued continuation of one paused Task's remaining scope ----
+
+    def get_scope_continuation_for_job(self, job_id: str) -> ScopeContinuation | None:
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM scope_continuations WHERE job_id=?", (job_id,)
+            ).fetchone()
+        return self._scope_continuation(row) if row else None
+
+    def get_scope_continuation_for_source_task(self, task_id: str) -> ScopeContinuation | None:
+        """The newest continuation of one source Task, active or historical."""
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM scope_continuations WHERE source_task_id=? "
+                "ORDER BY created_at DESC, continuation_id DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        return self._scope_continuation(row) if row else None
+
+    def list_scope_continuations(
+        self, task_id: str, *, limit: int = 32
+    ) -> tuple[ScopeContinuation, ...]:
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("scope continuation limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM scope_continuations WHERE source_task_id=? "
+                "ORDER BY created_at DESC, continuation_id DESC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+        return tuple(self._scope_continuation(row) for row in rows)
+
+    def admit_scope_continuation(
+        self,
+        job: AutomationJob,
+        continuation: ScopeContinuation,
+        *,
+        maximum_active_jobs: int,
+    ) -> tuple[ScopeContinuation, bool]:
+        """Atomically record one continuation and its queued Job.
+
+        The source Task is re-read while holding an IMMEDIATE transaction, so a
+        concurrent pause acknowledgement, cancellation, reopen or second
+        continuation can never be silently overwritten: the admitted row is
+        valid only for the exact paused state the operator read.  A duplicate
+        admission of an already-active continuation returns that row with
+        ``created=False`` instead of queueing the remaining work twice.
+        """
+
+        if (
+            isinstance(maximum_active_jobs, bool)
+            or not isinstance(maximum_active_jobs, int)
+            or not 1 <= maximum_active_jobs <= 10_000
+        ):
+            raise ValueError("maximum active Jobs must be between 1 and 10000")
+        if (
+            job.command is not AutomationCommand.SCOPE_CONTINUATION
+            or job.status is not AutomationJobStatus.PENDING
+            or job.execute_authorized
+            or job.task_id is not None
+            or job.schedule_id is not None
+            or job.claim_token is not None
+            or job.cancellation_requested
+            or job.definition_id is not None
+            or not job.configuration_snapshot_id
+            or not job.configuration_snapshot_digest
+        ):
+            raise ValueError("scope continuation Job identity is invalid")
+        if (
+            continuation.status is not ScopeContinuationStatus.QUEUED
+            or continuation.job_id != job.job_id
+            or continuation.configuration_snapshot_id != job.configuration_snapshot_id
+            or continuation.configuration_snapshot_digest != job.configuration_snapshot_digest
+            or continuation.new_task_id is not None
+            or continuation.started_at is not None
+            or continuation.completed_at is not None
+            or continuation.error is not None
+            or continuation.recovery is not None
+            or continuation.item_limit != job.limit
+        ):
+            raise ValueError("scope continuation identity is invalid")
+        with self._lock:
+            self._connection.execute("BEGIN IMMEDIATE")
+            try:
+                task = self._connection.execute(
+                    "SELECT * FROM tasks WHERE task_id=?",
+                    (continuation.source_task_id,),
+                ).fetchone()
+                if task is None:
+                    raise ScopeContinuationError(
+                        ScopeContinuationReason.TASK_NOT_FOUND,
+                        "the paused Task was not found",
+                        next_action=(
+                            "refresh the run inventory and select the exact paused run again"
+                        ),
+                    )
+                if task["status"] != PersistentTaskStatus.PAUSED.value:
+                    raise ScopeContinuationError(
+                        ScopeContinuationReason.TASK_NOT_PAUSED,
+                        f"only a paused Task has a remaining scope to continue; this Task is "
+                        f"{task['status']}",
+                        durable_state=f"the Task remains {task['status']}",
+                        next_action=(
+                            "refresh the Task and continue it only while it is durably paused"
+                        ),
+                    )
+                if (
+                    task["command"] != continuation.command
+                    or task["scope_path"] != continuation.scope_path
+                    or task["item_limit"] != continuation.item_limit
+                    or task["configuration_snapshot_id"] != continuation.configuration_snapshot_id
+                    or task["configuration_snapshot_digest"]
+                    != continuation.configuration_snapshot_digest
+                ):
+                    raise ScopeContinuationError(
+                        ScopeContinuationReason.STALE_TASK_STATE,
+                        "the Task's durable scope or configuration pin changed after it was read",
+                        next_action=(
+                            "refresh the Task, review its current durable scope, and continue "
+                            "again deliberately"
+                        ),
+                        retry_safe=True,
+                    )
+                existing = self._connection.execute(
+                    "SELECT * FROM scope_continuations WHERE source_task_id=? AND status IN (?, ?) "
+                    "ORDER BY created_at DESC, continuation_id DESC LIMIT 1",
+                    (
+                        continuation.source_task_id,
+                        ScopeContinuationStatus.QUEUED.value,
+                        ScopeContinuationStatus.RUNNING.value,
+                    ),
+                ).fetchone()
+                if existing is not None:
+                    self._connection.commit()
+                    return self._scope_continuation(existing), False
+                if not self._has_job_capacity(maximum_active_jobs):
+                    self._connection.rollback()
+                    raise AutomationQueueFull(
+                        f"automation queue reached configured active Job limit "
+                        f"{maximum_active_jobs}"
+                    )
+                self._insert_job(job)
+                self._connection.execute(
+                    "INSERT INTO scope_continuations "
+                    "(continuation_id, source_task_id, command, scope_path, item_limit, "
+                    "configuration_snapshot_id, configuration_snapshot_digest, boundary, "
+                    "status, created_at, updated_at, actor, job_id, new_task_id, started_at, "
+                    "completed_at, error, recovery, authority_statement) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    self._scope_continuation_values(continuation),
+                )
+                self._connection.commit()
+                return continuation, True
+            except Exception:
+                self._connection.rollback()
+                raise
+
+    def mark_scope_continuation_running(self, job_id: str) -> ScopeContinuation:
+        timestamp = datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE scope_continuations SET status=?, updated_at=?, "
+                "started_at=COALESCE(started_at, ?) WHERE job_id=? AND status=?",
+                (
+                    ScopeContinuationStatus.RUNNING.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    job_id,
+                    ScopeContinuationStatus.QUEUED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("scope continuation is not queued")
+        return self.require_scope_continuation_by_job(job_id)
+
+    def bind_scope_continuation_task(self, job_id: str, task_id: str) -> ScopeContinuation:
+        """Link the continuation to the new Task it produced, exactly once."""
+
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("continuation Task ID is required")
+        with self._lock, self._connection:
+            task = self._connection.execute(
+                "SELECT task_id FROM tasks WHERE task_id=?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise LookupError(f"continuation Task {task_id!r} was not found")
+            cursor = self._connection.execute(
+                "UPDATE scope_continuations SET updated_at=?, new_task_id=? "
+                "WHERE job_id=? AND status=? AND new_task_id IS NULL",
+                (
+                    datetime.now(UTC).isoformat(),
+                    task_id,
+                    job_id,
+                    ScopeContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                continuation = self.get_scope_continuation_for_job(job_id)
+                if continuation is None:
+                    raise LookupError(f"scope continuation for Job {job_id!r} was not found")
+                raise ValueError("scope continuation Task is already bound")
+        return self.require_scope_continuation_by_job(job_id)
+
+    def complete_scope_continuation(
+        self,
+        job_id: str,
+        *,
+        new_task_id: str | None = None,
+        success: bool,
+        error: str | None = None,
+        recovery: str | None = None,
+    ) -> ScopeContinuation:
+        timestamp = datetime.now(UTC)
+        status = ScopeContinuationStatus.COMPLETED if success else ScopeContinuationStatus.FAILED
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE scope_continuations SET status=?, updated_at=?, "
+                "new_task_id=COALESCE(?, new_task_id), completed_at=?, error=?, recovery=? "
+                "WHERE job_id=? AND status=?",
+                (
+                    status.value,
+                    timestamp.isoformat(),
+                    new_task_id,
+                    timestamp.isoformat(),
+                    error,
+                    recovery,
+                    job_id,
+                    ScopeContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("scope continuation is not running")
+        return self.require_scope_continuation_by_job(job_id)
+
+    def fail_queued_scope_continuation(
+        self, job_id: str, *, error: str, recovery: str | None = None
+    ) -> ScopeContinuation:
+        """Close a continuation that failed before its Task ever ran."""
+
+        timestamp = datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE scope_continuations SET status=?, updated_at=?, completed_at=?, "
+                "error=?, recovery=? WHERE job_id=? AND status=?",
+                (
+                    ScopeContinuationStatus.FAILED.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    error,
+                    recovery,
+                    job_id,
+                    ScopeContinuationStatus.QUEUED.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise ValueError("scope continuation is not queued")
+        return self.require_scope_continuation_by_job(job_id)
+
+    def cancel_scope_continuation(self, job_id: str) -> ScopeContinuation:
+        timestamp = datetime.now(UTC)
+        with self._lock, self._connection:
+            cursor = self._connection.execute(
+                "UPDATE scope_continuations SET status=?, updated_at=?, completed_at=? "
+                "WHERE job_id=? AND status IN (?, ?)",
+                (
+                    ScopeContinuationStatus.CANCELLED.value,
+                    timestamp.isoformat(),
+                    timestamp.isoformat(),
+                    job_id,
+                    ScopeContinuationStatus.QUEUED.value,
+                    ScopeContinuationStatus.RUNNING.value,
+                ),
+            )
+            if cursor.rowcount != 1:
+                continuation = self.get_scope_continuation_for_job(job_id)
+                if continuation is None:
+                    raise LookupError(f"scope continuation for Job {job_id!r} was not found")
+        return self.require_scope_continuation_by_job(job_id)
+
+    def require_scope_continuation_by_job(self, job_id: str) -> ScopeContinuation:
+        continuation = self.get_scope_continuation_for_job(job_id)
+        if continuation is None:
+            raise LookupError(f"scope continuation for Job {job_id!r} was not found")
         return continuation
 
     def _resolve_recovery_request_locked(
@@ -4861,6 +5164,21 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._job(row) if row else None
 
+    def get_job_for_task(self, task_id: str) -> AutomationJob | None:
+        """The Job that admitted one Task, through the persisted exact link.
+
+        Only the explicit ``automation_jobs.task_id`` column is used — never a
+        creation-time proximity or a label — so a continuation can read the
+        original admission evidence (a definition pin, for example) of exactly
+        the Task it continues.
+        """
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM automation_jobs WHERE task_id=? LIMIT 1", (task_id,)
+            ).fetchone()
+        return self._job(row) if row else None
+
     def list_jobs(
         self,
         *,
@@ -5951,13 +6269,15 @@ class SQLiteTaskRepository:
             # exception and no global snapshot bypass are permitted.
             #
             # The single bounded per-Job continuation exception: a Job that is bound
-            # to a different snapshot but has a queued record in either
-            # recovery_continuations or metadata_correction_continuations is an
-            # already-pinned continuation.  The continuation table is the explicit
-            # per-Job condition; the Worker still enforces lease/schema and the
-            # continuation handler loads and validates its own pinned snapshot.
+            # to a different snapshot but has a queued record in
+            # recovery_continuations, metadata_correction_continuations or
+            # scope_continuations is an already-pinned continuation.  The
+            # continuation table is the explicit per-Job condition; the Worker still
+            # enforces lease/schema and the continuation handler loads and validates
+            # its own pinned snapshot.
             _RECOVERY_QUEUED = RecoveryContinuationStatus.QUEUED.value
             _METADATA_CORRECTION_QUEUED = MetadataCorrectionContinuationStatus.QUEUED.value
+            _SCOPE_QUEUED = ScopeContinuationStatus.QUEUED.value
             if worker is None:
                 row = self._connection.execute(
                     "SELECT job_id FROM automation_jobs WHERE status=? "
@@ -5971,12 +6291,15 @@ class SQLiteTaskRepository:
                     "OR job_id IN (SELECT job_id FROM recovery_continuations "
                     "              WHERE status=?) "
                     "OR job_id IN (SELECT job_id FROM metadata_correction_continuations "
+                    "              WHERE status=?) "
+                    "OR job_id IN (SELECT job_id FROM scope_continuations "
                     "              WHERE status=?)) "
                     "ORDER BY created_at, job_id LIMIT 1",
                     (
                         AutomationJobStatus.PENDING.value,
                         _RECOVERY_QUEUED,
                         _METADATA_CORRECTION_QUEUED,
+                        _SCOPE_QUEUED,
                     ),
                 ).fetchone()
             else:
@@ -5986,6 +6309,8 @@ class SQLiteTaskRepository:
                     "OR job_id IN (SELECT job_id FROM recovery_continuations "
                     "              WHERE status=?) "
                     "OR job_id IN (SELECT job_id FROM metadata_correction_continuations "
+                    "              WHERE status=?) "
+                    "OR job_id IN (SELECT job_id FROM scope_continuations "
                     "              WHERE status=?)) "
                     "ORDER BY created_at, job_id LIMIT 1",
                     (
@@ -5994,6 +6319,7 @@ class SQLiteTaskRepository:
                         worker.configuration_snapshot_digest,
                         _RECOVERY_QUEUED,
                         _METADATA_CORRECTION_QUEUED,
+                        _SCOPE_QUEUED,
                     ),
                 ).fetchone()
             if row is None:
@@ -11472,6 +11798,24 @@ class SQLiteTaskRepository:
                     WHERE status IN ('queued', 'running');
                 CREATE INDEX IF NOT EXISTS recovery_continuations_item_created
                     ON recovery_continuations(source_item_id, created_at, continuation_id);
+                CREATE TABLE IF NOT EXISTS scope_continuations (
+                    continuation_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL,
+                    command TEXT NOT NULL, scope_path TEXT, item_limit INTEGER,
+                    configuration_snapshot_id TEXT NOT NULL,
+                    configuration_snapshot_digest TEXT NOT NULL,
+                    boundary TEXT NOT NULL, status TEXT NOT NULL,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, actor TEXT NOT NULL,
+                    job_id TEXT NOT NULL UNIQUE, new_task_id TEXT,
+                    started_at TEXT, completed_at TEXT, error TEXT, recovery TEXT,
+                    authority_statement TEXT NOT NULL,
+                    FOREIGN KEY(source_task_id) REFERENCES tasks(task_id),
+                    FOREIGN KEY(job_id) REFERENCES automation_jobs(job_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_active_scope_continuation
+                    ON scope_continuations(source_task_id)
+                    WHERE status IN ('queued', 'running');
+                CREATE INDEX IF NOT EXISTS scope_continuations_source_created
+                    ON scope_continuations(source_task_id, created_at, continuation_id);
                 CREATE TABLE IF NOT EXISTS recovery_batches (
                     batch_id TEXT PRIMARY KEY, source_task_id TEXT NOT NULL, actor TEXT NOT NULL,
                     status TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
@@ -13304,6 +13648,63 @@ class SQLiteTaskRepository:
             continuation.error,
             continuation.recovery,
             continuation.authority_statement,
+        )
+
+    @staticmethod
+    def _scope_continuation_values(
+        continuation: ScopeContinuation,
+    ) -> tuple[object, ...]:
+        return (
+            continuation.continuation_id,
+            continuation.source_task_id,
+            continuation.command,
+            continuation.scope_path,
+            continuation.item_limit,
+            continuation.configuration_snapshot_id,
+            continuation.configuration_snapshot_digest,
+            continuation.boundary,
+            continuation.status.value,
+            continuation.created_at.isoformat(),
+            continuation.updated_at.isoformat(),
+            continuation.actor,
+            continuation.job_id,
+            continuation.new_task_id,
+            continuation.started_at.isoformat() if continuation.started_at else None,
+            continuation.completed_at.isoformat() if continuation.completed_at else None,
+            continuation.error,
+            continuation.recovery,
+            continuation.authority_statement,
+        )
+
+    @staticmethod
+    def _scope_continuation(row: sqlite3.Row) -> ScopeContinuation:
+        try:
+            status = ScopeContinuationStatus(row["status"])
+        except ValueError:
+            # An externally written or future status is never promoted into a
+            # live continuation: it reads as the conservative terminal failure
+            # so no claim or admission can treat it as claimable work.
+            status = ScopeContinuationStatus.FAILED
+        return ScopeContinuation(
+            row["continuation_id"],
+            row["source_task_id"],
+            row["command"],
+            row["scope_path"],
+            row["item_limit"],
+            row["configuration_snapshot_id"],
+            row["configuration_snapshot_digest"],
+            row["boundary"],
+            status,
+            datetime.fromisoformat(row["created_at"]),
+            datetime.fromisoformat(row["updated_at"]),
+            row["actor"],
+            row["job_id"],
+            row["new_task_id"],
+            datetime.fromisoformat(row["started_at"]) if row["started_at"] else None,
+            datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None,
+            row["error"],
+            row["recovery"],
+            row["authority_statement"],
         )
 
     @staticmethod

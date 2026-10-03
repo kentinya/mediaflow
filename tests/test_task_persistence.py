@@ -854,5 +854,229 @@ class Schema37To38UpgradeTests(unittest.TestCase):
             self.assertEqual(upgraded_row[3], "token-a")
 
 
+class Schema42To43UpgradeTests(unittest.TestCase):
+    """The real 42 -> 43 scope_continuations upgrade preserves every durable fact.
+
+    Schema 43 adds the durable queued continuation boundary for one paused
+    Task's exact remaining admitted scope, and it is purely additive: the
+    ``scope_continuations`` table plus its indexes.  The fixture is a genuine
+    schema-42 runtime database — every real table and column as schema 42
+    shipped, with only the schema-43 objects absent and the marker set to 42 —
+    so the upgrade is proven against the production shape rather than a
+    hand-written subset.
+
+    The upgrade must leave every durable fact the continuation depends on
+    intact: the immutable pin, the recorded per-item outcome, the persisted
+    one-shot authority and the original Result.  A pre-existing Task must never
+    be handed a fabricated continuation.
+    """
+
+    #: The exact objects schema 43 adds.  The fixture removes them to reproduce
+    #: a real schema-42 database; the production migration must re-add them.
+    _SCHEMA43_OBJECTS = (
+        "DROP INDEX IF EXISTS one_active_scope_continuation",
+        "DROP INDEX IF EXISTS scope_continuations_source_created",
+        "DROP TABLE IF EXISTS scope_continuations",
+    )
+
+    @staticmethod
+    def _create_schema42_database(path: Path) -> None:
+        """Reproduce a production-shaped schema-42 database with real rows."""
+
+        with SQLiteTaskRepository(path) as repository:
+            coordinator = PersistentTaskCoordinator(repository, repository)
+            task = coordinator.create(
+                "preview",
+                execute_authorized=True,
+                scope_path="Media",
+                item_limit=10,
+                configuration_snapshot_id="snap-base",
+                configuration_snapshot_digest="digest-base",
+                require_configuration_snapshot=True,
+            )
+            coordinator.record_discovered(
+                task.task_id, "source", "source", "Media/one.mkv", "source:Media/one.mkv"
+            )
+            repository.upsert_item(
+                replace(
+                    repository.list_items(task.task_id)[0],
+                    status=TaskItemStatus.SUCCESS,
+                    stage="completed",
+                )
+            )
+            repository.append_result(
+                PersistentResultRecord(
+                    "base-result",
+                    task.task_id,
+                    repository.list_items(task.task_id)[0].item_id,
+                    "source",
+                    "Media/one.mkv",
+                    "target",
+                    "Movies/one.mkv",
+                    "C",
+                    "tmdb",
+                    "1",
+                    "C",
+                    "A",
+                    "A",
+                    "A",
+                    "MOVE",
+                    "success",
+                    datetime(2026, 9, 1, tzinfo=UTC),
+                    title="Base",
+                )
+            )
+            repository.request_task_pause(task.task_id, datetime(2026, 9, 1, tzinfo=UTC))
+            coordinator.acknowledge_pause(task.task_id)
+        # Remove exactly the schema-43 objects and rewind the marker: the result
+        # is a real schema-42 database that still holds every durable row.
+        with sqlite3.connect(path) as connection:
+            for statement in Schema42To43UpgradeTests._SCHEMA43_OBJECTS:
+                connection.execute(statement)
+            connection.execute("UPDATE schema_version SET version=42 WHERE component='runtime'")
+            connection.commit()
+
+    def test_schema42_upgrades_additively_and_preserves_the_paused_scope(self) -> None:
+        from mediaflow.application.scope_continuation import remaining_scope
+
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory, "upgraded.sqlite3")
+            self._create_schema42_database(database)
+            # The fixture really is a schema-42 database without the new table.
+            with sqlite3.connect(database) as connection:
+                marker = connection.execute(
+                    "SELECT version FROM schema_version WHERE component='runtime'"
+                ).fetchone()[0]
+                objects = {
+                    row[0]
+                    for row in connection.execute(
+                        "SELECT name FROM sqlite_master WHERE name LIKE '%scope_continuation%'"
+                    ).fetchall()
+                }
+            self.assertEqual(marker, 42)
+            self.assertEqual(objects, set())
+
+            with SQLiteTaskRepository(database) as repository:
+                self.assertEqual(repository.schema_version, SCHEMA_VERSION)
+                self.assertEqual(SCHEMA_VERSION, 43)
+                # Every pre-existing durable fact survived the additive upgrade.
+                task = repository.get_task("base-task") or next(
+                    item
+                    for item in repository.list_tasks(limit=10)
+                    if item.status is PersistentTaskStatus.PAUSED
+                )
+                self.assertIs(task.status, PersistentTaskStatus.PAUSED)
+                self.assertTrue(task.execute_authorized)
+                self.assertEqual(task.configuration_snapshot_id, "snap-base")
+                self.assertEqual(task.configuration_snapshot_digest, "digest-base")
+                self.assertEqual(task.scope_path, "Media")
+                self.assertEqual(task.item_limit, 10)
+                items = repository.list_items(task.task_id)
+                self.assertEqual(len(items), 1)
+                self.assertIs(items[0].status, TaskItemStatus.SUCCESS)
+                results = repository.list_results(task.task_id)
+                self.assertEqual(len(results), 1)
+                self.assertEqual(results[0].recognition_type, "C")
+                self.assertEqual(results[0].status, "success")
+
+                # The new boundary exists and is empty: an upgraded legacy Task
+                # is never handed a fabricated continuation, and the remaining
+                # scope is read from the preserved rows alone.
+                self.assertEqual(repository.list_scope_continuations(task.task_id), ())
+                self.assertIsNone(repository.get_scope_continuation_for_source_task(task.task_id))
+                remaining, already_recorded, remaining_limit = remaining_scope(repository, task)
+                self.assertEqual(remaining, ())
+                self.assertEqual(already_recorded, {("source", "Media/one.mkv")})
+                self.assertEqual(remaining_limit, 9)
+
+            # The upgrade is idempotent: reopening changes nothing.
+            with SQLiteTaskRepository(database) as reopened:
+                self.assertEqual(reopened.schema_version, SCHEMA_VERSION)
+                self.assertEqual(len(reopened.list_items(task.task_id)), 1)
+                self.assertEqual(len(reopened.list_results(task.task_id)), 1)
+
+            # A database newer than this code still fails closed.
+            with sqlite3.connect(database) as connection:
+                connection.execute(
+                    "UPDATE schema_version SET version=? WHERE component='runtime'",
+                    (SCHEMA_VERSION + 1,),
+                )
+                connection.commit()
+            with self.assertRaises(ValueError):
+                SQLiteTaskRepository(database)
+
+    def test_upgraded_scope_continuations_matches_a_freshly_created_one(self) -> None:
+        """The migrated table accepts and loads exactly like a fresh one."""
+
+        from mediaflow.domain.automation import (
+            AutomationCommand,
+            AutomationJob,
+            AutomationJobStatus,
+        )
+        from mediaflow.domain.scope_continuation import (
+            CONTINUATION_BOUNDARY,
+            ScopeContinuation,
+            ScopeContinuationStatus,
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            upgraded = Path(directory, "upgraded.sqlite3")
+            fresh = Path(directory, "fresh.sqlite3")
+            self._create_schema42_database(upgraded)
+            # The same genuine population, but never rewound: a fresh schema-43 DB.
+            self._create_schema42_database(fresh)
+            with SQLiteTaskRepository(fresh):
+                pass
+            now = datetime(2026, 10, 4, tzinfo=UTC)
+
+            def admit(database: Path) -> tuple[object, ...]:
+                with SQLiteTaskRepository(database) as repository:
+                    task = next(
+                        item
+                        for item in repository.list_tasks(limit=10)
+                        if item.status is PersistentTaskStatus.PAUSED
+                    )
+                    job = AutomationJob(
+                        "job-cont",
+                        AutomationCommand.SCOPE_CONTINUATION,
+                        AutomationJobStatus.PENDING,
+                        now,
+                        now,
+                        limit=task.item_limit,
+                        configuration_snapshot_id=task.configuration_snapshot_id,
+                        configuration_snapshot_digest=task.configuration_snapshot_digest,
+                    )
+                    continuation = ScopeContinuation(
+                        "cont-1",
+                        task.task_id,
+                        task.command,
+                        task.scope_path,
+                        task.item_limit,
+                        task.configuration_snapshot_id or "",
+                        task.configuration_snapshot_digest or "",
+                        CONTINUATION_BOUNDARY,
+                        ScopeContinuationStatus.QUEUED,
+                        now,
+                        now,
+                        "operator",
+                        "job-cont",
+                    )
+                    admitted, created = repository.admit_scope_continuation(
+                        job, continuation, maximum_active_jobs=10
+                    )
+                    self.assertTrue(created)
+                    stored = repository.get_scope_continuation_for_job("job-cont")
+                    self.assertEqual(stored, admitted)
+                    # The Task identity is generated per fixture, so it is
+                    # normalized out: every other bounded field must match.
+                    return tuple(
+                        (key, value)
+                        for key, value in stored.document().items()
+                        if key != "source_task_id"
+                    )
+
+            self.assertEqual(admit(upgraded), admit(fresh))
+
+
 if __name__ == "__main__":
     unittest.main()
