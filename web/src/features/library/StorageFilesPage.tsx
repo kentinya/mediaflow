@@ -16,6 +16,11 @@ import { settingsReturnSearch } from "../../shared/navigation/settings-return";
 import { useFilesSearch } from "../../shared/ui/AppShell";
 import { Icon } from "../../shared/ui/Icons";
 import { filesReturnSearch } from "../../shared/navigation/files-return";
+import {
+  operationsLandingSearch,
+  operationsReturnSearch,
+  readOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 import type {
   StorageFilesEntry,
   StorageFilesModel,
@@ -283,6 +288,19 @@ function readInitialBrowseState(): InitialBrowseState {
     invalidPath: value !== "" && !isSafeRelativePath(value),
     requestedLibraryId,
   };
+}
+
+/**
+ * The task center's bounded return context when this Files session started
+ * from `新建整理任务` (re-read per browse entry, never component-cached
+ * across a reconnect of a different origin). A tampered or absent value means
+ * the ordinary Files journey and no Operations return surface.
+ */
+function readOperationsReturnFromLocation(): string | null {
+  if (typeof window === "undefined") return null;
+  return readOperationsReturnContext(
+    Object.fromEntries(new URLSearchParams(window.location.search)),
+  );
 }
 
 /**
@@ -1827,6 +1845,13 @@ export function StorageFilesPage() {
   const queryClient = useQueryClient();
   const { query, setQuery, subscribeToQueryChange } = useFilesSearch();
   const initialBrowse = useMemo(() => readInitialBrowseState(), []);
+  // The organize journey started from the task center keeps one bounded
+  // return context; it is read at entry and rides into every page of the
+  // journey this page starts, never re-read after a principal change.
+  const operationsReturn = useMemo(
+    () => readOperationsReturnFromLocation(),
+    [],
+  );
   const [selectedLibraryId, setSelectedLibraryId] = useState(
     initialBrowse.requestedLibraryId,
   );
@@ -1939,10 +1964,13 @@ export function StorageFilesPage() {
       void navigate({
         to: "/operations/organize/intent/$intentId",
         params: { intentId },
-        search: filesReturnSearch({
-          resourceLibraryId: variables.libraryId,
-          path: variables.returnPath,
-        }),
+        search: {
+          ...filesReturnSearch({
+            resourceLibraryId: variables.libraryId,
+            path: variables.returnPath,
+          }),
+          ...operationsReturnSearch(operationsReturn),
+        },
       });
     },
     onError: (error) => {
@@ -2549,6 +2577,17 @@ export function StorageFilesPage() {
 
   return (
     <div className="mf-files-page">
+      {operationsReturn !== null && (
+        <nav className="mf-actions" aria-label="整理来源返回">
+          <Link
+            className="mf-button mf-button-secondary"
+            to="/operations"
+            search={operationsLandingSearch(operationsReturn, null)}
+          >
+            返回任务中心
+          </Link>
+        </nav>
+      )}
       <FilesHeader
         canAddResourceLibrary={
           Boolean(status?.configurationActive) && eligibleStorages.length > 0

@@ -1103,6 +1103,95 @@ export function normalizeOrganizeExecution(
   };
 }
 
+/**
+ * The bounded outcome of one admission-reconciliation read for a submitted
+ * Execute. `known` proves the durable admission equals the exact submitted
+ * reviewed selection; `not_equivalent` says durable admissions exist but none
+ * matches the claim; `not_admitted` proves the durable admission records hold
+ * no execution for this principal under this Preview. The read never admits
+ * work or carries authority material.
+ */
+export const ORGANIZE_ADMISSION_OUTCOMES = [
+  "known",
+  "not_equivalent",
+  "not_admitted",
+] as const;
+export type OrganizeAdmissionOutcome =
+  (typeof ORGANIZE_ADMISSION_OUTCOMES)[number];
+
+export const ORGANIZE_ADMISSION_REASONS = [
+  null,
+  "selection_or_binding_mismatch",
+  "execution_not_found",
+] as const;
+
+export interface OrganizeAdmissionOutcomeModel {
+  readonly outcome: OrganizeAdmissionOutcome;
+  readonly reason: string | null;
+  readonly executionId: string | null;
+  readonly taskId: string | null;
+  readonly status: string | null;
+  readonly selectedItemIds: readonly string[];
+  readonly completedItemCount: number;
+  readonly failedItemCount: number;
+  readonly sideEffects: string;
+  readonly nextAction: string;
+}
+
+export function normalizeOrganizeAdmissionOutcome(
+  payload: unknown,
+): OrganizeAdmissionOutcomeModel {
+  const source = readRecord(payload, "organize_admission_outcome");
+  const outcome = normalizeEnum(
+    source["outcome"],
+    "admission.outcome",
+    ORGANIZE_ADMISSION_OUTCOMES,
+  );
+  const reasonValue = source["reason"];
+  let reason: string | null = null;
+  if (reasonValue !== null && reasonValue !== undefined) {
+    try {
+      reason = normalizeBoundedText(reasonValue, "admission.reason");
+    } catch {
+      return fail("admission.reason");
+    }
+  }
+  const executionId = optionalText(source, "executionId");
+  const taskId = optionalText(source, "taskId");
+  const status = optionalText(source, "status");
+  const selectedItemIds = stringList(source, "selectedItemIds");
+  const sideEffects = text(source, "sideEffects");
+  if (sideEffects !== "none") {
+    // The reconciliation read is a bounded GET: any other effect claim is
+    // malformed evidence, never a permission to treat it as inert.
+    return fail("admission.sideEffects");
+  }
+  if (outcome === "known") {
+    // A known admission must carry its exact durable identity; nothing may
+    // resolve a run from a partially-proven answer.
+    if (executionId === null || taskId === null || status === null) {
+      return fail("admission.knownIdentity");
+    }
+  } else if (outcome === "not_admitted") {
+    // An unadmitted answer may not smuggle a resolvable run identity.
+    if (executionId !== null || taskId !== null) {
+      return fail("admission.outcome");
+    }
+  }
+  return {
+    outcome,
+    reason,
+    executionId,
+    taskId,
+    status,
+    selectedItemIds,
+    completedItemCount: count(source, "completedItemCount"),
+    failedItemCount: count(source, "failedItemCount"),
+    sideEffects,
+    nextAction: text(source, "nextAction"),
+  };
+}
+
 export interface OrganizeExecutionListPage {
   readonly items: readonly OrganizeExecutionModel[];
   readonly limit: number;

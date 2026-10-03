@@ -36,6 +36,7 @@ from mediaflow.domain.manual_execution import (
     ManualExecutionScopeItem,
     ManualExecutionStatus,
 )
+from mediaflow.domain.manual_organize import MAX_MANUAL_ID_LENGTH
 from mediaflow.domain.manual_organize_preview import ManualOrganizePreview
 from mediaflow.domain.manual_safety import (
     contains_manual_secret,
@@ -1077,6 +1078,246 @@ class ManualOrganizeExecutionService:
 
         reader = getattr(self._repository, "list_manual_executions_for_intent", None)
         return tuple(reader(intent_id, limit=limit)) if callable(reader) else ()
+
+    def admission_outcome(
+        self,
+        preview_id: str,
+        *,
+        item_ids: Sequence[str],
+        intent_version: int,
+        actor: str,
+        permission: str = "execute_manual_organize",
+        allow_overwrite: bool = False,
+        allow_source_cleanup: bool = False,
+    ) -> dict[str, object]:
+        """Prove one submitted Execute from exact durable evidence before any next command.
+
+        A transport error, lost response or malformed answer after an Execute
+        leaves the operator with an unknown outcome: the request may or may not
+        have admitted work.  This is the one bounded, side-effect-free read
+        that answers it from durable admission records only.  Every durable
+        execution of the reviewed Preview is compared against the submitted
+        reviewed selection with the same fail-closed exactness the admission
+        fold applies — the persisted consumed authority plus principal,
+        Preview, intent version, configuration pin, the exact selected item
+        set, per-item versions and fingerprints, and both destructive
+        permissions.  Anything narrower, overlapping or differently bound is
+        reported as unexplained instead of being presented as the operator's
+        own submission, and this read never admits work or mints, reissues or
+        replays execution authority.
+        """
+
+        actor = self._actor(actor)
+        permission = self._permission(permission)
+        preview_id = self._bounded_id(preview_id, "manual Preview ID")
+        if (
+            isinstance(intent_version, bool)
+            or not isinstance(intent_version, int)
+            or intent_version < 1
+        ):
+            raise ManualExecutionError(
+                "admission reconciliation intent version is invalid",
+                code="malformed_request",
+            )
+        self._validate_effect_flags(allow_overwrite, allow_source_cleanup)
+        submitted_ids = self._bounded_ids(item_ids)
+        if not 1 <= len(submitted_ids) <= MAX_MANUAL_EXECUTION_ITEMS or len(
+            set(submitted_ids)
+        ) != len(submitted_ids):
+            raise ManualExecutionError(
+                "admission reconciliation selection is outside its bounded shape",
+                code="malformed_request",
+            )
+        submitted = {
+            "preview_id": preview_id,
+            "intent_version": intent_version,
+            "selected_item_ids": frozenset(submitted_ids),
+            "allow_overwrite": allow_overwrite,
+            "allow_source_cleanup": allow_source_cleanup,
+        }
+        owned: list[ManualExecution] = []
+        for execution in self.list_for_preview(preview_id, limit=MAX_MANUAL_EXECUTION_ITEMS):
+            if not isinstance(execution, ManualExecution) or execution.actor != actor:
+                # Another principal's durable work is not this operator's
+                # evidence and is never confirmed or described here.
+                continue
+            owned.append(execution)
+            authority = self._execution_authorization_for_replay(execution)
+            if authority is None or authority.permission != permission or authority.actor != actor:
+                continue
+            if self._admission_is_equivalent(execution, authority, submitted):
+                return self._admission_outcome_document(execution)
+        if owned:
+            # The operator has durable admissions for this Preview, but none is
+            # exactly this submitted selection: the submission stays
+            # unexplained and investigation-only.  The most recent own admission
+            # is published as inspectable durable evidence of what does exist,
+            # never as a confirmation of what was submitted.
+            return self._admission_outcome_document(
+                owned[-1], reason="selection_or_binding_mismatch"
+            )
+        return self._admission_outcome_document(None)
+
+    def _admission_outcome_document(
+        self,
+        execution: ManualExecution | None,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, object]:
+        """One bounded, secret-free admission-outcome projection.
+
+        ``known`` proves the durable execution exactly equals the submitted
+        reviewed selection and publishes its durable Task identity.
+        ``not_equivalent`` says durable admissions exist for this principal and
+        Preview but none matches the claimed selection. ``not_admitted`` means
+        the durable admission records contain no execution for this principal
+        under this Preview — absence proven from the admission authority
+        itself, so an explicit resubmission of the same reviewed selection is
+        the only follow-up, never an automatic one.
+        """
+
+        if reason == "selection_or_binding_mismatch" and execution is not None:
+            return {
+                "outcome": "not_equivalent",
+                "reason": reason,
+                "executionId": execution.execution_id,
+                "taskId": execution.task_id,
+                "status": execution.status.value,
+                "selectedItemIds": list(execution.selected_item_ids),
+                "completedItemCount": 0,
+                "failedItemCount": 0,
+                "sideEffects": "none",
+                "nextAction": (
+                    "the durable admission under this Preview does not match the submitted "
+                    "reviewed selection: inspect both durable records before any further "
+                    "command; nothing is admitted, broadened or replayed automatically"
+                ),
+            }
+        if execution is None:
+            return {
+                "outcome": "not_admitted",
+                "reason": reason,
+                "executionId": None,
+                "taskId": None,
+                "status": None,
+                "selectedItemIds": [],
+                "completedItemCount": 0,
+                "failedItemCount": 0,
+                "sideEffects": "none",
+                "nextAction": (
+                    "keep the reviewed selection: inspect both durable records before any "
+                    "further command; nothing is admitted, broadened or replayed automatically"
+                    if reason
+                    else "the durable admission records contain no execution for this reviewed "
+                    "submission; resubmit only through an explicit action after refreshing the "
+                    "current Preview state"
+                ),
+            }
+        return {
+            "outcome": "known",
+            "reason": None,
+            "executionId": execution.execution_id,
+            "taskId": execution.task_id,
+            "status": execution.status.value,
+            "selectedItemIds": list(execution.selected_item_ids),
+            "completedItemCount": sum(
+                1 for item in execution.items if item.status is ManualExecutionItemStatus.SUCCESS
+            ),
+            "failedItemCount": sum(
+                1 for item in execution.items if item.status is ManualExecutionItemStatus.FAILED
+            ),
+            "sideEffects": "none",
+            "nextAction": (
+                "open the unified Operations run for this admitted work; the outcome is "
+                "durable and this read never replayed it"
+            ),
+        }
+
+    def _admission_is_equivalent(
+        self,
+        execution: ManualExecution,
+        authority: ManualExecutionAuthorization,
+        submitted: dict[str, object],
+    ) -> bool:
+        """Bind the durable execution to the submitted reviewed selection exactly.
+
+        The submission is checked against the consumed one-shot authority the
+        admission persisted (preview, intent version, destructive flags and
+        per-item versions/fingerprints), and the execution is checked against
+        both.  Any single difference is a non-match — the same fail-closed
+        standard the admission fold applies.
+        """
+
+        if (
+            submitted["preview_id"] != execution.preview_id
+            or authority.preview_id != execution.preview_id
+        ):
+            return False
+        if (
+            execution.intent_version != submitted["intent_version"]
+            or authority.intent_version != submitted["intent_version"]
+        ):
+            return False
+        if execution.configuration_snapshot_id != authority.configuration_snapshot_id:
+            return False
+        if execution.configuration_snapshot_digest != authority.configuration_snapshot_digest:
+            return False
+        if authority.allow_overwrite != execution.allow_overwrite:
+            return False
+        if authority.allow_source_cleanup != execution.allow_source_cleanup:
+            return False
+        if bool(submitted["allow_overwrite"]) != execution.allow_overwrite:
+            return False
+        if bool(submitted["allow_source_cleanup"]) != execution.allow_source_cleanup:
+            return False
+        selected = set(execution.selected_item_ids)
+        if selected != {scope.item_id for scope in authority.scope}:
+            return False
+        if selected != submitted["selected_item_ids"]:
+            return False
+        scopes = {scope.item_id: scope for scope in authority.scope}
+        if {item.item_id for item in execution.items} != selected:
+            return False
+        for item in execution.items:
+            scope = scopes[item.item_id]
+            if (
+                item.preview_item_id != scope.preview_item_id
+                or item.item_version != scope.item_version
+                or item.source_fingerprint != scope.source_fingerprint
+                or item.plan_fingerprint != scope.plan_fingerprint
+            ):
+                return False
+        return True
+
+    @staticmethod
+    def _bounded_id(value: object, label: str) -> str:
+        if not isinstance(value, str) or not value.strip() or len(value) > MAX_MANUAL_ID_LENGTH:
+            raise ManualExecutionError(
+                f"admission reconciliation {label} is invalid", code="malformed_request"
+            )
+        return value.strip()
+
+    @staticmethod
+    def _bounded_ids(values: object) -> tuple[str, ...]:
+        if not isinstance(values, (tuple, list)):
+            raise ManualExecutionError(
+                "admission reconciliation item selection is invalid", code="malformed_request"
+            )
+        return tuple(
+            ManualOrganizeExecutionService._bounded_id(value, "item ID") for value in values
+        )
+
+    @staticmethod
+    def _validate_effect_flags(allow_overwrite: object, allow_source_cleanup: object) -> None:
+        for name, value in (
+            ("allowOverwrite", allow_overwrite),
+            ("allowSourceCleanup", allow_source_cleanup),
+        ):
+            if not isinstance(value, bool):
+                raise ManualExecutionError(
+                    f"admission reconciliation {name} must be boolean",
+                    code="malformed_request",
+                )
 
     def _load_execution_authority(self, execution) -> ManualExecutionAuthorization:
         """Reload the exact consumed one-shot authority that admitted the execution."""

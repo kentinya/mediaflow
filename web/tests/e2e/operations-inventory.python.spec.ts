@@ -32,6 +32,7 @@ import { expect, test, type Page } from "@playwright/test";
  */
 
 const TOKEN = "harness-viewer-token";
+const ADMIN_TOKEN = "harness-admin-token";
 const BASE = "http://127.0.0.1:4183";
 
 /** The four runs seeded by real producers: two Jobs and two Tasks. */
@@ -40,9 +41,9 @@ const SEEDED_RUN_TOTAL = 4;
 /** The unique server-side command filter that isolates the rich detail run. */
 const RICH_RUN_COMMAND = "manual_organize";
 
-async function connect(page: Page): Promise<void> {
+async function connect(page: Page, token = TOKEN): Promise<void> {
   await page.goto("/ui-v2/");
-  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByLabel("API token").fill(token);
   await page.getByRole("button", { name: "Connect" }).click();
   await expect(
     page.getByRole("heading", { name: "Dashboard", exact: true }),
@@ -774,6 +775,189 @@ test("a real Manual Organize Worker run keeps its reviewed plan through detail, 
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
 
+test("new task selection reconciles a lost admission, completes in the Worker, and restores the selected run", async ({
+  page,
+  request,
+}) => {
+  const api = recordApiCalls(page);
+  const registered = await request.post(
+    `${BASE}/__harness__/register-manual-worker`,
+  );
+  expect(registered.ok()).toBeTruthy();
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  await page.getByLabel("操作类型").fill("manual_organize");
+  await expect(page).toHaveURL(/command=manual_organize/);
+
+  // Start from the native task-center entry with an existing list filter.
+  await page.getByRole("link", { name: "新建整理任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  // This entry has no source scope selected in Operations, so the operator
+  // makes the meaningful ResourceLibrary choice here before opening Files.
+  await page.getByRole("radio", { name: "source" }).check();
+  await page.getByRole("button", { name: "选择文件并开始整理" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+
+  // This file exists only in the harness's temporary live Local Storage. The
+  // browser selects it from the actual ResourceLibrary listing; no FileIndex
+  // identifier is submitted as source authority.
+  await page.getByRole("checkbox", { name: "选择 Three.2003.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
+  const recognition = page.locator('select[aria-label^="识别类型 "]');
+  await recognition.selectOption("C");
+  await page.getByRole("button", { name: "保存选择" }).click();
+
+  const beforePreview = await request.get(
+    `${BASE}/__harness__/manual-file-state`,
+  );
+  expect(await beforePreview.json()).toEqual({
+    sourceExists: true,
+    destinationTargets: [],
+  });
+  await page.getByRole("button", { name: "生成精确预览" }).click();
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(page.getByText(/预览不会修改文件/)).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /Three\.2003\.mkv 可执行/ }),
+  ).toBeVisible();
+  expect(
+    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  // Simulate only the browser losing a real successful API response: the
+  // Playwright proxy fetches the production API request, lets it commit its
+  // durable admission, then aborts the client response.
+  let droppedExecuteResponse = false;
+  await page.route(
+    /\/api\/v1\/operations\/organize\/previews\/[^/]+\/execute$/,
+    async (route) => {
+      if (droppedExecuteResponse) {
+        await route.continue();
+        return;
+      }
+      droppedExecuteResponse = true;
+      await route.fetch();
+      await route.abort("connectionreset");
+    },
+  );
+  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await expect(
+    page.getByRole("heading", { name: "执行结果未知" }),
+  ).toBeVisible();
+  const exactExecutePosts = () =>
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    );
+  expect(exactExecutePosts()).toHaveLength(1);
+  await expect(
+    page.getByRole("button", { name: "确认执行所选条目" }),
+  ).toBeDisabled();
+  expect(
+    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
+  ).toEqual({ sourceExists: true, destinationTargets: [] });
+
+  await page.getByRole("button", { name: "核对提交结果" }).click();
+  await expect(
+    page.getByRole("heading", { name: "操作与任务", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/command=manual_organize/);
+  await expect(page).toHaveURL(/run=/);
+  const runId = new URL(page.url()).searchParams.get("run");
+  expect(runId).toBeTruthy();
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  expect(exactExecutePosts()).toHaveLength(1);
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "GET" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/admission$/),
+    ),
+  ).toHaveLength(1);
+
+  // An auth continuation after a full reload returns to the same bounded
+  // Operations context and exact selected run without replaying Execute.
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(/command=manual_organize/);
+  await expect(page).toHaveURL(new RegExp(`run=${runId}`));
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+
+  const workerRun = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(workerRun.ok()).toBeTruthy();
+  expect(await workerRun.json()).toMatchObject({
+    completed: true,
+    taskId: runId,
+    status: "completed",
+    itemCount: 1,
+  });
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  await expect(detail).toBeVisible();
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByText("Three.2003.mkv")).toBeVisible();
+  const evidenceResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.url().includes(`/operations/runs/${runId}/items/`),
+  );
+  await items.getByRole("button", { name: "查看证据" }).click();
+  const evidence = await (await evidenceResponse).json();
+  expect(evidence.planEvidence).toMatchObject({
+    available: true,
+    plan: {
+      recognitionType: "C",
+      mediaIdentity: { provider: "tmdb", providerId: "103", title: "Three" },
+      policies: {
+        metadataPolicyId: "C",
+        namingPolicyId: "A",
+        classificationPolicyId: "A",
+      },
+    },
+    completedOperations: ["CREATE_DIRECTORY", "MOVE"],
+  });
+  expect(
+    await (await request.get(`${BASE}/__harness__/manual-file-state`)).json(),
+  ).toMatchObject({
+    sourceExists: false,
+    destinationTargets: expect.arrayContaining([
+      expect.stringContaining("Three"),
+    ]),
+  });
+  expect(exactExecutePosts()).toHaveLength(1);
+
+  // Restart the actual SQLite/API runtime. The same admitted Task, C/A policy
+  // evidence and completed Worker result remain selected and inspectable.
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${runId}`));
+  const restored = page.getByRole("region", { name: "运行详情" });
+  await expect(restored).toBeVisible();
+  const restoredEvidence = restored.getByRole("region", { name: "条目证据" });
+  await expect(
+    restoredEvidence.getByRole("heading", { name: "持久审核计划(已捕获)" }),
+  ).toBeVisible();
+  await expect(
+    restoredEvidence.getByText("CREATE_DIRECTORY、MOVE", { exact: true }),
+  ).toBeVisible();
+  const html = await page.content();
+  expect(html).not.toContain("/tmp/");
+  expect(html).not.toContain(ADMIN_TOKEN);
+  expect(exactExecutePosts()).toHaveLength(1);
+});
+
 test("a real standalone pipeline run keeps its durable steps through detail and restart", async ({
   page,
   request,
@@ -787,8 +971,8 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   const api = recordApiCalls(page);
   await connect(page);
   await openInventory(page);
-  // The seeded population plus the Manual run from the previous test.
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 1);
+  // The seeded population plus the two Manual runs from the previous tests.
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
 
   const executed = await request.post(
     `${BASE}/__harness__/run-standalone-pipeline`,
@@ -804,7 +988,7 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(run.status).toBe("completed");
 
   await page.getByRole("button", { name: "Refresh" }).first().click();
-  await expectRunTotal(page, SEEDED_RUN_TOTAL + 2);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 3);
 
   // Isolate the exact new run through the existing server-side command
   // filter — the standalone pipeline command is unique in this population.

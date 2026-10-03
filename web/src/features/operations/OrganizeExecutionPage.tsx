@@ -20,8 +20,14 @@ import { StatusBanner } from "../../shared/ui/StatusBanner";
 import { Button } from "../../shared/ui/Button";
 import {
   filesReturnHref,
+  filesReturnSearch,
   readFilesReturnContext,
 } from "../../shared/navigation/files-return";
+import {
+  operationsLandingSearch,
+  operationsReturnSearch,
+  readOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 import type { OrganizeFileIndexReconciliationState } from "../../entities/operations/organize";
 
 const RECONCILIATION_STATE_LABELS: Readonly<
@@ -34,10 +40,31 @@ const RECONCILIATION_STATE_LABELS: Readonly<
 };
 
 function displayEnum(value: string): string {
-  return value
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
+  const labels: Readonly<Record<string, string>> = {
+    admitted: "已准入",
+    cancelled: "已取消",
+    completed: "已完成",
+    copy: "复制",
+    create_directory: "创建目录",
+    created: "已创建",
+    delete: "删除",
+    failed: "失败",
+    hard_link: "硬链接",
+    move: "移动",
+    none: "无",
+    partial: "部分完成",
+    partial_success: "部分成功",
+    pending: "等待中",
+    running: "处理中",
+    skipped: "已跳过",
+    soft_link: "软链接",
+    success: "成功",
+    unknown: "未知",
+    unverified: "未验证",
+    verified: "已验证",
+    verified_complete: "已验证完成",
+  };
+  return labels[value.toLowerCase()] ?? value;
 }
 
 function safeValue(value: string | null): string {
@@ -50,6 +77,7 @@ export function OrganizeExecutionPage() {
   });
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const filesReturn = readFilesReturnContext(searchParams);
+  const operationsReturn = readOperationsReturnContext(searchParams);
   const token = useAuthToken();
   const queryClient = useQueryClient();
   const [reconciliationNotice, setReconciliationNotice] = useState<
@@ -66,7 +94,7 @@ export function OrganizeExecutionPage() {
     onSuccess: (value) => {
       if (value.ok) {
         setReconciliationNotice(
-          `索引核对已重试（${value.state}）。整理结果不会重放。`,
+          `索引核对已重试（${RECONCILIATION_STATE_LABELS[value.state as keyof typeof RECONCILIATION_STATE_LABELS] ?? value.state}）。整理结果不会重放。`,
         );
         void queryClient.invalidateQueries({
           queryKey: organizeExecutionQueryOptions(token, executionId).queryKey,
@@ -86,13 +114,13 @@ export function OrganizeExecutionPage() {
   return (
     <AuthorizedReadBoundary
       query={executionQuery}
-      unavailableTitle="Execution unavailable"
+      unavailableTitle="执行情况不可用"
     >
       {({ data, isFetching, refresh }) => {
         if (data === undefined) {
           return (
-            <StatusBanner variant="info" title="Loading durable execution">
-              <p>Reading the admitted exact execution and its outcomes.</p>
+            <StatusBanner variant="info" title="正在读取持久执行记录">
+              <p>正在读取已准入的精确执行及其结果。</p>
             </StatusBanner>
           );
         }
@@ -104,9 +132,22 @@ export function OrganizeExecutionPage() {
                 <Link
                   className="mf-button mf-button-secondary"
                   to="/operations"
+                  search={
+                    operationsReturn === null
+                      ? {}
+                      : operationsLandingSearch(operationsReturn, null)
+                  }
                 >
-                  Back to Operations
+                  返回操作与任务
                 </Link>
+                {filesReturn !== null && (
+                  <Link
+                    className="mf-button mf-button-secondary"
+                    to={filesReturnHref(filesReturn)}
+                  >
+                    返回文件
+                  </Link>
+                )}
                 <RefreshControl onRefresh={refresh} refreshing={isFetching} />
               </div>
             </StatusBanner>
@@ -123,38 +164,34 @@ export function OrganizeExecutionPage() {
           <div className="mf-dashboard">
             <header className="mf-dashboard-head">
               <div>
-                <h2>Manual organize execution</h2>
+                <h2>整理执行情况</h2>
                 <p className="mf-dashboard-meta">
-                  Execution {execution.executionId} ·{" "}
-                  {displayEnum(execution.status)} · Task {execution.taskId}
+                  执行记录 {execution.executionId} ·{" "}
+                  {displayEnum(execution.status)} · 任务 {execution.taskId}
                 </p>
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
             <section className="mf-count-section">
-              <h3>Admission and Worker state</h3>
+              <h3>受理与 Worker 状态</h3>
               <dl>
-                <dt>Durable state</dt>
+                <dt>持久状态</dt>
                 <dd>{displayEnum(execution.durableState)}</dd>
-                <dt>Items</dt>
+                <dt>条目</dt>
                 <dd>
-                  {execution.selectedItemCount} selected ·{" "}
-                  {execution.unselectedItemCount} unselected ·{" "}
-                  {execution.completedItemCount} verified ·{" "}
-                  {execution.failedItemCount} failed
+                  已选 {execution.selectedItemCount} · 未选{" "}
+                  {execution.unselectedItemCount} · 已验证完成{" "}
+                  {execution.completedItemCount} · 失败{" "}
+                  {execution.failedItemCount}
                 </dd>
-                <dt>Destructive authority</dt>
+                <dt>破坏性操作授权</dt>
                 <dd>
-                  overwrite{" "}
-                  {execution.allowOverwrite ? "authorized" : "not authorized"} ·
-                  source cleanup{" "}
-                  {execution.allowSourceCleanup
-                    ? "authorized"
-                    : "not authorized"}
+                  覆盖目标 {execution.allowOverwrite ? "已授权" : "未授权"} ·
+                  清理来源 {execution.allowSourceCleanup ? "已授权" : "未授权"}
                 </dd>
-                <dt>Admitted</dt>
+                <dt>受理时间</dt>
                 <dd>{execution.createdAt}</dd>
-                <dt>Last update</dt>
+                <dt>最近更新</dt>
                 <dd>{execution.updatedAt}</dd>
               </dl>
               <p className="mf-dashboard-meta">{execution.nextAction}</p>
@@ -163,7 +200,7 @@ export function OrganizeExecutionPage() {
               </p>
             </section>
             {execution.failure !== null && (
-              <StatusBanner variant="error" title="Execution finding">
+              <StatusBanner variant="error" title="执行问题">
                 <p>{execution.failure.message}</p>
                 <p className="mf-dashboard-meta">
                   {execution.failure.nextAction}
@@ -179,33 +216,33 @@ export function OrganizeExecutionPage() {
                   </span>
                 </h3>
                 <dl>
-                  <dt>Stage</dt>
+                  <dt>阶段</dt>
                   <dd>{displayEnum(item.stage ?? "unknown")}</dd>
-                  <dt>Effect certainty</dt>
+                  <dt>结果确定性</dt>
                   <dd>{displayEnum(item.effectCertainty ?? "unknown")}</dd>
-                  <dt>Completed operations</dt>
+                  <dt>已完成操作</dt>
                   <dd>
                     {item.completedOperations.length === 0
-                      ? "none"
-                      : item.completedOperations.join(", ")}
+                      ? "无"
+                      : item.completedOperations.map(displayEnum).join("、")}
                   </dd>
-                  <dt>Uncertain effects</dt>
+                  <dt>结果未确定的操作</dt>
                   <dd>
                     {item.uncertainEffects.length === 0
-                      ? "none"
-                      : item.uncertainEffects.join(", ")}
+                      ? "无"
+                      : item.uncertainEffects.map(displayEnum).join("、")}
                   </dd>
-                  <dt>Result</dt>
+                  <dt>结果记录</dt>
                   <dd>{safeValue(item.resultId)}</dd>
-                  <dt>TaskItem</dt>
+                  <dt>任务条目</dt>
                   <dd>{safeValue(item.taskItemId)}</dd>
                 </dl>
                 {item.effects.length > 0 && (
                   <ul>
                     {item.effects.map((effect, position) => (
                       <li key={`${item.itemId}-${position}`}>
-                        {displayEnum(effect.action ?? "effect")} ·{" "}
-                        {effect.verified ? "verified" : "unverified"} ·{" "}
+                        {displayEnum(effect.action ?? "未知操作")} ·{" "}
+                        {effect.verified ? "已验证" : "未验证"} ·{" "}
                         {safeValue(effect.sourceLocation)} →{" "}
                         {safeValue(effect.destinationLocation)}
                       </li>
@@ -213,7 +250,7 @@ export function OrganizeExecutionPage() {
                   </ul>
                 )}
                 {item.failure !== null && (
-                  <StatusBanner variant="error" title="Item finding">
+                  <StatusBanner variant="error" title="条目问题">
                     <p>{item.failure.message}</p>
                     <p className="mf-dashboard-meta">
                       {item.failure.nextAction}
@@ -262,11 +299,11 @@ export function OrganizeExecutionPage() {
                 to="/operations/tasks/$taskId"
                 params={{ taskId: execution.taskId }}
               >
-                Open the durable Task
+                查看关联任务
               </Link>
               {execution.actions.recovery.available && (
                 <Link className="mf-button mf-button-secondary" to="/review">
-                  Open Review &amp; Recovery
+                  打开复核与恢复
                 </Link>
               )}
               {execution.previewId && (
@@ -274,8 +311,14 @@ export function OrganizeExecutionPage() {
                   className="mf-button mf-button-secondary"
                   to="/operations/organize/preview/$previewId"
                   params={{ previewId: execution.previewId }}
+                  search={{
+                    ...(filesReturn === null
+                      ? {}
+                      : filesReturnSearch(filesReturn)),
+                    ...operationsReturnSearch(operationsReturn),
+                  }}
                 >
-                  Back to the reviewed Preview
+                  返回已审阅的预览
                 </Link>
               )}
               {filesReturn !== null && (
@@ -286,9 +329,25 @@ export function OrganizeExecutionPage() {
                   返回文件
                 </Link>
               )}
-              <Link className="mf-button mf-button-secondary" to="/operations">
-                Back to Operations
-              </Link>
+              {operationsReturn !== null ? (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations"
+                  search={operationsLandingSearch(
+                    operationsReturn,
+                    execution.taskId,
+                  )}
+                >
+                  返回任务中心
+                </Link>
+              ) : (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations"
+                >
+                  返回操作与任务
+                </Link>
+              )}
             </div>
             {reconciliationNotice !== null && (
               <StatusBanner variant="info" title="文件索引核对">
@@ -297,8 +356,7 @@ export function OrganizeExecutionPage() {
             )}
             {!terminal && (
               <p className="mf-dashboard-meta">
-                This execution is not terminal yet. Refresh to read the current
-                durable state; no action is replayed automatically.
+                此执行尚未结束。刷新可读取当前持久状态；系统不会自动重放任何操作。
               </p>
             )}
           </div>

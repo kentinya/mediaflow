@@ -373,6 +373,98 @@ describe("destination model", () => {
       ).toBeNull();
     });
 
+    it("carries the Organize journey return contexts through continuation", () => {
+      // The intent page keeps both bounded back contexts: the Files origin
+      // triple and the serialized task-center list context.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/intent/$intentId",
+          "returnTo=files&returnResourceLibraryId=resources&returnPath=Movies" +
+            "&returnOps=status%3Dfailed%26run%3Djob-001&token=secret",
+        ),
+      ).toBe(
+        "returnTo=files&returnResourceLibraryId=resources&returnPath=Movies" +
+          "&returnOps=status%3Dfailed%26run%3Djob-001",
+      );
+      // A hand-typed single-encoded context is replayed only through the
+      // landing's own canonical serialization, so a reconnect cannot grow the
+      // escaping or smuggle a raw character into the next URL.
+      const previewContext = allowlistedDestinationSearch(
+        "/operations/organize/preview/$previewId",
+        "returnOps=q%3D%E7%94%B5%E5%BD%B1",
+      );
+      expect(previewContext).not.toBeNull();
+      expect(
+        new URLSearchParams(previewContext as string).get("returnOps"),
+      ).toBe("q=%E7%94%B5%E5%BD%B1");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/execution/$executionId",
+          "returnTo=files&returnResourceLibraryId=resources",
+        ),
+      ).toBe("returnTo=files&returnResourceLibraryId=resources");
+    });
+
+    it("drops tampered journey contexts instead of replaying them", () => {
+      for (const search of [
+        "returnOps=token%3Dsecret",
+        "returnOps=" + "a".repeat(1025),
+        "returnOps=status%20%3D../../etc",
+        "returnTo=operations",
+        "returnTo=files&returnResourceLibraryId=..%2Fescape",
+        "returnTo=files&returnPath=%2Fabsolute",
+        "returnTo=files&returnPath=a..b",
+        "itemId=abc",
+      ]) {
+        expect(
+          allowlistedDestinationSearch(
+            "/operations/organize/intent/$intentId",
+            search,
+          ),
+        ).toBeNull();
+      }
+    });
+
+    it("keeps the organize marker and task-center context on Files and the new-task entry", () => {
+      expect(
+        allowlistedDestinationSearch(
+          "/resourcelib/files",
+          "resourceLibraryId=resources&path=Movies&organize=1" +
+            "&returnOps=run%3Djob-001",
+        ),
+      ).toBe(
+        "resourceLibraryId=resources&path=Movies&organize=1&returnOps=run%3Djob-001",
+      );
+      // Only the literal marker survives; a foreign `organize` value drops it.
+      expect(
+        allowlistedDestinationSearch("/resourcelib/files", "organize=execute"),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch("/resourcelib/files", "organize="),
+      ).toBeNull();
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/new",
+          "scopeKind=resourceLibrary&resourceLibraryId=resources&returnOps=attention%3Dtrue",
+        ),
+      ).toBe(
+        "scopeKind=resourceLibrary&resourceLibraryId=resources&returnOps=attention%3Dtrue",
+      );
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/new",
+          "returnOps=token%3Dsecret",
+        ),
+      ).toBeNull();
+      // The task center replays a still-open journey context on reconnect.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations",
+          "status=failed&returnOps=status%3Dfailed",
+        ),
+      ).toBe("status=failed&returnOps=status%3Dfailed");
+    });
+
     it("drops credential-like values from an Operations collection link", () => {
       expect(
         allowlistedDestinationSearch(

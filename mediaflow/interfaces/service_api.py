@@ -2082,6 +2082,91 @@ class MediaFlowApi:
                 202 if execution.status is ManualExecutionStatus.ADMITTED else 200,
                 self._organize_execution_document(execution),
             )
+        if (
+            len(parts) == 7
+            and parts[:5] == ["api", "v1", "operations", "organize", "previews"]
+            and parts[6] == "admission"
+            and method == "GET"
+        ):
+            # The exact admission-outcome reconciliation read for one reviewed
+            # Preview.  After a transport error, lost response or malformed
+            # answer to Execute, the operator may only prove what the durable
+            # admission records already say: the submitted selection either is
+            # exactly admitted, is contradicted by a non-equivalent durable
+            # admission, or has no admitted execution at all.  This GET admits
+            # no work, mints or reissues no authority, and never replays an
+            # uncertain mutation; only the exact submitted reviewed selection
+            # binds the answer, and the reading principal owns that evidence.
+            self._require(principal, ApiPermission.READ)
+            if self._manual_execution is None or not callable(
+                getattr(self._manual_execution, "admission_outcome", None)
+            ):
+                return self._error(
+                    start_response,
+                    503,
+                    "service_unavailable",
+                    "manual organize admission reconciliation is unavailable",
+                    details={
+                        "durableState": "admission_unknown",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "nextAction": (
+                            "restore the manual Organize execution service, then repeat this "
+                            "bounded read; the submitted command is never replayed"
+                        ),
+                    },
+                )
+            values = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            allowed = {"itemIds", "expectedIntentVersion", "allowOverwrite", "allowSourceCleanup"}
+            if set(values).difference(allowed) or any(len(value) != 1 for value in values.values()):
+                raise ValueError(
+                    "operations organize admission reconciliation query accepts itemIds, "
+                    "expectedIntentVersion, allowOverwrite and allowSourceCleanup once"
+                )
+            raw_items = values.get("itemIds", [""])[0]
+            item_ids = [value for value in raw_items.split(",") if value.strip()]
+            if (
+                not item_ids
+                or len(item_ids) > self._manual_execution.MAX_ITEMS
+                or len(set(item_ids)) != len(item_ids)
+                or any(len(value.strip()) > 128 for value in item_ids)
+            ):
+                raise ValueError(
+                    "operations organize admission reconciliation requires a bounded itemIds list"
+                )
+            raw_version = values.get("expectedIntentVersion", [""])[0]
+            if not raw_version.isdigit() or int(raw_version) < 1:
+                raise ValueError(
+                    "operations organize admission reconciliation expectedIntentVersion must be "
+                    "a positive integer"
+                )
+            expected_intent_version = int(raw_version)
+            effects: dict[str, bool] = {}
+            for name in ("allowOverwrite", "allowSourceCleanup"):
+                raw = values.get(name, [""])[0]
+                if raw == "":
+                    raise ValueError(
+                        "operations organize admission reconciliation requires explicit "
+                        f"{name} boolean"
+                    )
+                if raw not in {"true", "false"}:
+                    raise ValueError(
+                        f"operations organize admission reconciliation {name} must be true or false"
+                    )
+                effects[name] = raw == "true"
+            try:
+                document = self._manual_execution.admission_outcome(
+                    parts[5],
+                    item_ids=item_ids,
+                    intent_version=expected_intent_version,
+                    actor=principal.principal_id,
+                    allow_overwrite=effects["allowOverwrite"],
+                    allow_source_cleanup=effects["allowSourceCleanup"],
+                )
+            except ManualExecutionError as error:
+                return self._manual_step_error(start_response, error)
+            document["journey"] = "organize"
+            return self._response(start_response, 200, document)
         if parts == ["api", "v1", "operations", "organize", "executions"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             if self._manual_execution is None:

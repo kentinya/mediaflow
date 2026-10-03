@@ -447,9 +447,7 @@ test("general selection excludes ineligible rows from the durable Organize admis
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001\?/,
   );
-  await expect(
-    page.getByRole("heading", { name: "Manual organize intent" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
   expect(admissionBodies[0]).not.toContain("readme.txt");
@@ -486,9 +484,7 @@ test("the row Organize action admits the existing durable intent for one eligibl
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
   );
-  await expect(
-    page.getByRole("heading", { name: "Manual organize intent" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');
 
@@ -523,9 +519,7 @@ test("the selection footer admits one bounded multi-file intent", async ({
     .check();
   await expect(page.getByText("已选择 2 个文件")).toBeVisible();
   await page.getByRole("button", { name: "批量整理" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Manual organize intent" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain(
     '"paths":["sample.mkv","Avatar.2009.1080p.mkv"]',

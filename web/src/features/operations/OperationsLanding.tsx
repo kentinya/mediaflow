@@ -56,6 +56,12 @@ import {
 import { runItemsQueryKey, runRecordsQueryKey } from "./run-detail-query";
 import { ResidentServiceStatus } from "./ResidentServiceStatus";
 import { manualActionsQueryOptions } from "./manual-actions-query";
+import {
+  OPERATIONS_RETURN_KEY,
+  operationsLandingSearch,
+  operationsReturnContextFromSearch,
+  readOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 import { workerReadinessQueryOptions } from "./worker-query";
 import type { WorkerReadinessModel } from "../../entities/operations/worker";
 import { useQueryClient, type UseQueryResult } from "@tanstack/react-query";
@@ -239,6 +245,23 @@ export function OperationsLanding() {
   // state, so a refresh, a Back/Forward step and a reconnect all restore the
   // same server page instead of silently restarting at the first one.
   const { cursor, direction } = readPageState(searchParams);
+  // A completed or interrupted journey returns with its preserved context:
+  // the landing restores that bounded list state (filters, page, selection
+  // and detail view) exactly once and drops the marker, so the URL stays the
+  // single source of truth and a reconnect after a rejected 401 restores the
+  // same view an in-journey back link would.
+  useEffect(() => {
+    const context = readOperationsReturnContext(searchParams);
+    if (context === null) return;
+    void navigate({
+      to: "/operations",
+      search: operationsLandingSearch(context, null),
+      replace: true,
+    });
+    // Restore only on the transition into a context-bearing URL; re-running
+    // on every search change would fight the restored state itself.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams[OPERATIONS_RETURN_KEY]]);
   // The search draft resets exactly when the submitted URL query changes
   // (deep entry, reset, reconnect): adjusting state during render instead of
   // an effect keeps one source of truth without a second render pass.
@@ -574,6 +597,10 @@ export function OperationsLanding() {
             <ManualOperationsSection
               matrixQuery={matrixQuery}
               chosenLibraryId={chosenLibraryId}
+              returnContext={operationsReturnContextFromSearch({
+                ...listSearch(selectedId === "" ? undefined : selectedId),
+                ...(selectedId === "" ? {} : runDetailStateSearch(detailState)),
+              })}
             />
           </>
         )}
@@ -990,12 +1017,14 @@ function WorkerReadinessSection({
 function ManualOperationsSection({
   matrixQuery,
   chosenLibraryId,
+  returnContext,
 }: {
   readonly matrixQuery: UseQueryResult<
     OperationsRead<ManualActionMatrixModel>,
     Error
   >;
   readonly chosenLibraryId: string;
+  readonly returnContext: string;
 }) {
   const navigate = useNavigate();
   const matrix = matrixQuery.data?.ok === true ? matrixQuery.data.model : null;
@@ -1082,16 +1111,36 @@ function ManualOperationsSection({
                 运行零变更预览
               </Link>
             )}
-            {matrix.actions.organize.available && (
+            {/* The Organize entry deliberately differs from the Scan/Preview
+                direct-submit entries: `新建整理任务` starts a multi-page
+                journey, not one POST. At a chosen scope its availability is
+                the scoped action fact. At discovery (no scope chosen yet) the
+                scoped fact is honestly "select a scope first", so the entry
+                gates on the two backend facts that *are* meaningful before a
+                scope exists: this is a discovery projection, and the same
+                matrix still advertises a bounded preview population for this
+                principal (`limits.previewMaxItems`, which the real backend
+                publishes as zero without the manage-manual-organize
+                permission). A read-only principal therefore sees no entry. */}
+            {(matrix.actions.organize.available ||
+              (matrix.selectionRequired &&
+                matrix.limits.previewMaxItems !== null &&
+                matrix.limits.previewMaxItems > 0)) && (
               <Link
                 className="mf-button mf-button-secondary"
                 to="/operations/organize/new"
                 search={{
                   scopeKind: "resourceLibrary",
-                  resourceLibraryId: matrix.resourceLibraryId ?? undefined,
+                  // The chosen library (when one is chosen) is the exact
+                  // scope the new task starts from; the submitted list
+                  // context rides along so the journey can return here with
+                  // the admitted run selected.
+                  resourceLibraryId:
+                    chosenLibraryId || matrix.resourceLibraryId || undefined,
+                  [OPERATIONS_RETURN_KEY]: returnContext || undefined,
                 }}
               >
-                准备手动整理
+                新建整理任务
               </Link>
             )}
           </nav>

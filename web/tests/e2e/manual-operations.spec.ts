@@ -513,11 +513,9 @@ test("Files row admits one eligible file into the durable Organize journey", asy
   await expect(page).toHaveURL(
     /\/ui-v2\/operations\/organize\/intent\/organize-intent-e2e-001/,
   );
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Manual organize intent" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Create exact Preview" }),
+    page.getByRole("button", { name: "生成精确预览" }),
   ).toBeVisible();
   expect(admissionBodies).toHaveLength(1);
   expect(admissionBodies[0]).toContain('"paths":["sample.mkv"]');

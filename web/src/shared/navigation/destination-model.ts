@@ -10,6 +10,10 @@
 
 import { RULE_FAMILIES } from "../../entities/rules/rules-workspace";
 import {
+  parseOperationsReturnContext,
+  operationsReturnContextFromSearch,
+} from "./operations-return";
+import {
   RUN_DETAIL_ITEM_TOKEN,
   RUN_DISPOSITIONS,
   RUN_RECORD_KINDS,
@@ -561,6 +565,10 @@ const DELIVERY_STATUS_FILTER_TOKEN = /^[a-z][a-z0-9-]{0,31}$/;
 const COMMAND_FILTER_TOKEN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/;
 /** A run-inventory cursor URL may carry only the bounded cursor alphabet. */
 const CURSOR_TOKEN = /^[A-Za-z0-9._=-]{1,512}$/;
+/** The bounded Files live-directory grammar `returnPath` may carry. */
+const RETURN_PATH_TOKEN =
+  // eslint-disable-next-line no-control-regex
+  /^(?!\/)(?!.*\.\.)(?!.*\\)[^\u0000-\u001f\u007f]{0,4096}$/;
 
 /**
  * Return only the first safe values of allowlisted query keys for the
@@ -627,6 +635,30 @@ export function allowlistedDestinationSearch(
       }
     }
   };
+  /**
+   * The serialized task-center return context (`returnOps`) may only ever be
+   * the URLSearchParams encoding of the task center's own bounded list keys.
+   * Re-validation goes through the same closed per-key grammars the landing
+   * itself publishes: a value whose re-serialization differs (a foreign key
+   * such as a credential, a path-shaped filter token, an oversized cursor or
+   * a tampered selection) never re-enters an Operations URL after a rejected
+   * 401. Only a context that survives intact is replayed.
+   */
+  const setJourneyOperationsContext = (
+    allowed: URLSearchParams,
+    current: URLSearchParams,
+  ) => {
+    const raw = current.get("returnOps");
+    if (raw === null) return;
+    const parsed = parseOperationsReturnContext(raw);
+    const canonical = operationsReturnContextFromSearch(parsed);
+    if (
+      canonical !== "" &&
+      new URLSearchParams(canonical).toString() === canonical
+    ) {
+      allowed.set("returnOps", canonical);
+    }
+  };
   const setFilterToken = (
     target: URLSearchParams,
     key: string,
@@ -637,6 +669,37 @@ export function allowlistedDestinationSearch(
       target.set(key, value);
     }
   };
+  /**
+   * The bounded Organize-journey return contexts that must survive an
+   * authentication continuation: the Files origin triple (`returnTo=files`
+   * plus its bounded library identity and relative directory) and the
+   * serialized task-center list context (`returnOps`). A page without its
+   * origin marker degrades to "not originated here" — it never addresses
+   * another library, directory or list view.
+   */
+  const setJourneyReturnContexts = (
+    allowed: URLSearchParams,
+    current: URLSearchParams,
+  ) => {
+    // The Files origin travels as a pair: the marker is only replayed when
+    // the bounded library identity it returns to is present too, so a bare
+    // marker never survives a reconnect addressing no library.
+    const libraryId = current.get("returnResourceLibraryId");
+    if (
+      current.get("returnTo") === "files" &&
+      libraryId !== null &&
+      libraryId !== "" &&
+      !libraryId.includes("/")
+    ) {
+      allowed.set("returnTo", "files");
+      setSafe(allowed, "returnResourceLibraryId", libraryId);
+      const returnPath = current.get("returnPath");
+      if (returnPath !== null && RETURN_PATH_TOKEN.test(returnPath)) {
+        allowed.set("returnPath", returnPath);
+      }
+    }
+    setJourneyOperationsContext(allowed, current);
+  };
   if (path === "/resourcelib/files") {
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
@@ -644,6 +707,13 @@ export function allowlistedDestinationSearch(
       const value = current.get(key);
       setSafe(allowed, key, value);
     }
+    // The one Organize-selection marker and the task-center return context
+    // survive a reconnect inside a Files-originated organize journey; no
+    // other route gains a mutating search key through this branch.
+    if (current.get("organize") === "1") {
+      allowed.set("organize", "1");
+    }
+    setJourneyOperationsContext(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/medialib/files") {
@@ -738,6 +808,11 @@ export function allowlistedDestinationSearch(
       setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
     }
     setRunDetailTokens(allowed, current);
+    // A journey returning here re-selects the admitted run through the plain
+    // `run` param; the preserved `returnOps` context itself never re-enters
+    // the landing URL (the landing parses it once on entry), so it is only
+    // replayed while the journey is still open.
+    setJourneyOperationsContext(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/rules") {
@@ -800,20 +875,32 @@ export function allowlistedDestinationSearch(
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (path === "/operations/organize/new") {
-    // The manual Organize entry carries only its bounded scope parameters.
+    // The manual Organize entry carries only its bounded scope parameters
+    // plus the preserved task-center return context of the journey it starts.
     const allowed = new URLSearchParams();
     const current = new URLSearchParams(search);
     setSafe(allowed, "scopeKind", current.get("scopeKind"));
     setSafe(allowed, "fileId", current.get("fileId"));
     setSafe(allowed, "resourceLibraryId", current.get("resourceLibraryId"));
+    setJourneyOperationsContext(allowed, current);
+    return allowed.toString().length > 0 ? allowed.toString() : null;
+  }
+  if (
+    path === "/operations/organize/intent/$intentId" ||
+    path === "/operations/organize/preview/$previewId" ||
+    path === "/operations/organize/execution/$executionId"
+  ) {
+    // The intent, exact Preview and execution pages of one Organize journey
+    // carry only the bounded return contexts that let them offer their two
+    // explicit back actions; nothing else survives a reconnect here.
+    const allowed = new URLSearchParams();
+    const current = new URLSearchParams(search);
+    setJourneyReturnContexts(allowed, current);
     return allowed.toString().length > 0 ? allowed.toString() : null;
   }
   if (
     path === "/operations/scan/$taskId" ||
     path === "/operations/preview/$previewId" ||
-    path === "/operations/organize/intent/$intentId" ||
-    path === "/operations/organize/preview/$previewId" ||
-    path === "/operations/organize/execution/$executionId" ||
     path === "/operations/automation/new" ||
     path === "/operations/automation/definition/$definitionId" ||
     path === "/operations/automation/editor/$definitionId" ||
