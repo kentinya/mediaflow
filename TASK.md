@@ -326,7 +326,7 @@ the complete Base..Head/staged manifest without printing private configuration.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: [implementation checkpoint SHA recorded before the completion-report-only commit]
+Head SHA: eda07568000b036c1dbcd84f8f875c96ecdb722e
 ```
 
 ## B Review Result
