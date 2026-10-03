@@ -643,6 +643,11 @@ export function allowlistedDestinationSearch(
    * such as a credential, a path-shaped filter token, an oversized cursor or
    * a tampered selection) never re-enters an Operations URL after a rejected
    * 401. Only a context that survives intact is replayed.
+   *
+   * An empty-but-present context is the valid default (unfiltered,
+   * unselected) task-center origin, so it is replayed unchanged: the marker
+   * must survive authentication continuation exactly like any nonempty
+   * context. Only an *absent* key means "not Operations-originated".
    */
   const setJourneyOperationsContext = (
     allowed: URLSearchParams,
@@ -650,6 +655,10 @@ export function allowlistedDestinationSearch(
   ) => {
     const raw = current.get("returnOps");
     if (raw === null) return;
+    if (raw === "") {
+      allowed.set("returnOps", "");
+      return;
+    }
     const parsed = parseOperationsReturnContext(raw);
     const canonical = operationsReturnContextFromSearch(parsed);
     if (

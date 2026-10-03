@@ -47,7 +47,10 @@ The run-detail result-package export is served by the shared package-exchange
 authority; it reads durable Task/Result rows and writes one best-effort audit
 row. The Manual Organize proof uses a checked temporary Active configuration,
 temporary Local Storage and a synthetic MetadataProvider; no production
-configuration or external service is involved.
+configuration or external service is involved. One additional bounded read
+exists for the browser journeys: ``GET /__harness__/manual-file-state`` reports
+the source/destination state of one synthetic fixture file (``file=``, default
+``Three.2003.mkv``), relative to the temporary roots only.
 
 No production media, credential, Storage adapter, Provider or external service
 is involved. The script fails fast when the built artifact is missing.
@@ -62,6 +65,7 @@ import json
 import socketserver
 import sys
 import threading
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
@@ -230,6 +234,7 @@ def build_managed_fixture(
     source_file.write_bytes(b"synthetic browser media")
     (source_root / "Two.2002.mkv").write_bytes(b"second synthetic browser media")
     (source_root / "Three.2003.mkv").write_bytes(b"new-task synthetic browser media")
+    (source_root / "Four.2004.mkv").write_bytes(b"default-origin synthetic browser media")
 
     document = json.loads(
         (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
@@ -339,6 +344,15 @@ def build_managed_fixture(
                         MediaType.MOVIE,
                         "Three",
                         year=2003,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "104",
+                        MediaType.MOVIE,
+                        "Four",
+                        year=2004,
                         genres=("Animation",),
                         countries=("JP",),
                     ),
@@ -896,14 +910,24 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
         }
 
 
-def manual_file_state(state: AppState) -> dict[str, object]:
-    """Return relative-only state for the new-task synthetic source file."""
+def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict[str, object]:
+    """Return relative-only state for one new-task synthetic source file.
 
-    source = state.managed.root / "source" / "Three.2003.mkv"
+    The file identity comes from the harness query string (`file=`); the
+    default keeps the original new-task journey file. The name is validated
+    against the synthetic fixture set so the read stays bounded to files the
+    harness itself created.
+    """
+
+    allowed = ("One.2001.mkv", "Two.2002.mkv", "Three.2003.mkv", "Four.2004.mkv")
+    if filename not in allowed:
+        raise RuntimeError(f"harness: unknown manual-file-state file {filename!r}")
+    stem = filename.split(".")[0]
+    source = state.managed.root / "source" / filename
     destination = state.managed.root / "destination"
     targets = sorted(
         path.relative_to(destination).as_posix()
-        for path in destination.rglob("Three*.mkv")
+        for path in destination.rglob(f"{stem}*.mkv")
         if path.is_file()
     )
     return {
@@ -1058,7 +1082,9 @@ def application(environ, start_response):
         elif path == "/__harness__/run-manual-worker" and method == "POST":
             document = run_manual_worker_once(STATE)
         elif path == "/__harness__/manual-file-state" and method == "GET":
-            document = manual_file_state(STATE)
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            requested_file = (query.get("file") or ["Three.2003.mkv"])[0]
+            document = manual_file_state(STATE, filename=requested_file)
         elif path == "/__harness__/run-standalone-pipeline" and method == "POST":
             document = run_standalone_pipeline_once(STATE)
         elif path == "/__harness__/restart" and method == "POST":

@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 42.3
 Parent Slice: 42
-Status: IN PROGRESS
+Status: FIX REQUIRED
 Task Base: c55bb3cef6efa8b51158831f4136d7bc3d5fd490
 Difficulty: High
 Test Level: T4
@@ -274,66 +274,198 @@ the complete Base..Head/staged manifest without printing private configuration.
 
 ## Developer Completion Report
 
+This report covers Task 42.3 cumulatively: the original implementation checkpoint
+`eda07568000b036c1dbcd84f8f875c96ecdb722e` plus this B-requested correction checkpoint. Task ID,
+Task Base, Goal and Scope are unchanged; only the B P1 blocker and its direct root cause were fixed.
+
 ### Changed Files
 
-- Backend admission evidence: `mediaflow/application/manual_organize_execution.py`, `mediaflow/interfaces/service_api.py`.
-- Real browser harness and backend coverage: `scripts/operations_inventory_harness.py`, `tests/test_v2_manual_organize.py`.
-- Web journey and API/models: `web/src/entities/operations/organize.ts`, `web/src/shared/api/api-client.ts`, `web/src/features/library/StorageFilesPage.tsx`, `web/src/features/operations/OperationsLanding.tsx`, `web/src/features/operations/OrganizeExecutionPage.tsx`, `web/src/features/operations/OrganizeIntentPage.tsx`, `web/src/features/operations/OrganizeNewPage.tsx`, `web/src/features/operations/OrganizePreviewPage.tsx`.
-- Navigation and Web tests: `web/src/shared/navigation/destination-model.ts`, `web/src/shared/navigation/destination-model.test.ts`, `web/src/shared/navigation/operations-return.ts`, `web/src/shared/navigation/operations-return.test.ts`, `web/src/features/operations/OrganizeRouter.test.tsx`, `web/src/routes/router.test.tsx`, `web/tests/e2e/deep-link.spec.ts`, `web/tests/e2e/library-files.spec.ts`, `web/tests/e2e/manual-operations.spec.ts`, `web/tests/e2e/manual-organize.spec.ts`, `web/tests/e2e/operations-inventory.python.spec.ts`, `web/tests/fake-server.mjs`.
-- This Task’s Developer Completion Report in `TASK.md`.
+This correction checkpoint (`TASK.md` plus the P1 fix):
+
+- `web/src/features/operations/OperationsLanding.tsx` — the `新建整理任务` entry spreads the
+  existing `operationsReturnSearch(returnContext)` helper instead of `returnContext || undefined`,
+  so the valid empty default-list origin is carried as a present `returnOps=` marker.
+- `web/src/shared/navigation/destination-model.ts` — `setJourneyOperationsContext` replays an
+  empty-but-present `returnOps` unchanged through authentication continuation on every journey
+  surface (new/intent/Preview/execution, ResourceLibrary Files, landing reconnect). An *absent*
+  key still means "not Operations-originated"; nonempty contexts keep the existing canonical
+  re-validation and tampered values are still dropped.
+- `web/src/shared/navigation/destination-model.test.ts` — new empty-origin replay case across all
+  five journey surfaces plus the absence-vs-present contrast, and the landing reconnect case.
+- `web/src/features/operations/OperationsInventory.test.tsx` — new default-list entry test: the
+  entry link carries the exact empty `returnOps=` marker, and marker + admitted run resolves to the
+  same bounded landing search the real router accepts.
+- `scripts/operations_inventory_harness.py` — one additional synthetic fixture file
+  (`Four.2004.mkv`) with its synthetic metadata candidate (`tmdb` 104 "Four" 2004); the
+  `manual-file-state` read accepts a bounded `file=` query over the four harness-created files
+  (default still `Three.2003.mkv`). Harness-only: no product code, no persistence, no new endpoint.
+- `web/tests/e2e/operations-inventory.python.spec.ts` — one new real-browser test starting from the
+  default unfiltered, unselected task center and covering the empty-origin journey, the selected
+  durable run, auth continuation, real Worker completion and real runtime restart.
+- This Developer Completion Report in `TASK.md`.
+
+Delivered earlier in this Task at `eda07568000b036c1dbcd84f8f875c96ecdb722e` (unchanged by this
+correction): `mediaflow/application/manual_organize_execution.py`,
+`mediaflow/interfaces/service_api.py`, `web/src/entities/operations/organize.ts`,
+`web/src/shared/api/api-client.ts`, `web/src/features/library/StorageFilesPage.tsx`,
+`web/src/features/operations/OrganizeExecutionPage.tsx`,
+`web/src/features/operations/OrganizeIntentPage.tsx`,
+`web/src/features/operations/OrganizeNewPage.tsx`,
+`web/src/features/operations/OrganizePreviewPage.tsx`,
+`web/src/shared/navigation/operations-return.ts`,
+`web/src/shared/navigation/operations-return.test.ts`,
+`web/src/features/operations/OrganizeRouter.test.tsx`, `web/src/routes/router.test.tsx`,
+`web/tests/fake-server.mjs`, `web/tests/e2e/deep-link.spec.ts`,
+`web/tests/e2e/library-files.spec.ts`, `web/tests/e2e/manual-operations.spec.ts`,
+`web/tests/e2e/manual-organize.spec.ts`, `tests/test_v2_manual_organize.py`.
 
 ### Implemented
 
-- Added a bounded read-only admission reconciliation endpoint. A `known` result requires the exact principal, Preview, selected item set, intent version, immutable configuration pin, per-item versions/fingerprints, and destructive permissions from the consumed persisted authority. The read does not admit work, mint authority, or mutate Storage.
-- Replaced the task-center explanation link with a Chinese native `新建整理任务` journey through enabled ResourceLibrary choice, live Files selection, the existing intent and exact Preview, explicit execution, and the exact selected unified run. Validated bounded Operations and Files return context survives navigation and authentication continuation.
-- Unknown, lost, malformed and 5xx Execute responses stay locked until the exact durable read resolves them. A Preview reads its bounded durable execution history before exposing Execute, so reloading after an ambiguous response cannot erase the lock; existing work is inspectable and a failed history read keeps Execute closed.
-- Localized the manual organize intent, Preview and execution surfaces, including the operation and destructive-effect labels and action-oriented recovery copy.
-- Extended the real Python harness and browser spec to select a temporary live source file from the new task entry, lose the actual production admission response, reconcile it, inspect the selected run, complete it with the real Worker, and verify durable C identity with A downstream policies after restart.
+Correction (the B P1 blocker):
+
+- The entry and auth-continuation paths now separate three states exactly: absent marker → not
+  Operations-originated (Files-originated journey behavior preserved); present-but-empty marker →
+  default-list Operations origin (returns to the task center with the admitted run selected);
+  nonempty marker → existing validated filter context. Known admission from the default list now
+  selects its exact unified run instead of opening the separate execution page.
+- Reused the existing `operationsReturnSearch` helper for the entry rather than inventing a new
+  marker or a third state; journey pages already branch on `!== null`, so no page needed a change.
+- Reused, unchanged: existing admission authority (still exactly one Execute POST, no replay),
+  existing Preview/execution links, bounded Files returns, exact admission-equivalence checks,
+  Worker claim/restart ownership, and all authorization/destructive-permission gates.
+- The empty-origin write is confined to the harness fixture (one more synthetic temporary file) and
+  a bounded harness-only query parameter; no product behavior, schema or authority changed.
+
+Task as a whole (unchanged by this correction):
+
+- A bounded read-only admission reconciliation endpoint whose `known` result requires the exact
+  principal, Preview, selected item set, intent version, immutable configuration pin, per-item
+  versions/fingerprints and destructive permissions from the consumed persisted authority. The read
+  does not admit work, mint authority or mutate Storage.
+- The Chinese native `新建整理任务` journey: enabled ResourceLibrary choice → live Files selection →
+  existing intent → exact Preview → explicit execution → exact selected unified run, with validated
+  bounded Operations and Files return context through navigation and authentication continuation.
+- Unknown/lost/malformed/5xx Execute responses stay locked until the exact durable read resolves
+  them; a Preview reads its bounded durable execution history before exposing Execute.
+- Localized manual organize intent/Preview/execution surfaces including operation and
+  destructive-effect labels and action-oriented recovery copy.
 
 ### Tests and Results
 
+Correction-focused and required Task gates, all run on the final tree unless noted:
+
+- `python3 scripts/check_governance.py` — **PASS**.
 - `.venv/bin/python -m unittest tests.test_v2_manual_organize tests.test_manual_organize_intent tests.test_manual_organize_preview tests.test_manual_organize_execution tests.test_manual_operations_contract` — **PASS**, 103 tests.
 - `.venv/bin/python -m unittest tests.test_operations_workspace tests.test_operations_run_inventory tests.test_operations_run_detail tests.test_processing_worker_readiness` — **PASS**, 114 tests.
 - `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_direct_file_transfers tests.test_file_catalog_api tests.test_api_security` — **PASS**, 176 tests.
-- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2119 tests, 7 skips (existing isolated Storage real-service/endurance cases).
-- `.venv/bin/ruff format --check .` — **PASS**, 335 files formatted. `.venv/bin/ruff check .` — **PASS**. `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**. `.venv/bin/python -m pip check` — **PASS**.
-- `python3 scripts/check_governance.py` — **PASS**. `.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate` and `.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate` — **PASS**.
+- `.venv/bin/python -m unittest discover -s tests` — **PASS**, 2119 tests, 7 skips. The 7 skips are the explicitly `BLOCKED` real OpenList/S3/SMB service and endurance profiles (external-environment gates), recorded as unavailable, never as PASS.
+- `.venv/bin/ruff format --check .` — **PASS**, 335 files. `.venv/bin/ruff check .` — **PASS**. `.venv/bin/python -m compileall -q mediaflow tests scripts` — **PASS**. `.venv/bin/python -m pip check` — **PASS** (only a pip cache-directory ownership warning).
+- `.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate` and `.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate` — **PASS**.
 - `.venv/bin/python -m unittest tests.test_release_security tests.test_release_validation tests.test_migration_rehearsal tests.test_upgrade_preflight` — **PASS**, 19 tests.
-- `TMPDIR=/tmp/mediaflow-task42-3-docker-tmp .venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task42.3-developer-local` — **PASS**. The isolated Compose stack, unique image and temporary directory were removed after the run.
-- `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task42-3-wheel-output` and `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task42-3-wheel-output/mediaflow-2.0.0.dev0-py3-none-any.whl` — **PASS**. Temporary wheel output was removed after the smoke test.
-- From `web/`, `npm run test -- --run src/entities/operations src/features/operations src/features/library src/shared/api src/shared/navigation src/routes` — **PASS**, 41 files / 657 tests; `npm run test -- --run` — **PASS**, 62 files / 950 tests; `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run build` — **PASS**. Build emitted a >500 kB chunk-size warning.
-- From `web/`, `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/deep-link.spec.ts` — **FAIL / PRE-EXISTING / UNRELATED**, 66 passed / 2 failed; `npm run test:e2e -- tests/e2e/library-files.spec.ts` — **PASS**, 40 tests; `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS**, 13 tests.
-- `git diff --check` and `git diff --check c55bb3cef6efa8b51158831f4136d7bc3d5fd490` — **PASS**. Reference image SHA-256 — **PASS**, `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`. `config/alist.json` is ignored and untracked. The required FFmpeg/FFprobe search returned no matches.
+- From `web/`, `npm run test -- --run src/entities/operations src/features/operations src/features/library src/shared/api src/shared/navigation src/routes` — **PASS**, 659 tests; `npm run test -- --run` — **PASS**, 62 files / 952 tests; `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run build` — **PASS** (known >500 kB chunk-size warning only).
+- From `web/`, `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/manual-operations.spec.ts tests/e2e/deep-link.spec.ts` — **FAIL / PRE-EXISTING / UNRELATED**, 66 passed / 2 failed (`deep-link.spec.ts:211` and `:481`; B proved both at Task Base, spec/package/lockfile untouched).
+- From `web/`, `npm run test:e2e -- tests/e2e/library-files.spec.ts` — **PASS**, 40 tests.
+- From `web/`, `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — **PASS**, 14 tests (the 13 previously reviewed plus the new default-unfiltered-origin/empty-auth test), verified three consecutive times on the final tree.
+- `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w <temporary-output>` and `.venv/bin/python scripts/wheel_smoke_test.py <built-wheel>` — **PASS**, schema 42; temporary wheel output removed after the smoke test.
+- `.venv/bin/python scripts/docker_release_security_smoke_test.py` — **FAIL / ENVIRONMENT**: both attempts were rejected by the Docker daemon with `invalid mount config for type "bind": bind source path does not exist` for the smoke script's own generated temporary `deployment.env`/`mediaflow.json`, so the gate never reached build/inspect. No gate-owned containers, networks or volumes remained; the unique test image and both TMPDIRs were removed. The prior checkpoint's Docker PASS is the last valid Docker evidence; this correction touches no container/packaging code. Recorded as unavailable, never as PASS.
+- `git diff --check` and `git diff --check c55bb3cef6efa8b51158831f4136d7bc3d5fd490` — **PASS**.
+- Reference image SHA-256 — **PASS**, `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`. `config/alist.json` is ignored and neither tracked nor staged. The required FFmpeg/FFprobe search returned no matches (`rg` was unavailable in this shell; the equivalent `grep -rni` search over `mediaflow/` and `pyproject.toml` returned no matches).
+
+Before-and-after evidence for the exact B repro shapes (scratch specs removed after proof, so they
+are not part of this checkpoint):
+
+- Default unfiltered/unselected entry, pre-fix: the journey reached HTTP 202 and the browser landed
+  on `/ui-v2/operations/organize/execution/{executionId}` with `运行详情` absent — the reported
+  AC-T3/RO-4 gap. Post-fix: the same journey lands on `/ui-v2/operations?run={taskId}` with
+  `运行详情` visible.
+- Direct entry with valid empty `returnOps=`, pre-fix: after Connect the URL was
+  `/ui-v2/operations/organize/new` with the origin lost. Post-fix:
+  `/ui-v2/operations/organize/new?returnOps=` — the AC-T5 gap is closed.
 
 ### Decisions
 
-- Reused the existing Preview, execution, unified Operations run and persisted authorization records. Reconciliation is an exact, side-effect-free read and does not add another execution authority or lifecycle.
-- Kept the Operations return state as a bounded, revalidated search context and reused the current ResourceLibrary Files browse path rather than adding a new file browser.
-- Added the Preview-history read gate so an existing admission or an unavailable read cannot leave a reopened Preview executable. A new Preview is required to continue after existing work.
+- Reused the existing `operationsReturnSearch` helper (whose contract already states that a
+  present-but-empty context marks the default-list Operations origin) instead of introducing a new
+  marker or widening `readOperationsReturnContext`'s return type.
+- Replayed the empty marker verbatim through authentication continuation rather than
+  re-canonicalizing it: an empty context carries nothing to validate, and verbatim replay keeps
+  tampered nonempty contexts dropping to absent exactly as before (proved by the unchanged hostile
+  value tests).
+- Added the second harness fixture file plus a bounded `file=` query rather than reusing
+  `Three.2003.mkv`, because the serial spec shares one harness database and the earlier journey
+  moves that file away; the default argument keeps all existing assertions untouched.
+- Kept the Task's execution authority and persistence exactly as reviewed: no new admission path,
+  no replay, no second lifecycle, payload still exactly one Execute POST.
 
 ### Remaining In-Slice Work
 
-- The Task’s stated non-goals remain: RO-5 native queued Continue/control recovery and RO-6 task-linked decisions and failed-analysis recovery.
+- Only what B plans next. The Task's stated non-goals remain: RO-5 native queued Continue/control
+  recovery and RO-6 task-linked decisions and failed-analysis recovery. This correction added no
+  scope beyond the B P1.
 
 ### Risks / Deviations
 
-- The two fake Playwright failures are the Base-proven `deep-link.spec.ts:211` (“Review & Recovery” route choice) and `deep-link.spec.ts:481` (retired Configuration heading). B’s accepted-code run and clean Base export reproduce the same failures in `/tmp/mediaflow-b-r4-e2e.log` and `/tmp/mediaflow-b-r3-base-deeplink.log`. They are unchanged and unrelated to this Task; no gate is represented as fully passing while they remain.
-- Earlier test attempts were corrected and retained in the final evidence: the first focused Python tool output was truncated with no observable exit, then the exact rerun passed (102 tests before the two additional binding cases); the first Web focused attempt had 3 selector/text assertion failures, then `OrganizeRouter.test.tsx` passed 17/17, the focused bundle passed 655/655, and the final focused bundle passed 657/657; initial fake E2E ran against stale `web/dist` (57 passed / 10 failed), and the next run had 5 failures from fake-route/locator defects plus the two Base failures. The fake defects were fixed; the intermediate `manual-organize.spec.ts` rerun passed 13/13 and Files rerun passed 40/40, before the final combined 66/68 run. The real Python browser spec first failed on requiring a default library choice (11/13), then on a broad filename locator/fixture destination collision (11/13), fixed before the final 13/13 run.
-- Initial formatter/linter checks required formatting the new Python and Web code; initial typecheck found a string-key lookup against a closed reconciliation-label map. These were fixed and all final formatter, lint and typecheck commands passed. Existing SQLite `ResourceWarning`s and the full-suite’s 7 stated skips remain.
-- Three pre-existing untracked reference images under `docs/pics/` were preserved and excluded from the Task checkpoint. No real credentials or `config/alist.json` were staged.
+- The new real-browser test was initially flaky, and the flake was in the test, not the product: it
+  clicked `生成精确预览` immediately after `保存选择`, so the Preview sometimes submitted a
+  not-yet-refetched intent version and the real backend correctly refused it with
+  `manual_preview_conflict` (409). The test now waits for the save's own durable intent refetch
+  before requesting the Preview; the assertion after the runtime restart was likewise scoped to the
+  bounded `主条目` region instead of the whole detail region (Playwright strict mode). Three
+  consecutive full-spec runs pass 14/14 on the final tree. No product behavior, assertion strength
+  or timeout was weakened to obtain that.
+- One intermediate full-suite run reported `FAILED (failures=1)` during a verbose rerun with
+  unchanged source; the immediate unchanged rerun was fully green (**PASS**, 2119 tests, 7 skips).
+  Both results are recorded; no assertion, skip or timeout was changed to obtain the green run. B
+  may want to note the flake.
+- Docker gate is **FAIL / ENVIRONMENT** as documented above — environment-limited, not a product
+  regression.
+- The two fake deep-link E2E failures remain **FAIL / PRE-EXISTING / UNRELATED**, exactly as B
+  accepted; their spec, package and lockfile are unchanged.
+- Pre-existing untracked reference images under `docs/pics/` and existing SQLite
+  `ResourceWarning`s remain and are excluded from this checkpoint. No real credentials or
+  `config/alist.json` were staged.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: eda07568000b036c1dbcd84f8f875c96ecdb722e
+Head SHA: <filled by the report update after this commit>
 ```
 
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: c55bb3cef6efa8b51158831f4136d7bc3d5fd490..eda07568000b036c1dbcd84f8f875c96ecdb722e
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — Preserve the default task-center origin and its authentication continuation.**
+  **Current production reachability:** an authenticated operator opens the supported default
+  `/ui-v2/operations` list without filters or a selected run, clicks `新建整理任务`, chooses the
+  enabled ResourceLibrary, selects a live file, saves its choice, generates the exact Preview and
+  explicitly executes. B reproduced this with the current real Python API, checked Active
+  configuration, production Local Storage and real Worker; no production capability was removed.
+  **User impact:** the API returns 202 and the same admitted Task completes its actual MOVE, but
+  the browser opens `/ui-v2/operations/organize/execution/{executionId}` instead of the task center
+  with that run selected. The native `运行详情` region count is 0; `返回操作与任务` also points to
+  `/ui-v2/operations` without a run. A separate supported direct entry with valid empty
+  `returnOps=` loses that origin during Connect authentication, producing the same routing gap.
+  **Contract:** AC-T3 and AC-T5, Scope behavior 1/4/6, and Slice RO-4's selected-run return and
+  RO-7's authentication/return-context integration are unmet.
+  **Evidence:** `OperationsLanding.tsx:1140` uses `returnContext || undefined`, dropping the valid
+  empty origin; `destination-model.ts`'s `setJourneyOperationsContext` drops an empty canonical
+  context too. Against `.venv/bin/python scripts/operations_inventory_harness.py --port 4184`,
+  `node /tmp/mediaflow-b42-3-default-origin-proof-r2.mjs` records one Execute POST, HTTP 202,
+  completed exact Worker linkage and the wrong URL, then fails the AC-T3/RO-4 assertion.
+  `node /tmp/mediaflow-b42-3-empty-auth-origin-proof.mjs` records `hasOrigin: false` after Connect
+  and fails the AC-T5 assertion. Their adjacent `.json` and `.log` files retain the results;
+  `/tmp/mediaflow-b42-3-review-evidence.md` records the independent validation attempts honestly.
+  **Required correction:** preserve the distinction between absent Files origin and valid empty
+  Operations origin at entry and through the existing Files/intent/Preview/execution/auth journey.
+  Known admission must select its exact unified run even from the default list and after auth.
+  Retain bounded validation, nonempty filter context and ordinary Files returns; reuse existing
+  admission authority without replay. Extend the real browser coverage to the default unfiltered,
+  unselected entry and empty-context authentication, rather than proving only a filtered entry.
+  Fix within Task 42.3; Task Base, Goal and Scope remain unchanged.

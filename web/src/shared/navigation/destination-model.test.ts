@@ -405,6 +405,47 @@ describe("destination model", () => {
       ).toBe("returnTo=files&returnResourceLibraryId=resources");
     });
 
+    it("replays the empty-but-present task-center origin through continuation", () => {
+      // The task center's default (unfiltered, unselected) view serializes a
+      // valid empty `returnOps=` origin. It marks the journey as
+      // Operations-originated exactly like any nonempty context, so it must
+      // survive authentication continuation on every journey page — it is
+      // never "no origin". An absent key still means exactly that.
+      for (const path of [
+        "/operations/organize/new",
+        "/operations/organize/intent/$intentId",
+        "/operations/organize/preview/$previewId",
+        "/operations/organize/execution/$executionId",
+        "/resourcelib/files",
+      ] as const) {
+        const current =
+          path === "/operations/organize/new" || path === "/resourcelib/files"
+            ? "returnOps="
+            : "returnOps=&returnTo=files&returnResourceLibraryId=resources";
+        const allowed = allowlistedDestinationSearch(path, current);
+        expect(allowed).not.toBeNull();
+        expect(new URLSearchParams(allowed as string).has("returnOps")).toBe(
+          true,
+        );
+        expect(new URLSearchParams(allowed as string).get("returnOps")).toBe(
+          "",
+        );
+      }
+      // Absence stays "not Operations-originated" on the same pages.
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/new",
+          "scopeKind=resourceLibrary",
+        ),
+      ).toBe("scopeKind=resourceLibrary");
+      expect(
+        allowlistedDestinationSearch(
+          "/operations/organize/intent/$intentId",
+          "returnTo=files&returnResourceLibraryId=resources",
+        ),
+      ).toBe("returnTo=files&returnResourceLibraryId=resources");
+    });
+
     it("drops tampered journey contexts instead of replaying them", () => {
       for (const search of [
         "returnOps=token%3Dsecret",
@@ -463,6 +504,11 @@ describe("destination model", () => {
           "status=failed&returnOps=status%3Dfailed",
         ),
       ).toBe("status=failed&returnOps=status%3Dfailed");
+      // An empty-but-present origin is replayed through a still-open journey
+      // reconnect exactly like any other context.
+      expect(allowlistedDestinationSearch("/operations", "returnOps=")).toBe(
+        "returnOps=",
+      );
     });
 
     it("drops credential-like values from an Operations collection link", () => {
