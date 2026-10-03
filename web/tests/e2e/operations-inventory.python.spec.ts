@@ -1128,3 +1128,168 @@ test("a real standalone pipeline run keeps its durable steps through detail and 
   expect(api.length).toBeGreaterThan(0);
   expect(api.filter((entry) => entry.method !== "GET")).toEqual([]);
 });
+
+test("the default unfiltered task-center origin selects its admitted run through auth and restart", async ({
+  page,
+  request,
+}) => {
+  // Task 42.3 correction (P1): the supported default entry — the task center
+  // list with no filters, no selected run and therefore a valid *empty*
+  // `returnOps=` origin — must behave exactly like a filtered origin: the
+  // journey starts, the admitted run is selected on return, and the empty
+  // origin survives authentication continuation instead of degrading to
+  // "not Operations-originated".
+  const api = recordApiCalls(page);
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await connect(page, ADMIN_TOKEN);
+
+  // The default entry: the sidebar link, no filters, no selected run.
+  await page.getByRole("link", { name: "Operations", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "操作与任务", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/\/ui-v2\/operations$/);
+  await expectRunTotal(page, SEEDED_RUN_TOTAL + 3);
+
+  // The native entry carries the valid empty origin marker.
+  await page.getByRole("link", { name: "新建整理任务" }).click();
+  await expect(
+    page.getByRole("heading", { name: "新建整理任务", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/returnOps=/);
+  expect(new URL(page.url()).searchParams.get("returnOps")).toBe("");
+  // The Worker heartbeat window is bounded, so the real Worker is registered
+  // exactly before the operator continues past the scoped availability read.
+  await request.post(`${BASE}/__harness__/register-manual-worker`);
+  await page.getByRole("radio", { name: "source" }).check();
+  await page.getByRole("button", { name: "选择文件并开始整理" }).click();
+  await expect(page).toHaveURL(/\/ui-v2\/resourcelib\/files/);
+  await expect(page).toHaveURL(/returnOps=/);
+
+  // Select the live file from the actual ResourceLibrary listing.
+  await page.getByRole("checkbox", { name: "选择 Four.2004.mkv" }).check();
+  await page.getByRole("button", { name: "批量整理" }).click();
+  await expect(page.getByRole("heading", { name: "整理意图" })).toBeVisible();
+  await expect(page).toHaveURL(/returnOps=/);
+  await page.locator('select[aria-label^="识别类型 "]').selectOption("C");
+  // The Preview pins the exact current intent version, so the journey must
+  // wait for the save's own durable refetch before requesting it; clicking
+  // against a not-yet-refetched intent would submit a stale version.
+  const refetchedIntent = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      /\/operations\/organize\/intents\/[^/]+$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await page.getByRole("button", { name: "保存选择" }).click();
+  await expect(page.getByText(/选择已持久保存/)).toBeVisible();
+  expect((await refetchedIntent).ok()).toBeTruthy();
+  await page.getByRole("button", { name: "生成精确预览" }).click();
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(page).toHaveURL(/returnOps=/);
+
+  // The explicit admission from the empty-origin journey also returns to the
+  // default list view with the admitted run selected (AC-T3).
+  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  await expect(
+    page.getByRole("heading", { name: "操作与任务", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/run=/);
+  const runId = new URL(page.url()).searchParams.get("run");
+  expect(runId).toBeTruthy();
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    ),
+  ).toHaveLength(1);
+
+  // The empty origin survives authentication continuation: a reload plus
+  // Connect returns to the same list with the same admitted run selected.
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${runId}`));
+  await expect(page.getByRole("region", { name: "运行详情" })).toBeVisible();
+
+  // The real Worker completes the admitted run; the selected detail shows
+  // its durable C identity with the A downstream policies.
+  const workerRun = await request.post(`${BASE}/__harness__/run-manual-worker`);
+  expect(workerRun.ok()).toBeTruthy();
+  expect(await workerRun.json()).toMatchObject({
+    completed: true,
+    taskId: runId,
+    status: "completed",
+    itemCount: 1,
+  });
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  await expect(items.getByText("Four.2004.mkv")).toBeVisible();
+  const evidenceResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "GET" &&
+      response.url().includes(`/operations/runs/${runId}/items/`),
+  );
+  await items.getByRole("button", { name: "查看证据" }).click();
+  const evidence = await (await evidenceResponse).json();
+  expect(evidence.planEvidence).toMatchObject({
+    available: true,
+    plan: {
+      recognitionType: "C",
+      mediaIdentity: { provider: "tmdb", providerId: "104", title: "Four" },
+      policies: {
+        metadataPolicyId: "C",
+        namingPolicyId: "A",
+        classificationPolicyId: "A",
+      },
+    },
+    completedOperations: ["CREATE_DIRECTORY", "MOVE"],
+  });
+  expect(
+    await (
+      await request.get(
+        `${BASE}/__harness__/manual-file-state?file=Four.2004.mkv`,
+      )
+    ).json(),
+  ).toMatchObject({
+    sourceExists: false,
+    destinationTargets: expect.arrayContaining([
+      expect.stringContaining("Four"),
+    ]),
+  });
+
+  // A real runtime restart preserves the exact selected run (AC-T5).
+  const restart = await request.post(`${BASE}/__harness__/restart`);
+  expect(restart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${runId}`));
+  const restored = page.getByRole("region", { name: "运行详情" });
+  await expect(restored).toBeVisible();
+  // The same bounded item region as before the restart, so the assertion
+  // addresses exactly the run's primary item and not the detail's other
+  // (source identity / storage) mentions of the same filename.
+  await expect(
+    restored.getByRole("region", { name: "主条目" }).getByText("Four.2004.mkv"),
+  ).toBeVisible();
+
+  // Privacy and bounded reads: no raw token or temp path appears, and the
+  // journey issued exactly one Execute POST with no replay.
+  const finalHtml = await page.content();
+  expect(finalHtml).not.toContain(ADMIN_TOKEN);
+  expect(finalHtml).not.toContain("/tmp/");
+  expect(
+    api.filter(
+      (entry) =>
+        entry.method === "POST" &&
+        entry.path.match(/\/operations\/organize\/previews\/[^/]+\/execute$/),
+    ),
+  ).toHaveLength(1);
+});

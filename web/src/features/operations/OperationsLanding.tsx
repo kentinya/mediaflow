@@ -60,6 +60,7 @@ import {
   OPERATIONS_RETURN_KEY,
   operationsLandingSearch,
   operationsReturnContextFromSearch,
+  operationsReturnSearch,
   readOperationsReturnContext,
 } from "../../shared/navigation/operations-return";
 import { workerReadinessQueryOptions } from "./worker-query";
@@ -1134,10 +1135,13 @@ function ManualOperationsSection({
                   // The chosen library (when one is chosen) is the exact
                   // scope the new task starts from; the submitted list
                   // context rides along so the journey can return here with
-                  // the admitted run selected.
+                  // the admitted run selected. An empty-but-present context
+                  // is the valid default (unfiltered, unselected) list
+                  // origin: the marker must survive, not degrade to "no
+                  // Operations origin".
                   resourceLibraryId:
                     chosenLibraryId || matrix.resourceLibraryId || undefined,
-                  [OPERATIONS_RETURN_KEY]: returnContext || undefined,
+                  ...operationsReturnSearch(returnContext),
                 }}
               >
                 新建整理任务
