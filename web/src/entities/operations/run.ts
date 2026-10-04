@@ -188,6 +188,9 @@ export interface RunContinuation {
   readonly completedAt: string | null;
   readonly attemptCount: number;
   readonly truncated: boolean;
+  readonly recoveryKind: "queued_continuation" | "exact_preview" | null;
+  readonly recoveryPreviewId: string | null;
+  readonly executionId: string | null;
   readonly nextAction: string;
   readonly sideEffects: string;
 }
@@ -545,6 +548,29 @@ function normalizeRunContinuation(value: unknown): RunContinuation | null {
         source["truncated"],
         "run.continuation.truncated",
       ),
+      recoveryKind:
+        source["recoveryKind"] === undefined || source["recoveryKind"] === null
+          ? null
+          : normalizeEnum(
+              source["recoveryKind"],
+              "run.continuation.recoveryKind",
+              ["queued_continuation", "exact_preview"] as const,
+            ),
+      recoveryPreviewId:
+        source["recoveryPreviewId"] === null ||
+        source["recoveryPreviewId"] === undefined
+          ? null
+          : normalizeBoundedText(
+              source["recoveryPreviewId"],
+              "run.continuation.recoveryPreviewId",
+            ),
+      executionId:
+        source["executionId"] === null || source["executionId"] === undefined
+          ? null
+          : normalizeBoundedText(
+              source["executionId"],
+              "run.continuation.executionId",
+            ),
       nextAction: normalizeBoundedText(
         source["nextAction"],
         "run.continuation.nextAction",

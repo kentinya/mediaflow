@@ -261,6 +261,7 @@ export function OrganizePreviewPage() {
       readonly intentVersion: number;
       readonly allowOverwrite: boolean;
       readonly allowSourceCleanup: boolean;
+      readonly recoverySourceTaskId: string | null;
     }) =>
       executeOrganizePreview(token, {
         previewId,
@@ -293,7 +294,7 @@ export function OrganizePreviewPage() {
             to: "/operations",
             search: operationsLandingSearch(
               operationsReturn,
-              value.model.taskId,
+              options.recoverySourceTaskId ?? value.model.taskId,
             ),
           });
           return;
@@ -746,6 +747,7 @@ export function OrganizePreviewPage() {
                         requiresOverwrite && effectiveAllowOverwrite,
                       allowSourceCleanup:
                         requiresCleanup && effectiveAllowSourceCleanup,
+                      recoverySourceTaskId: model.recoverySourceTaskId,
                     })
                   }
                 >

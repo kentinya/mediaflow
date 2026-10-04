@@ -1109,4 +1109,56 @@ describe("selected run lifecycle controls", () => {
     // Selecting the linked run never submits a control.
     expect(posts).toHaveLength(0);
   });
+
+  it("opens the linked exact Preview with the selected run as its return context", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      overview: {
+        continuation: {
+          continuationId: "preview-recovery",
+          status: "previewed",
+          command: "preview",
+          jobId: null,
+          newTaskId: null,
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          recoveryKind: "exact_preview",
+          recoveryPreviewId: "preview-recovery",
+          executionId: null,
+          nextAction: "review the exact Preview",
+          sideEffects: "none",
+        },
+      },
+      respond: () => jsonResponse({ error: { code: "not_found" } }, 404),
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations?status=paused&run=task-001",
+    );
+
+    const facts = await screen.findByRole("region", { name: "运行详情" });
+    await user.click(
+      await within(facts).findByRole("button", {
+        name: "查看关联的精确预览",
+      }),
+    );
+
+    await waitFor(() =>
+      expect(router.history.location.pathname).toContain(
+        "/operations/organize/preview/preview-recovery",
+      ),
+    );
+    const returnOps = new URLSearchParams(router.history.location.search).get(
+      "returnOps",
+    );
+    expect(returnOps).not.toBeNull();
+    expect(returnOps).toContain("status=paused");
+    expect(returnOps).toContain("run=task-001");
+    expect(posts).toHaveLength(0);
+  });
 });

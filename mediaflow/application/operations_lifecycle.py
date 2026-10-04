@@ -998,6 +998,47 @@ def scope_continuation_operator_document(continuation: object) -> dict[str, obje
     }
 
 
+def scope_recovery_operator_document(
+    recovery: object, source_task: object | None
+) -> dict[str, object]:
+    """Bound the durable exact-Preview recovery link for the Operations UI."""
+
+    item_limit = getattr(source_task, "item_limit", None)
+    if isinstance(item_limit, bool) or not isinstance(item_limit, int) or item_limit < 0:
+        item_limit = None
+    execution_status = getattr(recovery, "execution_status", None)
+    status = execution_status or getattr(recovery, "preview_status", None)
+    completed_at = getattr(recovery, "completed_at", None)
+    created_at = getattr(recovery, "created_at", None)
+    document = {
+        "continuationId": _bounded_identifier(getattr(recovery, "preview_id", None)),
+        "sourceTaskId": _bounded_identifier(getattr(recovery, "source_task_id", None)),
+        "command": _bounded_evidence_text(getattr(source_task, "command", None), limit=64),
+        "itemLimit": item_limit,
+        "boundary": "manual_organize_exact_preview",
+        "status": _bounded_evidence_text(status, limit=64),
+        "jobId": None,
+        "newTaskId": _bounded_identifier(getattr(recovery, "new_task_id", None)),
+        "createdAt": _bounded_evidence_text(_isoformat(created_at), limit=64),
+        "updatedAt": _bounded_evidence_text(_isoformat(completed_at or created_at), limit=64),
+        "startedAt": None,
+        "completedAt": _bounded_evidence_text(_isoformat(completed_at), limit=64),
+        "error": None,
+        "recovery": None,
+        "nextAction": _bounded_evidence_text(
+            "open the linked execution run to inspect its independent item results"
+            if getattr(recovery, "new_task_id", None) is not None
+            else "review the exact Preview and explicitly authorize execution when ready"
+        ),
+        "authorityStatement": None,
+        "sideEffects": "none",
+        "recoveryKind": "exact_preview",
+        "recoveryPreviewId": _bounded_identifier(getattr(recovery, "preview_id", None)),
+        "executionId": _bounded_identifier(getattr(recovery, "execution_id", None)),
+    }
+    return _bounded_operator_document(document)
+
+
 def _isoformat(value: object) -> str | None:
     if value is None:
         return None
@@ -1052,6 +1093,7 @@ def manual_preview_operator_document(document: dict[str, object]) -> dict[str, o
         ),
         "scopeKind": _bounded_evidence_text(scope_kind, limit=64),
         "scopeId": _bounded_identifier(scope_id),
+        "recoverySourceTaskId": _bounded_identifier(document.get("recoverySourceTaskId")),
         "selection": {
             "selectedItemIds": _bounded_identifier_list(selection.get("selectedItemIds")),
             "unselectedItemIds": _bounded_identifier_list(selection.get("unselectedItemIds")),

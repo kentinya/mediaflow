@@ -99,6 +99,7 @@ from mediaflow.domain.manual_organize import (
 )
 from mediaflow.domain.manual_organize_preview import (
     ManualOrganizePreview,
+    ManualPreviewConflict,
     ManualPreviewItem,
     ManualPreviewItemStatus,
     ManualPreviewStatus,
@@ -202,6 +203,7 @@ from mediaflow.domain.scope_continuation import (
     ScopeContinuationError,
     ScopeContinuationReason,
     ScopeContinuationStatus,
+    ScopeRecoveryLink,
 )
 from mediaflow.domain.security import SecurityAuditRecord
 from mediaflow.domain.task_persistence import (
@@ -280,7 +282,12 @@ from mediaflow.infrastructure.file_index_schema import (
 # still owns the running boundary and revalidates live source, capability and
 # mutation authority before any effect.  A legacy database simply has no
 # continuation rows, so nothing is backfilled and no authority is invented.
-SCHEMA_VERSION = 43
+# Schema 44 adds a nullable origin Task to ordinary manual Previews. The exact
+# remaining-scope recovery Preview persists that link, and the existing
+# ManualExecution/Task rows complete it after explicit execution. This is
+# history and scope-accounting evidence only; execution still uses the normal
+# one-shot authority, Worker and OrganizerExecutor boundaries.
+SCHEMA_VERSION = 44
 
 #: The conservative owner generation written to ``file_locks`` rows that predate
 #: schema 38.  It is a fixed, non-guessable-looking sentinel rather than NULL so
@@ -2458,6 +2465,63 @@ class SQLiteTaskRepository:
                 (task_id, limit),
             ).fetchall()
         return tuple(self._scope_continuation(row) for row in rows)
+
+    def list_scope_recovery_links(
+        self, task_id: str, *, limit: int = 32
+    ) -> tuple[ScopeRecoveryLink, ...]:
+        """Read exact-Preview recovery history linked to one source Task."""
+
+        if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 100:
+            raise ValueError("scope recovery limit must be between 1 and 100")
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT p.preview_id, p.recovery_source_task_id, p.status AS preview_status,
+                    p.created_at, (SELECT COUNT(*) FROM manual_preview_items i
+                                   WHERE i.preview_id=p.preview_id) AS item_count,
+                    e.execution_id, e.task_id AS new_task_id,
+                    e.status AS execution_status, e.completed_at
+                FROM manual_previews p
+                LEFT JOIN manual_executions e ON e.preview_id=p.preview_id
+                WHERE p.recovery_source_task_id=?
+                ORDER BY p.created_at DESC, p.preview_id DESC, e.created_at DESC,
+                         e.execution_id DESC LIMIT ?""",
+                (task_id, limit),
+            ).fetchall()
+        return tuple(self._scope_recovery_link(row) for row in rows)
+
+    def get_scope_recovery_for_new_task(self, task_id: str) -> ScopeRecoveryLink | None:
+        """The exact-Preview recovery that admitted one ManualExecution Task."""
+
+        with self._lock:
+            row = self._connection.execute(
+                """SELECT p.preview_id, p.recovery_source_task_id, p.status AS preview_status,
+                    p.created_at, (SELECT COUNT(*) FROM manual_preview_items i
+                                   WHERE i.preview_id=p.preview_id) AS item_count,
+                    e.execution_id, e.task_id AS new_task_id,
+                    e.status AS execution_status, e.completed_at
+                FROM manual_executions e
+                JOIN manual_previews p ON p.preview_id=e.preview_id
+                WHERE e.task_id=? AND p.recovery_source_task_id IS NOT NULL
+                ORDER BY e.created_at DESC, e.execution_id DESC LIMIT 1""",
+                (task_id,),
+            ).fetchone()
+        return self._scope_recovery_link(row) if row else None
+
+    @staticmethod
+    def _scope_recovery_link(row: sqlite3.Row) -> ScopeRecoveryLink:
+        return ScopeRecoveryLink(
+            source_task_id=row["recovery_source_task_id"],
+            preview_id=row["preview_id"],
+            preview_status=row["preview_status"],
+            created_at=datetime.fromisoformat(row["created_at"]),
+            item_count=int(row["item_count"]),
+            execution_id=row["execution_id"],
+            new_task_id=row["new_task_id"],
+            execution_status=row["execution_status"],
+            completed_at=(
+                datetime.fromisoformat(row["completed_at"]) if row["completed_at"] else None
+            ),
+        )
 
     def admit_scope_continuation(
         self,
@@ -8465,6 +8529,38 @@ class SQLiteTaskRepository:
                 ).fetchone()
                 if intent_row is None:
                     raise LookupError(f"manual intent {preview.intent_id!r} was not found")
+                if preview.recovery_source_task_id is not None:
+                    source_task = self._connection.execute(
+                        "SELECT status, configuration_snapshot_id, "
+                        "configuration_snapshot_digest FROM tasks WHERE task_id=?",
+                        (preview.recovery_source_task_id,),
+                    ).fetchone()
+                    if (
+                        source_task is None
+                        or source_task["status"] != PersistentTaskStatus.PAUSED.value
+                        or source_task["configuration_snapshot_id"]
+                        != preview.configuration_snapshot_id
+                        or source_task["configuration_snapshot_digest"]
+                        != preview.configuration_snapshot_digest
+                    ):
+                        raise ManualPreviewConflict(
+                            "the source Task changed or its pinned configuration no longer "
+                            "matches; no recovery Preview was published"
+                        )
+                    active_continuation = self._connection.execute(
+                        "SELECT 1 FROM scope_continuations WHERE source_task_id=? "
+                        "AND status IN (?, ?) LIMIT 1",
+                        (
+                            preview.recovery_source_task_id,
+                            ScopeContinuationStatus.QUEUED.value,
+                            ScopeContinuationStatus.RUNNING.value,
+                        ),
+                    ).fetchone()
+                    if active_continuation is not None:
+                        raise ManualPreviewConflict(
+                            "the source Task already has a queued continuation; no recovery "
+                            "Preview was published"
+                        )
                 if (
                     intent_row["status"] != ManualIntentStatus.OPEN.value
                     or int(intent_row["version"]) != preview.intent_version
@@ -8533,8 +8629,8 @@ class SQLiteTaskRepository:
                     "configuration_snapshot_digest, status, intent_version, created_at, "
                     "updated_at, next_action, error, zero_mutation, current, truncated, "
                     "previous_preview_id, unselected_item_ids_json, source_scope, "
-                    "source_scope_id) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "source_scope_id, recovery_source_task_id) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         preview.preview_id,
                         preview.intent_id,
@@ -8558,6 +8654,7 @@ class SQLiteTaskRepository:
                         ),
                         preview.source_scope,
                         preview.source_scope_id,
+                        preview.recovery_source_task_id,
                     ),
                 )
                 for item in values:
@@ -11151,6 +11248,11 @@ class SQLiteTaskRepository:
                 source_scope_id=(
                     row["source_scope_id"] if "source_scope_id" in row.keys() else None
                 ),
+                recovery_source_task_id=(
+                    row["recovery_source_task_id"]
+                    if "recovery_source_task_id" in row.keys()
+                    else None
+                ),
             )
         except Exception as error:
             raise ManualPreviewUnavailable(
@@ -11936,6 +12038,7 @@ class SQLiteTaskRepository:
                     truncated INTEGER NOT NULL DEFAULT 0, previous_preview_id TEXT,
                     unselected_item_ids_json TEXT NOT NULL,
                     source_scope TEXT, source_scope_id TEXT,
+                    recovery_source_task_id TEXT,
                     FOREIGN KEY(intent_id) REFERENCES manual_intents(intent_id)
                 );
                 CREATE INDEX IF NOT EXISTS manual_previews_intent_created
@@ -12460,6 +12563,14 @@ class SQLiteTaskRepository:
                     self._connection.execute(
                         f"ALTER TABLE manual_previews ADD COLUMN {column} TEXT"
                     )
+            if "recovery_source_task_id" not in manual_preview_columns:
+                self._connection.execute(
+                    "ALTER TABLE manual_previews ADD COLUMN recovery_source_task_id TEXT"
+                )
+            self._connection.execute(
+                "CREATE INDEX IF NOT EXISTS manual_previews_recovery_source "
+                "ON manual_previews(recovery_source_task_id, created_at, preview_id)"
+            )
             delivery_columns = {
                 row["name"]
                 for row in self._connection.execute(

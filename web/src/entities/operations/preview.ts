@@ -325,6 +325,7 @@ export interface ManualPreviewModel {
   readonly scopeId: string | null;
   readonly selection: ManualPreviewSelectionModel;
   readonly configurationSnapshotId: string | null;
+  readonly recoverySourceTaskId: string | null;
   readonly items: readonly ManualPreviewItemModel[];
 }
 
@@ -1029,6 +1030,7 @@ export function normalizeManualPreview(payload: unknown): ManualPreviewModel {
       scopeId,
       selection: normalizeSelection(source["selection"]),
       configurationSnapshotId: optionalText(source, "configurationSnapshotId"),
+      recoverySourceTaskId: optionalText(source, "recoverySourceTaskId"),
       items: rawItems.map((item) => normalizePreviewItem(item)),
     };
   } catch {

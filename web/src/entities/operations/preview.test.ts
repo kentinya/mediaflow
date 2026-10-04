@@ -65,6 +65,13 @@ describe("normalizeManualPreview", () => {
     );
   });
 
+  it("retains the source Task link for an exact remaining-scope Preview", () => {
+    const model = normalizeManualPreview(
+      previewPayload({ recoverySourceTaskId: "task-source" }),
+    );
+    expect(model.recoverySourceTaskId).toBe("task-source");
+  });
+
   it("rejects an unknown status instead of casting it", () => {
     expect(() =>
       normalizeManualPreview(previewPayload({ status: "completed" })),

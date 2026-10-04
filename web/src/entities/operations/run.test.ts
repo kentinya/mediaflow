@@ -633,9 +633,40 @@ describe("run lifecycle projection normalization", () => {
       completedAt: null,
       attemptCount: 1,
       truncated: false,
+      recoveryKind: null,
+      recoveryPreviewId: null,
+      executionId: null,
       nextAction: "follow the linked continuation run",
       sideEffects: "none",
     });
+  });
+
+  it("normalizes exact Preview recovery and its durable execution link", () => {
+    const model = normalizeRunSummary(
+      runDocument({
+        continuation: {
+          continuationId: "preview-1",
+          status: "accepted",
+          command: "preview",
+          jobId: null,
+          newTaskId: "task-execution",
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          recoveryKind: "exact_preview",
+          recoveryPreviewId: "preview-1",
+          executionId: "execution-1",
+          nextAction: "open the linked execution run",
+          sideEffects: "none",
+        },
+      }),
+    );
+    expect(model.continuation?.recoveryKind).toBe("exact_preview");
+    expect(model.continuation?.recoveryPreviewId).toBe("preview-1");
+    expect(model.continuation?.executionId).toBe("execution-1");
+    expect(model.continuation?.newTaskId).toBe("task-execution");
   });
 
   it("normalizes an absent or explicit null continuation to null", () => {

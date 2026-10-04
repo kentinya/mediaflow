@@ -556,6 +556,60 @@ describe("V2 manual Organize journey", () => {
     expect(screen.getByText("结果记录")).toBeVisible();
   });
 
+  it("returns a recovery Execute admission to its original Operations run", async () => {
+    const user = userEvent.setup();
+    const preview = previewDocument();
+    preview["recoverySourceTaskId"] = "task-source";
+    const { calls } = recordingFetch((call) => {
+      if (
+        call.url === "/api/v1/operations/organize/previews/preview-1" &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(preview);
+      }
+      if (
+        call.url === "/api/v1/operations/organize/previews/preview-1/execute" &&
+        call.method === "POST"
+      ) {
+        return jsonResponse(executionDocument(), 202);
+      }
+      return undefined;
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp(
+      "/ui-v2/operations/organize/preview/preview-1?returnOps=status%3Dpaused%26run%3Dtask-source",
+    );
+
+    await screen.findByRole("heading", { name: /整理预览/ });
+    expect(
+      await screen.findByRole("link", { name: "返回任务中心" }),
+    ).toBeVisible();
+    const execute = await screen.findByRole("button", {
+      name: "确认执行所选条目",
+    });
+    expect(execute).toBeEnabled();
+    await user.click(execute);
+    await waitFor(() =>
+      expect(
+        calls.filter(
+          (call) => call.url.endsWith("/execute") && call.method === "POST",
+        ),
+      ).toHaveLength(1),
+    );
+    await waitFor(() =>
+      expect(router.history.location.pathname).toBe("/ui-v2/operations"),
+    );
+    const search = new URLSearchParams(router.history.location.search);
+    expect(search.get("run")).toBe("task-source");
+    expect(search.get("status")).toBe("paused");
+    expect(search.get("returnOps")).toBeNull();
+    expect(
+      calls.filter(
+        (call) => call.url.endsWith("/execute") && call.method === "POST",
+      ),
+    ).toHaveLength(1);
+  });
+
   it("locks a reopened Preview that already has durable execution history", async () => {
     const existing = executionDocument();
     existing["previewId"] = "preview-1";

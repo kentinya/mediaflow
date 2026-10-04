@@ -2133,6 +2133,97 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             ["Kept.2006.mkv", "Left.2005.mkv"],
         )
 
+    def test_exact_preview_execution_and_worker_consume_the_original_scope_budget(self) -> None:
+        """A real exact Preview execution remains in the paused Task's budget."""
+
+        from mediaflow.application.manual_organize_worker import ManualOrganizeExecutionWorker
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        (self.root / "Incoming" / "Right.2006.mkv").write_bytes(b"right")
+        original = self._paused_mutation_scan(active, item_limit=2)
+        api = self._api(config)
+
+        status, preview = request(
+            api,
+            f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 201, preview)
+        self.assertEqual(len(preview["items"]), 2)
+        self.assertEqual(preview["recoverySourceTaskId"], original.task_id)
+        preview_id = preview["previewId"]
+        item_ids = [item["itemId"] for item in preview["items"]]
+        status, admitted = request(
+            api,
+            f"/api/v1/operations/organize/previews/{preview_id}/execute",
+            method="POST",
+            body={
+                "confirmation": True,
+                "itemIds": item_ids,
+                "expectedIntentVersion": preview["intentVersion"],
+                "allowOverwrite": False,
+                "allowSourceCleanup": False,
+            },
+            token="admin-token",
+        )
+        self.assertEqual(status, 202, admitted)
+        execution_id = admitted["executionId"]
+        execution_task_id = admitted["taskId"]
+        link = self.repository.get_scope_recovery_for_new_task(execution_task_id)
+        self.assertIsNotNone(link)
+        self.assertEqual(link.source_task_id, original.task_id)
+        self.assertEqual(link.preview_id, preview_id)
+        self.assertEqual(link.execution_id, execution_id)
+
+        worker_result = ManualOrganizeExecutionWorker(api._manual_execution).run_next()
+        self.assertIsNotNone(worker_result)
+        self.assertEqual(worker_result.execution_id, execution_id)
+        self.assertEqual(worker_result.status.value, "completed")
+        remaining, recorded, remaining_limit = remaining_scope(self.repository, original)
+        self.assertEqual(len(self.repository.list_items(execution_task_id)), 2)
+        self.assertEqual(len(recorded), 2)
+        self.assertEqual(remaining_limit, 0)
+        self.assertEqual(remaining, ())
+        self.assertIs(
+            continuation_obstacle(self.repository, original, lambda *_: None)[0],
+            ScopeContinuationReason.NO_REMAINING_SCOPE,
+        )
+        self.assertEqual(
+            {path.name for path in (self.root / "Target" / "Movies").rglob("*.mkv")},
+            {"Left (2005).mkv", "Right (2006).mkv"},
+        )
+
+        status, overview = request(api, f"/api/v1/operations/runs/{original.task_id}")
+        self.assertEqual(status, 200, overview)
+        self.assertEqual(overview["continuation"]["recoveryKind"], "exact_preview")
+        self.assertEqual(overview["continuation"]["recoveryPreviewId"], preview_id)
+        self.assertEqual(overview["continuation"]["newTaskId"], execution_task_id)
+        self.assertEqual(overview["continuation"]["executionId"], execution_id)
+        (self.root / "Incoming" / "Third.2007.mkv").write_bytes(b"third")
+        status, refused = request(
+            api,
+            f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, refused)
+        self.assertEqual(refused["error"]["code"], "no_remaining_scope")
+        self.assertEqual(len(self.repository.list_scope_recovery_links(original.task_id)), 1)
+        with SQLiteTaskRepository(self.database) as reopened:
+            durable_source = reopened.get_task(original.task_id)
+            self.assertIsNotNone(durable_source)
+            durable_link = reopened.get_scope_recovery_for_new_task(execution_task_id)
+            self.assertIsNotNone(durable_link)
+            self.assertEqual(durable_link.source_task_id, original.task_id)
+            self.assertEqual(durable_link.preview_id, preview_id)
+            self.assertEqual(durable_link.execution_id, execution_id)
+            self.assertEqual(durable_link.new_task_id, execution_task_id)
+            self.assertEqual(remaining_scope(reopened, durable_source)[2], 0)
+
     def test_native_remaining_scope_preview_refuses_a_run_with_no_remaining_scope(self) -> None:
         """A fully-decided run has nothing to review and is refused truthfully."""
 
@@ -2389,6 +2480,15 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
                                 genres=("Animation",),
                                 countries=("JP",),
                             ),
+                            MediaCandidate(
+                                "tmdb",
+                                "101",
+                                MediaType.MOVIE,
+                                "Right",
+                                year=2006,
+                                genres=("Animation",),
+                                countries=("JP",),
+                            ),
                         )
                     ),
                 )
@@ -2396,7 +2496,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             storage_browser_cursor_secret="scope-continuation-journey-secret",
         )
 
-    def _paused_mutation_scan(self, active, *, discovered: str | None = None):
+    def _paused_mutation_scan(self, active, *, discovered: str | None = None, item_limit: int = 4):
         """One paused, mutation-authorized run with no live reusable authority.
 
         This is the exact durable state RO-5 must recover from: the original
@@ -2413,7 +2513,7 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
             NOW,
             started_at=NOW,
             scope_path="Incoming",
-            item_limit=4,
+            item_limit=item_limit,
             configuration_snapshot_id=active.revision_id,
             configuration_snapshot_digest=active.digest,
         )

@@ -356,6 +356,10 @@ class ManualOrganizePreview:
     # whether the exact source or the bounded ResourceLibrary was analyzed.
     source_scope: str | None = None
     source_scope_id: str | None = None
+    # Set only by the task-center's exact remaining-scope recovery. This
+    # immutable link lets the execution Task join the original admitted scope
+    # after a fresh explicit Execute and a process restart.
+    recovery_source_task_id: str | None = None
 
     def __post_init__(self) -> None:
         _identity(self.preview_id, "Preview")
@@ -428,6 +432,8 @@ class ManualOrganizePreview:
             _identity(self.source_scope_id, "source scope")
         elif self.source_scope_id is not None:
             raise ValueError("manual Preview source scope ID is not allowed without a scope")
+        if self.recovery_source_task_id is not None:
+            _identity(self.recovery_source_task_id, "recovery source Task")
         _text(self.error, "error")
         _text(self.next_action, "next action")
         if not isinstance(self.zero_mutation, bool) or not self.zero_mutation:
@@ -462,6 +468,7 @@ class ManualOrganizePreview:
             "intentVersion": self.intent_version,
             "configurationSnapshotId": self.configuration_snapshot_id,
             "configurationSnapshotDigest": self.configuration_snapshot_digest,
+            "recoverySourceTaskId": self.recovery_source_task_id,
             "status": self.status.value,
             "current": self.current,
             "previousPreviewId": self.previous_preview_id,
