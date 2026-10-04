@@ -600,7 +600,7 @@ endurance acceptance matrices; no skip was added and no assertion was weakened.
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: 8a60cab0a0f9306a434d785c35ebd26bac41a422
+Head SHA: f4aace533c2d62aead50f9b6a4fde81f0061bf24
 ```
 
 ## B Review Result
