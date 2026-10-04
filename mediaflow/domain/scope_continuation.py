@@ -69,6 +69,14 @@ class ScopeContinuationReason(StrEnum):
     SNAPSHOT_UNAVAILABLE = "snapshot_unavailable"
     AUTHORITY_REQUIRED = "authority_required"
     CONTINUATION_EXISTS = "continuation_exists"
+    #: The chain already consumed the whole originally admitted item budget, so
+    #: there is provably no remaining scope to queue.  Without this refusal a
+    #: finished continuation's scope could be admitted and executed again.
+    NO_REMAINING_SCOPE = "no_remaining_scope"
+    #: A later Task of the same continuation chain owns the remaining scope: a
+    #: continuation that paused again carries its own recorded items, pin and
+    #: remaining budget, so the original run must not continue it a second time.
+    CONTINUATION_OWNED_ELSEWHERE = "continuation_owned_elsewhere"
     QUEUE_FULL = "queue_full"
     INVALID_INPUT = "invalid_input"
     INSUFFICIENT_PERMISSION = "insufficient_permission"
@@ -194,6 +202,7 @@ class ScopeContinuation:
 class ScopeContinuationRepository(Protocol):
     def get_scope_continuation_for_job(self, job_id: str) -> ScopeContinuation | None: ...
     def get_scope_continuation_for_source_task(self, task_id: str) -> ScopeContinuation | None: ...
+    def get_scope_continuation_for_new_task(self, task_id: str) -> ScopeContinuation | None: ...
     def list_scope_continuations(
         self, task_id: str, *, limit: int = 32
     ) -> tuple[ScopeContinuation, ...]: ...

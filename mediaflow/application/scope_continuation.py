@@ -100,6 +100,22 @@ _TERMINAL_RESULT_STATUSES = frozenset(
 #: happen, so it stays investigation-only.
 _UNCERTAIN_EFFECT_CERTAINTY = "attempted_unverified"
 
+#: The statuses that mean a Task of a continuation chain has stopped producing
+#: work: a terminal Task cannot own remaining scope, so the deepest Task of the
+#: chain is the last known owner.
+_CHAIN_TERMINAL_STATUSES = frozenset(
+    {
+        PersistentTaskStatus.COMPLETED,
+        PersistentTaskStatus.PARTIAL_SUCCESS,
+        PersistentTaskStatus.FAILED,
+        PersistentTaskStatus.CANCELLED,
+    }
+)
+
+#: A hard bound on how many linked Tasks one chain walk will follow, so a
+#: corrupted or externally written link row can never make a read unbounded.
+_MAX_CHAIN_TASKS = 64
+
 
 @dataclass(frozen=True)
 class ScopeContinuationSubmission:
@@ -176,14 +192,28 @@ def continuation_obstacle(
     task: PersistentTask,
     snapshot_validator: Callable[[str, str], None] | None,
     mutation_authority: Callable[[PersistentTask], bool] | None = None,
+    *,
+    exclude_job_id: str | None = None,
 ) -> tuple[ScopeContinuationReason | None, str | None, str | None]:
     """Why one continuable Task cannot be continued now.
 
     Returns ``(reason, bounded_message, next_action)``, or ``(None, None,
     None)`` when the Task's exact remaining scope may be queued.  The lifecycle
-    projection and the admission boundary both call this, so the advertised
-    control and the real submission can never disagree about whether Continue
-    would be accepted.
+    projection, the admission boundary and the resident Worker all call this, so
+    the advertised control and the real submission can never disagree about
+    whether Continue would be accepted.
+
+    The decision is made over the whole recorded continuation chain, not one
+    Task in isolation:
+
+    * an already-active continuation of the same source owns the remaining
+      scope, so submitting again would duplicate it (``exclude_job_id`` lets the
+      Worker exclude the very continuation it is revalidating);
+    * a later Task of the chain that is still non-terminal (a continuation that
+      paused again) owns the remaining scope, so the original run must not
+      continue it a second time;
+    * a chain whose recorded items already consumed the originally admitted
+      item budget has no remaining scope left to queue.
     """
 
     if task.status is not PersistentTaskStatus.PAUSED:
@@ -215,6 +245,33 @@ def continuation_obstacle(
             _SNAPSHOT_REASON,
             _SNAPSHOT_NEXT_ACTION,
         )
+    active = _active_continuation(repository, task.task_id, exclude_job_id=exclude_job_id)
+    if active is not None:
+        return (
+            ScopeContinuationReason.CONTINUATION_EXISTS,
+            "this Task already has an active queued continuation that owns its remaining scope",
+            "follow the linked continuation run instead of submitting the remaining scope again",
+        )
+    owner = chain_owner(repository, task)
+    if owner.task_id != task.task_id:
+        return (
+            ScopeContinuationReason.CONTINUATION_OWNED_ELSEWHERE,
+            "a later run of this continuation chain owns the remaining scope; continuing this "
+            "run would queue the same remaining work twice",
+            "open the linked continuation run and continue its remaining scope there",
+        )
+    try:
+        _remaining, _recorded, remaining_limit = remaining_scope(repository, task)
+    except Exception:
+        remaining_limit = None
+    if remaining_limit == 0:
+        return (
+            ScopeContinuationReason.NO_REMAINING_SCOPE,
+            "every unit of this Task's originally admitted item budget is already recorded, so "
+            "no remaining scope exists to continue",
+            "inspect the linked continuation run and its independent per-item results, or start "
+            "a new bounded run from 操作与任务",
+        )
     if task.execute_authorized:
         # A persisted execute flag is a record of the original admission, never
         # a reusable credential.  The live authority must be proven again here,
@@ -234,6 +291,97 @@ def continuation_obstacle(
     return None, None, None
 
 
+def _active_continuation(repository, task_id: str, *, exclude_job_id: str | None):
+    """The active continuation of one source Task, or ``None``.
+
+    The Worker revalidating the continuation it already claimed excludes that
+    exact Job, so it never refuses itself.
+    """
+
+    reader = getattr(repository, "get_scope_continuation_for_source_task", None)
+    if not callable(reader):
+        return None
+    try:
+        existing = reader(task_id)
+    except Exception:
+        return None
+    if existing is None or not existing.active:
+        return None
+    if exclude_job_id is not None and existing.job_id == exclude_job_id:
+        return None
+    return existing
+
+
+def continuation_chain(repository, task: PersistentTask) -> tuple[PersistentTask, ...]:
+    """The whole recorded continuation chain that owns one Task's admitted scope.
+
+    The chain is resolved only through the explicit durable
+    ``scope_continuations.source_task_id`` / ``new_task_id`` links — never by
+    filename, label or creation-time proximity.  The root (the originally
+    admitted Task) comes first and every descendant follows in link order, so
+    the original item budget and every recorded item can be read together.
+    """
+
+    root = task
+    ancestors = {task.task_id}
+    link_reader = getattr(repository, "get_scope_continuation_for_new_task", None)
+    if callable(link_reader):
+        for _ in range(_MAX_CHAIN_TASKS):
+            try:
+                link = link_reader(root.task_id)
+            except Exception:
+                break
+            parent_id = getattr(link, "source_task_id", None) if link is not None else None
+            if not isinstance(parent_id, str) or not parent_id or parent_id in ancestors:
+                break
+            parent = repository.get_task(parent_id)
+            if parent is None:
+                break
+            ancestors.add(parent_id)
+            root = parent
+    chain: list[PersistentTask] = [root]
+    # The forward walk tracks its own visited set: an ancestor recorded while
+    # walking up must not make the descendant that produced it look visited.
+    seen = {root.task_id}
+    pending: list[PersistentTask] = [root]
+    lister = getattr(repository, "list_scope_continuations", None)
+    if callable(lister):
+        while pending and len(chain) < _MAX_CHAIN_TASKS:
+            current = pending.pop(0)
+            try:
+                links = lister(current.task_id)
+            except Exception:
+                break
+            for link in links:
+                child_id = getattr(link, "new_task_id", None)
+                if not isinstance(child_id, str) or not child_id or child_id in seen:
+                    continue
+                child = repository.get_task(child_id)
+                if child is None:
+                    continue
+                seen.add(child_id)
+                chain.append(child)
+                pending.append(child)
+    return tuple(chain)
+
+
+def chain_owner(repository, task: PersistentTask) -> PersistentTask:
+    """The chain Task that currently owns the remaining scope.
+
+    A later non-terminal Task of the chain (a continuation that paused or is
+    still running) owns the remaining scope: it carries its own recorded items,
+    pin and remaining budget, so the earlier run must not queue that scope a
+    second time.  When every later Task is terminal, the deepest Task is the
+    last known owner and the caller applies the remaining-budget decision.
+    """
+
+    chain = continuation_chain(repository, task)
+    for value in reversed(chain):
+        if value.status not in _CHAIN_TERMINAL_STATUSES:
+            return value
+    return chain[-1]
+
+
 def remaining_scope(
     repository,
     task: PersistentTask,
@@ -241,21 +389,29 @@ def remaining_scope(
     """The exact remaining admitted scope of one paused Task.
 
     Returns ``(remaining_items, already_recorded_sources, remaining_limit)``.
-    ``already_recorded_sources`` is **every** recorded item's
-    ``(storage_id, source_path)`` — including the terminal ones — so the
-    continuation's discovery walk can never re-record or re-process a source the
-    original run already owns.  ``remaining_limit`` is the original
-    ``item_limit`` minus the recorded items, so discovery and continuation never
-    broaden the admitted budget.
+
+    The computation spans the whole recorded continuation chain, so a finished
+    or still-paused descendant can never make the original run look unfinished:
+
+    * ``already_recorded_sources`` is **every** recorded item's
+      ``(storage_id, source_path)`` across the chain — including the terminal
+      ones — so the continuation's discovery walk can never re-record or
+      re-process a source any attempt of the chain already owns;
+    * ``remaining_items`` are the still-undecided items of the chain;
+    * ``remaining_limit`` is the **root** Task's originally admitted
+      ``item_limit`` minus every item the chain already recorded, so discovery
+      and continuation never broaden the admitted budget.
     """
 
-    items = tuple(repository.list_items(task.task_id))
-    results = tuple(repository.list_results(task.task_id))
+    chain = continuation_chain(repository, task)
+    root = chain[0]
+    items = tuple(item for value in chain for item in repository.list_items(value.task_id))
+    results = tuple(result for value in chain for result in repository.list_results(value.task_id))
     terminal = {
         result.item_id
         for result in results
         if result.status in _TERMINAL_RESULT_STATUSES
-        or result.effect_certainty == "attempted_unverified"
+        or result.effect_certainty == _UNCERTAIN_EFFECT_CERTAINTY
     }
     remaining = tuple(
         item
@@ -263,7 +419,7 @@ def remaining_scope(
         if item.status in _REMAINING_ITEM_STATUSES and item.item_id not in terminal
     )
     already_recorded = frozenset((item.storage_id, item.source_path) for item in items)
-    remaining_limit = max(0, task.item_limit - len(items)) if task.item_limit is not None else None
+    remaining_limit = max(0, root.item_limit - len(items)) if root.item_limit is not None else None
     return remaining, already_recorded, remaining_limit
 
 
@@ -287,6 +443,21 @@ class ScopeContinuationService:
     @property
     def repository(self):
         return self._repository
+
+    def obstacle(
+        self, task: PersistentTask
+    ) -> tuple[ScopeContinuationReason | None, str | None, str | None]:
+        """The exact decision this boundary would apply to one Task.
+
+        The API and the lifecycle projection call this so a recovery surface is
+        offered for exactly the refusal the admission would really return, using
+        the same validator and live-authority checker rather than a re-derived
+        approximation.
+        """
+
+        return continuation_obstacle(
+            self._repository, task, self._snapshot_validator, self._mutation_authority
+        )
 
     def submit(
         self,
@@ -353,27 +524,23 @@ class ScopeContinuationService:
             mutation_authority if mutation_authority is not None else self._mutation_authority,
         )
         if reason is not None:
+            existing = (
+                self._repository.get_scope_continuation_for_source_task(task_id)
+                if reason is ScopeContinuationReason.CONTINUATION_EXISTS
+                else None
+            )
             raise ScopeContinuationError(
                 reason,
                 message or "the Task cannot be continued in its current state",
                 durable_state=(
-                    "the Task keeps its paused state, its recorded item outcomes and its "
+                    "the existing continuation owns the remaining scope and will be claimed by "
+                    "the resident Worker"
+                    if existing is not None
+                    else "the Task keeps its paused state, its recorded item outcomes and its "
                     "completed effects; no further mutation was attempted"
                 ),
                 next_action=next_action or "refresh the Task and review its current state",
                 current_version=task.updated_at.isoformat(),
-            )
-
-        existing = self._repository.get_scope_continuation_for_source_task(task_id)
-        if existing is not None and existing.active:
-            raise ScopeContinuationError(
-                ScopeContinuationReason.CONTINUATION_EXISTS,
-                "this Task already has an active queued continuation",
-                durable_state=(
-                    "the existing continuation owns the remaining scope and will be claimed by "
-                    "the resident Worker"
-                ),
-                next_action="follow the existing continuation run instead of submitting again",
                 existing_continuation=existing,
             )
 
@@ -447,19 +614,23 @@ class ScopeContinuationService:
             raise ValueError("scope continuation source Task scope or pin changed")
         if not is_continuable_task_command(task.command):
             raise ValueError("scope continuation command is not supported")
-        self._require_live_obstacle(task)
+        self._require_live_obstacle(task, exclude_job_id=job_id)
         remaining, already_recorded, remaining_limit = remaining_scope(self._repository, task)
         return PreparedScopeContinuation(
             continuation, task, remaining, already_recorded, remaining_limit
         )
 
-    def _require_live_obstacle(self, task: PersistentTask) -> None:
+    def _require_live_obstacle(
+        self, task: PersistentTask, *, exclude_job_id: str | None = None
+    ) -> None:
         """Refuse a claimed continuation whose live evidence no longer holds.
 
         The Worker re-reads the same obstacle the admission boundary and the
         lifecycle projection read, so a continuation whose pinned revision
         became unresolvable, or whose live mutation authority was revoked,
         stops with zero new mutation instead of executing under stale authority.
+        The claimed continuation's own Job is excluded, so the Worker never
+        refuses itself as a duplicate.
         """
 
         reason, message, next_action = continuation_obstacle(
@@ -467,6 +638,7 @@ class ScopeContinuationService:
             task,
             self._snapshot_validator,
             self._mutation_authority,
+            exclude_job_id=exclude_job_id,
         )
         if reason is not None:
             raise ScopeContinuationError(

@@ -29,6 +29,7 @@ import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   mutateLifecycle,
+  submitRemainingScopePreview,
   type LifecycleMutationResult,
   type RunOverviewRead,
 } from "../../shared/api/api-client";
@@ -605,6 +606,13 @@ export function OperationsLanding() {
                   onClose={closeRun}
                   detailState={detailState}
                   onDetailStateChange={applyDetailState}
+                  onOpenPreview={(previewId) =>
+                    void navigate({
+                      to: "/operations/organize/preview/$previewId",
+                      params: { previewId },
+                    })
+                  }
+                  onSelectRun={selectRun}
                 />
               )}
             </div>
@@ -822,11 +830,17 @@ function RunDetailPanel({
   onClose,
   detailState,
   onDetailStateChange,
+  onOpenPreview,
+  onSelectRun,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
   readonly onClose: () => void;
   readonly detailState: RunDetailState;
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
+  /** Route to one freshly admitted exact organize Preview. */
+  readonly onOpenPreview: (previewId: string) => void;
+  /** Select another run in place, keeping the list state. */
+  readonly onSelectRun: (runId: string) => void;
 }) {
   const headingRef = useRef<HTMLHeadingElement>(null);
   const token = useAuthToken();
@@ -921,6 +935,26 @@ function RunDetailPanel({
       .finally(() => setReconciling(false));
   };
 
+  // The native exact-Preview recovery of a withheld Continue (RO-5). It is a
+  // zero-mutation admission: on success the operator is routed to the ordinary
+  // organize Preview review, where one fresh explicit execution intent is still
+  // required. Nothing is executed here.
+  const remainingScopePreview = useMutation({
+    mutationFn: (request: { readonly taskId: string }) =>
+      submitRemainingScopePreview(token, { taskId: request.taskId }),
+    retry: false,
+    onSuccess: (result) => {
+      if (!result.ok) {
+        setControlResult(result);
+        if (isUnknownLifecycleOutcome(result)) {
+          setLocked(true);
+        }
+        return;
+      }
+      onOpenPreview(result.model.previewId);
+    },
+  });
+
   return (
     <section className="mf-run-detail" aria-label="运行详情">
       <header className="mf-dashboard-head">
@@ -982,6 +1016,12 @@ function RunDetailPanel({
                       expectedVersion,
                     })
                   }
+                  previewPending={remainingScopePreview.isPending}
+                  onPreview={() =>
+                    remainingScopePreview.mutate({
+                      taskId: run.lifecycle?.objectId ?? run.runId,
+                    })
+                  }
                 />
               )}
               <RunDetailTabs
@@ -990,7 +1030,7 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                facts={<RunDetailFacts run={run} />}
+                facts={<RunDetailFacts run={run} onSelectRun={onSelectRun} />}
               />
             </>
           );
@@ -1000,7 +1040,25 @@ function RunDetailPanel({
   );
 }
 
-function RunDetailFacts({ run }: { readonly run: RunSummary }) {
+/** Bounded Chinese label for one continuation status token. */
+function continuationStatusLabel(status: string): string {
+  const labels: Readonly<Record<string, string>> = {
+    queued: "已排队",
+    running: "进行中",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+  };
+  return labels[status] ?? status;
+}
+
+function RunDetailFacts({
+  run,
+  onSelectRun,
+}: {
+  readonly run: RunSummary;
+  readonly onSelectRun: (runId: string) => void;
+}) {
   const detail = detailLinkOf(run);
   return (
     <dl className="mf-dashboard-facts">
@@ -1070,6 +1128,29 @@ function RunDetailFacts({ run }: { readonly run: RunSummary }) {
         <div>
           <dt>固定配置</dt>
           <dd>{run.configurationSnapshotId}</dd>
+        </div>
+      )}
+      {run.continuation !== null && (
+        <div>
+          <dt>剩余范围继续记录</dt>
+          <dd>
+            <p>
+              该运行已把自己的剩余范围交给一次持久继续(
+              {continuationStatusLabel(run.continuation.status)}
+              )。请打开真正持有剩余范围的那次运行,不要在本运行重复继续已完成的条目。
+            </p>
+            {run.continuation.newTaskId !== null ? (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() => onSelectRun(run.continuation!.newTaskId!)}
+              >
+                打开链接的继续运行
+              </button>
+            ) : (
+              <p>{run.continuation.nextAction}</p>
+            )}
+          </dd>
         </div>
       )}
       {detail !== null && run.taskId !== null && (

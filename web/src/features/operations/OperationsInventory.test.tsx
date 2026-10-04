@@ -771,6 +771,7 @@ function lifecycleAction(
   name: string,
   available: boolean,
   unavailableReason: string | null,
+  preview?: unknown,
 ) {
   return {
     action: name,
@@ -785,8 +786,23 @@ function lifecycleAction(
     sideEffects: "no Storage mutation",
     retrySafe: false,
     nextAction: `${name} next action`,
+    ...(preview === undefined ? {} : { preview }),
   };
 }
+
+/** The native recovery entry the backend publishes with an authority refusal. */
+const AUTHORITY_PREVIEW = {
+  available: true,
+  reason: null,
+  method: "POST",
+  path: "/api/v1/tasks/task-001/remaining-scope-previews",
+  requiresConfirmation: false,
+  sideEffects: "none",
+  durableOutcome:
+    "a durable zero-mutation exact Preview of the remaining eligible scope is stored",
+  nextAction:
+    "review the exact Preview, then make one fresh explicit execution intent",
+};
 
 function runLifecycleDocument(overrides: Record<string, unknown> = {}) {
   return {
@@ -992,5 +1008,105 @@ describe("selected run lifecycle controls", () => {
       ).toBeEnabled(),
     );
     expect(posts).toHaveLength(1);
+  });
+
+  it("admits the native exact Preview the withheld Continue advertised", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      lifecycle: runLifecycleDocument({
+        state: "paused",
+        permitted: true,
+        actions: [
+          lifecycleAction("cancel", false, "a paused Task cannot be cancelled"),
+          lifecycleAction(
+            "pause",
+            false,
+            "only a running Task accepts a pause",
+          ),
+          lifecycleAction(
+            "resume",
+            false,
+            "the stored execute flag is not authority",
+            AUTHORITY_PREVIEW,
+          ),
+        ],
+      }),
+      respond: () =>
+        jsonResponse(
+          {
+            error: {
+              code: "scope_unresolved",
+              message:
+                "the run's admitted scope does not resolve to a ResourceLibrary",
+              details: { sideEffects: "none" },
+            },
+          },
+          409,
+        ),
+    });
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const controls = await screen.findByRole("region", { name: "运行控制" });
+    // The withheld Continue is never a button, but its recovery entry is a real
+    // control driven by the backend path.
+    expect(
+      within(controls).queryByRole("button", { name: "继续剩余范围" }),
+    ).toBeNull();
+    const recovery = within(controls).getByRole("button", {
+      name: "查看剩余范围的精确预览",
+    });
+    await user.click(recovery);
+
+    await waitFor(() => expect(posts).toHaveLength(1));
+    expect(posts[0]?.url).toBe(
+      "/api/v1/tasks/task-001/remaining-scope-previews",
+    );
+    // The browser submits nothing but the run identity: the scope, the pin and
+    // the source identities stay server-side.
+    expect(posts[0]?.body).toEqual({});
+    // A bounded refusal is reported without ever locking the operator out.
+    expect(await within(controls).findByText(/该控制被拒绝/)).toBeVisible();
+  });
+
+  it("routes to the run that really owns an already-continued scope", async () => {
+    const user = userEvent.setup();
+    const posts: { url: string; body: unknown }[] = [];
+    stubLifecycleJourney({
+      posts,
+      overview: {
+        continuation: {
+          continuationId: "continuation-1",
+          status: "queued",
+          command: "scan",
+          jobId: "job-1",
+          newTaskId: "task-linked",
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          nextAction: "follow the linked continuation run",
+          sideEffects: "none",
+        },
+      },
+      respond: () => jsonResponse({ error: { code: "not_found" } }, 404),
+    });
+    authStore.setToken(TOKEN);
+    const { router } = renderApp("/ui-v2/operations?run=task-001");
+
+    const facts = await screen.findByRole("region", { name: "运行详情" });
+    await user.click(
+      await within(facts).findByRole("button", {
+        name: "打开链接的继续运行",
+      }),
+    );
+    await waitFor(() =>
+      expect(router.history.location.search).toContain("run=task-linked"),
+    );
+    // Selecting the linked run never submits a control.
+    expect(posts).toHaveLength(0);
   });
 });

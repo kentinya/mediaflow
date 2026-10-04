@@ -602,4 +602,77 @@ describe("run lifecycle projection normalization", () => {
     const page = normalizeRunInventoryPage(pageDocument());
     expect(page.items[0]?.lifecycle).toBeNull();
   });
+
+  it("normalizes the run's durable continuation evidence", () => {
+    const model = normalizeRunSummary(
+      runDocument({
+        continuation: {
+          continuationId: "continuation-1",
+          status: "queued",
+          command: "preview",
+          jobId: "job-1",
+          newTaskId: null,
+          itemLimit: 2,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          nextAction: "follow the linked continuation run",
+          sideEffects: "none",
+        },
+      }),
+    );
+    expect(model.continuation).toEqual({
+      continuationId: "continuation-1",
+      status: "queued",
+      command: "preview",
+      jobId: "job-1",
+      newTaskId: null,
+      itemLimit: 2,
+      createdAt: "2026-08-22T12:41:00+00:00",
+      completedAt: null,
+      attemptCount: 1,
+      truncated: false,
+      nextAction: "follow the linked continuation run",
+      sideEffects: "none",
+    });
+  });
+
+  it("normalizes an absent or explicit null continuation to null", () => {
+    expect(normalizeRunSummary(runDocument()).continuation).toBeNull();
+    expect(
+      normalizeRunSummary(runDocument({ continuation: null })).continuation,
+    ).toBeNull();
+    // Inventory rows carry no continuation evidence, exactly like lifecycle.
+    const page = normalizeRunInventoryPage(pageDocument());
+    expect(page.items[0]?.continuation).toBeNull();
+  });
+
+  it("rejects a malformed continuation instead of rendering it", () => {
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({ continuation: { continuationId: "continuation-1" } }),
+      ),
+    ).toThrow(RunNormalizationError);
+    expect(() =>
+      normalizeRunSummary(
+        runDocument({
+          continuation: {
+            continuationId: "continuation-1",
+            status: "queued",
+            command: "preview",
+            jobId: null,
+            newTaskId: null,
+            itemLimit: null,
+            createdAt: "2026-08-22T12:41:00+00:00",
+            completedAt: null,
+            attemptCount: -1,
+            truncated: false,
+            nextAction: "follow",
+            sideEffects: "none",
+          },
+        }),
+      ),
+    ).toThrow(RunNormalizationError);
+  });
 });

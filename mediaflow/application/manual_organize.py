@@ -198,6 +198,7 @@ class ManualOrganizeIntentService:
         actor: str,
         snapshot_id: str | None = None,
         snapshot_digest: str | None = None,
+        pinned_snapshot: bool = False,
     ) -> ManualOrganizeIntent:
         """Create a manual intent from server-built live Storage source identities.
 
@@ -205,6 +206,14 @@ class ManualOrganizeIntentService:
         supplies only ResourceLibrary-relative source selection; Preview builds
         immutable SourceIdentity from Storage.stat and passes it here.  No
         FileIndex row or fileId lookup is required on this path.
+
+        ``pinned_snapshot`` is the one explicit opt-in for a *historical*
+        published revision: the caller must supply both ``snapshot_id`` and
+        ``snapshot_digest``, and the revision is loaded through the same
+        managed authority (``ACTIVE`` or ``SUPERSEDED`` only, integrity
+        verified) that the Worker uses.  The ordinary Files path keeps the
+        strict current-Active rule, so a Preview can never be minted under a
+        stale or draft pin by accident.
         """
 
         actor = self._actor(actor)
@@ -213,6 +222,12 @@ class ManualOrganizeIntentService:
                 "configuration snapshot ID and digest must be supplied together",
                 code="malformed_snapshot",
                 next_action="reload the current Active snapshot and retry the bounded selection",
+            )
+        if pinned_snapshot and snapshot_id is None:
+            raise ManualIntentError(
+                "a pinned manual intent requires the exact configuration snapshot identity",
+                code="malformed_snapshot",
+                next_action="reload the paused run and request a fresh exact Preview",
             )
         values = tuple(sources)
         if not 1 <= len(values) <= self._max_items:
@@ -239,18 +254,34 @@ class ManualOrganizeIntentService:
                     details={"resourceLibraryId": source.resource_library_id, "path": source.path},
                 )
             identities.add(identity)
-        snapshot = self._active_snapshot()
-        if snapshot_id is not None and (
-            snapshot.snapshot_id != snapshot_id or snapshot.digest != snapshot_digest
-        ):
-            raise ManualIntentConflict(
-                "the Active configuration changed before the manual intent was created",
-                next_action="reload the current Active configuration and resubmit the same files",
-                details={
-                    "currentSnapshotId": snapshot.snapshot_id,
-                    "currentSnapshotDigest": snapshot.digest,
-                },
-            )
+        if pinned_snapshot:
+            # The pinned path never consults the current Active revision: the
+            # exact historical revision the paused run was admitted under is the
+            # only configuration this remaining scope may be reviewed against.
+            try:
+                snapshot = self._load_managed_snapshot(snapshot_id, snapshot_digest)
+            except ManualIntentError:
+                raise
+            except Exception as error:
+                raise ManualIntentUnavailable(
+                    "the paused run's pinned configuration revision is unavailable",
+                    details={"reason": type(error).__name__},
+                ) from error
+        else:
+            snapshot = self._active_snapshot()
+            if snapshot_id is not None and (
+                snapshot.snapshot_id != snapshot_id or snapshot.digest != snapshot_digest
+            ):
+                raise ManualIntentConflict(
+                    "the Active configuration changed before the manual intent was created",
+                    next_action=(
+                        "reload the current Active configuration and resubmit the same files"
+                    ),
+                    details={
+                        "currentSnapshotId": snapshot.snapshot_id,
+                        "currentSnapshotDigest": snapshot.digest,
+                    },
+                )
         now = self._clock()
         intent_id = str(uuid4())
         items: list[ManualIntentItem] = []

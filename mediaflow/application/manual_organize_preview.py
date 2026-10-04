@@ -15,6 +15,7 @@ import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from pathlib import PurePath
 from uuid import uuid4
 
 from mediaflow.application.attachments import AttachmentDiscovery, AttachmentPlanner
@@ -26,6 +27,7 @@ from mediaflow.application.read_only_storage import (
     ReadOnlyStorageGuard,
     ReadOnlyStorageMutationError,
 )
+from mediaflow.application.scope_continuation import remaining_scope as _remaining_scope
 from mediaflow.application.strategy_test import (
     StrategyConfigurationError,
     StrategyTestRunner,
@@ -181,7 +183,18 @@ class ManualOrganizePreviewService:
         source_scope_id: str | None = None,
         source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
         review_decisions: object | None = None,
+        skip_current_snapshot_check: bool = False,
     ) -> ManualOrganizePreview:
+        """Create one durable zero-mutation Preview.
+
+        ``skip_current_snapshot_check`` is the one explicit opt-in for a
+        *pinned historical* intent: the caller has already proven the exact
+        published revision through managed authority, and the remaining-scope
+        recovery path must review the plan under that pin rather than under the
+        current Active revision.  The ordinary Files path keeps the strict
+        current-Active rule.
+        """
+
         actor = self._actor(actor)
         source_admission_errors = dict(source_admission_errors or {})
         self._positive_version(expected_version, "expectedVersion")
@@ -198,6 +211,12 @@ class ManualOrganizePreviewService:
                 current_version=intent.version,
             )
         self._check_snapshot(intent, snapshot_id, snapshot_digest)
+        if skip_current_snapshot_check:
+            # The pinned path proves the revision through the managed authority
+            # itself, never through the current Active identity.
+            self._load_runtime(intent.snapshot_id, intent.snapshot_digest)
+        else:
+            self._current_snapshot(snapshot_id, snapshot_digest)
         selected = self._select_items(intent, item_ids)
         versions = self._item_versions(selected, expected_item_versions)
 
@@ -636,6 +655,334 @@ class ManualOrganizePreviewService:
             ) from error
 
     admit_files_intent = admit_storage_paths
+
+    def create_remaining_scope_from_task(
+        self,
+        task_id: str,
+        *,
+        actor: str,
+        obstacle=None,
+    ) -> ManualOrganizePreview:
+        """Review the exact remaining scope of one paused run, under its own pin.
+
+        This is the native exact-Preview recovery path RO-5 promises when a
+        paused run's Continue cannot retain live execution authority.  It is
+        deliberately narrower than every other Preview admission:
+
+        * the scope is the *durable* remaining scope of the exact Task, resolved
+          by the same :func:`remaining_scope` the continuation boundary uses, so
+          the Preview can never broaden the admitted budget and never re-offer a
+          completed, ignored or uncertain sibling;
+        * the configuration is the Task's own immutable historical pin, loaded
+          through the managed authority (``ACTIVE`` or ``SUPERSEDED``) instead of
+          the current Active revision, so the reviewed plan is the plan the
+          paused run would really have produced;
+        * every source is re-verified live from Storage at admission, so a
+          changed or missing source fails closed;
+        * the resulting intent/Preview are the ordinary durable manual records:
+          they grant no authority, and the operator must still make one fresh
+          explicit execution intent through the existing Execute action.
+
+        A Task whose scope is not provably ResourceLibrary-relative is refused:
+        this boundary never interprets a raw host path as new admission
+        authority.
+        """
+
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ManualPreviewError(
+                "remaining-scope Preview requires a Task identity",
+                code="malformed_selection",
+                next_action="reload the paused run and request its exact Preview again",
+            )
+        task_id = task_id.strip()
+        repository = self._repository
+        reader = getattr(repository, "get_task", None)
+        task = reader(task_id) if callable(reader) else None
+        if task is None:
+            raise ManualPreviewError(
+                "the paused run was not found",
+                code="task_not_found",
+                status=404,
+                next_action="refresh the run inventory and select the exact run again",
+            )
+        if obstacle is not None:
+            reason, message, next_action = obstacle(task)
+            if reason is not None and reason != "authority_required":
+                raise ManualPreviewError(
+                    message or "this run has no exact remaining scope to review",
+                    code=str(reason),
+                    status=409,
+                    next_action=next_action
+                    or "refresh the run and review its recorded per-item outcomes",
+                )
+        if not task.configuration_snapshot_id or not task.configuration_snapshot_digest:
+            raise ManualPreviewError(
+                "this run has no immutable configuration pin, so its exact original scope "
+                "cannot be reproduced",
+                code="snapshot_unavailable",
+                status=409,
+                next_action=(
+                    "start a new bounded run under the current Active configuration, or inspect "
+                    "the run's recorded per-item evidence"
+                ),
+            )
+        try:
+            runtime = self._load_runtime(
+                task.configuration_snapshot_id, task.configuration_snapshot_digest
+            )
+        except ManualPreviewError:
+            raise
+        except Exception as error:
+            raise ManualPreviewUnavailable(
+                "the paused run's pinned configuration revision is unavailable",
+                details={"reason": type(error).__name__},
+            ) from error
+        remaining, already_recorded, remaining_limit = _remaining_scope(repository, task)
+        if remaining_limit == 0:
+            raise ManualPreviewError(
+                "this run has no remaining eligible item to review; every admitted item already "
+                "has a decided outcome",
+                code="no_remaining_scope",
+                status=409,
+                next_action=(
+                    "inspect the run's recorded per-item outcomes, or start a new bounded run "
+                    "from 操作与任务"
+                ),
+            )
+        library, relative_scope = self._scope_library(runtime, task)
+        sources = self._remaining_scope_sources(
+            runtime,
+            library,
+            relative_scope,
+            already_recorded=already_recorded,
+            undecided={
+                (item.storage_id, item.source_path)
+                for item in remaining
+                if item.resource_library_id == library.library_id
+            },
+            limit=remaining_limit,
+        )
+        if not sources:
+            raise ManualPreviewError(
+                "this run has no remaining eligible item to review; every admitted item already "
+                "has a decided outcome",
+                code="no_remaining_scope",
+                status=409,
+                next_action=(
+                    "inspect the run's recorded per-item outcomes, or start a new bounded run "
+                    "from 操作与任务"
+                ),
+            )
+        intent_creator = getattr(self._intent_service, "create_from_sources", None)
+        if not callable(intent_creator):
+            raise ManualPreviewUnavailable("manual intent service cannot admit Storage sources")
+        try:
+            intent = intent_creator(
+                tuple(sources),
+                actor=actor,
+                snapshot_id=task.configuration_snapshot_id,
+                snapshot_digest=task.configuration_snapshot_digest,
+                pinned_snapshot=True,
+            )
+        except ManualIntentError as error:
+            raise ManualPreviewError(
+                str(error),
+                code=error.code,
+                status=error.status,
+                next_action=error.next_action,
+                details=error.details,
+            ) from error
+        return self.create(
+            intent.intent_id,
+            expected_version=intent.version,
+            expected_item_versions={item.item_id: item.version for item in intent.items},
+            snapshot_id=task.configuration_snapshot_id,
+            snapshot_digest=task.configuration_snapshot_digest,
+            actor=actor,
+            source_scope="resource_library",
+            source_scope_id=library.library_id,
+            skip_current_snapshot_check=True,
+        )
+
+    def _scope_library(self, runtime, task):
+        """Resolve the run's exact ResourceLibrary scope from its durable scope.
+
+        The Worker resolves ``task.scope_path`` against the *pinned runtime's*
+        ResourceLibrary roots, so this boundary does the same thing.  A scope it
+        cannot prove belongs to exactly one enabled library is **refused**: the
+        recovery path must never widen an unresolvable scope into a whole-library
+        review, because that would review (and could later execute) work the
+        original run never admitted.
+        """
+
+        scope = task.scope_path
+        if scope is None or not str(scope).strip():
+            # A run admitted without a directory scope owns every enabled
+            # ResourceLibrary, so only an unambiguous single-library runtime can
+            # reproduce it.
+            enabled = tuple(
+                value
+                for value in getattr(runtime, "resource_libraries", ())
+                if getattr(value, "enabled", False)
+            )
+            if len(enabled) != 1:
+                raise ManualPreviewError(
+                    "this run's admitted scope does not resolve to exactly one ResourceLibrary, "
+                    "so its exact remaining scope cannot be reproduced",
+                    code="scope_unresolved",
+                    status=409,
+                    next_action=(
+                        "start a new bounded run from Files under the current Active "
+                        "configuration, or inspect the run's recorded per-item evidence"
+                    ),
+                )
+            return self._runtime_library(runtime, enabled[0].library_id), ""
+        raw = str(scope).replace("\\", "/").strip()
+        candidate = PurePath(raw)
+        # Two truthful spellings exist in durable state: the absolute display
+        # root the operator selected, and the library-relative path the Worker
+        # stores.  Both resolve to the same exact scope, and the *most specific*
+        # match wins so a nested library is never shadowed by its parent.
+        matches: list[tuple[int, str, str]] = []
+        for library_id, display_root in tuple(getattr(runtime, "resource_display_roots", ()) or ()):
+            root = PurePath(str(display_root).replace("\\", "/").rstrip("/") or "/")
+            if candidate == root or root in candidate.parents:
+                matches.append(
+                    (len(root.parts), library_id, candidate.relative_to(root).as_posix())
+                )
+        relative_candidate = candidate
+        if raw.startswith("/"):
+            # A leading slash that matched no display root is not a relative
+            # scope: the relative branch must never reinterpret a host path.
+            relative_candidate = None
+        for value in getattr(runtime, "resource_libraries", ()):
+            if not getattr(value, "enabled", False):
+                continue
+            if relative_candidate is None:
+                continue
+            root_path = str(getattr(value, "root_path", "") or "").replace("\\", "/").strip("/")
+            if not root_path:
+                # An empty root path means the ResourceLibrary owns its whole
+                # Storage, so every relative scope belongs to it.
+                matches.append((0, value.library_id, relative_candidate.as_posix()))
+                continue
+            root = PurePath(root_path)
+            if relative_candidate == root or root in relative_candidate.parents:
+                matches.append(
+                    (
+                        len(root.parts),
+                        value.library_id,
+                        relative_candidate.relative_to(root).as_posix(),
+                    )
+                )
+        if not matches:
+            raise ManualPreviewError(
+                "this run's admitted scope does not resolve to a ResourceLibrary in its own "
+                "pinned configuration, so its exact remaining scope cannot be reproduced",
+                code="scope_unresolved",
+                status=409,
+                next_action=(
+                    "start a new bounded run from Files under the current Active "
+                    "configuration, or inspect the run's recorded per-item evidence"
+                ),
+            )
+        best_depth = max(match[0] for match in matches)
+        winners = [match for match in matches if match[0] == best_depth]
+        if len({match[1] for match in winners}) != 1:
+            # Two libraries claim the same scope equally: refusing is the only
+            # truthful answer, because guessing would review the wrong library.
+            raise ManualPreviewError(
+                "this run's admitted scope is claimed by more than one ResourceLibrary in its "
+                "own pinned configuration, so its exact remaining scope is ambiguous",
+                code="scope_unresolved",
+                status=409,
+                next_action=(
+                    "start a new bounded run from Files under the current Active "
+                    "configuration, or inspect the run's recorded per-item evidence"
+                ),
+            )
+        _, library_id, relative = winners[0]
+        library = self._runtime_library(runtime, library_id)
+        relative = "" if relative == "." else relative
+        return library, self._normalize_library_relative_path(relative, allow_empty=True)
+
+    def _remaining_scope_sources(
+        self,
+        runtime,
+        library,
+        relative_scope: str,
+        *,
+        already_recorded: frozenset[tuple[str, str]],
+        undecided: set[tuple[str, str]],
+        limit: int | None,
+    ):
+        """The live, verified sources the run's remaining scope really owns.
+
+        A source is eligible exactly when the run's own remaining budget still
+        covers it and no attempt of the chain already recorded it.  The
+        discovery is the same bounded Storage walk the Worker performs, so the
+        reviewed Preview cannot offer more work than the run may really do.
+        """
+
+        storages = self._create_storages(runtime, {library.storage_id})
+        storage = self._guarded_storage(storages, library.storage_id)
+        # The Worker distinguishes a single-file admission from a directory
+        # admission, so this boundary does too: a scope that resolves to one
+        # file reviews exactly that file, and a scope that resolves to a
+        # directory reviews the files below it.
+        if relative_scope:
+            normalized = self._normalize_library_relative_path(relative_scope, allow_empty=False)
+            storage_path = self._join_library_path(library.root_path, normalized)
+            try:
+                entry = storage.stat(storage_path)
+            except StorageError:
+                return ()
+            if getattr(entry, "entry_type", None) is StorageEntryType.FILE:
+                key = (library.storage_id, storage_path)
+                if key in already_recorded and key not in undecided:
+                    return ()
+                if limit is not None and limit < 1:
+                    return ()
+                return (self._source_identity_from_storage(storage, library, normalized),)
+            if getattr(entry, "entry_type", None) is not StorageEntryType.DIRECTORY:
+                return ()
+        sources = []
+        pending = [relative_scope]
+        while pending:
+            rel_dir = pending.pop(0)
+            storage_dir = self._join_library_path(library.root_path, rel_dir)
+            cursor = None
+            while True:
+                page = storage.list_page(
+                    storage_dir, limit=min(100, self._max_items), cursor=cursor
+                )
+                for entry in tuple(getattr(page, "entries", ())):
+                    if not isinstance(entry, StorageEntry):
+                        continue
+                    rel_path = self._strip_library_path(entry.path, library.root_path)
+                    if entry.entry_type is StorageEntryType.DIRECTORY:
+                        pending.append(rel_path)
+                        continue
+                    if entry.entry_type is not StorageEntryType.FILE:
+                        continue
+                    key = (library.storage_id, entry.path)
+                    if key in already_recorded and key not in undecided:
+                        continue
+                    sources.append(self._source_identity_from_storage(storage, library, rel_path))
+                    if limit is not None and len(sources) >= limit:
+                        return tuple(sources)
+                    if len(sources) > self._max_items:
+                        raise ManualPreviewError(
+                            f"ResourceLibrary Preview selection exceeds the bound of "
+                            f"{self._max_items}",
+                            code="selection_over_limit",
+                            next_action="select a smaller batch from Files",
+                            details={"resourceLibraryId": library.library_id},
+                        )
+                cursor = getattr(page, "next_cursor", None)
+                if not cursor:
+                    break
+        return tuple(sources)
 
     def create_current_from_index(
         self,
