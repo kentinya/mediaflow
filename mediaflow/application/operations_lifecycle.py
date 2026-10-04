@@ -21,7 +21,7 @@ existing Job repository.
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -265,6 +265,11 @@ class TaskExecutionContext:
     #: the state itself offers no obstacle.
     continuation_blocked_reason: str | None = None
     continuation_blocked_next_action: str | None = None
+    #: The machine-readable continuation refusal code behind that reason.  It
+    #: lets the projection publish the *native* recovery entry (an exact Preview
+    #: of the remaining scope) for exactly the refusal that promises it, instead
+    #: of matching on translated operator copy.
+    continuation_blocked_code: str | None = None
 
 
 class OperationsLifecycleConflict(RuntimeError):
@@ -945,6 +950,59 @@ def manual_scan_operator_document(
         ],
     }
     return _bounded_operator_document(bounded)
+
+
+def scope_continuation_operator_document(continuation: object) -> dict[str, object]:
+    """The bounded, redacted operator projection of one scope continuation.
+
+    The internal ``scope_path``, the configuration pin identity and the actor
+    never reach an operator/API response.  The Worker keeps reading the full
+    durable row through :meth:`ScopeContinuation.document`, so redaction here
+    cannot weaken execution: it only bounds what a control response publishes.
+    """
+
+    return {
+        "continuationId": _bounded_identifier(getattr(continuation, "continuation_id", None)),
+        "sourceTaskId": _bounded_identifier(getattr(continuation, "source_task_id", None)),
+        "command": _bounded_evidence_text(getattr(continuation, "command", None), limit=64),
+        "itemLimit": getattr(continuation, "item_limit", None),
+        "boundary": _bounded_evidence_text(getattr(continuation, "boundary", None), limit=128),
+        "status": _bounded_evidence_text(
+            getattr(getattr(continuation, "status", None), "value", None), limit=64
+        ),
+        "jobId": _bounded_identifier(getattr(continuation, "job_id", None)),
+        "newTaskId": _bounded_identifier(getattr(continuation, "new_task_id", None)),
+        "createdAt": _bounded_evidence_text(
+            _isoformat(getattr(continuation, "created_at", None)), limit=64
+        ),
+        "updatedAt": _bounded_evidence_text(
+            _isoformat(getattr(continuation, "updated_at", None)), limit=64
+        ),
+        "startedAt": _bounded_evidence_text(
+            _isoformat(getattr(continuation, "started_at", None)), limit=64
+        ),
+        "completedAt": _bounded_evidence_text(
+            _isoformat(getattr(continuation, "completed_at", None)), limit=64
+        ),
+        "error": _bounded_evidence_text(getattr(continuation, "error", None)),
+        "recovery": _bounded_evidence_text(getattr(continuation, "recovery", None)),
+        "nextAction": _bounded_evidence_text(
+            continuation.next_action()
+            if callable(getattr(continuation, "next_action", None))
+            else None
+        ),
+        "authorityStatement": _bounded_evidence_text(
+            getattr(continuation, "authority_statement", None)
+        ),
+        "sideEffects": "none",
+    }
+
+
+def _isoformat(value: object) -> str | None:
+    if value is None:
+        return None
+    isoformat = getattr(value, "isoformat", None)
+    return isoformat() if callable(isoformat) else None
 
 
 def manual_preview_operator_document(document: dict[str, object]) -> dict[str, object]:
@@ -1821,6 +1879,7 @@ def _action(
     side_effects: str,
     next_action: str,
     confirmation_required: bool = False,
+    extra: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     return {
         "action": action,
@@ -1835,6 +1894,7 @@ def _action(
         "sideEffects": side_effects,
         "retrySafe": False,
         "nextAction": next_action,
+        **dict(extra or {}),
     }
 
 
@@ -2076,6 +2136,37 @@ def task_lifecycle_document(
                 execution.continuation_blocked_next_action
                 or "follow the linked continuation run for its independent per-item outcomes"
             ),
+            # The native recovery entry RO-5 promises when Continue cannot retain
+            # live authority: an exact zero-mutation Preview of the remaining
+            # scope under the run's own historical pin, followed by one fresh
+            # explicit execution intent.  It is advertised for exactly the
+            # backend refusal code that promises it, never for another obstacle,
+            # and it is only reachable by a principal that may admit manual work.
+            extra=(
+                {
+                    "preview": {
+                        "available": True,
+                        "reason": None,
+                        "method": "POST",
+                        "path": f"/api/v1/tasks/{task.task_id}/remaining-scope-previews",
+                        "requiresConfirmation": False,
+                        "sideEffects": "none",
+                        "durableOutcome": (
+                            "a durable zero-mutation exact Preview of the remaining eligible "
+                            "scope is stored under the run's original immutable pin; it grants "
+                            "no execution authority"
+                        ),
+                        "nextAction": (
+                            "review the exact Preview, then make one fresh explicit execution "
+                            "intent for only the eligible remaining scope"
+                        ),
+                    }
+                }
+                if execution.continuation_blocked_code
+                == ScopeContinuationReason.AUTHORITY_REQUIRED.value
+                and ApiPermission.MANAGE_MANUAL_ORGANIZE in permissions
+                else {}
+            ),
         )
     else:
         resume = _action(
@@ -2234,6 +2325,12 @@ class TaskLifecycleService:
             # *available* also depends on the exact paused state, the immutable
             # pin and the applicable execution authority, which this projection
             # resolves from the same durable evidence the admission revalidates.
+            # One decision yields the operator copy *and* the machine-readable
+            # refusal code, so the advertised recovery entry can never disagree
+            # with the refusal it accompanies.
+            code = continuation_obstacle(
+                self._repository, task, self._snapshot_validator, self._mutation_authority
+            )[0]
             reason, next_action = self.continuation_obstacle(task)
             return TaskExecutionContext(
                 TaskExecutionPath.OPERATOR_WORKFLOW,
@@ -2241,6 +2338,7 @@ class TaskLifecycleService:
                 continuable=True,
                 continuation_blocked_reason=reason,
                 continuation_blocked_next_action=next_action,
+                continuation_blocked_code=code.value if code is not None else None,
             )
         return TaskExecutionContext(TaskExecutionPath.OPERATOR_WORKFLOW)
 

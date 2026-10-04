@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md).
 ```text
 Task ID: 42.4
 Parent Slice: 42
-Status: PLANNED
+Status: FIX REQUIRED
 Task Base: d52ce9299671ab05141f64848b8475cd4db11126
 Difficulty: High
 Test Level: T4
@@ -310,8 +310,31 @@ Web:
 - `web/tests/fake-server.mjs` — the projection and the resume envelope.
 - `web/tests/e2e/operations-inventory.python.spec.ts` — the two AC-T7 browser journeys.
 
+Correction round 1 (B `FIX REQUIRED`) — modified/added:
+- `mediaflow/domain/scope_continuation.py` — `NO_REMAINING_SCOPE`,
+  `CONTINUATION_OWNED_ELSEWHERE`, and the `get_scope_continuation_for_new_task` Protocol read.
+- `mediaflow/application/scope_continuation.py` — chain-aware `remaining_scope`, `continuation_chain`,
+  `chain_owner`, `_active_continuation`, the `exclude_job_id` self-refusal guard and the public
+  `obstacle` accessor.
+- `mediaflow/application/manual_organize_preview.py` — `create_remaining_scope_from_task`,
+  `_scope_library`, `_remaining_scope_sources` and the explicit `skip_current_snapshot_check` opt-in.
+- `mediaflow/application/manual_organize.py` — the explicit `pinned_snapshot` opt-in.
+- `mediaflow/application/operations_lifecycle.py` — `scope_continuation_operator_document`,
+  `continuation_blocked_code` and the `preview` recovery entry on the withheld Continue action.
+- `mediaflow/interfaces/service_api.py` — the redacted 202 continuation envelope, the run-overview
+  `continuation` field and `POST /api/v1/tasks/{taskId}/remaining-scope-previews`.
+- `mediaflow/infrastructure/sqlite_runtime.py` — `get_scope_continuation_for_new_task`.
+- `web/src/entities/operations/lifecycle.ts` (+ test) — the fail-closed `recovery` normalizer.
+- `web/src/entities/operations/run.ts` (+ test) — the bounded `continuation` projection.
+- `web/src/features/operations/RunLifecycleControls.tsx` (+ test) — the native Preview recovery entry.
+- `web/src/features/operations/OperationsLanding.tsx`, `OperationsInventory.test.tsx` — the recovery
+  admission, the linked-run entry and their journeys.
+- `web/src/shared/api/api-client.ts` (+ test) — `submitRemainingScopePreview`.
+- `web/tests/fake-server.mjs`, `web/tests/e2e/operations-inventory.python.spec.ts`,
+  `scripts/operations_inventory_harness.py` — the mirrored projection, route and fixture scope.
+
 Tests:
-- `tests/test_scope_continuation.py` (new, 42 cases) — the focused continuation matrix.
+- `tests/test_scope_continuation.py` (new, 55 cases) — the focused continuation matrix.
 - `tests/test_task_persistence.py` — `Schema42To43UpgradeTests`.
 - `tests/test_operations_workspace.py`, `test_operations_run_detail.py`,
   `test_configuration_*.py`, `test_resident_correction.py` — updated expectations.
@@ -468,6 +491,111 @@ synchronous fixture work and therefore cannot hold a real in-flight Provider cal
 - The harness fixture now keeps the managed configuration and the runtime rows in one SQLite file
   (the production shape), which the Worker's `configuration.database_path` resolution requires.
 
+### Correction Round 1 (B Review `FIX REQUIRED`)
+
+All three B blockers are fixed. Only the listed blockers and their direct root causes were touched;
+no unrelated P2/P3 work, no assertion loosening and no history amendment.
+
+**P1-1 — a finished continuation could be admitted and executed again.**
+`mediaflow/application/scope_continuation.py` now resolves the whole recorded continuation **chain**
+through the explicit durable links only (`scope_continuations.source_task_id` / `new_task_id`, via
+the new `get_scope_continuation_for_new_task` repository read) — never by filename, label or
+creation time. `remaining_scope()` aggregates every chain Task's items and results and computes the
+budget from the **root** Task, so `already_recorded` covers sources any attempt already owns.
+`continuation_obstacle()` now returns two new closed reasons: `CONTINUATION_OWNED_ELSEWHERE` when a
+later non-terminal chain Task owns the remaining scope, and `NO_REMAINING_SCOPE` when the chain
+already consumed the whole admitted budget. The lifecycle projection, the API admission and the
+Worker all read this one decision, and the Worker excludes the exact Job it already claimed
+(`exclude_job_id`) so it can never refuse itself. The run overview publishes a bounded
+`continuation` projection, and the run detail renders a native entry that selects the linked
+continuation run, so the operator is never told to "follow the linked run" without a surface.
+
+**P1-2 — no native exact Preview / fresh-intent recovery under a historical pin.**
+`ManualOrganizePreviewService.create_remaining_scope_from_task` admits a zero-mutation exact Preview
+of the run's **durable remaining scope** under the run's **own immutable pin**. It reuses
+`remaining_scope` (so it can never broaden the admitted budget or re-offer a decided sibling),
+resolves the run's scope against the *pinned* runtime's ResourceLibrary roots, re-verifies every
+source live from Storage, and refuses an unresolvable or ambiguous scope (`scope_unresolved`) rather
+than widening it to a whole library. `ManualOrganizeIntentService.create_from_sources` gained the
+single explicit `pinned_snapshot=True` opt-in, which loads the revision through the same managed
+authority (`ACTIVE` or `SUPERSEDED`, integrity verified) the Worker uses; the ordinary Files path
+still hard-requires the current Active revision, and `ManualOrganizePreviewService.create` gained
+the matching explicit `skip_current_snapshot_check` opt-in. The new route
+`POST /api/v1/tasks/{taskId}/remaining-scope-previews` (`MANAGE_MANUAL_ORGANIZE`, 201) is advertised
+as a `preview` recovery entry on the withheld Continue action for exactly the `authority_required`
+refusal and for a principal that really holds the permission. The Web renders that entry as a real
+button and routes the operator to the ordinary organize Preview review, where one fresh explicit
+Execute intent is still required. Execution is still refused on the basis of the execute flag, a
+consumed authorization or a revoked grant alone.
+
+**P1-3 — the Continue API response leaked an absolute host path.**
+The 202 acceptance response now publishes `scope_continuation_operator_document(...)` instead of the
+raw `submission.continuation.document()`. The new projection in
+`mediaflow/application/operations_lifecycle.py` carries only bounded identifiers and bounded
+evidence: no `scope_path`, no configuration pin identity, no actor. The same projection is used by
+the run-overview `continuation` field, and the duplicate/conflict read path was reviewed (it
+publishes no continuation body at all). The Worker's internal durable row keeps the complete
+original scope and pin, so redaction never weakens execution; front-end hiding alone was not used.
+`tests/test_scope_continuation.py` gained a legal absolute-scope API privacy regression that asserts
+the host root never appears in the accepted body while the stored row still holds it verbatim.
+
+#### Correction evidence
+
+```text
+.venv/bin/python -m unittest tests.test_scope_continuation
+  -> Ran 55 tests, OK   (was 42; +13 correction cases)
+.venv/bin/python -m unittest discover -s tests -t .
+  -> Ran 2176 tests, OK (skipped=7)
+python3 scripts/check_governance.py                -> governance check: PASS
+.venv/bin/ruff check .                             -> All checks passed
+.venv/bin/ruff format --check .                    -> 338 files already formatted
+.venv/bin/python -m compileall -q mediaflow tests scripts -> OK
+.venv/bin/python -m pip check                      -> No broken requirements found
+.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate           -> PASS
+.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config validate -> PASS
+.venv/bin/python -m unittest tests.test_release_security tests.test_release_validation tests.test_migration_rehearsal tests.test_upgrade_preflight
+                                                   -> Ran 19 tests, OK
+wheel smoke test                                   -> Schema: 43 / Status: PASS
+git diff --check                                   -> clean
+git check-ignore config/alist.json                 -> config/alist.json (untracked; nothing staged)
+```
+
+Web (`web/`):
+
+```text
+NODE_ENV=test npx vitest run                       -> 63 files, 987 tests passed, 0 failed
+npm run typecheck                                  -> PASS
+npm run lint                                       -> PASS
+npm run format:check                               -> All matched files use Prettier code style
+npm run build                                      -> PASS
+NODE_ENV=test npx playwright test tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts tests/e2e/manual-operations.spec.ts
+                                                   -> 54 passed
+NODE_ENV=test npx playwright test --config playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts
+                                                   -> 16 passed
+NODE_ENV=test npx playwright test                  -> 204 passed / 31 failed (all 31 pre-existing)
+```
+
+New correction cases: chain-aware remaining scope (a finished continuation chain has no remaining
+scope; a still-paused descendant owns it; the linked continuation is projected), the Worker
+never refusing the continuation it claimed, the native remaining-scope Preview (only the eligible
+items, zero mutation, no Task/Job/execution/authority, exact remaining scope, no host-path leak),
+its `no_remaining_scope` / `scope_unresolved` / permission / unresolvable-pin refusals, the
+`authority_required`-only Preview advertisement, the permission gate on the projection, and the
+opt-in-only historical pin. Web cases: the recovery entry renders only from the backend projection,
+is disabled in flight, the linked continuation entry selects the linked run without a POST, the
+recovery POST sends only the run identity, and the redacted continuation envelope is asserted
+end-to-end.
+
+#### Pre-existing failures (unchanged, not caused by this Task)
+
+The 31 fake-server browser failures are the **same set** on the untouched Task Base: a throwaway
+worktree at `HEAD` reproduced all 31 (and the baseline full run additionally failed 80, a superset).
+They are confined to `storage-management.spec.ts` (28), `deep-link.spec.ts` (2) and
+`dashboard.spec.ts` (1) — none in this Task's `operations*.spec.ts` / `manual-*.spec.ts` journeys.
+Label: `FAIL / PRE-EXISTING / UNRELATED`; the "does not affect PASS" judgement is left to B.
+The 7 skipped backend tests remain the pre-existing environment-blocked real SMB/S3/OpenList/
+endurance acceptance matrices; no skip was added and no assertion was weakened.
+
 ### Checkpoint
 
 ```text
@@ -478,8 +606,20 @@ Head SHA: 8a60cab0a0f9306a434d785c35ebd26bac41a422
 ## B Review Result
 
 ```text
-Reviewed: PENDING
-Decision: PENDING
-Slice Required Outcomes all satisfied: PENDING
-Next: PENDING
+Reviewed: d52ce9299671ab05141f64848b8475cd4db11126..8a60cab0a0f9306a434d785c35ebd26bac41a422
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
 ```
+
+- **P1 — 已完成的 continuation 范围可再次受理并执行（AC-T3/T4/T5；RO-5；Safety Invariant 5）。**
+  当前生产 Coordinator 产生的合法 pinned、limit=2 暂停 scan，经原生“继续剩余范围”与真实 API/SQLite/Local Storage/Worker 完成剩余文件后，刷新原运行仍可点击 Continue；第二次请求再次返回 202。
+  证据：`node /tmp/mediaflow-b42-4-b-proof.mjs`，两次实际 Worker continuation 均为 completed，新增 Task `3d1b3d5d-dcb1-403d-aa68-f9b1cdb7d989` 与 `e606c952-0816-4496-9cce-e089456396ca` 的持久 item 均为同一 `Five.2005.mkv`；断言以 exit 1 揭示重复处理。当前 `remaining_scope()` 仅读取原 Task，已完成后代不进入排除集合/剩余预算；admission 仅阻止 queued/running continuation，原运行仍保持 paused。用户从完成后的原运行重复继续会重新处理已完成范围。修正：后端 projection/admission/Worker 共同根据真实 continuation 链及持久结果确定剩余范围、预算与执行所有者，排除已完成/ignored/uncertain 工作，并提供能查看实际后续运行的原生入口；保持原历史、pin 和并发保护。证据 JSON：`/tmp/mediaflow-b42-4-b-proof.json`。
+
+- **P1 — 授权不足时缺少原生 exact Preview / fresh intent 恢复路径（AC-T4/T7；Scope 5；RO-5）。**
+  当前生产 `final_cli.py` 的合法 managed `organize --execute` 创建形态（原 scope、完整有效 pin、execute=true，无可重用 grant）经真实 Coordinator 在安全边界暂停后，当前 API 拒绝 Continue 为 409 `authority_required`，所选运行只有“查看精确预览并重新授权”的文字，详情没有 Preview 链接或按钮。用户无法从该运行进入历史 pin 下仅含 eligible 剩余范围的 Preview/明确执行意图。
+  证据：`.venv/bin/python /tmp/mediaflow-b42-4-b-legal-fixtures.py` 配合 `node /tmp/mediaflow-b42-4-b-legal-proof.mjs`；真实 Python API/已构建 Web 返回 `organizeRefusalStatus=409`、`reason=authority_required`、`previewLinks=[]`、`previewButtons=[]`。使用合法 `organize` 生产形态与完整 Local 能力，不以 `preview + execute=true` 的不支持 fixture 作为阻塞依据。修正：实现当前 Contract 已要求的、绑定原运行/历史 pin/精确剩余范围的原生 Preview 与 fresh explicit intent 流程，并返回关联运行；继续拒绝仅凭 execute 标志、已消费授权或已撤销 grant 执行。证据 JSON：`/tmp/mediaflow-b42-4-b-legal-proof.json`。
+
+- **P1 — Continue 的 API 响应泄漏绝对宿主路径（RO-7；Safety Invariant 8；Task 隐私边界）。**
+  当前合法 managed scoped `preview`（execute=false，scope 为配置 Local ResourceLibrary 内的绝对路径、完整有效 pin）安全暂停后，真实 `POST /api/v1/tasks/{id}/resume` 返回 202，`continuation.scope_path` 原样包含绝对宿主路径。普通 operator/API 控制响应已越过后端脱敏边界；无需未来 adapter、非法配置或削弱 Storage 能力。
+  证据：同一 legal-fixtures / legal-proof 命令得到 `previewAdmissionStatus=202`、`hostRootExposed=true`，隐私断言 exit 1；`mediaflow/interfaces/service_api.py` 的受理响应直接调用 `submission.continuation.document()`，后者输出内部 `scope_path`。修正：为 operator/API 输出使用后端 bounded/redacted continuation projection，审查对应读取/冲突响应的同类输出；Worker 所需内部原 scope/pin 保持完整，不能仅靠前端隐藏。加入合法绝对 scope 的 API 隐私回归。证据 JSON：`/tmp/mediaflow-b42-4-b-legal-proof.json`。

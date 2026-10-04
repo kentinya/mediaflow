@@ -2430,6 +2430,22 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._scope_continuation(row) if row else None
 
+    def get_scope_continuation_for_new_task(self, task_id: str) -> ScopeContinuation | None:
+        """The continuation that produced one Task, or ``None``.
+
+        This is the explicit durable child→parent link the continuation-chain
+        walk follows; it is never inferred from a filename, label or creation
+        time.
+        """
+
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT * FROM scope_continuations WHERE new_task_id=? "
+                "ORDER BY created_at DESC, continuation_id DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        return self._scope_continuation(row) if row else None
+
     def list_scope_continuations(
         self, task_id: str, *, limit: int = 32
     ) -> tuple[ScopeContinuation, ...]:

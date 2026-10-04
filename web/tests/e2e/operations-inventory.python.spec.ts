@@ -1368,13 +1368,17 @@ test("a paused run continues only its remaining scope through the real Worker", 
   expect(admissionBody.sideEffects).toBe("none");
   expect(admissionBody.retrySafe).toBe(false);
   expect(admissionBody.continuation.status).toBe("queued");
-  expect(admissionBody.continuation.source_task_id).toBe(sourceTaskId);
-  // The continuation preserves the original command, scope and item budget.
+  // The operator/API projection is bounded and redacted: it publishes the
+  // durable identifiers but never the internal scope path, the pin or the actor.
+  expect(admissionBody.continuation.sourceTaskId).toBe(sourceTaskId);
   expect(admissionBody.continuation.command).toBe("scan");
-  expect(admissionBody.continuation.item_limit).toBe(2);
+  expect(admissionBody.continuation.itemLimit).toBe(2);
   expect(admissionBody.continuation.boundary).toBe(
     "paused_remaining_admitted_scope",
   );
+  expect(admissionBody.continuation.sideEffects).toBe("none");
+  expect(admissionBody.continuation.scope_path).toBeUndefined();
+  expect(admissionBody.continuation.scopePath).toBeUndefined();
   const continuationJobId = admissionBody.jobId as string;
   expect(continuationJobId).toBeTruthy();
 
@@ -1449,8 +1453,15 @@ test("a mutation-authorized paused run without live authority is refused nativel
   ).json();
   const taskId = created.taskId as string;
   expect(taskId).toBeTruthy();
+  expect(created.scope).toBe("Authority");
+  expect(created.remainingSources).toEqual([
+    "Seven.2007.mkv",
+    "Eight.2008.mkv",
+  ]);
 
-  await connect(page);
+  // The native recovery entry is bound to the permission that would really
+  // admit it, so this journey connects the principal that holds it.
+  await connect(page, ADMIN_TOKEN);
   await openInventory(page);
   const row = page.getByRole("row").filter({ hasText: taskId });
   await expect(row).toHaveCount(1);
@@ -1472,17 +1483,37 @@ test("a mutation-authorized paused run without live authority is refused nativel
   await expect(controls).toContainText("exact Preview");
   await expect(controls).not.toContainText("mediaflow tasks");
 
-  // A direct deliberate POST is refused atomically with the same reason, and it
-  // queues no work.
+  // The refusal also publishes the *native* recovery entry RO-5 promises, so the
+  // operator is never left with copy and no surface. Driving it admits a real
+  // zero-mutation exact Preview of the remaining scope under the run's own pin.
+  const previewButton = controls.getByRole("button", {
+    name: "查看剩余范围的精确预览",
+  });
+  await expect(previewButton).toBeVisible();
+  await previewButton.click();
+  await expect(page).toHaveURL(/\/operations\/organize\/preview\//);
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  // The reviewed scope is exactly the run's own remaining sources: nothing
+  // outside the run's admitted scope is ever reviewed.
+  await expect(page.locator("body")).toContainText("Seven.2007.mkv");
+  await expect(page.locator("body")).toContainText("Eight.2008.mkv");
+  await expect(page.locator("body")).not.toContainText("One.2001.mkv");
+  // The Preview is the ordinary organize review: it grants no authority, so the
+  // operator must still make one fresh explicit execution intent.
+  await expect(page.getByRole("heading", { name: "执行整理" })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("mediaflow tasks");
+
+  // Return to the run and prove a direct deliberate POST is refused atomically
+  // with the same reason, and queues no work.
   const projectionResponse = await request.get(
     `${BASE}/api/v1/tasks/${taskId}`,
-    { headers: { Authorization: `Bearer ${TOKEN}` } },
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
   );
   expect(projectionResponse.ok()).toBeTruthy();
   const projection = await projectionResponse.json();
   const refused = await request.post(`${BASE}/api/v1/tasks/${taskId}/resume`, {
     data: { expectedUpdatedAt: projection.lifecycle.version },
-    headers: { Authorization: `Bearer ${TOKEN}` },
+    headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
   });
   expect(refused.status()).toBe(409);
   const refusal = await refused.json();

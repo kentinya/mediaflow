@@ -2354,6 +2354,32 @@ export type OrganizePreviewRead =
   | { readonly ok: true; readonly model: OrganizePreviewModel }
   | { readonly ok: false; readonly failure: OperationsFailure };
 
+/**
+ * Admit the native exact Preview of one paused run's remaining scope.
+ *
+ * This is the RO-5 recovery entry the backend advertises alongside a withheld
+ * Continue. The browser sends nothing but the run identity: the scope, the
+ * historical pin and every source identity are resolved server-side, and the
+ * response is the ordinary zero-mutation organize Preview the operator then
+ * reviews and explicitly executes.
+ */
+export async function submitRemainingScopePreview(
+  token: string | null,
+  options: { readonly taskId: string },
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<OrganizePreviewModel>> {
+  if (!isSafeIdentifier(options.taskId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/tasks/${encodeURIComponent(options.taskId)}/remaining-scope-previews`,
+    {},
+    normalizeOrganizePreview,
+    fetchImpl,
+  );
+}
+
 export async function fetchOrganizePreviewDetail(
   token: string | null,
   previewId: string,

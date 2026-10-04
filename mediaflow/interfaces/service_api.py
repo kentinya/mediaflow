@@ -73,6 +73,7 @@ from mediaflow.application.operations_lifecycle import (
     run_item_evidence_document,
     run_progress_document,
     run_record_document,
+    scope_continuation_operator_document,
     task_item_operator_document,
     task_lifecycle_document,
     task_operator_document,
@@ -7312,6 +7313,19 @@ class MediaFlowApi:
         if (
             len(parts) == 5
             and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "remaining-scope-previews"
+            and method == "POST"
+        ):
+            # The native exact-Preview recovery path for a paused run whose
+            # Continue cannot retain live execution authority (RO-5).  It is a
+            # Task-scoped sibling of the resume control, so the advertised
+            # next action and the real admission can never disagree.
+            return self._operations_run_remaining_scope_preview(
+                parts[3], environ, start_response, principal
+            )
+        if (
+            len(parts) == 5
+            and parts[:3] == ["api", "v1", "tasks"]
             and parts[4] in {"cancel", "pause", "resume"}
             and method == "POST"
         ):
@@ -7421,7 +7435,9 @@ class MediaFlowApi:
                         "taskId": current.task_id,
                         "task": task_operator_document(current),
                         "lifecycle": lifecycle,
-                        "continuation": submission.continuation.document(),
+                        "continuation": scope_continuation_operator_document(
+                            submission.continuation
+                        ),
                         "jobId": submission.job.job_id,
                         "durableOutcome": next(
                             (
@@ -12917,7 +12933,147 @@ class MediaFlowApi:
         # the panel renders only what the backend would really accept, and a run
         # with neither object publishes `null` instead of a guessed control.
         document["lifecycle"] = self._operations_run_lifecycle(overview, principal)
+        # The selected run's durable continuation chain.  A paused run whose
+        # remaining scope was already continued keeps a native entry to the run
+        # that really owns that scope, so the operator never has to guess an
+        # internal identifier and never repeats finished work.
+        document["continuation"] = self._operations_run_continuation(overview)
         return self._response(start_response, 200, document)
+
+    def _operations_run_continuation(self, overview) -> dict[str, object] | None:
+        """The bounded, redacted continuation evidence of one selected run.
+
+        The internal ``scope_path``, the configuration pin and the actor are
+        never published: the operator document carries only the bounded
+        identifiers the Web needs to follow the linked continuation run, plus
+        the run's own truthful next action.
+        """
+
+        repository = self._repository
+        task_id = getattr(overview, "task_id", None)
+        if repository is None or not isinstance(task_id, str) or not task_id:
+            return None
+        lister = getattr(repository, "list_scope_continuations", None)
+        if not callable(lister):
+            return None
+        try:
+            values = tuple(lister(task_id, limit=8))
+        except Exception:
+            return None
+        if not values:
+            return None
+        latest = values[0]
+        document = scope_continuation_operator_document(latest)
+        document["attemptCount"] = len(values)
+        document["truncated"] = len(values) >= 8
+        return document
+
+    def _remaining_scope_obstacle(self):
+        """The shared continuation obstacle the Preview admission reuses.
+
+        The recovery entry is offered for exactly the refusal the real admission
+        boundary would return, so it delegates to that boundary's own decision
+        instead of re-deriving the pin or live-authority rules here.
+        """
+
+        service = self._scope_continuations
+
+        def obstacle(task):
+            reason, message, next_action = service.obstacle(task)
+            return (reason.value if reason is not None else None), message, next_action
+
+        return obstacle
+
+    def _operations_run_remaining_scope_preview(
+        self, task_id: str, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal
+    ):
+        """Admit one native exact Preview of a paused run's remaining scope.
+
+        This is the recovery path RO-5 promises when Continue cannot retain live
+        execution authority.  It admits a zero-mutation review of the run's
+        *durable* remaining scope under the run's own immutable historical pin,
+        and grants no execution authority: the operator still has to make one
+        fresh explicit execution intent through the ordinary Execute action.
+        """
+
+        self._require(principal, ApiPermission.MANAGE_MANUAL_ORGANIZE)
+        if self._manual_previews is None or not callable(
+            getattr(self._manual_previews, "create_remaining_scope_from_task", None)
+        ):
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "the exact Preview service is unavailable",
+                details={
+                    "durableState": "no_preview_created",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": "restore a valid Active runtime and Preview services, then retry",
+                },
+            )
+        self._require_empty_query(environ, "remaining-scope Preview")
+        # An empty body is the normal submission; when a body is supplied it may
+        # carry only the optimistic version the operator read, exactly like the
+        # sibling resume control.
+        raw_length = str(environ.get("CONTENT_LENGTH", "")).strip()
+        if raw_length and raw_length != "0":
+            document = self._document(environ)
+            if set(document).difference({"expectedVersion"}):
+                raise ValueError("remaining-scope Preview accepts only the paused Task identity")
+            expected_version = document.get("expectedVersion")
+            if expected_version is not None and (
+                not isinstance(expected_version, str)
+                or not expected_version.strip()
+                or len(expected_version) > 128
+            ):
+                raise ValueError("remaining-scope Preview expectedVersion is invalid")
+            current = repository.get_task(task_id) if (repository := self._repository) else None
+            if (
+                expected_version is not None
+                and current is not None
+                and expected_version != current.updated_at.isoformat()
+            ):
+                return self._error(
+                    start_response,
+                    409,
+                    "lifecycle_conflict",
+                    "the paused run changed since it was read; no Preview was created",
+                    details={
+                        "reason": "stale_task_state",
+                        "durableState": "the run keeps its current durable state",
+                        "sideEffects": "none",
+                        "retrySafe": True,
+                        "currentVersion": current.updated_at.isoformat(),
+                        "nextAction": "refresh the run and request the exact Preview again",
+                    },
+                )
+        repository = self._repository
+        task = repository.get_task(task_id) if repository is not None else None
+        if task is None:
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                "the paused run was not found",
+                details={
+                    "reason": "task_not_found",
+                    "sideEffects": "none",
+                    "retrySafe": False,
+                    "nextAction": "refresh the run inventory and select the exact run again",
+                },
+            )
+        try:
+            preview = self._manual_previews.create_remaining_scope_from_task(
+                task_id,
+                actor=principal.principal_id,
+                obstacle=self._remaining_scope_obstacle(),
+            )
+        except ManualPreviewError as error:
+            return self._manual_step_error(start_response, error)
+        operator_document = self._organize_preview_document(preview, principal)
+        operator_document["runTaskId"] = task_id
+        return self._response(start_response, 201, operator_document)
 
     def _operations_run_lifecycle(self, overview, principal) -> dict[str, object] | None:
         """Backend-computed controls for one selected run, or ``None``."""

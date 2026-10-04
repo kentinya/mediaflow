@@ -40,6 +40,7 @@ function action(
   name: string,
   available: boolean,
   unavailableReason: string | null,
+  preview?: unknown,
 ) {
   return {
     action: name,
@@ -54,8 +55,20 @@ function action(
     sideEffects: "no Storage mutation",
     retrySafe: false,
     nextAction: "refresh the Task",
+    ...(preview === undefined ? {} : { preview }),
   };
 }
+
+const RECOVERY = {
+  available: true,
+  reason: null,
+  method: "POST",
+  path: "/api/v1/tasks/task-1/remaining-scope-previews",
+  requiresConfirmation: false,
+  sideEffects: "none",
+  durableOutcome: "a durable zero-mutation exact Preview is stored",
+  nextAction: "review the exact Preview, then authorize execution again",
+};
 
 describe("normalizeLifecycleProjection", () => {
   it("accepts a well-formed projection and exposes only advertised actions", () => {
@@ -188,5 +201,79 @@ describe("normalizeLifecycleProjection", () => {
   it("rejects a missing or non-object projection", () => {
     expect(() => normalizeLifecycleProjection(null, OBJECT)).toThrow();
     expect(() => normalizeLifecycleProjection("cancel", OBJECT)).toThrow();
+  });
+});
+
+describe("native continuation recovery normalization", () => {
+  it("normalizes the recovery entry of a withheld Continue", () => {
+    const model = normalizeLifecycleProjection(
+      projection({
+        state: "paused",
+        actions: [
+          action(
+            "resume",
+            false,
+            "the stored execute flag is not authority",
+            RECOVERY,
+          ),
+        ],
+      }),
+      { ...OBJECT, state: "paused" },
+    );
+    expect(model.actions[0]?.recovery).toEqual({
+      action: "preview",
+      method: "POST",
+      path: "/api/v1/tasks/task-1/remaining-scope-previews",
+      available: true,
+      confirmationRequired: false,
+      durableOutcome: "a durable zero-mutation exact Preview is stored",
+      sideEffects: "none",
+      nextAction: "review the exact Preview, then authorize execution again",
+    });
+  });
+
+  it("carries no recovery when the backend published none", () => {
+    const model = normalizeLifecycleProjection(
+      projection({
+        state: "paused",
+        actions: [action("resume", false, "the pinned revision is gone")],
+      }),
+      { ...OBJECT, state: "paused" },
+    );
+    expect(model.actions[0]?.recovery).toBeNull();
+  });
+
+  it("rejects a recovery entry that is not a POST instead of rendering it", () => {
+    expect(() =>
+      normalizeLifecycleProjection(
+        projection({
+          state: "paused",
+          actions: [
+            action("resume", false, "authority required", {
+              ...RECOVERY,
+              method: "DELETE",
+            }),
+          ],
+        }),
+        { ...OBJECT, state: "paused" },
+      ),
+    ).toThrow();
+  });
+
+  it("rejects a recovery entry that is not advertised as available", () => {
+    expect(() =>
+      normalizeLifecycleProjection(
+        projection({
+          state: "paused",
+          actions: [
+            action("resume", false, "authority required", {
+              ...RECOVERY,
+              available: false,
+            }),
+          ],
+        }),
+        { ...OBJECT, state: "paused" },
+      ),
+    ).toThrow();
   });
 });

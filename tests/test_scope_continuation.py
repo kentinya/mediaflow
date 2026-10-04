@@ -33,6 +33,8 @@ from pathlib import Path
 
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
+from mediaflow.application.file_catalog import FileCatalogService
+from mediaflow.application.metadata import MetadataProviderRegistry
 from mediaflow.application.scope_continuation import (
     ScopeContinuationService,
     ScopeContinuationWorkerService,
@@ -41,6 +43,7 @@ from mediaflow.application.scope_continuation import (
     is_continuable_task_command,
     remaining_scope,
 )
+from mediaflow.application.strategy_test import SyntheticMetadataProvider
 from mediaflow.application.task_runtime import PersistentTaskCoordinator
 from mediaflow.domain.automation import (
     AutomationCommand,
@@ -53,6 +56,7 @@ from mediaflow.domain.configuration_management import (
     ConfigurationStorageCheckStatus,
     ConfigurationStrategyTestStatus,
 )
+from mediaflow.domain.metadata import MediaCandidate, MediaType
 from mediaflow.domain.scope_continuation import (
     ScopeContinuationError,
     ScopeContinuationReason,
@@ -67,6 +71,7 @@ from mediaflow.domain.task_persistence import (
     TaskItemStatus,
 )
 from mediaflow.infrastructure.local_storage import LocalStorage
+from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
@@ -521,13 +526,21 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertEqual(body["sideEffects"], "none")
         self.assertFalse(body["retrySafe"])
         continuation = body["continuation"]
+        # The operator/API projection is bounded and redacted: it publishes the
+        # durable identifiers the Web needs and never the internal scope path,
+        # the configuration pin identity or the actor.
         self.assertEqual(continuation["status"], "queued")
-        self.assertEqual(continuation["source_task_id"], task.task_id)
+        self.assertEqual(continuation["sourceTaskId"], task.task_id)
         self.assertEqual(continuation["command"], "preview")
-        self.assertEqual(continuation["scope_path"], "Media")
-        self.assertEqual(continuation["item_limit"], 10)
-        self.assertEqual(continuation["configuration_snapshot_id"], active.revision_id)
+        self.assertEqual(continuation["itemLimit"], 10)
         self.assertEqual(continuation["boundary"], "paused_remaining_admitted_scope")
+        self.assertEqual(continuation["sideEffects"], "none")
+        self.assertNotIn("scope_path", continuation)
+        self.assertNotIn("scopePath", continuation)
+        self.assertNotIn("actor", continuation)
+        self.assertNotIn("configuration_snapshot_id", continuation)
+        self.assertNotIn("configuration_snapshot_digest", continuation)
+        self.assertNotIn(str(self.root), json.dumps(body))
 
         job = self.repository.get_job(body["jobId"])
         self.assertIsNotNone(job)
@@ -541,9 +554,38 @@ class ScopeContinuationTests(unittest.TestCase):
         self.assertEqual(
             [item.item_id for item in self.repository.list_items(task.task_id)], ["item-a"]
         )
-        # The continuation is bound to the real Active revision, never a
-        # client-supplied identity.
-        self.assertEqual(continuation["configuration_snapshot_id"], active.revision_id)
+        # The durable row still carries the exact internal pin the Worker needs.
+        stored = self.repository.get_scope_continuation_for_job(body["jobId"])
+        self.assertEqual(stored.configuration_snapshot_id, active.revision_id)
+        self.assertEqual(stored.scope_path, "Media")
+
+    def test_admission_response_never_publishes_an_absolute_scope_path(self) -> None:
+        """RO-7: the control response stays behind the redaction boundary.
+
+        A legally admitted scoped run can carry an absolute host path in its
+        durable ``scope_path``.  The accepted control must never echo it: the
+        Worker keeps the full internal row and the operator reads a bounded
+        projection instead.
+        """
+
+        api, _active = self._activate()
+        absolute = str(self.root / "source" / "Media")
+        task = self._api_paused_task(scope_path=absolute, item_limit=2)
+        status, body = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/resume",
+            method="POST",
+            body=None,
+            token="operator-token",
+        )
+        self.assertEqual(status, 202, body)
+        payload = json.dumps(body)
+        self.assertNotIn(absolute, payload)
+        self.assertNotIn(str(self.root), payload)
+        self.assertNotIn("scope_path", body["continuation"])
+        # The internal row keeps the exact original scope the Worker needs.
+        stored = self.repository.get_scope_continuation_for_job(body["jobId"])
+        self.assertEqual(stored.scope_path, absolute)
 
     def test_duplicate_admission_never_queues_the_remaining_scope_twice(self) -> None:
         api, _active = self._activate()
@@ -665,12 +707,77 @@ class ScopeContinuationTests(unittest.TestCase):
         # live-authority checker refuses: a stored boolean is not authority.
         self.assertFalse(definition_occurrence_authority(self.repository, (), None)(task))
 
-        read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="operator-token")
+        # The recovery entry belongs to a principal that may really admit it, so
+        # the projection is read with the manage permission in hand.
+        read_status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
         self.assertEqual(read_status, 200)
         resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
         self.assertFalse(resume["available"])
         self.assertIn("stored execute flag is not authority", resume["unavailableReason"])
         self.assertIn("exact Preview", resume["nextAction"])
+        # The native recovery entry is published with the refusal, so the Web
+        # renders a real control instead of an instruction with no surface.
+        preview = resume["preview"]
+        self.assertTrue(preview["available"])
+        self.assertEqual(preview["method"], "POST")
+        self.assertEqual(preview["path"], f"/api/v1/tasks/{task.task_id}/remaining-scope-previews")
+        self.assertEqual(preview["sideEffects"], "none")
+        self.assertIn("grants no execution authority", preview["durableOutcome"])
+
+    def test_the_native_preview_action_is_only_published_for_the_authority_refusal(self) -> None:
+        """A withheld Continue explains itself, and only that refusal links Preview.
+
+        The Web contract rejects an available control that also carries a
+        reason, so the projection must stay exactly one decision: the native
+        Preview entry belongs to the authority refusal alone, never to an
+        unrelated obstacle such as an unresolvable pin.
+        """
+
+        api, _active = self._activate()
+        for scope, snapshot, digest, expected_code, expects_preview in (
+            ("Media", None, None, "snapshot_unavailable", False),
+            ("Media", "snap-gone", "digest-gone", "snapshot_unavailable", False),
+        ):
+            task = self._api_paused_task(
+                task_id=f"task-{expected_code}-{digest}",
+                scope_path=scope,
+                snapshot_id=snapshot,
+                snapshot_digest=digest,
+            )
+            status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
+            self.assertEqual(status, 200)
+            resume = next(
+                item for item in detail["lifecycle"]["actions"] if item["action"] == "resume"
+            )
+            self.assertFalse(resume["available"])
+            self.assertIsNotNone(resume["unavailableReason"])
+            self.assertEqual("preview" in resume, expects_preview)
+
+        refused = self._api_paused_task(
+            task_id="task-authority", scope_path="Media", execute_authorized=True
+        )
+        status, detail = request(api, f"/api/v1/tasks/{refused.task_id}", token="admin-token")
+        self.assertEqual(status, 200)
+        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
+        self.assertFalse(resume["available"])
+        self.assertTrue(resume["preview"]["available"])
+
+    def test_a_reader_without_the_manage_permission_gets_no_preview_control(self) -> None:
+        """The recovery control is bound to the permission that would admit it."""
+
+        api, _active = self._activate()
+        task = self._api_paused_task(scope_path="Media", execute_authorized=True)
+        status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="viewer-token")
+        self.assertEqual(status, 200)
+        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
+        self.assertFalse(resume["available"])
+        self.assertNotIn("preview", resume)
+        # A principal that may manage manual work but not control the Task still
+        # receives the recovery entry, because that is what it may really do.
+        status, detail = request(api, f"/api/v1/tasks/{task.task_id}", token="admin-token")
+        self.assertEqual(status, 200)
+        resume = next(item for item in detail["lifecycle"]["actions"] if item["action"] == "resume")
+        self.assertTrue(resume["preview"]["available"])
 
     def test_read_only_principal_cannot_continue(self) -> None:
         api, _active = self._activate()
@@ -1244,6 +1351,173 @@ class ScopeContinuationTests(unittest.TestCase):
             )
         self.assertIs(raised.exception.reason, ScopeContinuationReason.SNAPSHOT_UNAVAILABLE)
 
+    # -- recorded continuation chain (B P1: no repeated finished scope) ---
+
+    def _complete_continuation(
+        self, task: PersistentTask, *, new_task_id: str, item_source: str | None = None
+    ):
+        """Drive one real admission + Worker completion of ``task``'s scope.
+
+        The continuation Job is claimed and closed through the production
+        repository methods, and the new Task is finished, so the fixture holds
+        exactly the durable state the real Worker leaves behind.
+        """
+
+        service = self._service()
+        submission = self._admit(service, task)
+        self.repository.mark_scope_continuation_running(submission.job.job_id)
+        if item_source is not None:
+            self._item(new_task_id, f"{new_task_id}:item", item_source, TaskItemStatus.SUCCESS)
+            self._result(new_task_id, f"{new_task_id}:item")
+        self.repository.bind_scope_continuation_task(submission.job.job_id, new_task_id)
+        return submission
+
+    def _child_task(self, task: PersistentTask, new_task_id: str, *, status) -> PersistentTask:
+        child = PersistentTask(
+            new_task_id,
+            task.command,
+            status,
+            task.execute_authorized,
+            NOW,
+            NOW,
+            started_at=NOW,
+            completed_at=NOW if status is not PersistentTaskStatus.PAUSED else None,
+            scope_path=task.scope_path,
+            item_limit=task.item_limit,
+            configuration_snapshot_id=task.configuration_snapshot_id,
+            configuration_snapshot_digest=task.configuration_snapshot_digest,
+        )
+        self.repository.create_task(child)
+        return child
+
+    def test_a_finished_continuation_chain_has_no_remaining_scope(self) -> None:
+        """B P1-1: a completed continuation must never be admitted again.
+
+        The original paused Task stays ``paused`` after its remaining scope was
+        continued and finished.  Its item budget is exhausted across the chain,
+        so a second Continue must be refused with zero queued work instead of
+        re-processing the same file.
+        """
+
+        api, _active = self._activate()
+        task = self._api_paused_task(scope_path="Media", item_limit=2)
+        self._item(task.task_id, "item-a", "Media/Five.2005.mkv", TaskItemStatus.SUCCESS)
+        self._result(task.task_id, "item-a")
+        child = self._child_task(task, "task-child", status=PersistentTaskStatus.RUNNING)
+        submission = self._admit(self._service(), task)
+        self.repository.mark_scope_continuation_running(submission.job.job_id)
+        self.repository.bind_scope_continuation_task(submission.job.job_id, child.task_id)
+        # The continuation discovered and succeeded on the one remaining source.
+        self._item(child.task_id, "child-item", "Media/Six.2006.mkv", TaskItemStatus.SUCCESS)
+        self._result(child.task_id, "child-item")
+        self.repository.complete_scope_continuation(
+            submission.job.job_id, new_task_id=child.task_id, success=True
+        )
+        self.repository.update_task(
+            replace(child, status=PersistentTaskStatus.COMPLETED, updated_at=NOW)
+        )
+
+        # The whole chain's recorded items now exhaust the original budget.
+        remaining, recorded, remaining_limit = remaining_scope(self.repository, task)
+        self.assertEqual(remaining_limit, 0)
+        self.assertEqual(remaining, ())
+        self.assertEqual(
+            recorded,
+            {("source-storage", "Media/Five.2005.mkv"), ("source-storage", "Media/Six.2006.mkv")},
+        )
+        self.assertIs(
+            continuation_obstacle(self.repository, task, lambda *_: None)[0],
+            ScopeContinuationReason.NO_REMAINING_SCOPE,
+        )
+
+        jobs_before = len(self.repository.list_jobs(limit=100))
+        status, body = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/resume",
+            method="POST",
+            body=None,
+            token="operator-token",
+        )
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["details"]["reason"], "no_remaining_scope")
+        self.assertEqual(body["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(len(self.repository.list_jobs(limit=100)), jobs_before)
+        self.assertEqual(len(self.repository.list_scope_continuations(task.task_id)), 1)
+
+    def test_a_still_paused_descendant_owns_the_remaining_scope(self) -> None:
+        """A continuation that paused again owns its own remaining scope.
+
+        Continuing the original run would queue the same remaining work twice,
+        so the original must be refused and the operator routed to the linked
+        continuation run.
+        """
+
+        api, _active = self._activate()
+        task = self._api_paused_task(scope_path="Media", item_limit=5)
+        self._item(task.task_id, "item-a", "Media/one.mkv", TaskItemStatus.SUCCESS)
+        self._result(task.task_id, "item-a")
+        child = self._child_task(task, "task-child", status=PersistentTaskStatus.PAUSED)
+        self._item(child.task_id, "child-item", "Media/two.mkv", TaskItemStatus.PAUSED)
+        submission = self._admit(self._service(), task)
+        self.repository.mark_scope_continuation_running(submission.job.job_id)
+        self.repository.bind_scope_continuation_task(submission.job.job_id, child.task_id)
+        self.repository.complete_scope_continuation(
+            submission.job.job_id,
+            new_task_id=child.task_id,
+            success=False,
+            error="the continuation paused again before completing its remaining scope",
+        )
+
+        # The chain owner is the paused descendant, not the original run.
+        from mediaflow.application.scope_continuation import chain_owner
+
+        self.assertEqual(chain_owner(self.repository, task).task_id, child.task_id)
+        self.assertIs(
+            continuation_obstacle(self.repository, task, lambda *_: None)[0],
+            ScopeContinuationReason.CONTINUATION_OWNED_ELSEWHERE,
+        )
+        status, body = request(
+            api,
+            f"/api/v1/tasks/{task.task_id}/resume",
+            method="POST",
+            body=None,
+            token="operator-token",
+        )
+        self.assertEqual(status, 409, body)
+        self.assertEqual(body["error"]["details"]["reason"], "continuation_owned_elsewhere")
+        # The descendant itself still has a real remaining scope to continue.
+        self.assertIsNone(continuation_obstacle(self.repository, child, lambda *_: None)[0])
+
+    def test_projection_advertises_the_linked_continuation_of_a_finished_run(self) -> None:
+        """The selected run publishes its bounded continuation evidence."""
+
+        api, _active = self._activate()
+        task = self._api_paused_task(scope_path="Media", item_limit=2)
+        self._item(task.task_id, "item-a", "Media/Five.2005.mkv", TaskItemStatus.SUCCESS)
+        self._result(task.task_id, "item-a")
+        child = self._child_task(task, "task-child", status=PersistentTaskStatus.RUNNING)
+        submission = self._admit(self._service(), task)
+        self.repository.mark_scope_continuation_running(submission.job.job_id)
+        self.repository.bind_scope_continuation_task(submission.job.job_id, child.task_id)
+        self.repository.complete_scope_continuation(
+            submission.job.job_id, new_task_id=child.task_id, success=True
+        )
+
+        status, overview = request(api, f"/api/v1/operations/runs/{task.task_id}")
+        self.assertEqual(status, 200, overview)
+        continuation = overview["continuation"]
+        self.assertEqual(continuation["continuationId"], submission.continuation.continuation_id)
+        self.assertEqual(continuation["status"], "completed")
+        self.assertEqual(continuation["newTaskId"], child.task_id)
+        self.assertEqual(continuation["jobId"], submission.job.job_id)
+        self.assertEqual(continuation["attemptCount"], 1)
+        self.assertEqual(continuation["sideEffects"], "none")
+        # The bounded projection never publishes the internal scope or the pin.
+        payload = json.dumps(overview)
+        self.assertNotIn("Media/Five", payload)
+        self.assertNotIn("scope_path", payload)
+        self.assertNotIn(str(self.root), payload)
+
 
 class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
     """The live-authority decision is real, shared and impossible to bypass.
@@ -1769,6 +2043,422 @@ class ScopeContinuationWorkerJourneyTests(unittest.TestCase):
         self.assertEqual(
             sorted(path.name for path in (self.root / "Incoming").iterdir()), ["one.mkv"]
         )
+
+    def test_the_worker_never_refuses_the_continuation_it_claimed(self) -> None:
+        """The claimed continuation's own Job is excluded from the duplicate check.
+
+        Without that exclusion the Worker would re-read its own active
+        continuation as a duplicate and refuse the very work it was admitted to
+        do, so the exclusion is a correctness requirement, not a convenience.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "first.mkv").write_bytes(b"first")
+        (self.root / "Incoming" / "second.mkv").write_bytes(b"second")
+        original = self._paused_scan(active)
+        service = ScopeContinuationService(self.repository, snapshot_validator=lambda *_: None)
+        submission = service.submit(
+            original.task_id,
+            expected_version=None,
+            actor="operator",
+            maximum_active_jobs=10,
+        )
+        # The claimed continuation is active while the Worker prepares it.
+        self.repository.mark_scope_continuation_running(submission.job.job_id)
+        prepared = service.prepare(submission.job.job_id)
+        self.assertEqual(prepared.source_task.task_id, original.task_id)
+        # A scan records its sources as it discovers them, so the remaining
+        # *rows* are still empty here; the remaining budget and the exclusion
+        # set are what the Worker's discovery walk really consumes.
+        self.assertIsNone(prepared.remaining_limit)
+        self.assertEqual(prepared.already_recorded, frozenset())
+        # Admission from another surface still sees the duplicate.
+        with self.assertRaises(ScopeContinuationError) as raised:
+            service.submit(
+                original.task_id,
+                expected_version=None,
+                actor="operator",
+                maximum_active_jobs=10,
+            )
+        self.assertIs(raised.exception.reason, ScopeContinuationReason.CONTINUATION_EXISTS)
+
+    def test_native_remaining_scope_preview_reviews_only_the_eligible_items(self) -> None:
+        """The native recovery path previews the durable remaining scope.
+
+        A paused mutation-authorized run whose live authority is gone has no
+        Continue, but the operator must still be able to review exactly what is
+        left under the run's own immutable pin.  The admission is zero-mutation,
+        excludes the already-decided sibling, and grants no execution authority.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "Kept.2006.mkv").write_bytes(b"kept")
+        (self.root / "Incoming" / "Left.2005.mkv").write_bytes(b"left")
+        original = self._paused_mutation_scan(active, discovered="Incoming/Kept.2006.mkv")
+        api = self._api(config)
+
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 201, document)
+        self.assertEqual(document["journey"], "organize")
+        self.assertEqual(document["runTaskId"], original.task_id)
+        self.assertEqual(document["zeroMutation"], True)
+        self.assertEqual(document["sideEffects"], "none")
+        # Every reviewed item really produced a plan: the pinned analysis
+        # dependencies are live, so the Preview is an actionable review rather
+        # than a placeholder that would make Execute impossible.
+        self.assertEqual([item["status"] for item in document["items"]], ["previewed"])
+        self.assertIn(document["status"], {"previewed", "partial"})
+        # Only the undecided source is reviewed; the recorded sibling is never
+        # re-offered, and the plan runs under the run's own historical pin.
+        self.assertEqual(
+            [item["source"]["path"] for item in document["items"]], ["Incoming/Left.2005.mkv"]
+        )
+        self.assertEqual(document["configurationSnapshotId"], active.revision_id)
+        self.assertIn("previewId", document)
+        # The exact Preview grants no authority: the operator still has to make
+        # one fresh explicit execution intent.
+        self.assertEqual(document["actions"]["execute"]["requiresConfirmation"], True)
+        payload = json.dumps(document)
+        self.assertNotIn(str(self.root), payload)
+        self.assertNotIn("scope_path", payload)
+        # Zero Storage mutation happened during the review.
+        self.assertEqual(
+            sorted(path.name for path in (self.root / "Incoming").iterdir()),
+            ["Kept.2006.mkv", "Left.2005.mkv"],
+        )
+
+    def test_native_remaining_scope_preview_refuses_a_run_with_no_remaining_scope(self) -> None:
+        """A fully-decided run has nothing to review and is refused truthfully."""
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "only.mkv").write_bytes(b"only")
+        original = self._paused_mutation_scan(active)
+        api = self._api(config)
+        self.coordinator.record_discovered(
+            original.task_id,
+            "source-storage",
+            "source",
+            "Incoming/only.mkv",
+            "source-storage:Incoming/only.mkv",
+        )
+        item = self.repository.list_items(original.task_id)[0]
+        self.repository.upsert_item(
+            replace(item, status=TaskItemStatus.SUCCESS, updated_at=datetime.now(UTC))
+        )
+        self.repository.append_result(
+            PersistentResultRecord(
+                "only:1",
+                original.task_id,
+                item.item_id,
+                "source-storage",
+                "Incoming/only.mkv",
+                "media-target",
+                "Movies/Only/Only.mkv",
+                "C",
+                "tmdb",
+                "1",
+                "C",
+                "A",
+                "A",
+                "A",
+                "MOVE",
+                "success",
+                NOW,
+                title="Only",
+                effect_certainty="verified_complete",
+            )
+        )
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, document)
+        self.assertEqual(document["error"]["code"], "no_remaining_scope")
+        self.assertEqual(document["error"]["details"]["sideEffects"], "none")
+        self.assertEqual(
+            self.repository.list_manual_previews_by_scope("resource_library", "source"), ()
+        )
+
+    def test_native_remaining_scope_preview_never_widens_an_unresolvable_scope(self) -> None:
+        """A scope that is not in the pinned runtime is refused, not broadened.
+
+        Broadening it would review (and could later execute) work the original
+        run never admitted, so the recovery path must fail closed.
+        """
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "left.mkv").write_bytes(b"left")
+        task = PersistentTask(
+            "task-outside",
+            "preview",
+            PersistentTaskStatus.RUNNING,
+            True,
+            NOW,
+            NOW,
+            started_at=NOW,
+            scope_path="Somewhere/Else",
+            item_limit=2,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+        )
+        self.repository.create_task(task)
+        self.repository.request_task_pause(task.task_id, NOW)
+        paused = self.coordinator.acknowledge_pause(task.task_id)
+        api = self._api(config)
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{paused.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, document)
+        self.assertEqual(document["error"]["code"], "scope_unresolved")
+        self.assertEqual(document["error"]["details"]["sideEffects"], "none")
+        # Nothing was minted and the out-of-scope file was never reviewed.
+        self.assertEqual(
+            self.repository.list_manual_previews_by_scope("resource_library", "source"), ()
+        )
+        self.assertNotIn("left.mkv", json.dumps(document))
+
+    def test_the_pinned_recovery_path_never_relaxes_the_ordinary_files_rule(self) -> None:
+        """A historical pin is opt-in, and only for the remaining-scope path.
+
+        The ordinary Files admission must keep hard-requiring the current Active
+        revision; otherwise a superseded or draft revision could mint an
+        ordinary Preview. The opt-in is therefore proven by its own signature
+        and by the ordinary path still resolving the *current* Active revision.
+        """
+
+        import inspect
+
+        from mediaflow.application.manual_organize import ManualOrganizeIntentService
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "left.mkv").write_bytes(b"left")
+        parameters = inspect.signature(ManualOrganizeIntentService.create_from_sources).parameters
+        # The historical-pin behaviour is opt-in: the default keeps the strict
+        # current-Active rule for every existing caller.
+        self.assertIn("pinned_snapshot", parameters)
+        self.assertIs(parameters["pinned_snapshot"].default, False)
+
+        configuration_repository = SQLiteConfigurationRepository(self.database)
+        self.addCleanup(configuration_repository.close)
+        service = ManagedConfigurationService(
+            configuration_repository, bootstrap_database_path=str(self.database)
+        )
+        intents = ManualOrganizeIntentService(
+            self.repository,
+            FileCatalogService(
+                InMemoryFileIndexRepository(),
+                ("source",),
+                ("source-storage",),
+                task_repository=self.repository,
+            ),
+            configuration_service=service,
+        )
+        # The ordinary path resolves the current Active revision, never a
+        # caller-supplied historical one.
+        current = intents._active_snapshot()
+        self.assertEqual(current.snapshot_id, active.revision_id)
+        self.assertEqual(current.digest, active.digest)
+
+    def test_native_remaining_scope_preview_requires_the_manage_permission(self) -> None:
+        """A READ-only principal can never mint a Preview."""
+
+        config, active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "left.mkv").write_bytes(b"left")
+        original = self._paused_mutation_scan(active)
+        api = self._api(config)
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{original.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="viewer-token",
+        )
+        self.assertEqual(status, 403, document)
+        self.assertEqual(
+            self.repository.list_manual_previews_by_scope("resource_library", "source"), ()
+        )
+
+    def test_native_remaining_scope_preview_is_refused_while_the_pin_is_unresolvable(self) -> None:
+        """A run whose historical revision is gone is refused, not repinned."""
+
+        config, _active = self._activate(scope="Incoming")
+        (self.root / "Incoming" / "left.mkv").write_bytes(b"left")
+        task = PersistentTask(
+            "task-unpinned",
+            "preview",
+            PersistentTaskStatus.RUNNING,
+            True,
+            NOW,
+            NOW,
+            started_at=NOW,
+            configuration_snapshot_id="snap-gone",
+            configuration_snapshot_digest="digest-gone",
+        )
+        self.repository.create_task(task)
+        self.repository.request_task_pause(task.task_id, NOW)
+        paused = self.coordinator.acknowledge_pause(task.task_id)
+        api = self._api(config)
+        status, document = request(
+            api,
+            f"/api/v1/tasks/{paused.task_id}/remaining-scope-previews",
+            method="POST",
+            body=None,
+            token="admin-token",
+        )
+        self.assertEqual(status, 409, document)
+        self.assertEqual(document["error"]["code"], "snapshot_unavailable")
+        self.assertEqual(document["error"]["details"]["sideEffects"], "none")
+        self.assertNotIn("mediaflow tasks", json.dumps(document))
+        self.assertNotIn(str(self.root), json.dumps(document))
+
+    def _api(self, config: Path):
+        """One API over the managed runtime of this journey."""
+
+        from mediaflow.infrastructure.runtime_configuration import (
+            load_managed_runtime_configuration,
+            with_managed_snapshot,
+        )
+
+        configuration_repository = SQLiteConfigurationRepository(self.database)
+        self.addCleanup(configuration_repository.close)
+        service = ManagedConfigurationService(
+            configuration_repository,
+            bootstrap_database_path=str(self.database),
+        )
+        document = json.loads(config.read_text(encoding="utf-8"))
+        active = service.active()
+        assert active is not None
+        runtime = with_managed_snapshot(
+            load_managed_runtime_configuration(
+                active.document, bootstrap_database_path=str(self.database)
+            ),
+            snapshot_id=active.revision_id,
+            digest=active.digest,
+        )
+        storages = runtime.create_storages(
+            external={
+                "source-storage": LocalStorage("source-storage", self.root),
+                "media-target": LocalStorage("media-target", self.root / "Target"),
+            }
+        )
+        # The manual Preview/Intent services require a FileCatalog; the
+        # remaining-scope path itself never reads the FileIndex, so one bounded
+        # catalog over the same runtime is enough to assemble the API.
+        from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository
+
+        catalog = FileCatalogService(
+            InMemoryFileIndexRepository(),
+            ("source",),
+            ("source-storage",),
+            task_repository=self.repository,
+        )
+        return MediaFlowApi(
+            self.repository,
+            None,
+            principals=(ADMIN, VIEWER, OPERATOR),
+            configuration_service=service,
+            bootstrap_document=document,
+            storage_adapters=storages,
+            file_catalog=catalog,
+            # The exact Preview runs the real analysis pipeline; a deterministic
+            # in-process provider keeps the journey offline while still proving
+            # the plan is produced under the run's own pinned revision.
+            metadata_provider_registry_factory=lambda runtime: MetadataProviderRegistry(
+                (
+                    SyntheticMetadataProvider(
+                        (
+                            MediaCandidate(
+                                "tmdb",
+                                "100",
+                                MediaType.MOVIE,
+                                "Left",
+                                year=2005,
+                                genres=("Animation",),
+                                countries=("JP",),
+                            ),
+                        )
+                    ),
+                )
+            ),
+            storage_browser_cursor_secret="scope-continuation-journey-secret",
+        )
+
+    def _paused_mutation_scan(self, active, *, discovered: str | None = None):
+        """One paused, mutation-authorized run with no live reusable authority.
+
+        This is the exact durable state RO-5 must recover from: the original
+        admission was authorized, but the one-shot authority is consumed, so a
+        stored boolean is not authority and Continue is refused.
+        """
+
+        task = PersistentTask(
+            "task-authority",
+            "preview",
+            PersistentTaskStatus.RUNNING,
+            True,
+            NOW,
+            NOW,
+            started_at=NOW,
+            scope_path="Incoming",
+            item_limit=4,
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+        )
+        self.repository.create_task(task)
+        if discovered is not None:
+            self.coordinator.record_discovered(
+                task.task_id,
+                "source-storage",
+                "source",
+                discovered,
+                f"source-storage:{discovered}",
+            )
+            item = next(
+                value
+                for value in self.repository.list_items(task.task_id)
+                if value.source_path == discovered
+            )
+            self.repository.upsert_item(
+                replace(item, status=TaskItemStatus.SUCCESS, updated_at=datetime.now(UTC))
+            )
+            self.repository.append_result(
+                PersistentResultRecord(
+                    f"{item.item_id}:1",
+                    task.task_id,
+                    item.item_id,
+                    "source-storage",
+                    discovered,
+                    "media-target",
+                    "Movies/Kept.2006/Kept.2006.mkv",
+                    "C",
+                    "tmdb",
+                    "1",
+                    "C",
+                    "A",
+                    "A",
+                    "A",
+                    "MOVE",
+                    "success",
+                    NOW,
+                    title="Kept",
+                    effect_certainty="verified_complete",
+                )
+            )
+        self.repository.request_task_pause(task.task_id, NOW)
+        return self.coordinator.acknowledge_pause(task.task_id)
 
 
 if __name__ == "__main__":

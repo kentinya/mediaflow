@@ -366,6 +366,26 @@ def build_managed_fixture(
                         genres=("Animation",),
                         countries=("JP",),
                     ),
+                    # The authority-refusal fixture's own remaining sources, so
+                    # its exact Preview really produces an actionable plan.
+                    MediaCandidate(
+                        "tmdb",
+                        "107",
+                        MediaType.MOVIE,
+                        "Seven",
+                        year=2007,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
+                    MediaCandidate(
+                        "tmdb",
+                        "108",
+                        MediaType.MOVIE,
+                        "Eight",
+                        year=2008,
+                        genres=("Animation",),
+                        countries=("JP",),
+                    ),
                 )
             ),
         )
@@ -970,6 +990,12 @@ PIPELINE_SOURCE_FILE = "电影/Two.2002.mkv"
 #: must never repeat it) and the remaining one is the only work left.  Both are
 #: dedicated names, so the remaining-scope proof can never be confused with
 #: another journey's media.
+# The authority-refusal fixture's own ResourceLibrary-relative scope and its
+# two eligible remaining sources.
+AUTHORITY_SCOPE = "Authority"
+AUTHORITY_FIRST_FILE = "Seven.2007.mkv"
+AUTHORITY_SECOND_FILE = "Eight.2008.mkv"
+
 CONTINUATION_RECORDED_FILE = "Six.2006.mkv"
 CONTINUATION_SOURCE_FILE = "Five.2005.mkv"
 
@@ -1111,11 +1137,19 @@ def seed_authority_refusal(state: AppState) -> dict[str, object]:
     """
 
     active = state.managed.active
+    # A dedicated, ResourceLibrary-relative scope holding exactly two eligible
+    # sources, so the native exact Preview really has a remaining scope to
+    # review under the run's own pin.
+    source_root = state.managed.root / "source"
+    authority_root = source_root / AUTHORITY_SCOPE
+    authority_root.mkdir(parents=True, exist_ok=True)
+    (authority_root / AUTHORITY_FIRST_FILE).write_bytes(b"authority synthetic media")
+    (authority_root / AUTHORITY_SECOND_FILE).write_bytes(b"authority synthetic media two")
     coordinator = PersistentTaskCoordinator(state.repository, state.repository)
     task = coordinator.create(
         "preview",
         execute_authorized=True,
-        scope_path="Movies/Harness/Authority",
+        scope_path=AUTHORITY_SCOPE,
         item_limit=2,
         configuration_snapshot_id=active.revision_id,
         configuration_snapshot_digest=active.digest,
@@ -1125,7 +1159,12 @@ def seed_authority_refusal(state: AppState) -> dict[str, object]:
     paused = coordinator.acknowledge_pause(task.task_id)
     if paused.status is not PersistentTaskStatus.PAUSED:
         raise RuntimeError("authority-refusal fixture Task did not pause")
-    return {"taskId": task.task_id, "status": paused.status.value}
+    return {
+        "taskId": task.task_id,
+        "status": paused.status.value,
+        "scope": AUTHORITY_SCOPE,
+        "remainingSources": [AUTHORITY_FIRST_FILE, AUTHORITY_SECOND_FILE],
+    }
 
 
 def continuation_journey_state(state: AppState) -> dict[str, object]:

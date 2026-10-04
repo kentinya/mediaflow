@@ -49,6 +49,28 @@ export interface LifecycleAction {
   readonly sideEffects: string;
   readonly retrySafe: boolean;
   readonly nextAction: string;
+  /**
+   * The native recovery entry the backend publishes alongside a withheld
+   * control, or `null` when that control has no native recovery.
+   *
+   * RO-5 requires that a refused Continue never leaves the operator with copy
+   * and no surface: when the refusal is "no live execution authority", the
+   * backend also advertises the exact zero-mutation Preview of the remaining
+   * scope. It is a separate control with its own path, so it is normalized
+   * independently and never inferred from the refusal copy.
+   */
+  readonly recovery: LifecycleRecoveryAction | null;
+}
+
+export interface LifecycleRecoveryAction {
+  readonly action: "preview";
+  readonly method: "POST";
+  readonly path: string;
+  readonly available: true;
+  readonly confirmationRequired: boolean;
+  readonly durableOutcome: string;
+  readonly sideEffects: string;
+  readonly nextAction: string;
 }
 
 export interface LifecycleProjection {
@@ -81,6 +103,48 @@ export class LifecycleNormalizationError extends Error {
 
 function fail(): never {
   throw new LifecycleNormalizationError();
+}
+
+function readRecoveryAction(value: unknown): LifecycleRecoveryAction | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const source = readRecord(value, "lifecycle.action.recovery");
+  // The recovery entry is keyed by its own `preview` field, so its action name
+  // is implied by the envelope rather than repeated inside it. An entry that is
+  // not an available POST carries no actionable surface.
+  if (source["method"] !== "POST" || source["available"] !== true) {
+    fail();
+  }
+  try {
+    return {
+      action: "preview",
+      method: "POST",
+      path: normalizeBoundedText(
+        source["path"],
+        "lifecycle.action.recovery.path",
+      ),
+      available: true,
+      confirmationRequired: normalizeBoolean(
+        source["requiresConfirmation"],
+        "lifecycle.action.recovery.requiresConfirmation",
+      ),
+      durableOutcome: normalizeBoundedText(
+        source["durableOutcome"],
+        "lifecycle.action.recovery.durableOutcome",
+      ),
+      sideEffects: normalizeBoundedText(
+        source["sideEffects"],
+        "lifecycle.action.recovery.sideEffects",
+      ),
+      nextAction: normalizeBoundedText(
+        source["nextAction"],
+        "lifecycle.action.recovery.nextAction",
+      ),
+    };
+  } catch {
+    return fail();
+  }
 }
 
 function readAction(
@@ -145,6 +209,7 @@ function readAction(
         source["nextAction"],
         "lifecycle.action.nextAction",
       ),
+      recovery: readRecoveryAction(source["preview"]),
     };
   } catch {
     return fail();

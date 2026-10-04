@@ -3099,6 +3099,9 @@ function manualActionMatrixDocument(request, permitted) {
 const ORGANIZE_INTENT_ID = "organize-intent-e2e-001";
 const ORGANIZE_ITEM_ID = "organize-item-e2e-001";
 const ORGANIZE_PREVIEW_ID = "organize-preview-e2e-001";
+// Durable remaining-scope continuations recorded by the fake population, keyed
+// by the source Task. A run only publishes the evidence it really recorded.
+const CONTINUATIONS = new Map();
 const ORGANIZE_DESTRUCTIVE_PREVIEW_ID = "organize-preview-destructive-e2e-001";
 const ORGANIZE_HOSTILE_PREVIEW_ID = "organize-preview-hostile-e2e-001";
 const ORGANIZE_MISBOUND_PREVIEW_ID = "organize-preview-misbound-e2e-001";
@@ -10995,7 +10998,7 @@ const server = createServer(async (req, res) => {
     );
   }
 
-  function runRunDocument(run, progress, lifecycle) {
+  function runRunDocument(run, progress, lifecycle, continuation) {
     const attention = ATTENTION_RUN_STATUSES.includes(run.status);
     return {
       ...run,
@@ -11011,7 +11014,29 @@ const server = createServer(async (req, res) => {
       // for the exact durable object the run resolves to (linked Task, else
       // pre-Task Job, else none) — inventory rows never carry it.
       ...(lifecycle !== undefined ? { lifecycle } : {}),
+      // The run's durable continuation evidence, published only when this run
+      // really recorded one. It carries bounded identifiers and never the
+      // internal scope path or the configuration pin.
+      ...(continuation !== undefined ? { continuation } : {}),
     };
+  }
+
+  /**
+   * The durable continuation evidence of one run, or `undefined`.
+   *
+   * Only a run that really recorded a remaining-scope continuation publishes
+   * it, and the projection is bounded and redacted exactly like the Python
+   * `scope_continuation_operator_document`.
+   */
+  function runContinuationDocument(run) {
+    if (run.task_id === null) {
+      return undefined;
+    }
+    const recorded = CONTINUATIONS.get(run.task_id);
+    if (recorded === undefined) {
+      return undefined;
+    }
+    return recorded;
   }
 
   /**
@@ -11649,6 +11674,9 @@ const server = createServer(async (req, res) => {
     return { next, page, previous };
   }
 
+  // The exact durable Task commands with a supported remaining-scope boundary.
+  const CONTINUABLE_TASK_COMMANDS = new Set(["scan", "preview", "organize"]);
+
   function taskAction(action, label, available, unavailableReason, extra) {
     return {
       action,
@@ -11668,6 +11696,9 @@ const server = createServer(async (req, res) => {
       retrySafe: false,
       nextAction:
         extra?.nextAction ?? "refresh the Task to read its durable state",
+      // The native recovery entry a withheld control may advertise. It is
+      // carried through verbatim so the fake mirrors the Python projection.
+      ...(extra?.preview === undefined ? {} : { preview: extra.preview }),
     };
   }
 
@@ -11685,6 +11716,17 @@ const server = createServer(async (req, res) => {
       (task.command === "files_transfer" ||
         task.command === "media_files_transfer") &&
       task.status === "paused";
+    // The shared durable queued continuation boundary: a paused scan/preview/
+    // organize Task really does admit its remaining admitted scope for
+    // resident-Worker pickup (Slice 42 RO-5). A mutation-authorized Task whose
+    // live authority is gone is refused with the native exact-Preview recovery
+    // entry, exactly as the real backend projects it.
+    const continuable =
+      CONTINUABLE_TASK_COMMANDS.has(task.command) && task.status === "paused";
+    const authorityRequired =
+      continuable &&
+      task.execute_authorized === true &&
+      task.live_authority !== true;
     const uncertain = results.some(
       (result) => result.effect_certainty === "attempted_unverified",
     );
@@ -11752,11 +11794,15 @@ const server = createServer(async (req, res) => {
         taskAction(
           "resume",
           "Resume Task",
-          permitted && resumable,
-          resumable
-            ? null
-            : (permissionReason ??
-                "continuing one exact paused Task scope with its pinned configuration and successful-item exclusions is currently an operator CLI workflow; no durable queued command reproduces it, so MediaFlow does not advertise resume here"),
+          permitted && (resumable || (continuable && !authorityRequired)),
+          permissionReason ??
+            (resumable
+              ? null
+              : continuable
+                ? authorityRequired
+                  ? "the stored execute flag is not authority: the original execution authority was consumed, expired or revoked, so continuing would mutate media without a live reusable authority; review the exact Preview of the remaining scope and authorize execution again"
+                  : null
+                : "only a durably paused Task of a continuable kind has a remaining scope to continue"),
           resumable
             ? {
                 durableOutcome:
@@ -11766,13 +11812,39 @@ const server = createServer(async (req, res) => {
                 nextAction:
                   "resume re-queues the transfer; follow its progress in the Files workspace or Operations",
               }
-            : {
-                durableOutcome:
-                  "not offered: no durable queued continuation of this exact paused scope exists",
-                sideEffects: "none",
-                nextAction:
-                  "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), or leave it paused",
-              },
+            : continuable
+              ? {
+                  durableOutcome:
+                    "a durable continuation of this Task's exact remaining admitted scope is queued for the resident Worker, which preserves the original immutable pin and excludes every completed, ignored, waiting or uncertain item",
+                  sideEffects:
+                    "no Storage mutation in this request; the Worker later continues the remaining scope through OrganizerExecutor under its own claim and revalidated authority",
+                  nextAction: authorityRequired
+                    ? "open the run's exact Preview, review the remaining scope, and authorize execution again from 操作与任务"
+                    : "follow the linked continuation run for its independent per-item outcomes",
+                  ...(authorityRequired
+                    ? {
+                        preview: {
+                          available: true,
+                          reason: null,
+                          method: "POST",
+                          path: `/api/v1/tasks/${task.task_id}/remaining-scope-previews`,
+                          requiresConfirmation: false,
+                          sideEffects: "none",
+                          durableOutcome:
+                            "a durable zero-mutation exact Preview of the remaining eligible scope is stored under the run's original immutable pin; it grants no execution authority",
+                          nextAction:
+                            "review the exact Preview, then make one fresh explicit execution intent for only the eligible remaining scope",
+                        },
+                      }
+                    : {}),
+                }
+              : {
+                  durableOutcome:
+                    "not offered: no durable queued continuation of this exact paused scope exists",
+                  sideEffects: "none",
+                  nextAction:
+                    "review the Task's recorded per-item outcomes; only a paused continuable Task has a remaining scope",
+                },
         ),
       ],
     };
@@ -12289,13 +12361,91 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (action === "resume") {
-      // Only a durably paused bounded transfer has a real queued continuation
-      // boundary; every other paused scope is withheld with a bounded reason
-      // and an actionable next step, exactly like the Python contract.
+      // A durably paused bounded transfer re-queues its own authority; a paused
+      // scan/preview/organize Task admits one durable remaining-scope
+      // continuation for resident-Worker pickup. A mutation-authorized Task
+      // whose live authority is gone is refused with the native exact-Preview
+      // next action, exactly like the Python contract.
       const resumable =
         task.status === "paused" &&
         (task.command === "files_transfer" ||
           task.command === "media_files_transfer");
+      const continuable =
+        task.status === "paused" && CONTINUABLE_TASK_COMMANDS.has(task.command);
+      if (continuable && !resumable) {
+        if (task.execute_authorized === true && task.live_authority !== true) {
+          sendJson(res, 409, {
+            error: {
+              code: "authority_required",
+              message:
+                "the stored execute flag is not authority: the original execution authority was consumed, expired or revoked",
+              details: {
+                reason: "authority_required",
+                durableState:
+                  "the Task keeps its paused state, its recorded item outcomes and its completed effects; no further mutation was attempted",
+                sideEffects: "none",
+                retrySafe: false,
+                nextAction:
+                  "open the run's exact Preview, review the remaining scope, and authorize execution again from 操作与任务",
+              },
+            },
+          });
+          return;
+        }
+        const continuationId = `continuation-${task.task_id}`;
+        CONTINUATIONS.set(task.task_id, {
+          continuationId,
+          status: "queued",
+          command: task.command,
+          jobId: `job-${task.task_id}`,
+          newTaskId: null,
+          itemLimit: task.item_limit,
+          createdAt: "2026-08-22T12:41:00+00:00",
+          completedAt: null,
+          attemptCount: 1,
+          truncated: false,
+          nextAction:
+            "follow the linked continuation run for its independent per-item outcomes",
+          sideEffects: "none",
+        });
+        sendJson(res, 202, {
+          action,
+          taskId: task.task_id,
+          task,
+          lifecycle: taskLifecycle(
+            task,
+            TASK_RESULTS.filter((result) => result.task_id === task.task_id),
+          ),
+          continuation: {
+            continuationId,
+            sourceTaskId: task.task_id,
+            command: task.command,
+            itemLimit: task.item_limit,
+            boundary: "paused_remaining_admitted_scope",
+            status: "queued",
+            jobId: `job-${task.task_id}`,
+            newTaskId: null,
+            createdAt: "2026-08-22T12:41:00+00:00",
+            updatedAt: "2026-08-22T12:41:00+00:00",
+            startedAt: null,
+            completedAt: null,
+            error: null,
+            recovery: null,
+            nextAction:
+              "follow the linked continuation run for its independent per-item outcomes",
+            authorityStatement: null,
+            sideEffects: "none",
+          },
+          jobId: `job-${task.task_id}`,
+          durableOutcome:
+            "a durable continuation of this Task's exact remaining admitted scope is queued for the resident Worker, which preserves the original immutable pin and excludes every completed, ignored, waiting or uncertain item",
+          sideEffects: "none",
+          retrySafe: false,
+          nextAction:
+            "follow the linked continuation run for its independent per-item outcomes",
+        });
+        return;
+      }
       if (!resumable) {
         sendJson(res, 409, {
           error: {
@@ -12304,7 +12454,7 @@ const server = createServer(async (req, res) => {
               reason: "resume_unavailable",
               durableState: `a ${task.status} ${task.command} Task has no durable queued continuation`,
               nextAction:
-                "continue the paused Task from the operator terminal (mediaflow tasks resume <task-id>), or leave it paused",
+                "review the Task's recorded per-item outcomes; only a paused continuable Task has a remaining scope",
             },
           },
         });
@@ -12685,7 +12835,12 @@ const server = createServer(async (req, res) => {
     sendJson(
       res,
       200,
-      runRunDocument(run, runProgressDocument(run), runLifecycleDocument(run)),
+      runRunDocument(
+        run,
+        runProgressDocument(run),
+        runLifecycleDocument(run),
+        runContinuationDocument(run),
+      ),
     );
     return;
   }
@@ -13138,6 +13293,51 @@ const server = createServer(async (req, res) => {
       return;
     }
     sendJson(res, 201, organizePreviewDocument(state));
+    return;
+  }
+
+  if (
+    /^\/api\/v1\/tasks\/[^/]+\/remaining-scope-previews$/.test(url.pathname) &&
+    req.method === "POST"
+  ) {
+    if (!operationsGuard(res)) {
+      return;
+    }
+    const taskId = decodeURIComponent(url.pathname.split("/")[4] ?? "");
+    const task = FAKE_TASKS.find((value) => value.task_id === taskId);
+    if (task === undefined) {
+      sendJson(res, 404, { error: { code: "not_found" } });
+      return;
+    }
+    if (task.execute_authorized !== true || task.live_authority === true) {
+      // The recovery entry exists only for the authority refusal it recovers
+      // from; any other state is refused rather than silently re-scoped.
+      sendJson(res, 409, {
+        error: {
+          code: "no_remaining_scope",
+          message:
+            "this run has no remaining eligible item to review; every admitted item already has a decided outcome",
+          details: {
+            reason: "no_remaining_scope",
+            durableState: "rejected_without_mutation",
+            sideEffects: "none",
+            retrySafe: true,
+            nextAction:
+              "inspect the run's recorded per-item outcomes, or start a new bounded run from 操作与任务",
+          },
+        },
+      });
+      return;
+    }
+    const state = organizeState(session);
+    recordManualRequestForSession({
+      method: "POST",
+      objectId: ORGANIZE_PREVIEW_ID,
+      objectType: "organize_preview",
+      path: "/api/v1/tasks/:taskId/remaining-scope-previews",
+    });
+    const document = organizePreviewDocument(state);
+    sendJson(res, 201, { ...document, runTaskId: taskId });
     return;
   }
 

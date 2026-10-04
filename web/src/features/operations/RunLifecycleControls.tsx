@@ -24,6 +24,7 @@ import type { LifecycleMutationResult } from "../../shared/api/api-client";
 import {
   type LifecycleAction,
   type LifecycleProjection,
+  type LifecycleRecoveryAction,
 } from "../../entities/operations/lifecycle";
 
 /** Chinese operator labels for the three modelled lifecycle actions. */
@@ -152,6 +153,14 @@ export interface RunLifecycleControlsProps {
   readonly locked: boolean;
   /** True while the reconciling overview read is in flight. */
   readonly reconciling?: boolean;
+  /**
+   * Admit the native exact Preview the backend advertised for a withheld
+   * Continue (RO-5). The recovery entry carries its own backend path, so the
+   * component never invents the recovery surface or its scope.
+   */
+  readonly onPreview?: (recovery: LifecycleRecoveryAction) => void;
+  /** True while the exact Preview admission is in flight. */
+  readonly previewPending?: boolean;
 }
 
 export function RunLifecycleControls({
@@ -162,6 +171,8 @@ export function RunLifecycleControls({
   onReconcile,
   locked,
   reconciling = false,
+  onPreview,
+  previewPending = false,
 }: RunLifecycleControlsProps) {
   const available = projection.actions.filter((item) => item.available);
   const withheld = projection.actions.filter(
@@ -235,9 +246,31 @@ export function RunLifecycleControls({
         </ul>
       )}
       {withheldResume !== undefined && (
-        <p className="mf-dashboard-meta">
-          继续不可用的下一步:{withheldResume.nextAction}
-        </p>
+        <div className="mf-dashboard-meta">
+          <p>继续不可用的下一步:{withheldResume.nextAction}</p>
+          {/* The native recovery the backend advertised with the refusal. It is
+              rendered only from the backend projection, never inferred from the
+              refusal copy, so the operator gets a real surface instead of an
+              instruction they cannot act on. */}
+          {withheldResume.recovery !== null && onPreview !== undefined && (
+            <div className="mf-actions">
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                disabled={controlsDisabled || previewPending}
+                aria-busy={previewPending}
+                onClick={() => onPreview(withheldResume.recovery!)}
+              >
+                {previewPending
+                  ? "正在生成精确预览…"
+                  : "查看剩余范围的精确预览"}
+              </button>
+              <span className="mf-dashboard-meta">
+                {withheldResume.recovery.durableOutcome}
+              </span>
+            </div>
+          )}
+        </div>
       )}
       {/* The result region is announced without moving focus away from the
           control the operator just used. */}

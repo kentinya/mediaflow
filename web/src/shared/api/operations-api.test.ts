@@ -12,6 +12,7 @@ import {
   jobListUrl,
   mutateLifecycle,
   executeOrganizePreview,
+  submitRemainingScopePreview,
   runExportUrl,
   runInventoryUrl,
   runItemEvidenceUrl,
@@ -761,5 +762,41 @@ describe("manual Organize execution request", () => {
       allowOverwrite: false,
       allowSourceCleanup: true,
     });
+  });
+});
+
+describe("native remaining-scope Preview admission", () => {
+  it("posts only the run identity to the exact-Preview recovery route", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({ error: { code: "no_remaining_scope" } }, 409),
+    );
+
+    const result = await submitRemainingScopePreview("token", {
+      taskId: "task-006",
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      status: 409,
+      code: "no_remaining_scope",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    // The browser never submits a scope, a pin or a source identity: the
+    // backend resolves all of them from the run's own durable state.
+    expect(url).toBe("/api/v1/tasks/task-006/remaining-scope-previews");
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(String(init.body))).toEqual({});
+  });
+
+  it("refuses an unsafe run identity without a request", async () => {
+    const fetchMock = stubFetch(async () => jsonResponse({}, 201));
+
+    const result = await submitRemainingScopePreview("token", {
+      taskId: "../escape",
+    });
+
+    expect(result).toEqual({ ok: false, status: 0, code: "invalid_request" });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

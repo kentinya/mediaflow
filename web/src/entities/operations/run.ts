@@ -163,6 +163,33 @@ export interface RunSummary {
    * Only the single-run overview read publishes it; inventory rows carry
    * `null`. It is the only source of a rendered control. */
   readonly lifecycle: LifecycleProjection | null;
+  /** The run's durable continuation evidence, or `null` when the run never
+   * continued its remaining scope. Only the single-run overview read publishes
+   * it; inventory rows carry `null`. */
+  readonly continuation: RunContinuation | null;
+}
+
+/**
+ * Bounded continuation evidence of one run.
+ *
+ * The backend never publishes the internal scope path, the configuration pin or
+ * the actor here, so this projection carries only the durable identifiers the
+ * operator needs in order to follow the run that really owns the remaining
+ * scope.
+ */
+export interface RunContinuation {
+  readonly continuationId: string;
+  readonly status: string;
+  readonly command: string;
+  readonly jobId: string | null;
+  readonly newTaskId: string | null;
+  readonly itemLimit: number | null;
+  readonly createdAt: string;
+  readonly completedAt: string | null;
+  readonly attemptCount: number;
+  readonly truncated: boolean;
+  readonly nextAction: string;
+  readonly sideEffects: string;
 }
 
 export interface RunInventoryPage {
@@ -424,6 +451,7 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
   const jobId = optionalText(source, "job_id");
   const taskId = optionalText(source, "task_id");
   const lifecycle = normalizeRunLifecycle(source["lifecycle"], taskId, jobId);
+  const continuation = normalizeRunContinuation(source["continuation"]);
   return {
     runId: text(source, "run_id"),
     runKind: text(source, "run_kind"),
@@ -453,7 +481,82 @@ export function normalizeRunSummary(payload: unknown): RunSummary {
         ? null
         : normalizeRunProgress(source["progress"]),
     lifecycle,
+    continuation,
   };
+}
+
+function normalizeRunContinuation(value: unknown): RunContinuation | null {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const source = readRecord(value, "run.continuation");
+  try {
+    const attemptCount = normalizeBoundedCount(
+      source["attemptCount"],
+      "run.continuation.attemptCount",
+    );
+    const itemLimit =
+      source["itemLimit"] === null || source["itemLimit"] === undefined
+        ? null
+        : normalizeBoundedCount(
+            source["itemLimit"],
+            "run.continuation.itemLimit",
+          );
+    return {
+      continuationId: normalizeBoundedText(
+        source["continuationId"],
+        "run.continuation.continuationId",
+      ),
+      status: normalizeBoundedText(
+        source["status"],
+        "run.continuation.status",
+        64,
+      ),
+      command: normalizeBoundedText(
+        source["command"],
+        "run.continuation.command",
+        64,
+      ),
+      jobId:
+        source["jobId"] === null || source["jobId"] === undefined
+          ? null
+          : normalizeBoundedText(source["jobId"], "run.continuation.jobId"),
+      newTaskId:
+        source["newTaskId"] === null || source["newTaskId"] === undefined
+          ? null
+          : normalizeBoundedText(
+              source["newTaskId"],
+              "run.continuation.newTaskId",
+            ),
+      itemLimit,
+      createdAt: normalizeBoundedText(
+        source["createdAt"],
+        "run.continuation.createdAt",
+      ),
+      completedAt:
+        source["completedAt"] === null || source["completedAt"] === undefined
+          ? null
+          : normalizeBoundedText(
+              source["completedAt"],
+              "run.continuation.completedAt",
+            ),
+      attemptCount,
+      truncated: normalizeBoolean(
+        source["truncated"],
+        "run.continuation.truncated",
+      ),
+      nextAction: normalizeBoundedText(
+        source["nextAction"],
+        "run.continuation.nextAction",
+      ),
+      sideEffects: normalizeBoundedText(
+        source["sideEffects"],
+        "run.continuation.sideEffects",
+      ),
+    };
+  } catch {
+    return fail();
+  }
 }
 
 function normalizeRunFilterEcho(

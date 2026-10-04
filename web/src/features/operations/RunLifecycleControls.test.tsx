@@ -35,6 +35,9 @@ function action(
     retrySafe: false,
     nextAction: `${name} next action`,
     ...overrides,
+    // `Partial` makes every overridden field optional; the recovery entry is
+    // required by the contract, so it is normalized back to an explicit value.
+    recovery: overrides.recovery ?? null,
   };
 }
 
@@ -276,5 +279,113 @@ describe("RunLifecycleControls", () => {
       // Ordinary recovery must never be routed to the CLI.
       expect(copy, reason).not.toContain("mediaflow tasks");
     }
+  });
+
+  it("renders the native exact-Preview recovery of a withheld Continue", async () => {
+    const user = userEvent.setup();
+    const onPreview = vi.fn();
+    render(
+      <RunLifecycleControls
+        projection={projection({
+          state: "paused",
+          actions: [
+            action(
+              "resume",
+              false,
+              "the stored execute flag is not authority",
+              {
+                recovery: {
+                  action: "preview",
+                  method: "POST",
+                  path: "/api/v1/tasks/task-1/remaining-scope-previews",
+                  available: true,
+                  confirmationRequired: false,
+                  durableOutcome:
+                    "a durable zero-mutation exact Preview of the remaining eligible scope is stored",
+                  sideEffects: "none",
+                  nextAction:
+                    "review the exact Preview, then make one fresh explicit execution intent",
+                },
+              },
+            ),
+          ],
+        })}
+        onInvoke={vi.fn()}
+        pendingAction={null}
+        result={null}
+        onReconcile={vi.fn()}
+        locked={false}
+        onPreview={onPreview}
+      />,
+    );
+    // A withheld Continue is never a button; its recovery entry is.
+    expect(
+      screen.queryByRole("button", { name: "继续剩余范围" }),
+    ).not.toBeInTheDocument();
+    const recovery = screen.getByRole("button", {
+      name: "查看剩余范围的精确预览",
+    });
+    expect(recovery).toBeEnabled();
+    await user.click(recovery);
+    expect(onPreview).toHaveBeenCalledTimes(1);
+    expect(onPreview.mock.calls[0]?.[0]?.path).toBe(
+      "/api/v1/tasks/task-1/remaining-scope-previews",
+    );
+  });
+
+  it("never invents a recovery surface the backend did not advertise", () => {
+    render(
+      <RunLifecycleControls
+        projection={projection({
+          state: "paused",
+          actions: [action("resume", false, "the pinned revision is gone")],
+        })}
+        onInvoke={vi.fn()}
+        pendingAction={null}
+        result={null}
+        onReconcile={vi.fn()}
+        locked={false}
+        onPreview={vi.fn()}
+      />,
+    );
+    // The refusal copy is shown, but no control is offered for a recovery the
+    // backend did not publish.
+    expect(screen.getByText(/the pinned revision is gone/)).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "查看剩余范围的精确预览" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("disables the recovery entry while a control is in flight", () => {
+    render(
+      <RunLifecycleControls
+        projection={projection({
+          state: "paused",
+          actions: [
+            action("resume", false, "authority required", {
+              recovery: {
+                action: "preview",
+                method: "POST",
+                path: "/api/v1/tasks/task-1/remaining-scope-previews",
+                available: true,
+                confirmationRequired: false,
+                durableOutcome: "durable exact Preview",
+                sideEffects: "none",
+                nextAction: "review then authorize",
+              },
+            }),
+          ],
+        })}
+        onInvoke={vi.fn()}
+        pendingAction="resume"
+        result={null}
+        onReconcile={vi.fn()}
+        locked={false}
+        onPreview={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByRole("button", { name: "查看剩余范围的精确预览" }),
+    ).toBeDisabled();
   });
 });
