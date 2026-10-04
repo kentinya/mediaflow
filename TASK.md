@@ -603,23 +603,128 @@ Status: READY FOR B REVIEW
 Head SHA: f4aace533c2d62aead50f9b6a4fde81f0061bf24
 ```
 
+### Correction Round 2 — Developer Completion Report
+
+#### Changed Files
+
+- Backend: `mediaflow/application/automation.py`, `manual_organize_preview.py`,
+  `media_organizer.py`, `operations_lifecycle.py`, `scope_continuation.py`;
+  `mediaflow/domain/manual_organize_preview.py`, `scope_continuation.py`;
+  `mediaflow/final_cli.py`, `mediaflow/infrastructure/sqlite_runtime.py`,
+  `mediaflow/interfaces/service_api.py`.
+- Tests: `tests/test_scope_continuation.py`, `tests/test_automation_definition_execution.py`,
+  `tests/test_task_persistence.py`, and the five managed configuration tests whose runtime-schema
+  expectation advances from 43 to 44.
+- Web: operations `run`/`preview` models and tests, `OperationsLanding.tsx`,
+  `OperationsInventory.test.tsx`, `OrganizePreviewPage.tsx`, `OrganizeRouter.test.tsx`, and the
+  API-backed `manual-operations.json` fixture.
+- `TASK.md` — this report; the B review blockers below remain unchanged.
+
+#### Implemented
+
+- Exact remaining-scope Previews persist their source Task ID. The existing ManualExecution-to-Task
+  record completes the durable Preview → execution → new Task link. Remaining-scope accounting
+  traverses these explicit links along with queued continuations, charges execution items to the
+  original Task budget, and refuses a further Preview when no admitted budget remains. The selected
+  source run exposes the exact Preview, execution and resulting Task; Preview navigation preserves
+  the task-center query, and a successful recovery Execute returns to the original run.
+- Definition-scoped continuations validate the original Task/Job against the pinned Definition,
+  including fingerprint, command, ResourceLibrary, Storage-relative source scope and item limit.
+  The Worker resolves that exact sub-scope through Storage and keeps its display root for results;
+  it does not broaden to the ResourceLibrary root.
+- Runtime schema 44 adds nullable `manual_previews.recovery_source_task_id` and its index. Schema 42
+  upgrades preserve existing Tasks, pins, items, Results and authority state without inventing
+  recovery links.
+
+#### Tests and Results
+
+- Focused Python gates: all PASS — `tests.test_task_pause_resume` / persistence / workspace / run
+  inventory / run detail (121); automation API / admission / fencing / readiness / authorization
+  (73); unattended grants / Definition execution / authorized matrix / configuration snapshot (86);
+  transfer / manual execution / V2 / API security (217); recovery / admission / checkpoints / manual
+  operations contract (56).
+- `.venv/bin/python -m unittest tests.test_scope_continuation tests.test_task_persistence tests.test_automation_definition_execution`
+  → 94 tests PASS, including the exact Preview budget, schema-42-to-44 preservation and Definition
+  Storage-relative Worker scope cases.
+- The first full Python run found five configuration tests still expecting schema 43. I updated those
+  direct version assertions to 44 and reran them (5/5 PASS). The unchanged full command then passed:
+  `.venv/bin/python -m unittest discover -s tests` → 2,178 tests, PASS, 7 skipped.
+- Required Web-focused command → 42 files, 698 tests PASS. Full `npm run test -- --run` → 63 files,
+  991 tests PASS. `npm run typecheck`, `npm run lint`, and `npm run format:check` PASS;
+  `npm run build` PASS with the existing >500 kB chunk-size advisory.
+- Browser command for Operations, Manual Organize, Manual Operations and deep links → 66 PASS, 2
+  FAIL in `deep-link.spec.ts` (route-choice boundary timeout and V1 handoff heading). These are the
+  same two failures B recorded on the untouched Task Base; see Risks / Deviations. Files browser →
+  40 PASS. Python-backed Operations browser → 16 PASS, including resident Worker Continue and
+  restart coverage.
+- `.venv/bin/python /tmp/mediaflow-b42-4-r2-definition-proof-fixed.py` → PASS: the real Definition
+  Task paused at `scopePath="Authority"`, admitted Continue (202), and completed in the Worker
+  with an exactly linked new Task. The preview-budget API/Manual Worker integration test also
+  passed in the focused and full Python suites. The separate
+  `node /tmp/mediaflow-b42-4-r2-recovery-budget.mjs` reproduction was UNAVAILABLE because its
+  Playwright harness was not running at `localhost:4185`.
+- Governance, Ruff format/check, compileall, pip check, both configuration validations and release /
+  migration tests (19) PASS. Candidate-tree Docker release-security smoke PASS. Wheel build and
+  `scripts/wheel_smoke_test.py` PASS with runtime Schema 44.
+- `git diff --check` and Base-to-working-tree `git diff --check` were clean; reference image SHA-256
+  is `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`; `config/alist.json`
+  remains ignored and untracked; the forbidden FFmpeg/FFprobe dependency search has no matches.
+
+#### Decisions
+
+- A nullable origin Task ID on the ordinary Preview is sufficient durable ancestry: the existing
+  ManualExecution row supplies the explicit new Task ID. No parallel execution queue or stored
+  authority was added.
+- Recovery links participate in the same chain-wide remaining-scope calculation as queued
+  continuations. The immutable root Task remains the item-budget authority.
+- Definition scope resolution requires matching immutable Definition and Job evidence, then uses
+  the configured Storage interface for the exact Storage-relative path. The direct CLI path stays
+  confined under its configured ResourceLibrary display root.
+- Recovery navigation uses the normal Preview and explicit Execute journey, retaining the selected
+  Operations run as the return target.
+
+#### Remaining In-Slice Work
+
+RO-6 remains: task-linked Recognition / Metadata / Classification / conflict decisions and single /
+failed-analysis batch retry. This Task adds only the RO-5 exact Preview / fresh Execute recovery
+needed when paused work cannot safely retain execution authority.
+
+#### Risks / Deviations
+
+- `FAIL / PRE-EXISTING / UNRELATED`: the two fake-browser failures are the same unchanged
+  `deep-link.spec.ts` failures B recorded against the untouched Task Base; no deep-link code or
+  assertions changed here. Their Task-level disposition remains for B.
+- The separate budget reproduction could not connect because its local Playwright harness was
+  unavailable at port 4185. The equivalent repository integration test exercises real API
+  admission, Manual Worker execution, linked history, reopened SQLite state and exhausted-budget
+  refusal; it passed.
+- Seven full-suite skips are the existing environment-blocked external-service/endurance cases; no
+  skip or assertion was added or weakened.
+- Docker smoke used isolated candidate `8433180915062648b9339763bfcd0c635c6de6a0`, whose application,
+  test and fixture tree matches the implementation checkpoint below; only this completion report
+  was not present in that candidate tree.
+
+#### Checkpoint
+
+Status: READY FOR B REVIEW
+
+Head SHA: `887e744e48feb170744629708936fa9584e97d79`
+
 ## B Review Result
 
 ```text
-Reviewed: d52ce9299671ab05141f64848b8475cd4db11126..8a60cab0a0f9306a434d785c35ebd26bac41a422
+Reviewed: d52ce9299671ab05141f64848b8475cd4db11126..f4aace533c2d62aead50f9b6a4fde81f0061bf24
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — 已完成的 continuation 范围可再次受理并执行（AC-T3/T4/T5；RO-5；Safety Invariant 5）。**
-  当前生产 Coordinator 产生的合法 pinned、limit=2 暂停 scan，经原生“继续剩余范围”与真实 API/SQLite/Local Storage/Worker 完成剩余文件后，刷新原运行仍可点击 Continue；第二次请求再次返回 202。
-  证据：`node /tmp/mediaflow-b42-4-b-proof.mjs`，两次实际 Worker continuation 均为 completed，新增 Task `3d1b3d5d-dcb1-403d-aa68-f9b1cdb7d989` 与 `e606c952-0816-4496-9cce-e089456396ca` 的持久 item 均为同一 `Five.2005.mkv`；断言以 exit 1 揭示重复处理。当前 `remaining_scope()` 仅读取原 Task，已完成后代不进入排除集合/剩余预算；admission 仅阻止 queued/running continuation，原运行仍保持 paused。用户从完成后的原运行重复继续会重新处理已完成范围。修正：后端 projection/admission/Worker 共同根据真实 continuation 链及持久结果确定剩余范围、预算与执行所有者，排除已完成/ignored/uncertain 工作，并提供能查看实际后续运行的原生入口；保持原历史、pin 和并发保护。证据 JSON：`/tmp/mediaflow-b42-4-b-proof.json`。
+- **P1 — exact Preview 恢复执行未计入源运行的范围、预算和关联历史（AC-T4/T6；Scope 4/5/7；RO-5/RO-7）。**
+  当前合法 managed Local `organize --execute` 形态的暂停运行（有效历史 pin、scope 为配置显示根内的目录、limit=2），从原生“查看剩余范围的精确预览”生成 201 Preview，再明确 Execute 返回 202，真实 Manual Worker 完成 2 个文件。回到原运行后它仍为 paused、`continuation=null`；在该目录新增一份测试媒体，原生剩余范围 Preview 再次返回 201，Execute 再次返回 202，真实 Worker 又完成第 3 个文件。用户通过同一原运行的恢复入口突破了已耗尽的原限额，且原运行无法查看恢复执行的关联历史。
+  证据：`node /tmp/mediaflow-b42-4-r2-proof.mjs`（校准合法显示根后的日志 `/tmp/mediaflow-b42-4-r2-proof-v2.log`），以及 `node /tmp/mediaflow-b42-4-r2-recovery-budget.mjs`；预算断言 exit 1。源 Task `027acd51-0814-4ec8-b63c-ad00e1da753e` 限额 2，后续 Task `90c754f6-e53e-49cb-ad2c-fe949bcd8270` completed/2 items，第二次恢复 Task `b3783c7e-b869-4af4-9973-eff3fbbf00c8` completed/1 item。首轮 Preview 导航还丢失 `returnOps`，Execute 后进入独立 execution 页，未返回任务中心选择关联运行。`runTaskId` 只附在 Preview 受理响应中，未形成 `remaining_scope()` 可追踪的持久恢复关联。
+  修正：使原运行→remaining Preview→fresh intent→execution/Task 的关联与预算消耗持久化，并由后端 remaining-scope 判定/受理/Worker 共同使用；耗尽范围拒绝再次恢复，保存成功/ignored/uncertain 排除规则、原 pin 和历史。原生 Preview 保留任务中心返回上下文，成功受理后选择关联运行，并能从源运行查看后续结果。证据 JSON：`/tmp/mediaflow-b42-4-r2-proof.json`、`/tmp/mediaflow-b42-4-r2-recovery-budget.json`。
 
-- **P1 — 授权不足时缺少原生 exact Preview / fresh intent 恢复路径（AC-T4/T7；Scope 5；RO-5）。**
-  当前生产 `final_cli.py` 的合法 managed `organize --execute` 创建形态（原 scope、完整有效 pin、execute=true，无可重用 grant）经真实 Coordinator 在安全边界暂停后，当前 API 拒绝 Continue 为 409 `authority_required`，所选运行只有“查看精确预览并重新授权”的文字，详情没有 Preview 链接或按钮。用户无法从该运行进入历史 pin 下仅含 eligible 剩余范围的 Preview/明确执行意图。
-  证据：`.venv/bin/python /tmp/mediaflow-b42-4-b-legal-fixtures.py` 配合 `node /tmp/mediaflow-b42-4-b-legal-proof.mjs`；真实 Python API/已构建 Web 返回 `organizeRefusalStatus=409`、`reason=authority_required`、`previewLinks=[]`、`previewButtons=[]`。使用合法 `organize` 生产形态与完整 Local 能力，不以 `preview + execute=true` 的不支持 fixture 作为阻塞依据。修正：实现当前 Contract 已要求的、绑定原运行/历史 pin/精确剩余范围的原生 Preview 与 fresh explicit intent 流程，并返回关联运行；继续拒绝仅凭 execute 标志、已消费授权或已撤销 grant 执行。证据 JSON：`/tmp/mediaflow-b42-4-b-legal-proof.json`。
-
-- **P1 — Continue 的 API 响应泄漏绝对宿主路径（RO-7；Safety Invariant 8；Task 隐私边界）。**
-  当前合法 managed scoped `preview`（execute=false，scope 为配置 Local ResourceLibrary 内的绝对路径、完整有效 pin）安全暂停后，真实 `POST /api/v1/tasks/{id}/resume` 返回 202，`continuation.scope_path` 原样包含绝对宿主路径。普通 operator/API 控制响应已越过后端脱敏边界；无需未来 adapter、非法配置或削弱 Storage 能力。
-  证据：同一 legal-fixtures / legal-proof 命令得到 `previewAdmissionStatus=202`、`hostRootExposed=true`，隐私断言 exit 1；`mediaflow/interfaces/service_api.py` 的受理响应直接调用 `submission.continuation.document()`，后者输出内部 `scope_path`。修正：为 operator/API 输出使用后端 bounded/redacted continuation projection，审查对应读取/冲突响应的同类输出；Worker 所需内部原 scope/pin 保持完整，不能仅靠前端隐藏。加入合法绝对 scope 的 API 隐私回归。证据 JSON：`/tmp/mediaflow-b42-4-b-legal-proof.json`。
+- **P1 — 当前 Definition-scoped Preview 的 Continue 无法执行合法 Storage 相对 scope（AC-T3/T4/T7；Scope 3/4；RO-5）。**
+  当前已检查并激活的 `scan-and-plan` Automation Definition（ResourceLibrary `source`、sourceScope=`Authority`、itemLimit=2）经真实 IntervalScheduler 发出 occurrence、真实 DefinitionScopedExecutionService 创建 Task；实际 Pause API 返回 200，生产执行在安全边界确认 paused，持久 command=`preview`、scope_path=`Authority`。当前 API 公告 Continue 可用并返回 202，但真实 claim/queued Worker 随即失败，continuation 与新 Task 均为 failed，0 items，异常为 `ValueError: path is not inside a configured ResourceLibrary`。用户在任务中心继续当前受支持的暂停 Definition Preview 会进入无法推进的失败循环。
+  证据：`.venv/bin/python /tmp/mediaflow-b42-4-r2-definition-proof-v2.py`，生产路径断言 exit 1；源 Task `180ed1a4-ea23-41ec-b0bd-02438acc9a4b`，失败的新 Task `eee1143a-8611-4924-ba9c-15d423315dd7`。合法配置/源目录/完整 pin/权限/Local Storage/claim 均保持真实；原处理与 continuation 仅在外部 Provider 装配处使用相同完整 synthetic registry，没有删除或隐藏当前能力。失败发生在任何媒体 item/Provider lookup 之前，不以缺少 TMDB credential 的首次环境失败作为阻塞证据。当前 Definition 生产者持久化 Storage-relative scoped root，而 `_continue_scope_from_admission()` 对 preview/organize 把它交给宿主 `Path` / `_resource_library()` 解析。
+  修正：依据当前生产 Task/Definition 的持久库身份与历史 pin，通过既有 Storage/ResourceLibrary scope 边界解析并执行原 scope，保留限额、排除集合和安全 checkpoint；让公告、受理与 Worker 支持矩阵一致，保留当前 Definition Pause/Continue 能力。覆盖合法 Definition 的实际暂停→排队继续→Worker 结果，不能用只含 CLI 绝对 scope 或 scan 全库 fixture 代替。证据 JSON/日志：`/tmp/mediaflow-b42-4-r2-definition-proof-v2.json`、`/tmp/mediaflow-b42-4-r2-definition-proof-v2.log`。
