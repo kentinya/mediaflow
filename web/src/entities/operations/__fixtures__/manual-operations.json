@@ -1011,6 +1011,7 @@
     "journey": "organize",
     "nextAction": "inspect each exact plan; authorize selected items for execution",
     "previewId": "<uuid>",
+    "recoverySourceTaskId": null,
     "scope": null,
     "scopeId": null,
     "scopeKind": null,
@@ -1262,6 +1263,7 @@
     "journey": "organize",
     "nextAction": "inspect each exact plan; authorize selected items for execution",
     "previewId": "<uuid>",
+    "recoverySourceTaskId": null,
     "scope": null,
     "scopeId": null,
     "scopeKind": null,
@@ -1489,6 +1491,7 @@
     ],
     "nextAction": "inspect each exact plan; authorize selected items for execution",
     "previewId": "<uuid>",
+    "recoverySourceTaskId": null,
     "scope": {
       "itemCount": 1,
       "scopeId": "One.2001.mkv",
@@ -1714,6 +1717,7 @@
     ],
     "nextAction": "inspect each exact plan; authorize selected items for execution",
     "previewId": "<uuid>",
+    "recoverySourceTaskId": null,
     "scope": {
       "itemCount": 1,
       "scopeId": "One.2001.mkv",
@@ -1945,6 +1949,7 @@
         ],
         "nextAction": "inspect each exact plan; authorize selected items for execution",
         "previewId": "<uuid>",
+        "recoverySourceTaskId": null,
         "scope": {
           "itemCount": 1,
           "scopeId": "One.2001.mkv",

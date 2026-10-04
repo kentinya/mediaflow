@@ -252,14 +252,6 @@ def continuation_obstacle(
             "this Task already has an active queued continuation that owns its remaining scope",
             "follow the linked continuation run instead of submitting the remaining scope again",
         )
-    owner = chain_owner(repository, task)
-    if owner.task_id != task.task_id:
-        return (
-            ScopeContinuationReason.CONTINUATION_OWNED_ELSEWHERE,
-            "a later run of this continuation chain owns the remaining scope; continuing this "
-            "run would queue the same remaining work twice",
-            "open the linked continuation run and continue its remaining scope there",
-        )
     try:
         _remaining, _recorded, remaining_limit = remaining_scope(repository, task)
     except Exception:
@@ -271,6 +263,14 @@ def continuation_obstacle(
             "no remaining scope exists to continue",
             "inspect the linked continuation run and its independent per-item results, or start "
             "a new bounded run from 操作与任务",
+        )
+    owner = chain_owner(repository, task)
+    if owner.task_id != task.task_id:
+        return (
+            ScopeContinuationReason.CONTINUATION_OWNED_ELSEWHERE,
+            "a later run of this continuation chain owns the remaining scope; continuing this "
+            "run would queue the same remaining work twice",
+            "open the linked continuation run and continue its remaining scope there",
         )
     if task.execute_authorized:
         # A persisted execute flag is a record of the original admission, never
@@ -315,22 +315,29 @@ def _active_continuation(repository, task_id: str, *, exclude_job_id: str | None
 def continuation_chain(repository, task: PersistentTask) -> tuple[PersistentTask, ...]:
     """The whole recorded continuation chain that owns one Task's admitted scope.
 
-    The chain is resolved only through the explicit durable
-    ``scope_continuations.source_task_id`` / ``new_task_id`` links — never by
-    filename, label or creation-time proximity.  The root (the originally
-    admitted Task) comes first and every descendant follows in link order, so
-    the original item budget and every recorded item can be read together.
+    The chain is resolved only through explicit durable queued-continuation
+    links and exact-Preview recovery links — never by filename, label or
+    creation-time proximity. The root (the originally admitted Task) comes
+    first and every descendant follows in link order, so the original item
+    budget and every recorded item can be read together.
     """
 
     root = task
     ancestors = {task.task_id}
     link_reader = getattr(repository, "get_scope_continuation_for_new_task", None)
-    if callable(link_reader):
+    recovery_reader = getattr(repository, "get_scope_recovery_for_new_task", None)
+    if callable(link_reader) or callable(recovery_reader):
         for _ in range(_MAX_CHAIN_TASKS):
-            try:
-                link = link_reader(root.task_id)
-            except Exception:
-                break
+            link = None
+            for reader in (link_reader, recovery_reader):
+                if not callable(reader):
+                    continue
+                try:
+                    link = reader(root.task_id)
+                except Exception:
+                    link = None
+                if link is not None:
+                    break
             parent_id = getattr(link, "source_task_id", None) if link is not None else None
             if not isinstance(parent_id, str) or not parent_id or parent_id in ancestors:
                 break
@@ -345,13 +352,21 @@ def continuation_chain(repository, task: PersistentTask) -> tuple[PersistentTask
     seen = {root.task_id}
     pending: list[PersistentTask] = [root]
     lister = getattr(repository, "list_scope_continuations", None)
-    if callable(lister):
+    recovery_lister = getattr(repository, "list_scope_recovery_links", None)
+    if callable(lister) or callable(recovery_lister):
         while pending and len(chain) < _MAX_CHAIN_TASKS:
             current = pending.pop(0)
-            try:
-                links = lister(current.task_id)
-            except Exception:
-                break
+            links = []
+            for reader in (lister, recovery_lister):
+                if not callable(reader):
+                    continue
+                try:
+                    links.extend(reader(current.task_id))
+                except Exception:
+                    continue
+            links.sort(
+                key=lambda value: getattr(value, "created_at", datetime.min.replace(tzinfo=UTC))
+            )
             for link in links:
                 child_id = getattr(link, "new_task_id", None)
                 if not isinstance(child_id, str) or not child_id or child_id in seen:

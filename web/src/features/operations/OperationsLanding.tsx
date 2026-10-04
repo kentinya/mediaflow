@@ -610,6 +610,12 @@ export function OperationsLanding() {
                     void navigate({
                       to: "/operations/organize/preview/$previewId",
                       params: { previewId },
+                      search: operationsReturnSearch(
+                        operationsReturnContextFromSearch({
+                          ...listSearch(selectedId),
+                          ...runDetailStateSearch(detailState),
+                        }),
+                      ),
                     })
                   }
                   onSelectRun={selectRun}
@@ -1030,7 +1036,13 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
-                facts={<RunDetailFacts run={run} onSelectRun={onSelectRun} />}
+                facts={
+                  <RunDetailFacts
+                    run={run}
+                    onSelectRun={onSelectRun}
+                    onOpenPreview={onOpenPreview}
+                  />
+                }
               />
             </>
           );
@@ -1044,6 +1056,7 @@ function RunDetailPanel({
 function continuationStatusLabel(status: string): string {
   const labels: Readonly<Record<string, string>> = {
     queued: "已排队",
+    previewed: "待审阅",
     running: "进行中",
     completed: "已完成",
     failed: "失败",
@@ -1055,9 +1068,11 @@ function continuationStatusLabel(status: string): string {
 function RunDetailFacts({
   run,
   onSelectRun,
+  onOpenPreview,
 }: {
   readonly run: RunSummary;
   readonly onSelectRun: (runId: string) => void;
+  readonly onOpenPreview: (previewId: string) => void;
 }) {
   const detail = detailLinkOf(run);
   return (
@@ -1134,11 +1149,30 @@ function RunDetailFacts({
         <div>
           <dt>剩余范围继续记录</dt>
           <dd>
-            <p>
-              该运行已把自己的剩余范围交给一次持久继续(
-              {continuationStatusLabel(run.continuation.status)}
-              )。请打开真正持有剩余范围的那次运行,不要在本运行重复继续已完成的条目。
-            </p>
+            {run.continuation.recoveryKind === "exact_preview" ? (
+              <p>
+                精确预览已关联到此运行，状态为
+                {continuationStatusLabel(run.continuation.status)}
+                。执行任务会计入原运行的范围和条目上限。
+              </p>
+            ) : (
+              <p>
+                该运行已把自己的剩余范围交给一次持久继续(
+                {continuationStatusLabel(run.continuation.status)}
+                )。请打开真正持有剩余范围的那次运行,不要在本运行重复继续已完成的条目。
+              </p>
+            )}
+            {run.continuation.recoveryPreviewId !== null && (
+              <button
+                type="button"
+                className="mf-button mf-button-secondary"
+                onClick={() =>
+                  onOpenPreview(run.continuation!.recoveryPreviewId!)
+                }
+              >
+                查看关联的精确预览
+              </button>
+            )}
             {run.continuation.newTaskId !== null ? (
               <button
                 type="button"
@@ -1147,9 +1181,9 @@ function RunDetailFacts({
               >
                 打开链接的继续运行
               </button>
-            ) : (
+            ) : run.continuation.recoveryPreviewId === null ? (
               <p>{run.continuation.nextAction}</p>
-            )}
+            ) : null}
           </dd>
         </div>
       )}

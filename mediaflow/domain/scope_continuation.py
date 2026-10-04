@@ -59,6 +59,26 @@ class ScopeContinuationStatus(StrEnum):
         return self in {self.QUEUED, self.RUNNING}
 
 
+@dataclass(frozen=True)
+class ScopeRecoveryLink:
+    """Durable exact-Preview recovery ancestry for one paused Task scope.
+
+    The link is stored on the ordinary manual Preview. Once that Preview is
+    explicitly executed, the existing ManualExecution row supplies the
+    linked Task identity; no second queue or task lifecycle is introduced.
+    """
+
+    source_task_id: str
+    preview_id: str
+    preview_status: str
+    created_at: datetime
+    item_count: int
+    execution_id: str | None = None
+    new_task_id: str | None = None
+    execution_status: str | None = None
+    completed_at: datetime | None = None
+
+
 class ScopeContinuationReason(StrEnum):
     """The closed set of bounded, operator-facing continuation refusals."""
 
@@ -206,6 +226,10 @@ class ScopeContinuationRepository(Protocol):
     def list_scope_continuations(
         self, task_id: str, *, limit: int = 32
     ) -> tuple[ScopeContinuation, ...]: ...
+    def list_scope_recovery_links(
+        self, task_id: str, *, limit: int = 32
+    ) -> tuple[ScopeRecoveryLink, ...]: ...
+    def get_scope_recovery_for_new_task(self, task_id: str) -> ScopeRecoveryLink | None: ...
     def admit_scope_continuation(
         self,
         job: AutomationJob,
@@ -238,4 +262,5 @@ __all__ = [
     "ScopeContinuationReason",
     "ScopeContinuationRepository",
     "ScopeContinuationStatus",
+    "ScopeRecoveryLink",
 ]

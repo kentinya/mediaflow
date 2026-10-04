@@ -349,6 +349,151 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 target_guard.mutation_calls, {key: 0 for key in target_guard.mutation_calls}
             )
 
+    def test_paused_definition_relative_scope_continues_in_the_real_worker(self) -> None:
+        """Pause → Continue → Worker resolves the original Definition sub-scope."""
+
+        from mediaflow.application.scope_continuation import ScopeContinuationService
+        from mediaflow.application.task_runtime import PersistentTaskCoordinator
+
+        definition = _definition(
+            "relative-worker", scope="C", mode=AutomationTaskRunMode.SCAN_AND_PLAN, limit=2
+        )
+        candidate = MediaCandidate(
+            "tmdb",
+            "alpha",
+            MediaType.MOVIE,
+            "Alpha Movie",
+            year=2024,
+            genres=("Animation",),
+            countries=("JP",),
+        )
+        later_candidate = replace(candidate, provider_id="bravo", title="Bravo Movie", year=2025)
+        provider = SyntheticMetadataProvider((candidate, later_candidate))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source" / "Media" / "C"
+            source.mkdir(parents=True)
+            configuration = self._configuration(root, definition)
+            with SQLiteTaskRepository(configuration.database_path) as repository:
+                original_job = self._emit(repository, definition)
+                coordinator = PersistentTaskCoordinator(repository, repository)
+                original = coordinator.create(
+                    original_job.command.value,
+                    execute_authorized=False,
+                    scope_path="Media/C",
+                    item_limit=definition.item_limit,
+                    configuration_snapshot_id=original_job.configuration_snapshot_id,
+                    configuration_snapshot_digest=original_job.configuration_snapshot_digest,
+                    require_configuration_snapshot=True,
+                )
+                repository.update_job(
+                    replace(
+                        original_job,
+                        status=AutomationJobStatus.COMPLETED,
+                        task_id=original.task_id,
+                        updated_at=NOW,
+                        completed_at=NOW,
+                    )
+                )
+                coordinator.request_pause(original.task_id)
+                original = coordinator.acknowledge_pause(original.task_id)
+                self.assertEqual(original.status, PersistentTaskStatus.PAUSED)
+                self.assertEqual(original.scope_path, "Media/C")
+                self.assertEqual(repository.list_items(original.task_id), ())
+                # This file arrives after the paused occurrence was admitted.
+                # The exact Definition sub-scope still includes it, while its
+                # ResourceLibrary sibling and parent remain outside the run.
+                later_media = source / "Bravo.Movie.2025.mkv"
+                later_media.write_bytes(b"bravo")
+                sibling = source.parent / "D"
+                sibling.mkdir()
+                sibling_media = sibling / "Alpha.Movie.2024.mkv"
+                sibling_media.write_bytes(b"sibling")
+                parent_media = source.parent / "Parent.Movie.2024.mkv"
+                parent_media.write_bytes(b"parent")
+                self.assertEqual(
+                    repository.get_job_for_task(original.task_id).job_id, original_job.job_id
+                )
+
+                continuation_service = ScopeContinuationService(
+                    repository, snapshot_validator=lambda *_: None
+                )
+                submission = continuation_service.submit(
+                    original.task_id,
+                    expected_version=original.updated_at.isoformat(),
+                    actor="operator",
+                    maximum_active_jobs=10,
+                )
+                with (
+                    patch("mediaflow.final_cli._configuration", return_value=configuration),
+                    patch(
+                        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                        return_value=MetadataProviderRegistry((provider,)),
+                    ),
+                ):
+                    continued = AutomationWorker(
+                        repository,
+                        lambda job, cancelled: _run_queued_workflow(
+                            job,
+                            None,
+                            cancelled,
+                            repository=repository,
+                        ),
+                    ).run_next()
+
+                self.assertEqual(continued.job_id, submission.job.job_id)
+                continuation_record = repository.get_scope_continuation_for_job(
+                    submission.job.job_id
+                )
+                self.assertEqual(
+                    continued.status,
+                    AutomationJobStatus.COMPLETED,
+                    (
+                        continued.error,
+                        continued.failure_category,
+                        continued.failure_durable_state,
+                        continued.failure_next_action,
+                        continuation_record.document(),
+                        repository.get_task(continuation_record.new_task_id).error
+                        if continuation_record.new_task_id
+                        else None,
+                        [
+                            (item.source_path, item.status.value, item.error)
+                            for item in repository.list_items(continuation_record.new_task_id)
+                        ]
+                        if continuation_record.new_task_id
+                        else (),
+                        [
+                            (result.source_path, result.status, result.error)
+                            for result in repository.list_results(continuation_record.new_task_id)
+                        ]
+                        if continuation_record.new_task_id
+                        else (),
+                    ),
+                )
+                continued_task = repository.get_task(continued.task_id)
+                self.assertEqual(continued_task.status, PersistentTaskStatus.COMPLETED)
+                self.assertEqual(continued_task.scope_path, "Media/C")
+                self.assertEqual(
+                    {item.source_path for item in repository.list_items(continued_task.task_id)},
+                    {"Media/C/Bravo.Movie.2025.mkv"},
+                )
+                self.assertNotIn(
+                    "Media/D/Alpha.Movie.2024.mkv",
+                    {item.source_path for item in repository.list_items(continued_task.task_id)},
+                )
+                self.assertNotIn(
+                    "Media/Parent.Movie.2024.mkv",
+                    {item.source_path for item in repository.list_items(continued_task.task_id)},
+                )
+                self.assertEqual(
+                    repository.get_scope_continuation_for_job(submission.job.job_id).new_task_id,
+                    continued_task.task_id,
+                )
+                self.assertTrue(later_media.exists())
+                self.assertTrue(sibling_media.exists())
+                self.assertTrue(parent_media.exists())
+
     def test_scope_without_subscope_uses_library_root_and_never_parent(self) -> None:
         definition = _definition("root", scope=None, limit=10)
         with tempfile.TemporaryDirectory() as directory:

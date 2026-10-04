@@ -509,10 +509,9 @@ class ManagedClassificationPolicyJourneyTests(unittest.TestCase):
                         "WHERE component='configuration_management'"
                     ).fetchone()[0]
                 self.assertEqual(marker, CONFIGURATION_SCHEMA_VERSION)
-                # Runtime schema 43 adds the durable scope_continuations
-                # boundary so a paused Task's exact remaining admitted scope
-                # can be continued by the resident Worker.
-                self.assertEqual(RUNTIME_SCHEMA_VERSION, 43)
+                # Runtime schema 43 adds durable scope continuations; schema
+                # 44 links exact-Preview recovery to the paused source Task.
+                self.assertEqual(RUNTIME_SCHEMA_VERSION, 44)
 
                 optional = copy.deepcopy(document)
                 optional.pop("classificationPolicies")

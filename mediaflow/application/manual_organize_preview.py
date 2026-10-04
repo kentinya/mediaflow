@@ -184,6 +184,7 @@ class ManualOrganizePreviewService:
         source_admission_errors: Mapping[str, ManualPreviewError] | None = None,
         review_decisions: object | None = None,
         skip_current_snapshot_check: bool = False,
+        recovery_source_task_id: str | None = None,
     ) -> ManualOrganizePreview:
         """Create one durable zero-mutation Preview.
 
@@ -376,6 +377,7 @@ class ManualOrganizePreviewService:
             truncated=any(item.truncated for item in preview_items),
             source_scope=source_scope,
             source_scope_id=source_scope_id,
+            recovery_source_task_id=recovery_source_task_id,
         )
         persisted = self._persist_create(preview)
         return persisted or preview
@@ -802,6 +804,7 @@ class ManualOrganizePreviewService:
             source_scope="resource_library",
             source_scope_id=library.library_id,
             skip_current_snapshot_check=True,
+            recovery_source_task_id=task.task_id,
         )
 
     def _scope_library(self, runtime, task):

@@ -505,11 +505,15 @@ class MediaOrganizerService:
         progress: ProgressReporter | None = None,
         cancellation_check: CancellationCheck | None = None,
         skip_sources: set[tuple[str, str]] | None = None,
+        source_display_root: str | None = None,
     ) -> MediaOrganizerBatchResult:
         items: list[MediaOrganizerItemResult] = []
         selected_count = 0
         bound_reached = False
         cancellation = CancellationToken()
+        display_root = source_display_root or self._source_display_roots.get(
+            library.library_id, library.root_path
+        )
         self._log(LogLevel.INFO, "library scan started", library_id=library.library_id)
 
         def discovered(file) -> None:
@@ -529,7 +533,7 @@ class MediaOrganizerService:
                     if library_root and file.path.startswith(f"{library_root}/"):
                         relative_display_path = file.path[len(library_root) + 1 :]
                     source = posixpath.join(
-                        self._source_display_roots.get(library.library_id, library.root_path),
+                        display_root,
                         relative_display_path,
                     )
                     tracked = self._task_coordinator.begin_item(
@@ -558,7 +562,7 @@ class MediaOrganizerService:
             if library_root and file.path.startswith(f"{library_root}/"):
                 relative_display_path = file.path[len(library_root) + 1 :]
             source = posixpath.join(
-                self._source_display_roots.get(library.library_id, library.root_path),
+                display_root,
                 relative_display_path,
             )
             selected_count += 1

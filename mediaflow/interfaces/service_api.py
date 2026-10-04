@@ -74,6 +74,7 @@ from mediaflow.application.operations_lifecycle import (
     run_progress_document,
     run_record_document,
     scope_continuation_operator_document,
+    scope_recovery_operator_document,
     task_item_operator_document,
     task_lifecycle_document,
     task_operator_document,
@@ -12953,20 +12954,45 @@ class MediaFlowApi:
         task_id = getattr(overview, "task_id", None)
         if repository is None or not isinstance(task_id, str) or not task_id:
             return None
+        candidates: list[tuple[object, dict[str, object]]] = []
         lister = getattr(repository, "list_scope_continuations", None)
-        if not callable(lister):
+        if callable(lister):
+            try:
+                values = tuple(lister(task_id, limit=8))
+            except Exception:
+                values = ()
+            for value in values:
+                document = scope_continuation_operator_document(value)
+                document.update(
+                    {
+                        "recoveryKind": "queued_continuation",
+                        "recoveryPreviewId": None,
+                        "executionId": None,
+                    }
+                )
+                document["attemptCount"] = len(values)
+                document["truncated"] = len(values) >= 8
+                candidates.append((value.created_at, document))
+
+        recovery_lister = getattr(repository, "list_scope_recovery_links", None)
+        if callable(recovery_lister):
+            try:
+                recoveries = tuple(recovery_lister(task_id, limit=8))
+            except Exception:
+                recoveries = ()
+            task_reader = getattr(repository, "get_task", None)
+            try:
+                source = task_reader(task_id) if callable(task_reader) else None
+            except Exception:
+                source = None
+            for value in recoveries:
+                document = scope_recovery_operator_document(value, source)
+                document["attemptCount"] = len(recoveries)
+                document["truncated"] = len(recoveries) >= 8
+                candidates.append((value.created_at, document))
+        if not candidates:
             return None
-        try:
-            values = tuple(lister(task_id, limit=8))
-        except Exception:
-            return None
-        if not values:
-            return None
-        latest = values[0]
-        document = scope_continuation_operator_document(latest)
-        document["attemptCount"] = len(values)
-        document["truncated"] = len(values) >= 8
-        return document
+        return max(candidates, key=lambda candidate: candidate[0])[1]
 
     def _remaining_scope_obstacle(self):
         """The shared continuation obstacle the Preview admission reuses.

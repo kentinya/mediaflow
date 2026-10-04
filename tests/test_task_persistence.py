@@ -854,16 +854,15 @@ class Schema37To38UpgradeTests(unittest.TestCase):
             self.assertEqual(upgraded_row[3], "token-a")
 
 
-class Schema42To43UpgradeTests(unittest.TestCase):
-    """The real 42 -> 43 scope_continuations upgrade preserves every durable fact.
+class Schema42To44UpgradeTests(unittest.TestCase):
+    """The real 42 -> 44 continuation/recovery upgrade preserves durable facts.
 
-    Schema 43 adds the durable queued continuation boundary for one paused
-    Task's exact remaining admitted scope, and it is purely additive: the
-    ``scope_continuations`` table plus its indexes.  The fixture is a genuine
+    Schema 43 adds the durable queued continuation boundary and schema 44 adds
+    the nullable origin Task on manual Previews. The fixture is a genuine
     schema-42 runtime database — every real table and column as schema 42
-    shipped, with only the schema-43 objects absent and the marker set to 42 —
-    so the upgrade is proven against the production shape rather than a
-    hand-written subset.
+    shipped, with both additions absent and the marker set to 42 — so the
+    upgrade is proven against the production shape rather than a hand-written
+    subset.
 
     The upgrade must leave every durable fact the continuation depends on
     intact: the immutable pin, the recorded per-item outcome, the persisted
@@ -871,12 +870,14 @@ class Schema42To43UpgradeTests(unittest.TestCase):
     be handed a fabricated continuation.
     """
 
-    #: The exact objects schema 43 adds.  The fixture removes them to reproduce
-    #: a real schema-42 database; the production migration must re-add them.
-    _SCHEMA43_OBJECTS = (
+    #: The exact objects schemas 43 and 44 add. The fixture removes them to
+    #: reproduce a real schema-42 database; production migrations re-add them.
+    _SCHEMA42_OBJECTS = (
         "DROP INDEX IF EXISTS one_active_scope_continuation",
         "DROP INDEX IF EXISTS scope_continuations_source_created",
         "DROP TABLE IF EXISTS scope_continuations",
+        "DROP INDEX IF EXISTS manual_previews_recovery_source",
+        "ALTER TABLE manual_previews DROP COLUMN recovery_source_task_id",
     )
 
     @staticmethod
@@ -928,10 +929,10 @@ class Schema42To43UpgradeTests(unittest.TestCase):
             )
             repository.request_task_pause(task.task_id, datetime(2026, 9, 1, tzinfo=UTC))
             coordinator.acknowledge_pause(task.task_id)
-        # Remove exactly the schema-43 objects and rewind the marker: the result
-        # is a real schema-42 database that still holds every durable row.
+        # Remove exactly the schema-43/44 additions and rewind the marker: the
+        # result is a real schema-42 database that still holds every durable row.
         with sqlite3.connect(path) as connection:
-            for statement in Schema42To43UpgradeTests._SCHEMA43_OBJECTS:
+            for statement in Schema42To44UpgradeTests._SCHEMA42_OBJECTS:
                 connection.execute(statement)
             connection.execute("UPDATE schema_version SET version=42 WHERE component='runtime'")
             connection.commit()
@@ -942,7 +943,7 @@ class Schema42To43UpgradeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory, "upgraded.sqlite3")
             self._create_schema42_database(database)
-            # The fixture really is a schema-42 database without the new table.
+            # The fixture really is a schema-42 database without either new feature.
             with sqlite3.connect(database) as connection:
                 marker = connection.execute(
                     "SELECT version FROM schema_version WHERE component='runtime'"
@@ -953,12 +954,16 @@ class Schema42To43UpgradeTests(unittest.TestCase):
                         "SELECT name FROM sqlite_master WHERE name LIKE '%scope_continuation%'"
                     ).fetchall()
                 }
+                columns = {
+                    row[1] for row in connection.execute("PRAGMA table_info(manual_previews)")
+                }
             self.assertEqual(marker, 42)
             self.assertEqual(objects, set())
+            self.assertNotIn("recovery_source_task_id", columns)
 
             with SQLiteTaskRepository(database) as repository:
                 self.assertEqual(repository.schema_version, SCHEMA_VERSION)
-                self.assertEqual(SCHEMA_VERSION, 43)
+                self.assertEqual(SCHEMA_VERSION, 44)
                 # Every pre-existing durable fact survived the additive upgrade.
                 task = repository.get_task("base-task") or next(
                     item
@@ -984,6 +989,7 @@ class Schema42To43UpgradeTests(unittest.TestCase):
                 # scope is read from the preserved rows alone.
                 self.assertEqual(repository.list_scope_continuations(task.task_id), ())
                 self.assertIsNone(repository.get_scope_continuation_for_source_task(task.task_id))
+                self.assertEqual(repository.list_scope_recovery_links(task.task_id), ())
                 remaining, already_recorded, remaining_limit = remaining_scope(repository, task)
                 self.assertEqual(remaining, ())
                 self.assertEqual(already_recorded, {("source", "Media/one.mkv")})
@@ -1023,7 +1029,7 @@ class Schema42To43UpgradeTests(unittest.TestCase):
             upgraded = Path(directory, "upgraded.sqlite3")
             fresh = Path(directory, "fresh.sqlite3")
             self._create_schema42_database(upgraded)
-            # The same genuine population, but never rewound: a fresh schema-43 DB.
+            # The same genuine population, but never rewound: a fresh schema-44 DB.
             self._create_schema42_database(fresh)
             with SQLiteTaskRepository(fresh):
                 pass

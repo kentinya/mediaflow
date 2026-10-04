@@ -6,6 +6,7 @@ import io
 import ipaddress
 import json
 import os
+import posixpath
 import re
 import secrets
 import signal
@@ -58,7 +59,7 @@ from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationWorkerService
 from mediaflow.application.recovery_decisions import collect_resolved_continuation_decisions
 from mediaflow.application.resident_services import ResidentServiceService
-from mediaflow.application.scanner import StorageScanner
+from mediaflow.application.scanner import StorageScanner, normalize_resource_root
 from mediaflow.application.scope_continuation import (
     ScopeContinuationService,
     ScopeContinuationWorkerService,
@@ -72,6 +73,8 @@ from mediaflow.cli import render_strategy_result
 from mediaflow.domain.automation import (
     AutomationCommand,
     AutomationFailureEvidence,
+    AutomationTaskDefinition,
+    AutomationTaskRunMode,
     CronSchedule,
     SchedulerConfigurationSnapshot,
 )
@@ -80,6 +83,7 @@ from mediaflow.domain.classification_review import (
     ClassificationSelection,
 )
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
+from mediaflow.domain.library import ScanMode
 from mediaflow.domain.logging import LogLevel
 from mediaflow.domain.metadata_correction import (
     MetadataCorrectionSelection,
@@ -93,6 +97,7 @@ from mediaflow.domain.resident_services import ResidentServiceWaiting
 from mediaflow.domain.scanner import FileScanStatus
 from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
+from mediaflow.domain.storage import StorageEntryType
 from mediaflow.domain.task_persistence import (
     FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
@@ -3321,6 +3326,7 @@ def _run_scope_continuation(
                 remaining_limit,
                 prepared.already_recorded,
                 workflow_stop,
+                original_job=repository.get_job_for_task(original.task_id),
             )
             if cancellation_check():
                 coordinator.cancel(continuation.task_id)
@@ -3477,6 +3483,8 @@ def _continue_scope_from_admission(
     limit: int | None,
     skip_sources: frozenset[tuple[str, str]],
     cancellation_check: Callable[[], bool],
+    *,
+    original_job=None,
 ) -> MediaOrganizerBatchResult:
     """Walk only the original admitted scope that is not already recorded.
 
@@ -3500,6 +3508,26 @@ def _continue_scope_from_admission(
         )
 
     if original.command == "scan":
+        if original.scope_path is not None:
+            library, storage_path, display_path = _continuation_scope(
+                configuration, original, original_job
+            )
+            entry = storages[library.storage_id].stat(storage_path)
+            if entry.entry_type is not StorageEntryType.DIRECTORY:
+                raise ValueError("paused scan scope is no longer a directory")
+            scoped = replace(library, root_path=storage_path, scan_mode=ScanMode.INCREMENTAL)
+            batch = ResourceLibraryScanner(
+                StorageScanner(storages, file_index), (scoped,), storages
+            ).scan_all(
+                limit=limit,
+                on_discovered=on_discovered,
+                include_discovered=lambda source_library, file: (
+                    (source_library.storage_id, file.path) not in skip_sources
+                ),
+                cancellation_check=cancellation_check,
+            )
+            errors = tuple(error for result in batch.results for error in result.errors)
+            return MediaOrganizerBatchResult((), errors)
         batch = ResourceLibraryScanner(
             StorageScanner(storages, file_index),
             configuration.resource_libraries,
@@ -3524,30 +3552,113 @@ def _continue_scope_from_admission(
             cancellation_check=cancellation_check,
             skip_sources=set(skip_sources),
         )
-    library, display_root = _resource_library(configuration, original.scope_path)
-    path = Path(original.scope_path).resolve(strict=False)
-    if path.is_dir():
+    library, storage_path, display_path = _continuation_scope(configuration, original, original_job)
+    entry = storages[library.storage_id].stat(storage_path)
+    if entry.entry_type is StorageEntryType.DIRECTORY:
+        scoped = replace(library, root_path=storage_path, scan_mode=ScanMode.INCREMENTAL)
         return service.process_library(
-            library,
+            scoped,
             execute=execute,
             limit=limit,
             cancellation_check=cancellation_check,
             skip_sources=set(skip_sources),
+            source_display_root=display_path,
         )
-    relative = path.relative_to(Path(display_root).resolve(strict=False)).as_posix()
-    storage_path = _storage_path(library.root_path, relative)
     if (library.storage_id, storage_path) in skip_sources:
         return MediaOrganizerBatchResult(())
+    if entry.entry_type is not StorageEntryType.FILE:
+        raise ValueError("paused media scope is no longer a file or directory")
     return MediaOrganizerBatchResult(
         (
             service.process_file(
-                path.as_posix(),
+                display_path,
                 resource_library=library,
                 storage_path=storage_path,
                 execute=execute,
             ),
         )
     )
+
+
+def _continuation_scope(configuration, original: PersistentTask, original_job):
+    """Resolve one paused scope from its pinned Definition or configured display root.
+
+    Definition occurrences persist a Storage-relative Task path, while direct
+    CLI Tasks persist a display path. The Job-to-Task link and immutable
+    configuration pin disambiguate those forms without guessing from path
+    shape or widening a sub-scope to its ResourceLibrary root.
+    """
+
+    if original_job is not None and getattr(original_job, "definition_id", None):
+        if (
+            getattr(original_job, "task_id", None) != original.task_id
+            or getattr(original_job, "configuration_snapshot_id", None)
+            != original.configuration_snapshot_id
+            or getattr(original_job, "configuration_snapshot_digest", None)
+            != original.configuration_snapshot_digest
+        ):
+            raise ValueError("paused Definition Task no longer matches its pinned Job")
+        definition = next(
+            (
+                value
+                for value in getattr(configuration, "automation_task_definitions", ())
+                if getattr(value, "definition_id", None) == original_job.definition_id
+            ),
+            None,
+        )
+        if definition is None:
+            raise ValueError("paused Definition is absent from the pinned configuration")
+        expected_command = {
+            AutomationTaskRunMode.SCAN_ONLY: AutomationCommand.SCAN,
+            AutomationTaskRunMode.SCAN_AND_PLAN: AutomationCommand.PREVIEW,
+            AutomationTaskRunMode.AUTOMATIC_ORGANIZATION: AutomationCommand.ORGANIZE,
+        }.get(definition.mode)
+        if (
+            expected_command is None
+            or original_job.command is not expected_command
+            or original.command != expected_command.value
+            or original_job.run_mode is not definition.mode
+            or original_job.definition_fingerprint != definition.definition_fingerprint
+            or original_job.resource_library_id != definition.resource_library_id
+            or original_job.source_scope != definition.source_scope
+            or original_job.limit != definition.item_limit
+            or original.item_limit != definition.item_limit
+            or original.execute_authorized != original_job.execute_authorized
+        ):
+            raise ValueError("paused Definition Task no longer matches its pinned scope")
+        libraries = tuple(
+            value
+            for value in configuration.resource_libraries
+            if value.library_id == definition.resource_library_id
+        )
+        if len(libraries) != 1 or not libraries[0].enabled:
+            raise ValueError("paused Definition ResourceLibrary is unavailable")
+        library = libraries[0]
+        normalized_scope = AutomationTaskDefinition.normalize_scope(definition.source_scope)
+        storage_path = normalize_resource_root(
+            posixpath.join(normalize_resource_root(library.root_path), normalized_scope or "")
+        )
+        if normalize_resource_root(original.scope_path or "") != storage_path:
+            raise ValueError("paused Definition Task scope differs from its pinned Definition")
+        display_roots = dict(configuration.resource_display_roots)
+        display_root = display_roots.get(library.library_id, library.root_path)
+        display_path = posixpath.join(display_root, normalized_scope or "").rstrip("/")
+        return library, storage_path, display_path or display_root
+
+    if original.scope_path is None:
+        raise ValueError("paused Task has no exact source scope")
+    path = Path(original.scope_path)
+    if not path.is_absolute():
+        raise ValueError("paused Task scope is neither a pinned Definition nor a display path")
+    library, display_root = _resource_library(configuration, original.scope_path)
+    resolved_path = path.resolve(strict=False)
+    resolved_root = Path(display_root).resolve(strict=False)
+    try:
+        relative = resolved_path.relative_to(resolved_root).as_posix()
+    except ValueError as error:
+        raise ValueError("paused Task scope is outside its configured ResourceLibrary") from error
+    storage_path = normalize_resource_root(_storage_path(library.root_path, relative))
+    return library, storage_path, resolved_path.as_posix()
 
 
 def _automation_configuration_unavailable(
