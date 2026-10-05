@@ -350,7 +350,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
             )
 
     def test_paused_definition_relative_scope_continues_in_the_real_worker(self) -> None:
-        """Pause → Continue → Worker resolves the original Definition sub-scope."""
+        """Repeated Pause → Continue resolves the original Definition sub-scope."""
 
         from mediaflow.application.scope_continuation import ScopeContinuationService
         from mediaflow.application.task_runtime import PersistentTaskCoordinator
@@ -400,9 +400,12 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 self.assertEqual(original.status, PersistentTaskStatus.PAUSED)
                 self.assertEqual(original.scope_path, "Media/C")
                 self.assertEqual(repository.list_items(original.task_id), ())
-                # This file arrives after the paused occurrence was admitted.
-                # The exact Definition sub-scope still includes it, while its
-                # ResourceLibrary sibling and parent remain outside the run.
+                # These files arrive after the paused occurrence was admitted.
+                # The first continuation is paused after one durable Result;
+                # the second must find only the later item in the original
+                # Definition sub-scope.
+                earlier_media = source / "Alpha.Movie.2024.mkv"
+                earlier_media.write_bytes(b"alpha")
                 later_media = source / "Bravo.Movie.2025.mkv"
                 later_media.write_bytes(b"bravo")
                 sibling = source.parent / "D"
@@ -424,6 +427,22 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     actor="operator",
                     maximum_active_jobs=10,
                 )
+
+                def pause_after_first_result() -> bool:
+                    for candidate_task in repository.list_tasks(limit=100):
+                        if candidate_task.task_id == original.task_id:
+                            continue
+                        if (
+                            repository.get_scope_continuation_for_new_task(candidate_task.task_id)
+                            is not None
+                            and repository.list_results(candidate_task.task_id)
+                            and not candidate_task.pause_requested
+                        ):
+                            PersistentTaskCoordinator(repository, repository).request_pause(
+                                candidate_task.task_id
+                            )
+                    return False
+
                 with (
                     patch("mediaflow.final_cli._configuration", return_value=configuration),
                     patch(
@@ -436,7 +455,7 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                         lambda job, cancelled: _run_queued_workflow(
                             job,
                             None,
-                            cancelled,
+                            lambda: pause_after_first_result() or cancelled(),
                             repository=repository,
                         ),
                     ).run_next()
@@ -445,38 +464,96 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                 continuation_record = repository.get_scope_continuation_for_job(
                     submission.job.job_id
                 )
+                paused_continuation_task = repository.get_task(continuation_record.new_task_id)
+                self.assertEqual(paused_continuation_task.status, PersistentTaskStatus.PAUSED)
+                self.assertEqual(len(repository.list_results(paused_continuation_task.task_id)), 1)
+                self.assertEqual(len(repository.list_items(paused_continuation_task.task_id)), 1)
+                self.assertEqual(paused_continuation_task.scope_path, "Media/C")
                 self.assertEqual(
-                    continued.status,
+                    paused_continuation_task.configuration_snapshot_id,
+                    original.configuration_snapshot_id,
+                )
+                self.assertEqual(
+                    paused_continuation_task.configuration_snapshot_digest,
+                    original.configuration_snapshot_digest,
+                )
+
+                # A second admission starts from the newly paused Task. The
+                # real Worker must follow its persisted parent link to the
+                # original Definition Job and exclude the first Result.
+                second_submission = continuation_service.submit(
+                    paused_continuation_task.task_id,
+                    expected_version=paused_continuation_task.updated_at.isoformat(),
+                    actor="operator",
+                    maximum_active_jobs=10,
+                )
+                with (
+                    patch("mediaflow.final_cli._configuration", return_value=configuration),
+                    patch(
+                        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+                        return_value=MetadataProviderRegistry((provider,)),
+                    ),
+                ):
+                    second = AutomationWorker(
+                        repository,
+                        lambda job, cancelled: _run_queued_workflow(
+                            job,
+                            None,
+                            cancelled,
+                            repository=repository,
+                        ),
+                    ).run_next()
+
+                self.assertEqual(second.job_id, second_submission.job.job_id)
+                second_record = repository.get_scope_continuation_for_job(
+                    second_submission.job.job_id
+                )
+                self.assertEqual(
+                    second.status,
                     AutomationJobStatus.COMPLETED,
                     (
-                        continued.error,
-                        continued.failure_category,
-                        continued.failure_durable_state,
-                        continued.failure_next_action,
+                        second.error,
+                        second.failure_category,
+                        second.failure_durable_state,
+                        second.failure_next_action,
                         continuation_record.document(),
-                        repository.get_task(continuation_record.new_task_id).error
-                        if continuation_record.new_task_id
+                        second_record.document(),
+                        repository.get_task(second_record.new_task_id).error
+                        if second_record.new_task_id
                         else None,
                         [
                             (item.source_path, item.status.value, item.error)
-                            for item in repository.list_items(continuation_record.new_task_id)
+                            for item in repository.list_items(second_record.new_task_id)
                         ]
-                        if continuation_record.new_task_id
+                        if second_record.new_task_id
                         else (),
                         [
                             (result.source_path, result.status, result.error)
-                            for result in repository.list_results(continuation_record.new_task_id)
+                            for result in repository.list_results(second_record.new_task_id)
                         ]
-                        if continuation_record.new_task_id
+                        if second_record.new_task_id
                         else (),
                     ),
                 )
-                continued_task = repository.get_task(continued.task_id)
+                continued_task = repository.get_task(second.task_id)
                 self.assertEqual(continued_task.status, PersistentTaskStatus.COMPLETED)
                 self.assertEqual(continued_task.scope_path, "Media/C")
                 self.assertEqual(
                     {item.source_path for item in repository.list_items(continued_task.task_id)},
                     {"Media/C/Bravo.Movie.2025.mkv"},
+                )
+                self.assertEqual(
+                    {
+                        result.source_path
+                        for result in repository.list_results(continued_task.task_id)
+                    },
+                    {"Media/C/Bravo.Movie.2025.mkv"},
+                )
+                self.assertEqual(
+                    repository.get_scope_continuation_for_job(
+                        second_submission.job.job_id
+                    ).new_task_id,
+                    continued_task.task_id,
                 )
                 self.assertNotIn(
                     "Media/D/Alpha.Movie.2024.mkv",
@@ -486,11 +563,15 @@ class DefinitionScopedExecutionTests(unittest.TestCase):
                     "Media/Parent.Movie.2024.mkv",
                     {item.source_path for item in repository.list_items(continued_task.task_id)},
                 )
-                self.assertEqual(
-                    repository.get_scope_continuation_for_job(submission.job.job_id).new_task_id,
-                    continued_task.task_id,
+                self.assertIn(
+                    "Media/C/Alpha.Movie.2024.mkv",
+                    {
+                        result.source_path
+                        for result in repository.list_results(paused_continuation_task.task_id)
+                    },
                 )
                 self.assertTrue(later_media.exists())
+                self.assertTrue(earlier_media.exists())
                 self.assertTrue(sibling_media.exists())
                 self.assertTrue(parent_media.exists())
 

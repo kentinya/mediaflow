@@ -63,6 +63,11 @@ _SNAPSHOT_NEXT_ACTION = (
     "restore the pinned published configuration revision, or start a new bounded run under "
     "the current Active configuration"
 )
+_LINEAGE_REASON = "the recorded continuation history no longer proves the original paused scope"
+_LINEAGE_NEXT_ACTION = (
+    "inspect the linked continuation run and its configuration history; start a new bounded run "
+    "if the original scope cannot be restored"
+)
 
 #: The item dispositions that still hold remaining admitted work.  This mirrors
 #: the operator CLI's proven continuation eligibility exactly
@@ -139,6 +144,65 @@ def is_continuable_task_command(command: object) -> bool:
     return isinstance(command, str) and command in CONTINUABLE_TASK_COMMANDS
 
 
+def continuation_origin(repository, task: PersistentTask) -> PersistentTask:
+    """Resolve a continuation Task's root only through exact persisted links.
+
+    Each queued continuation copies its source Task's command, scope, item
+    limit and immutable configuration pin. Rechecking those values on every
+    parent edge makes the root Job's Definition occurrence usable after any
+    number of pauses without inferring ancestry from a path, label or timestamp.
+    A malformed, cyclic, incomplete or overlong chain is refused.
+    """
+
+    reader = getattr(repository, "get_scope_continuation_for_new_task", None)
+    if not callable(reader):
+        return task
+
+    current = task
+    visited = {task.task_id}
+    for _ in range(_MAX_CHAIN_TASKS):
+        link = reader(current.task_id)
+        if link is None:
+            return current
+        if getattr(link, "new_task_id", None) != current.task_id:
+            raise ValueError("continuation ancestry does not identify its child Task")
+        parent_id = getattr(link, "source_task_id", None)
+        if not isinstance(parent_id, str) or not parent_id or parent_id in visited:
+            raise ValueError("continuation ancestry is cyclic or incomplete")
+        parent = repository.get_task(parent_id)
+        if parent is None:
+            raise ValueError("continuation ancestry source Task is unavailable")
+        expected = (
+            parent.task_id,
+            parent.command,
+            parent.scope_path,
+            parent.item_limit,
+            parent.configuration_snapshot_id,
+            parent.configuration_snapshot_digest,
+        )
+        recorded = (
+            getattr(link, "source_task_id", None),
+            getattr(link, "command", None),
+            getattr(link, "scope_path", None),
+            getattr(link, "item_limit", None),
+            getattr(link, "configuration_snapshot_id", None),
+            getattr(link, "configuration_snapshot_digest", None),
+        )
+        child = (
+            current.task_id,
+            current.command,
+            current.scope_path,
+            current.item_limit,
+            current.configuration_snapshot_id,
+            current.configuration_snapshot_digest,
+        )
+        if recorded != expected or child[1:] != expected[1:]:
+            raise ValueError("continuation ancestry changed its original command, scope or pin")
+        visited.add(parent_id)
+        current = parent
+    raise ValueError("continuation ancestry exceeds the supported chain depth")
+
+
 def definition_occurrence_authority(repository, definitions, grants):
     """A checker proving a mutation-authorized Task keeps live reusable authority.
 
@@ -162,7 +226,11 @@ def definition_occurrence_authority(repository, definitions, grants):
         job_reader = getattr(repository, "get_job_for_task", None)
         if not callable(job_reader) or grants is None:
             return False
-        job = job_reader(task.task_id)
+        try:
+            origin = continuation_origin(repository, task)
+        except Exception:
+            return False
+        job = job_reader(origin.task_id)
         definition_id = getattr(job, "definition_id", None)
         if not isinstance(definition_id, str) or not definition_id:
             return False
@@ -244,6 +312,14 @@ def continuation_obstacle(
             ScopeContinuationReason.SNAPSHOT_UNAVAILABLE,
             _SNAPSHOT_REASON,
             _SNAPSHOT_NEXT_ACTION,
+        )
+    try:
+        continuation_origin(repository, task)
+    except Exception:
+        return (
+            ScopeContinuationReason.SNAPSHOT_UNAVAILABLE,
+            _LINEAGE_REASON,
+            _LINEAGE_NEXT_ACTION,
         )
     active = _active_continuation(repository, task.task_id, exclude_job_id=exclude_job_id)
     if active is not None:
