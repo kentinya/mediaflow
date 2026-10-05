@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { authStore } from "./auth-store";
 import { destinations } from "../navigation/destination-model";
 import type { DestinationPath } from "../navigation/destination-model";
+import { recoveryBatchSessionKey } from "../../features/operations/recovery-batch-session";
 
 afterEach(() => {
   authStore.clearToken();
@@ -101,6 +102,25 @@ describe("authStore", () => {
     authStore.clearToken();
     expect(authStore.getToken()).toBeNull();
     expect(authStore.getIntendedPath()).toBeNull();
+  });
+
+  it("clears persisted recovery batch commands when a principal changes", () => {
+    const key = recoveryBatchSessionKey("task-001");
+    window.sessionStorage.setItem(key, "admin-command");
+    authStore.setToken("admin-token");
+    authStore.setToken("viewer-token");
+
+    expect(window.sessionStorage.getItem(key)).toBeNull();
+  });
+
+  it("preserves recovery batch reconciliation through same-principal auth return", () => {
+    const key = recoveryBatchSessionKey("task-001");
+    window.sessionStorage.setItem(key, "durable-batch-hint");
+    authStore.setToken("admin-token");
+    authStore.clearRejectedAuthority();
+    authStore.setToken("admin-reconnected-token");
+
+    expect(window.sessionStorage.getItem(key)).toBe("durable-batch-hint");
   });
 
   it("notifies subscribers until they unsubscribe", () => {

@@ -1723,6 +1723,111 @@ test("native task-item recognition recovery reaches a separately authorized link
   expect(pageContent).not.toContain(ADMIN_TOKEN);
 });
 
+test("explicit disconnect clears a lost-response batch before another principal opens the run", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery-batch`,
+  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly batchEligibleItemId: string;
+  };
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  const selector = page.getByLabel(
+    `选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`,
+  );
+  await expect(selector).toBeVisible();
+  await selector.check();
+
+  let recoveryPosts = 0;
+  page.on("request", (browserRequest) => {
+    if (
+      browserRequest.method() === "POST" &&
+      new URL(browserRequest.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`
+    ) {
+      recoveryPosts += 1;
+    }
+  });
+  await page.route(
+    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+    (route) => route.abort("failed"),
+    { times: 1 },
+  );
+  const batchPanel = page.getByRole("region", { name: "批量失败分析恢复" });
+  await batchPanel.getByRole("button", { name: "继续所选分析(1)" }).click();
+  await expect(
+    batchPanel.getByRole("button", { name: "核对这个批次" }),
+  ).toBeVisible();
+  await batchPanel.getByRole("button", { name: "核对这个批次" }).click();
+  await expect(
+    batchPanel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
+  ).toBeVisible();
+  const sourceUrl = page.url();
+  const storageKey = `mediaflow.operations.recovery-batch:${seeded.taskId}`;
+  const originalCommand = await page.evaluate((key) => {
+    const value = sessionStorage.getItem(key);
+    return value === null ? null : JSON.parse(value);
+  }, storageKey);
+  expect(originalCommand).toMatchObject({
+    items: [{ itemId: seeded.batchEligibleItemId }],
+  });
+
+  await page
+    .getByRole("button", { name: "Disconnect", exact: true })
+    .first()
+    .click();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) =>
+        key.startsWith("mediaflow.operations.recovery-batch:"),
+      ),
+    ),
+  ).toEqual([]);
+
+  // Re-enter through the same selected run as another valid API principal.
+  // A full route reload also proves no in-memory command state is needed for
+  // the leak to reproduce: the persisted hint was the entire repro surface.
+  await page.goto(sourceUrl);
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  const viewerBatchPanel = page.getByRole("region", {
+    name: "批量失败分析恢复",
+  });
+  await expect(viewerBatchPanel).toBeVisible();
+  await expect(
+    viewerBatchPanel.getByRole("button", { name: "核对这个批次" }),
+  ).toHaveCount(0);
+  await expect(
+    viewerBatchPanel.getByRole("button", {
+      name: "明确重发同一批次和所选条目",
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`),
+  ).not.toBeChecked();
+  expect(recoveryPosts).toBe(1);
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) =>
+        key.startsWith("mediaflow.operations.recovery-batch:"),
+      ),
+    ),
+  ).toEqual([]);
+});
+
 test("a failed item retry and a mixed batch preserve exact independent outcomes", async ({
   page,
   request,
@@ -1957,4 +2062,31 @@ test("a failed item retry and a mixed batch preserve exact independent outcomes"
   expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
   expect(state.sourceExists["Batch/C/BatchSingle.2006.mkv"]).toBe(true);
   expect(state.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
+
+  const linkedAnalysis = persistedBatch.items.find(
+    (item: { source_item_id: string }) =>
+      item.source_item_id === seeded.batchEligibleItemId,
+  );
+  expect(linkedAnalysis.new_task_id).toEqual(expect.any(String));
+  await batchPanel.getByRole("button", { name: "查看关联分析 Task" }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ui-v2/operations/tasks/${linkedAnalysis.new_task_id}`),
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: `Task ${linkedAnalysis.new_task_id}`,
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "返回原运行", exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  await expect(page).toHaveURL(
+    new RegExp(`item=${seeded.batchEligibleItemId}`),
+  );
+  await expect(
+    page.getByRole("heading", {
+      name: `条目证据:${seeded.batchEligibleItemId}`,
+      exact: true,
+    }),
+  ).toBeVisible();
 });

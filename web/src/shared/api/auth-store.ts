@@ -11,6 +11,7 @@ import {
   isDestinationPath,
   type DestinationPath,
 } from "../navigation/destination-model";
+import { clearPrincipalSessionData } from "../auth/principal-session-data";
 
 export type AuthListener = () => void;
 
@@ -73,6 +74,9 @@ export function createMemoryAuthStore(): MemoryAuthStore {
     getToken: () => token,
     isRejected: () => rejected,
     setToken: (next) => {
+      if (token !== null && token !== next) {
+        clearPrincipalSessionData();
+      }
       token = next;
       // A freshly entered principal resets the rejected-authority boundary.
       rejected = false;
@@ -82,6 +86,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
       if (token === null && !rejected) {
         return;
       }
+      clearPrincipalSessionData();
       token = null;
       rejected = false;
       clearIntendedPathInternal();
