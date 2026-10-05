@@ -275,56 +275,59 @@ npm run build
 
 ### Changed Files
 
-- Backend/API: `mediaflow/application/manual_recovery_continuation.py`, `mediaflow/application/operations_lifecycle.py`, `mediaflow/application/processing_checkpoint.py`, `mediaflow/application/recovery_batch.py`, `mediaflow/application/recovery_continuation.py`, `mediaflow/application/task_item_recovery.py`, `mediaflow/domain/security.py`, `mediaflow/final_cli.py`, `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`.
-- Web: `web/src/entities/operations/__fixtures__/manual-operations.json`, `web/src/entities/operations/manual-operations-contract.test.ts`, `web/src/entities/operations/preview.test.ts`, `web/src/entities/operations/preview.ts`, `web/src/entities/operations/task-item-recovery.test.ts`, `web/src/entities/operations/task-item-recovery.ts`, `web/src/features/operations/ManualOperationsRouter.test.tsx`, `web/src/features/operations/OperationsLanding.tsx`, `web/src/features/operations/OrganizePreviewPage.tsx`, `web/src/features/operations/RunDetailTabs.test.tsx`, `web/src/features/operations/RunDetailTabs.tsx`, `web/src/features/operations/TaskDetailPage.tsx`, `web/src/features/operations/TaskItemRecoveryPanel.test.tsx`, `web/src/features/operations/TaskItemRecoveryPanel.tsx`, `web/src/features/operations/run-detail-query.ts`, `web/src/shared/api/api-client.ts`.
-- Harness/tests: `scripts/operations_inventory_harness.py`, `tests/test_manual_operations_contract.py`, `tests/test_recovery_batch.py`, `tests/test_recovery_continuation.py`, `web/tests/e2e/operations-inventory.python.spec.ts`.
-- `TASK.md` — this Developer Completion Report and Task status.
+- `web/src/features/operations/OperationsLanding.tsx`
+- `web/src/features/operations/RunDetailTabs.tsx`
+- `web/src/features/operations/recovery-batch-session.ts`
+- `web/src/shared/api/auth-store.ts`
+- `web/src/shared/api/auth-store.test.ts`
+- `web/src/shared/auth/principal-session-data.ts`
+- `web/tests/e2e/operations-inventory.python.spec.ts`
+- `TASK.md` — this completion report and Task status.
 
 ### Implemented
 
-- Added task-scoped, bounded recovery detail, explicit Metadata search, and version-fenced Recognition, Metadata, Metadata correction, Classification, conflict and ignore decisions through existing review services. Reads do not call Providers; decision persistence does not grant execution authority.
-- Composed an eligible decision with the existing safe DryRun admission and durable Worker continuation. Checkpoint projections now admit only structured, durable zero-effect states; unknown effects remain investigation-only. Corrected the Worker parser input to use the ResourceLibrary-relative source path rather than its Storage-qualified display label.
-- Added single-item and explicitly selected batch recovery to native V2 run detail. Batch commands keep one browser-persisted request UUID, bind each item to its captured checkpoint, reconcile an uncertain response against the same durable batch, and preserve independent accepted/refused outcomes.
-- Connected completed analysis to the existing manual recovery Preview and separately authorized execution. Preview shows the exact Storage-relative target composed by the reviewed plan, without disclosing a host root, and links the resulting execution and Result back to the original item.
-- Added a real Python API/SQLite/Worker harness and browser coverage for decision recovery, single retry, mixed batch outcomes, restart/auth return, zero-mutation analysis and separately authorized execution.
+- Replaced the batch result's root-relative anchor with native V2 navigation to the exact linked Task detail. The return context keeps the original run, submitted list/detail state and exact source item, and the Task detail's return action restores that item.
+- Added principal-session cleanup registration for recovery batch commands. Explicit disconnect and direct replacement of an active principal clear the persisted batch hint; page reload and the existing rejected-authority/auth-return path retain the exact ID for durable reconciliation. API tokens remain memory-only.
+- Added auth-store regression coverage and Python/API/SQLite/Worker browser coverage for the linked analysis round trip and an unknown batch response followed by disconnect and a second principal.
 
 ### Tests and Results
 
-- PASS — all five focused Python command groups in `TASK.md`: 34, 105, 117, 179 and 71 tests (506 total).
+- PASS — all five required focused Python groups: 34, 105, 117, 179 and 71 tests (506 total).
 - PASS — `.venv/bin/python -m unittest discover -s tests`: 2,183 tests, 7 skipped, 0 failures.
 - PASS — `.venv/bin/python -m unittest tests.test_release_security tests.test_release_validation tests.test_migration_rehearsal tests.test_upgrade_preflight`: 19 tests.
-- PASS — `python3 scripts/check_governance.py`; `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required example-config validation commands.
-- PASS — `.venv/bin/python scripts/docker_release_security_smoke_test.py`; isolated four-service stack, redaction/RBAC and resident Worker checks completed.
-- PASS — wheel build and `.venv/bin/python scripts/wheel_smoke_test.py <built-wheel>`; the smoke covered CLI/config validation, backup/restore, migration rehearsal and upgrade preflight.
-- PASS — final Web checks: `npm run typecheck`, `npm run lint`, `npm run format:check`, `npm run build`.
-- PASS — `npm run test -- --run`: 65 files / 994 tests. This full-suite run preceded the final storage-unavailable notice and its regression test; after that final change, the affected `RunDetailTabs` and `TaskItemRecoveryPanel` component group passed 12/12 tests.
-- PASS — required focused Web directory command: 44 files / 701 tests. PASS — final Python-backed browser spec: 18/18 tests; after the final storage notice, the mixed-batch Worker browser case passed again (1/1).
+- PASS — `python3 scripts/check_governance.py`; `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; both required example-config validations.
+- PASS — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: isolated four-service stack and release-security acceptance completed.
+- PASS — wheel build and `.venv/bin/python scripts/wheel_smoke_test.py <built-wheel>`: CLI/config, backup/restore, migration rehearsal and upgrade preflight completed.
+- PASS — Web `npm run typecheck`, `npm run lint`, `npm run format:check` and `npm run build`.
+- PASS — focused Web command from Task: 44 files / 704 tests.
+- PASS — `npm run test -- --run`: 65 files / 997 tests.
+- PASS — `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`: 19/19 tests, including both correction regressions and same-principal restart/auth-return recovery.
 - PASS — `npm run test:e2e -- tests/e2e/library-files.spec.ts`: 40/40 tests.
-- FAIL / PRE-EXISTING / UNRELATED — the required `operations.spec.ts`, `manual-organize.spec.ts`, `manual-operations.spec.ts`, `deep-link.spec.ts` command had 66 passing and two unchanged Base-proven failures: `deep-link.spec.ts:211` cannot find the “Review & Recovery” link; `deep-link.spec.ts:481` expects the retired V1 handoff heading. `deep-link.spec.ts` is unchanged from Task Base and the same failures are recorded in the Base review evidence.
-- PASS — `git diff --check`, `git diff --check 0370eada28e2a4911bedaa7cea7fa7eb18bc35be`, reference screenshot checksum, and the `config/alist.json` ignore/index checks. `ffprobe`/`ffmpeg` search returned no matches in `mediaflow` or `pyproject.toml`.
+- FAIL / PRE-EXISTING / UNRELATED — required `operations.spec.ts`, `manual-organize.spec.ts`, `manual-operations.spec.ts`, `deep-link.spec.ts` browser command: 66 passed, 2 failed. The unchanged Base-proven failures are `deep-link.spec.ts:211` (missing “Review & Recovery” link) and `deep-link.spec.ts:481` (retired V1 handoff heading); neither file changed in this Task.
+- PASS — final `git diff --check`, Task Base whitespace check, reference image SHA-256 (`a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`), ignored/untracked/index checks for `config/alist.json`, and `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` (no matches).
 
 ### Decisions
 
-- Kept the MediaLibrary-relative destination field for context and added a separate Storage-relative planned path for the exact reviewed target. It contains no host root and prevents Preview from displaying a path different from the one OrganizerExecutor will use.
-- Reused the existing recovery admission, checkpoint, Worker, manual Preview and one-shot execution authority. No schema or second queue was added.
-- Made the batch UUID caller-stable and reuse conditional on an exact Task, actor and item/checkpoint selection match. Duplicate delivery returns the existing durable batch and never creates a second batch job.
+- Reused the existing TanStack V2 Task detail route and bounded `returnOps` context instead of adding another route or API.
+- Kept batch hints in sessionStorage so the same browser session can reconcile after reload, while registering feature-owned cleanup with the shared auth lifecycle. No API token or token-derived key is stored.
+- Added no schema, backend authority or Storage behavior changes.
 
 ### Remaining In-Slice Work
 
-No separate in-Slice implementation work was identified during this Task. B must reevaluate the Slice Required Outcomes after reviewing this checkpoint; this report does not assess Slice completion or plan a next Task.
+No separate in-Slice implementation work was identified in this correction. B must reevaluate the Slice Required Outcomes after reviewing this checkpoint; this report does not assess Slice completion or plan a next Task.
 
 ### Risks / Deviations
 
-- The two Deep Link browser failures above remain `FAIL / PRE-EXISTING / UNRELATED`; no assertion was changed or suppressed.
-- Python tests emitted existing SQLite `ResourceWarning` messages for unclosed test connections. The full run still completed with 2,183 tests and 7 skips.
-- Vitest emitted its existing jsdom `window.scrollTo()`/navigation notices. Vite build succeeded with a chunk-size warning for the approximately 1.1 MB JavaScript bundle.
-- The final full Web run (994 tests) predates the isolated session-storage error notice/test addition; the affected component group, all static checks, build and final mixed-batch browser case were rerun after it.
+- The two deep-link browser failures above remain `FAIL / PRE-EXISTING / UNRELATED`; the tests and assertions were not changed.
+- An initial concurrent two-file Web test run had one storage-notice test fail to find its batch region. The isolated test then passed; the exact two-file rerun passed 26/26, followed by the required 704-test focused Web group and 997-test full Web suite passing.
+- The first run of the new account-switch browser test expected the resubmit control before using the displayed “核对这个批次” action. The test was corrected to follow that reconciliation step; the isolated regression and final 19-test Python-backed browser suite passed.
+- Python emitted existing SQLite ResourceWarnings; jsdom emitted its scroll/navigation notices; Vite reported the existing approximately 1.1 MB bundle-size warning. No required gate was unavailable.
 
 ### Checkpoint
 
 ```text
 Status: READY FOR B REVIEW
-Head SHA: b09660113816d29e8a4177bb10450a8db1498906
+Head SHA: 0e8e93f0d080006f98f3bdcb24882a5767669453
 ```
 
 ## B Review Result
