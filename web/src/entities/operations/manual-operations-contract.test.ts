@@ -153,7 +153,9 @@ describe("real API Preview documents", () => {
       expect(item?.providerId).toBe("129");
       expect(item?.organizePolicy).toBe("A");
       expect(item?.targetStorageId).toBe("target");
-      expect(item?.targetPath).toBe("Movies/Anime/One (2001)/One (2001).mkv");
+      expect(item?.targetPath).toBe(
+        "Movies/Movies/Anime/One (2001)/One (2001).mkv",
+      );
       expect(item?.destination?.relativePath).toBe(
         "Movies/Anime/One (2001)/One (2001).mkv",
       );

@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 from datetime import UTC, datetime
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.application.recovery_continuation import RecoveryContinuationService
@@ -44,6 +44,7 @@ class RecoveryBatchContinuationService:
         *,
         actor: str,
         maximum_active_jobs: int,
+        batch_id: str | None = None,
     ) -> RecoveryBatch:
         task_id = self._required_text(task_id, "Task ID")
         actor = self._actor(actor)
@@ -72,12 +73,21 @@ class RecoveryBatchContinuationService:
             seen.add(item_id)
             normalized.append((item_id, version))
         normalized.sort()
+        if batch_id is None:
+            batch_id = str(uuid4())
+        else:
+            try:
+                batch_id = str(UUID(batch_id))
+            except (TypeError, ValueError, AttributeError):
+                raise ValueError("batch recovery identity must be a UUID") from None
+            existing = self._find_reusable_batch(batch_id, task_id, actor, normalized)
+            if existing is not None:
+                return existing
 
         task = self._repository.get_task(task_id)
         if task is None:
             raise LookupError(f"task {task_id!r} was not found")
         now = datetime.now(UTC)
-        batch_id = str(uuid4())
         initial_items = tuple(
             RecoveryBatchItem(
                 str(uuid4()),
@@ -92,20 +102,47 @@ class RecoveryBatchContinuationService:
             for item_id, version in normalized
         )
         initial_items = tuple(replace(item, batch_id=batch_id) for item in initial_items)
-        self._repository.create_recovery_batch(
-            RecoveryBatch(
-                batch_id,
-                task_id,
-                actor,
-                now,
-                now,
-                RecoveryBatchStatus.QUEUED,
-                initial_items,
+        try:
+            self._repository.create_recovery_batch(
+                RecoveryBatch(
+                    batch_id,
+                    task_id,
+                    actor,
+                    now,
+                    now,
+                    RecoveryBatchStatus.QUEUED,
+                    initial_items,
+                )
             )
-        )
+        except Exception:
+            # A repeated HTTP submission with the same opaque request identity
+            # returns the durable batch only when Task, actor and exact selected
+            # checkpoint set match. It never re-drives already-recorded children.
+            existing = self._find_reusable_batch(batch_id, task_id, actor, normalized)
+            if existing is not None:
+                return existing
+            raise
 
         self._drive(initial_items, actor, maximum_active_jobs)
         return self._repository.get_recovery_batch(batch_id)
+
+    def _find_reusable_batch(self, batch_id, task_id, actor, selections):
+        try:
+            existing = self._repository.get_recovery_batch(batch_id)
+        except LookupError:
+            return None
+        selected = tuple(
+            sorted((item.source_item_id, item.checkpoint_version) for item in existing.items)
+        )
+        if (
+            existing.source_task_id != task_id
+            or existing.actor != actor
+            or selected != tuple(selections)
+        ):
+            raise ValueError(
+                "batch recovery identity is already bound to another Task or selection"
+            )
+        return existing
 
     def resume(self, batch_id: str, *, actor: str, maximum_active_jobs: int) -> RecoveryBatch:
         """Deterministically finish children still durably `selected` after reload.
@@ -203,7 +240,6 @@ class RecoveryBatchContinuationService:
             continuation = submission.continuation
             return replace(
                 batch_item,
-                checkpoint_version=checkpoint.checkpoint_version,
                 status=RecoveryBatchItemStatus.QUEUED,
                 request_id=continuation.request_id,
                 continuation_id=continuation.continuation_id,

@@ -175,6 +175,71 @@ class RecoveryBatchTests(unittest.TestCase):
             self.assertEqual(len(detail["recovery_batches"]), 1)
             self.assertEqual(detail["recovery_batches"][0]["batch_id"], document["batch_id"])
 
+    def test_api_batch_identity_reconciles_exact_selection_without_replay(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            helper = _RecoveryContinuationTests()
+            environment = helper._environment(directory)
+            source_task, source_item = helper._seed_failed_item(environment)
+            api = helper._api(environment)
+            status, checkpoint = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}",
+            )
+            self.assertEqual(status, 200)
+            batch_id = "be7112ca-1ac1-4d01-9bda-6b012c1c9c0a"
+            selection = {
+                "itemId": source_item.item_id,
+                "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+            }
+            path = f"/api/v1/tasks/{source_task.task_id}/recovery/continue-batch"
+            status, first = api_request(
+                api,
+                path,
+                method="POST",
+                body={"batchId": batch_id, "items": [selection]},
+            )
+            self.assertEqual(status, 202)
+            self.assertEqual(first["batch_id"], batch_id)
+            self.assertEqual(first["counts"]["queued"], 1)
+
+            # The page can reconcile an ambiguous submission by its exact
+            # caller-owned batch identity; repeating that identity reads the
+            # original child and never creates a second continuation.
+            read_status, durable = api_request(
+                api,
+                f"/api/v1/tasks/{source_task.task_id}/recovery-batches/{batch_id}",
+            )
+            self.assertEqual(read_status, 200)
+            self.assertEqual(durable["batch_id"], batch_id)
+            self.assertEqual(durable["items"][0]["source_item_id"], source_item.item_id)
+            duplicate_status, duplicate = api_request(
+                api,
+                path,
+                method="POST",
+                body={"batchId": batch_id, "items": [selection]},
+            )
+            self.assertEqual(duplicate_status, 202)
+            self.assertEqual(duplicate["batch_id"], first["batch_id"])
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                self.assertEqual(len(repository.list_recovery_batches(source_task.task_id)), 1)
+                self.assertEqual(len(repository.list_jobs(limit=100)), 1)
+
+            mismatch_status, _ = api_request(
+                api,
+                path,
+                method="POST",
+                body={
+                    "batchId": batch_id,
+                    "items": [
+                        {
+                            "itemId": "different-item",
+                            "expectedCheckpointVersion": checkpoint["checkpoint_version"],
+                        }
+                    ],
+                },
+            )
+            self.assertEqual(mismatch_status, 400)
+
     def test_batch_bound_and_duplicate_selection_fail_closed_without_rows(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             helper = _RecoveryContinuationTests()

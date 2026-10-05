@@ -2872,7 +2872,11 @@ def _run_metadata_correction_continuation(
                 secret_free_errors=True,
             )
             item = service.process_file(
-                prepared.source_item.source_display,
+                # ``source_display`` is an operator-facing, Storage-qualified
+                # label (for example ``storage-id:relative/path``).  The
+                # strategy parser needs the ResourceLibrary-relative media
+                # path so a Storage ID cannot become part of the title query.
+                prepared.source_item.source_path,
                 resource_library=resource,
                 storage_path=prepared.source_item.source_path,
                 execute=False,
@@ -3090,7 +3094,9 @@ def _run_recovery_continuation(
                 secret_free_errors=True,
             )
             item = service.process_file(
-                prepared.source_item.source_display,
+                # The display label is Storage-qualified; parsing must use the
+                # exact ResourceLibrary-relative media path instead.
+                prepared.source_item.source_path,
                 resource_library=resource,
                 storage_path=prepared.source_item.source_path,
                 execute=False,

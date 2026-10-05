@@ -68,6 +68,7 @@ import threading
 import urllib.parse
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from unittest.mock import patch
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +89,7 @@ from mediaflow.application.media_organizer import (  # noqa: E402
 from mediaflow.application.metadata import MetadataProviderRegistry  # noqa: E402
 from mediaflow.application.organizer import OrganizerExecutor  # noqa: E402
 from mediaflow.application.package_exchange import PackageExchangeService  # noqa: E402
+from mediaflow.application.recognition_review import RecognitionReviewService  # noqa: E402
 from mediaflow.application.scanner import StorageScanner  # noqa: E402
 from mediaflow.application.strategy_test import (  # noqa: E402
     SyntheticMetadataProvider,
@@ -108,6 +110,12 @@ from mediaflow.domain.failure import FailureExplanation  # noqa: E402
 from mediaflow.domain.logging import LogLevel, OperationalLogRecord  # noqa: E402
 from mediaflow.domain.media_evidence import EvidenceSection, PipelineEvidence  # noqa: E402
 from mediaflow.domain.metadata import MediaCandidate, MediaType  # noqa: E402
+from mediaflow.domain.organizer import (  # noqa: E402
+    ExecutionEffectCertainty,
+    ExecutionResult,
+    ExecutionStatus,
+)
+from mediaflow.domain.recognition import RecognitionResult, RecognitionStatus  # noqa: E402
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal  # noqa: E402
 from mediaflow.domain.task_persistence import (  # noqa: E402
     PersistentResultRecord,
@@ -430,6 +438,8 @@ class AppState:
         self.pipeline_run: dict[str, str] | None = None
         #: The paused scan Task of the AC-T7 continuation journey.
         self.continuation_task_id: str | None = None
+        self.recovery_run: dict[str, str] | None = None
+        self.recovery_batch_run: dict[str, object] | None = None
 
     @property
     def database(self) -> Path:
@@ -945,6 +955,631 @@ def run_manual_worker_once(state: AppState) -> dict[str, object]:
         }
 
 
+class _PreMutationFailureExecutor:
+    """A local test seam that records one known-zero-effect execution failure."""
+
+    def execute(self, plan, _storages, **_kwargs):
+        return ExecutionResult(
+            ExecutionStatus.FAILED,
+            plan.operation,
+            plan.source,
+            plan.target,
+            plan_id=plan.plan_id,
+            resolved_destination=plan.target,
+            errors=("harness injected a failure before Storage mutation",),
+            effect_certainty=ExecutionEffectCertainty.NONE,
+        )
+
+
+def seed_task_item_recovery_journey(state: AppState) -> dict[str, str]:
+    """Create a real linked Manual TaskItem at a pending Recognition decision.
+
+    The Manual intent, exact Preview, execution admission, Worker claim and
+    failure Result all use the product services. The failure executor is a
+    deterministic test seam that fails before Storage is touched; a subsequent
+    real RecognitionReviewService row provides the legal waiting state the
+    browser resolves through the product API.
+    """
+
+    with state._manual_lock:
+        if state.recovery_run is not None:
+            return dict(state.recovery_run)
+        active = state.managed.active
+        filename = "Recovery.2005.mkv"
+        source_file = state.managed.root / "source" / filename
+        source_file.write_bytes(b"synthetic recovery media; no real codec parsing")
+        scan = StorageScanner(
+            state.managed.runtime.create_storages(),
+            state.file_index,
+            clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+        ).scan(state.managed.runtime.resource_libraries[0])
+        if scan.status.value != "completed":
+            raise RuntimeError("recovery fixture ResourceLibrary scan did not complete")
+
+        provider = state.managed.metadata_registry.resolve("tmdb")
+        existing_candidates = tuple(getattr(provider, "_candidates", ()))
+        if not any(value.provider_id == "205" for value in existing_candidates):
+            provider._candidates = existing_candidates + (
+                MediaCandidate(
+                    "tmdb",
+                    "205",
+                    MediaType.MOVIE,
+                    "Recovery",
+                    year=2005,
+                    genres=("Animation",),
+                    countries=("JP",),
+                ),
+            )
+
+        state.api._worker_service.register_worker(
+            "harness-recovery-manual-worker",
+            "Harness Recovery Manual Worker",
+            10.0,
+            ("scan", "preview", "organize"),
+            configuration_snapshot_id=active.revision_id,
+            configuration_snapshot_digest=active.digest,
+            runtime_schema_version=SCHEMA_VERSION,
+        )
+        status, intent = wsgi_request(
+            state.api,
+            "POST",
+            "/api/v1/resource-libraries/source/files/organize",
+            body={"paths": [filename]},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 201:
+            raise RuntimeError(f"recovery Manual Organize intent failed: {status}")
+        item = intent["items"][0]
+        status, intent = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/intents/{intent['intentId']}"
+            f"/items/{item['itemId']}/choice",
+            body={
+                "expectedVersion": intent["version"],
+                "expectedItemVersion": item["version"],
+                "recognitionTypeId": "C",
+                "namingPolicyId": "A",
+                "classificationPolicyId": "A",
+                "organizePolicyId": "A",
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 200:
+            raise RuntimeError(f"recovery Manual Organize choice failed: {status}")
+        status, preview = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/intents/{intent['intentId']}/previews",
+            body={"expectedVersion": intent["version"]},
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 201:
+            raise RuntimeError(f"recovery Manual Organize Preview failed: {status}")
+        status, execution = wsgi_request(
+            state.api,
+            "POST",
+            f"/api/v1/operations/organize/previews/{preview['previewId']}/execute",
+            body={
+                "confirmation": True,
+                "itemIds": [value["itemId"] for value in preview["items"]],
+                "expectedIntentVersion": intent["version"],
+            },
+            token=HARNESS_ADMIN_TOKEN,
+        )
+        if status != 202:
+            raise RuntimeError(f"recovery Manual Organize admission failed: {status}")
+
+        manual_execution = state.api._manual_execution
+        actual_executor = manual_execution._executor
+        manual_execution._executor = _PreMutationFailureExecutor()
+        try:
+            completed = ManualOrganizeExecutionWorker(
+                manual_execution,
+                worker_id="harness-recovery-manual-worker",
+                notice=lambda _line: None,
+            ).run_next()
+        finally:
+            manual_execution._executor = actual_executor
+        if completed is None or completed.status.value != "failed":
+            raise RuntimeError("recovery fixture did not produce the expected safe failure")
+
+        durable = state.repository.get_manual_execution(execution["executionId"])
+        if durable is None or len(durable.items) != 1:
+            raise RuntimeError("recovery fixture lost the exact manual execution item")
+        manual_item = durable.items[0]
+        current = state.repository.get_item(manual_item.task_item_id)
+        if current is None or current.status is not TaskItemStatus.FAILED:
+            raise RuntimeError("recovery fixture item did not persist its failed outcome")
+        processing = dataclasses.replace(
+            current,
+            status=TaskItemStatus.PROCESSING,
+            stage="recognizing",
+        )
+        state.repository.upsert_item(processing)
+        review = RecognitionReviewService(
+            state.repository,
+            state.managed.runtime.strategy.recognition_types,
+        ).create(
+            processing,
+            RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
+        )
+        state.recovery_run = {
+            "runId": durable.task_id,
+            "taskId": durable.task_id,
+            "itemId": manual_item.task_item_id,
+            "previewId": preview["previewId"],
+            "executionId": durable.execution_id,
+            "reviewId": review.review_id,
+            "sourcePath": filename,
+        }
+        if source_file.read_bytes() != b"synthetic recovery media; no real codec parsing":
+            raise RuntimeError("zero-mutation recovery fixture changed the source")
+        return dict(state.recovery_run)
+
+
+def run_task_item_recovery_worker_once(state: AppState) -> dict[str, object]:
+    """Run the real resident queued-workflow handler for the recovery Job."""
+
+    recovery_item_ids = [
+        str(value)
+        for value in (
+            state.recovery_run.get("itemId") if state.recovery_run else None,
+            state.recovery_batch_run.get("singleItemId") if state.recovery_batch_run else None,
+            state.recovery_batch_run.get("batchEligibleItemId")
+            if state.recovery_batch_run
+            else None,
+        )
+        if value is not None
+    ]
+    if not recovery_item_ids:
+        raise RuntimeError("task-item recovery fixture has not been seeded")
+    from mediaflow.final_cli import _run_queued_workflow
+
+    queued = next(
+        (
+            value
+            for item_id in recovery_item_ids
+            for value in state.repository.list_recovery_continuations(item_id, limit=10)
+            if value.status.value == "queued" and value.new_task_id is None
+        ),
+        None,
+    )
+    if queued is None:
+        return {"ran": False, "reason": "no queued recovery continuation"}
+    job = state.repository.get_job(queued.job_id)
+    if job is None:
+        raise RuntimeError("queued recovery continuation lost its Job")
+    if state.managed.config_path is None:
+        raise RuntimeError("resident recovery Worker has no managed config path")
+    active = state.managed.active
+    state.repository.register_worker(
+        WORKER_ID,
+        "harness-inventory-worker",
+        30.0,
+        ("scan", "preview", "organize", "recovery-continuation"),
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        runtime_schema_version=SCHEMA_VERSION,
+        now=datetime.now(UTC),
+    )
+    # Older unclaimed seed Jobs are harness fixtures. Close them with an
+    # unregistered claim before the exact recovery Job; a snapshot-bound
+    # Worker may claim only this continuation and must never mistake it for a
+    # fixture. The actual recovery Job is claimed below by AutomationWorker.
+    while True:
+        pending = tuple(
+            sorted(
+                (
+                    value
+                    for value in state.repository.list_jobs(limit=100)
+                    if value.status is AutomationJobStatus.PENDING
+                ),
+                key=lambda value: (value.created_at, value.job_id),
+            )
+        )
+        if not pending or pending[0].job_id == job.job_id:
+            break
+        claimed_fixture = state.repository.claim_next_job(datetime.now(UTC))
+        if claimed_fixture is None:
+            break
+        state.repository.complete_claimed_job(
+            dataclasses.replace(
+                claimed_fixture,
+                status=AutomationJobStatus.COMPLETED,
+                updated_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+                error=None,
+            )
+        )
+    worker = AutomationWorker(
+        state.repository,
+        lambda value, cancelled: _run_queued_workflow(
+            value,
+            str(state.managed.config_path),
+            cancelled,
+            repository=state.repository,
+        ),
+        worker_id=WORKER_ID,
+        label="harness-inventory-worker",
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        runtime_schema_version=SCHEMA_VERSION,
+    )
+    with patch(
+        "mediaflow.final_cli.metadata_provider_registry_from_environment",
+        lambda _provider_ids: state.managed.metadata_registry,
+    ):
+        completed_job = worker.run_next()
+    if completed_job is None or completed_job.job_id != job.job_id:
+        return {"ran": False, "reason": "queued recovery Job was not claimable"}
+    continuation = state.repository.get_recovery_continuation_for_job(job.job_id)
+    return {
+        "ran": True,
+        "jobId": job.job_id,
+        "taskId": completed_job.task_id,
+        "continuationStatus": continuation.status.value if continuation else None,
+        "newTaskId": continuation.new_task_id if continuation else None,
+        "newResultId": continuation.new_result_id if continuation else None,
+    }
+
+
+def seed_task_item_recovery_batch(state: AppState) -> dict[str, object]:
+    """Create exact pinned TaskItems for single and mixed browser recovery."""
+
+    if state.recovery_batch_run is not None:
+        return dict(state.recovery_batch_run)
+
+    source_root = state.managed.root / "source"
+    files = {
+        "Batch/C/BatchSingle.2006.mkv": b"synthetic single recovery source",
+        "Batch/C/BatchEligible.2007.mkv": b"synthetic accepted batch source",
+        "Batch/C/BatchStale.2008.mkv": b"synthetic stale batch source",
+        "Batch/C/BatchUnknown.2009.mkv": b"synthetic unknown effect sibling",
+        "Batch/C/BatchSuccess.2010.mkv": b"synthetic successful sibling",
+        "Batch/C/BatchIgnored.2011.mkv": b"synthetic ignored sibling",
+    }
+    for relative_path, content in files.items():
+        source = source_root / relative_path
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(content)
+
+    scan = StorageScanner(
+        state.managed.runtime.create_storages(),
+        state.file_index,
+        clock=lambda: datetime.now(UTC) + timedelta(hours=2),
+    ).scan(state.managed.runtime.resource_libraries[0])
+    if scan.status.value != "completed":
+        raise RuntimeError("recovery batch fixture ResourceLibrary scan did not complete")
+
+    provider = state.managed.metadata_registry.resolve("tmdb")
+    existing_candidates = tuple(getattr(provider, "_candidates", ()))
+    added_candidates = tuple(
+        MediaCandidate(
+            "tmdb",
+            provider_id,
+            MediaType.MOVIE,
+            title,
+            year=year,
+            genres=("Animation",),
+            countries=("JP",),
+        )
+        for provider_id, title, year in (
+            ("206", "BatchSingle", 2006),
+            ("207", "BatchEligible", 2007),
+        )
+        if not any(value.provider_id == provider_id for value in existing_candidates)
+    )
+    provider._candidates = existing_candidates + added_candidates
+
+    active = state.managed.active
+    task = PersistentTaskCoordinator(state.repository, state.repository).create(
+        "organize",
+        execute_authorized=False,
+        scope_path="Batch",
+        configuration_snapshot_id=active.revision_id,
+        configuration_snapshot_digest=active.digest,
+        require_configuration_snapshot=True,
+        status=PersistentTaskStatus.PARTIAL_SUCCESS,
+    )
+    now = datetime.now(UTC)
+    identifiers = {
+        "single": f"{task.task_id}-single",
+        "eligible": f"{task.task_id}-eligible",
+        "stale": f"{task.task_id}-stale",
+        "success": f"{task.task_id}-success",
+        "unknown": f"{task.task_id}-unknown",
+        "ignored": f"{task.task_id}-ignored",
+    }
+    eligible_failure = FailureExplanation(
+        category="analysis_interrupted",
+        message="the last analysis stopped before any Storage mutation",
+        durable_state="failed",
+        side_effects="none",
+        retry_safe=True,
+        next_action="continue this failed item through a fresh pinned DryRun",
+    ).encode()
+    unknown_failure = FailureExplanation(
+        category="execution_outcome_unknown",
+        message="the previous operation outcome could not be verified",
+        durable_state="investigation_required",
+        side_effects="unknown",
+        retry_safe=False,
+        next_action="inspect the recorded effect evidence before taking another action",
+    ).encode()
+
+    def make_item(item_id: str, path: str, status: TaskItemStatus, stage: str, error=None):
+        record = state.file_index.find_by_path("source-storage", "source", path)
+        if record is None or record.occurrence_id is None or record.fingerprint is None:
+            raise RuntimeError(f"recovery batch fixture has no verified source identity for {path}")
+        return PersistentTaskItem(
+            item_id=item_id,
+            task_id=task.task_id,
+            storage_id="source-storage",
+            resource_library_id="source",
+            source_path=path,
+            source_display=path,
+            status=status,
+            stage=stage,
+            attempts=1,
+            created_at=now,
+            updated_at=now,
+            error=error,
+            source_occurrence_id=record.occurrence_id,
+            source_fingerprint=record.fingerprint,
+            source_fingerprint_state="verified",
+        )
+
+    item_specs = (
+        (
+            identifiers["single"],
+            "Batch/C/BatchSingle.2006.mkv",
+            TaskItemStatus.FAILED,
+            "failed",
+            eligible_failure,
+        ),
+        (
+            identifiers["eligible"],
+            "Batch/C/BatchEligible.2007.mkv",
+            TaskItemStatus.FAILED,
+            "failed",
+            eligible_failure,
+        ),
+        (
+            identifiers["stale"],
+            "Batch/C/BatchStale.2008.mkv",
+            TaskItemStatus.FAILED,
+            "failed",
+            eligible_failure,
+        ),
+        (
+            identifiers["success"],
+            "Batch/C/BatchSuccess.2010.mkv",
+            TaskItemStatus.SUCCESS,
+            "completed",
+            None,
+        ),
+        (
+            identifiers["unknown"],
+            "Batch/C/BatchUnknown.2009.mkv",
+            TaskItemStatus.FAILED,
+            "failed",
+            unknown_failure,
+        ),
+        (
+            identifiers["ignored"],
+            "Batch/C/BatchIgnored.2011.mkv",
+            TaskItemStatus.IGNORED,
+            "ignored_by_operator",
+            None,
+        ),
+    )
+    for item_id, path, status, stage, error in item_specs:
+        state.repository.upsert_item(make_item(item_id, path, status, stage, error))
+
+    result_values = (
+        PersistentResultRecord(
+            result_id=f"{task.task_id}-result-success",
+            task_id=task.task_id,
+            item_id=identifiers["success"],
+            source_storage_id="source-storage",
+            source_path="Batch/C/BatchSuccess.2010.mkv",
+            destination_storage_id="media-target",
+            destination_path="Movies/BatchSingle (2006)/BatchSingle (2006).mkv",
+            recognition_type="C",
+            provider="tmdb",
+            provider_id="206",
+            metadata_policy_id="C",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id="A",
+            operation="MOVE",
+            status="SUCCESS",
+            created_at=now,
+            title="BatchSingle",
+            completed_operations=("MOVE",),
+            effect_certainty="verified_complete",
+        ),
+        PersistentResultRecord(
+            result_id=f"{task.task_id}-result-unknown",
+            task_id=task.task_id,
+            item_id=identifiers["unknown"],
+            source_storage_id="source-storage",
+            source_path="Batch/C/BatchUnknown.2009.mkv",
+            destination_storage_id="media-target",
+            destination_path="Movies/BatchUnknown (2009)/BatchUnknown (2009).mkv",
+            recognition_type="C",
+            provider="tmdb",
+            provider_id="209",
+            metadata_policy_id="C",
+            naming_policy_id="A",
+            classification_policy_id="A",
+            organize_policy_id="A",
+            operation="MOVE",
+            status="FAILED",
+            created_at=now,
+            title="BatchUnknown",
+            completed_operations=("MOVE",),
+            effect_certainty="attempted_unverified",
+            uncertain_effects=("mutation_outcome",),
+            error=unknown_failure,
+        ),
+    )
+    for result in result_values:
+        state.repository.append_result(result)
+
+    state.repository.update_task(
+        dataclasses.replace(
+            task,
+            total_items=len(item_specs),
+            completed_items=2,
+            failed_items=4,
+            updated_at=now,
+            completed_at=now,
+        )
+    )
+    state.recovery_batch_run = {
+        "runId": task.task_id,
+        "taskId": task.task_id,
+        "singleItemId": identifiers["single"],
+        "batchEligibleItemId": identifiers["eligible"],
+        "staleItemId": identifiers["stale"],
+        "successItemId": identifiers["success"],
+        "unknownItemId": identifiers["unknown"],
+        "ignoredItemId": identifiers["ignored"],
+        "singleSourcePath": "Batch/C/BatchSingle.2006.mkv",
+    }
+    return dict(state.recovery_batch_run)
+
+
+def stale_task_item_batch_selection(state: AppState) -> dict[str, object]:
+    """Change one selected checkpoint after the browser captured its version."""
+
+    if state.recovery_batch_run is None:
+        raise RuntimeError("recovery batch fixture has not been seeded")
+    item_id = str(state.recovery_batch_run["staleItemId"])
+    item = state.repository.get_item(item_id)
+    if item is None:
+        raise RuntimeError("selected stale batch fixture item disappeared")
+    state.repository.upsert_item(
+        dataclasses.replace(item, stage="failed_after_selection", updated_at=datetime.now(UTC))
+    )
+    return {"changed": True, "itemId": item_id}
+
+
+def task_item_recovery_batch_state(state: AppState) -> dict[str, object]:
+    """Return relative, read-only state for the single and batch browser journey."""
+
+    if state.recovery_batch_run is None:
+        return {"available": False}
+    run = state.recovery_batch_run
+    item_ids = {
+        key: str(run[run_key])
+        for key, run_key in (
+            ("single", "singleItemId"),
+            ("eligible", "batchEligibleItemId"),
+            ("stale", "staleItemId"),
+            ("success", "successItemId"),
+            ("unknown", "unknownItemId"),
+            ("ignored", "ignoredItemId"),
+        )
+    }
+    items = {key: state.repository.get_item(item_id) for key, item_id in item_ids.items()}
+    continuations = {
+        key: state.repository.list_recovery_continuations(item_id, limit=10)
+        for key, item_id in item_ids.items()
+    }
+    return {
+        "available": True,
+        "taskId": run["taskId"],
+        "itemIds": item_ids,
+        "itemStatuses": {
+            key: value.status.value if value is not None else None for key, value in items.items()
+        },
+        "itemStages": {
+            key: value.stage if value is not None else None for key, value in items.items()
+        },
+        "continuations": {
+            key: [
+                {
+                    "status": value.status.value,
+                    "newTaskId": value.new_task_id,
+                    "newResultId": value.new_result_id,
+                }
+                for value in rows
+            ]
+            for key, rows in continuations.items()
+        },
+        "sourceExists": {
+            path: (state.managed.root / "source" / path).is_file()
+            for path in (
+                "Batch/C/BatchSingle.2006.mkv",
+                "Batch/C/BatchEligible.2007.mkv",
+            )
+        },
+        "targetFiles": [
+            value.relative_to(state.managed.root / "destination").as_posix()
+            for value in (state.managed.root / "destination").rglob("*")
+            if value.is_file()
+        ],
+    }
+
+
+def task_item_recovery_state(state: AppState) -> dict[str, object]:
+    """Return bounded test-only state for independent source/result assertions."""
+
+    if state.recovery_run is None:
+        return {"available": False}
+    run = state.recovery_run
+    task = state.repository.get_task(run["taskId"])
+    source = state.repository.get_item(run["itemId"])
+    continuations = state.repository.list_recovery_continuations(run["itemId"], limit=10)
+    continuation = continuations[0] if continuations else None
+    analysis_task = (
+        state.repository.get_task(continuation.new_task_id)
+        if continuation is not None and continuation.new_task_id
+        else None
+    )
+    analysis_items = (
+        state.repository.list_items(continuation.new_task_id)
+        if continuation is not None and continuation.new_task_id
+        else ()
+    )
+    linked_results = (
+        state.repository.list_results(continuation.new_task_id)
+        if continuation and continuation.new_task_id
+        else ()
+    )
+    return {
+        "available": True,
+        "taskId": run["taskId"],
+        "itemId": run["itemId"],
+        "taskStatus": task.status.value if task else None,
+        "itemStatus": source.status.value if source else None,
+        "itemStage": source.stage if source else None,
+        "continuationStatus": continuation.status.value if continuation else None,
+        "analysisTaskId": continuation.new_task_id if continuation else None,
+        "analysisTaskStatus": analysis_task.status.value if analysis_task else None,
+        "analysisItems": [
+            {
+                "status": value.status.value,
+                "stage": value.stage,
+                "error": value.error,
+                "sourcePath": value.source_path,
+            }
+            for value in analysis_items
+        ],
+        "analysisResultId": continuation.new_result_id if continuation else None,
+        "resultIds": [value.result_id for value in linked_results],
+        "sourceExists": (state.managed.root / "source" / run["sourcePath"]).is_file(),
+        "targetFiles": [
+            value.relative_to(state.managed.root / "destination").as_posix()
+            for value in (state.managed.root / "destination").rglob("*")
+            if value.is_file()
+        ],
+    }
+
+
 def manual_file_state(state: AppState, filename: str = "Three.2003.mkv") -> dict[str, object]:
     """Return relative-only state for one new-task synthetic source file.
 
@@ -1330,6 +1965,18 @@ def application(environ, start_response):
             document = register_manual_worker(STATE)
         elif path == "/__harness__/run-manual-worker" and method == "POST":
             document = run_manual_worker_once(STATE)
+        elif path == "/__harness__/seed-task-item-recovery" and method == "POST":
+            document = seed_task_item_recovery_journey(STATE)
+        elif path == "/__harness__/run-task-item-recovery-worker" and method == "POST":
+            document = run_task_item_recovery_worker_once(STATE)
+        elif path == "/__harness__/task-item-recovery-state" and method == "GET":
+            document = task_item_recovery_state(STATE)
+        elif path == "/__harness__/seed-task-item-recovery-batch" and method == "POST":
+            document = seed_task_item_recovery_batch(STATE)
+        elif path == "/__harness__/stale-task-item-batch-selection" and method == "POST":
+            document = stale_task_item_batch_selection(STATE)
+        elif path == "/__harness__/task-item-recovery-batch-state" and method == "GET":
+            document = task_item_recovery_batch_state(STATE)
         elif path == "/__harness__/manual-file-state" and method == "GET":
             query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
             requested_file = (query.get("file") or ["Three.2003.mkv"])[0]

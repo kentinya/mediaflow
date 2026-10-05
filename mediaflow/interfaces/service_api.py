@@ -105,6 +105,7 @@ from mediaflow.application.system_settings import (
     SystemSettingsService,
     SystemSettingsValidationError,
 )
+from mediaflow.application.task_item_recovery import TaskItemRecoveryError, TaskItemRecoveryService
 from mediaflow.application.unattended_execution import (
     UnattendedExecutionGrantError,
     UnattendedExecutionGrantService,
@@ -495,6 +496,12 @@ class MediaFlowApi:
         self._checkpoint_service = ProcessingCheckpointService(
             repository,
             snapshot_validator=snapshot_validator,
+        )
+        self._task_item_recovery = TaskItemRecoveryService(
+            repository,
+            checkpoint_service=self._checkpoint_service,
+            configuration_service=configuration_service,
+            metadata_provider_registry_factory=metadata_provider_registry_factory,
         )
         # The shared admission boundary for a Web "Continue" of one durably
         # paused Task's exact remaining admitted scope.  It performs zero
@@ -1366,6 +1373,24 @@ class MediaFlowApi:
                 str(error),
                 details=error.document(),
             )
+        except TaskItemRecoveryError as error:
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "task-item-recovery",
+                "conflict" if error.status == 409 else "error" if error.status >= 500 else "denied",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details={"sideEffects": "none", "nextAction": error.next_action},
+            )
         except (ValueError, json.JSONDecodeError) as error:
             self._safe_audit(
                 environ,
@@ -1961,6 +1986,26 @@ class MediaFlowApi:
             return self._response(start_response, 200, operator_document)
         if (
             len(parts) == 7
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6] == "recovery"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "task item recovery detail")
+            value = self._task_item_recovery.detail(parts[3], parts[5])
+            if self._manual_recovery is not None:
+                value["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
+                    parts[3], parts[5]
+                )
+                value["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
+                    parts[3], parts[5]
+                )
+            else:
+                value["manualRecoveryAvailable"] = False
+            return self._response(start_response, 200, redact_manual_value(value))
+        if (
+            len(parts) == 7
             and parts[:5] == ["api", "v1", "operations", "organize", "intents"]
             and parts[6] == "previews"
             and method == "POST"
@@ -2242,6 +2287,117 @@ class MediaFlowApi:
                     "truncated": len(tuple(executions)) > len(documents),
                 },
             )
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "decision"]
+            and method == "POST"
+        ):
+            self._require_empty_query(environ, "task item review decision")
+            document = self._document(environ)
+            kind = document.get("kind")
+            permission = {
+                "recognition": ApiPermission.RESOLVE_RECOGNITION_REVIEW,
+                "metadata": ApiPermission.RESOLVE_METADATA_REVIEW,
+                "metadata_correction": ApiPermission.RESOLVE_METADATA_REVIEW,
+                "classification": ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
+                "conflict": ApiPermission.RESOLVE_CONFIRMATION,
+            }.get(kind)
+            if permission is None:
+                raise ValueError("task item decision kind is invalid")
+            self._require(principal, permission)
+            fields = {
+                "recognition": {"kind", "expectedCheckpointVersion", "recognitionTypeId", "note"},
+                "metadata": {"kind", "expectedCheckpointVersion", "candidateRank", "note"},
+                "metadata_correction": {
+                    "kind",
+                    "expectedCheckpointVersion",
+                    "query",
+                    "year",
+                    "mediaType",
+                    "providerId",
+                    "note",
+                },
+                "classification": {"kind", "expectedCheckpointVersion", "choiceRank", "note"},
+                "conflict": {
+                    "kind",
+                    "expectedCheckpointVersion",
+                    "strategy",
+                    "confirmOverwrite",
+                    "note",
+                },
+            }[kind]
+            if set(document).difference(fields) or not {
+                "kind",
+                "expectedCheckpointVersion",
+            }.issubset(document):
+                raise ValueError("task item decision fields are invalid")
+            expected = document["expectedCheckpointVersion"]
+            if not isinstance(expected, str) or not expected.strip():
+                raise ValueError("expectedCheckpointVersion is required")
+            decision_fields = {
+                "recognitionTypeId": "recognition_type_id",
+                "candidateRank": "candidate_rank",
+                "choiceRank": "choice_rank",
+                "mediaType": "media_type",
+                "providerId": "provider_id",
+                "confirmOverwrite": "confirm_overwrite",
+            }
+            decision = {
+                decision_fields.get(key, key): value
+                for key, value in document.items()
+                if key not in {"kind", "expectedCheckpointVersion"}
+            }
+            result = self._task_item_recovery.resolve(
+                parts[3],
+                parts[5],
+                kind=kind,
+                expected_checkpoint_version=expected,
+                actor=principal.principal_id,
+                decision=decision,
+            )
+            recovery = self._task_item_recovery.detail(parts[3], parts[5])
+            if self._manual_recovery is not None:
+                recovery["manualRecoveryLink"] = self._manual_recovery.discovery_for_source_item(
+                    parts[3], parts[5]
+                )
+                recovery["manualRecoveryAvailable"] = self._manual_recovery.supports_source_item(
+                    parts[3], parts[5]
+                )
+            else:
+                recovery["manualRecoveryAvailable"] = False
+            return self._response(
+                start_response,
+                200,
+                redact_manual_value(
+                    {
+                        **recovery,
+                        "decision_kind": kind,
+                        "decision_result": self._value(result),
+                    }
+                ),
+            )
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] == ["recovery", "metadata-search"]
+            and method == "POST"
+        ):
+            self._require(principal, ApiPermission.RESOLVE_METADATA_REVIEW)
+            self._require_empty_query(environ, "task item Metadata search")
+            document = self._document(environ)
+            if set(document) != {"expectedCheckpointVersion", "query", "mediaType"}:
+                raise ValueError("task item Metadata search fields are invalid")
+            value = self._task_item_recovery.metadata_search(
+                parts[3],
+                parts[5],
+                expected_checkpoint_version=document["expectedCheckpointVersion"],
+                query=document["query"],
+                media_type=document["mediaType"],
+            )
+            return self._response(start_response, 200, redact_manual_value(value))
         if (
             len(parts) == 6
             and parts[:5] == ["api", "v1", "operations", "organize", "executions"]
@@ -7259,16 +7415,21 @@ class MediaFlowApi:
             self._require(principal, ApiPermission.SUBMIT_DRY_RUN)
             self._require_empty_query(environ, "task batch recovery continuation")
             document = self._document(environ)
-            if set(document) != {"items"}:
-                raise ValueError("task batch recovery continuation requires only items")
+            if set(document).difference({"items", "batchId"}) or "items" not in document:
+                raise ValueError(
+                    "task batch recovery continuation requires items and optional batchId"
+                )
             if not isinstance(document["items"], list):
                 raise ValueError("task batch recovery items must be a list")
+            if "batchId" in document and not isinstance(document["batchId"], str):
+                raise ValueError("task batch recovery identity must be a UUID")
             binding = self._runtime_binding
             batch = self._recovery_batch.submit(
                 parts[3],
                 document["items"],
                 actor=principal.principal_id,
                 maximum_active_jobs=binding.maximum_active_jobs,
+                batch_id=document.get("batchId"),
             )
             return self._response(
                 start_response,
@@ -7279,6 +7440,18 @@ class MediaFlowApi:
                     "sideEffects": "none",
                 },
             )
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "recovery-batches"
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "Task recovery batch")
+            batch = self._repository.get_recovery_batch(parts[5])
+            if batch.source_task_id != parts[3]:
+                raise LookupError("Task recovery batch was not found")
+            return self._response(start_response, 200, batch.document())
         if len(parts) == 4 and parts[:3] == ["api", "v1", "recovery-batches"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             self._require_empty_query(environ, "recovery batch")
@@ -9503,6 +9676,19 @@ class MediaFlowApi:
                 if len(parts) == 9 and parts[7] == "state" and parts[8] in {"enable", "disable"}:
                     return f"/api/v1/operations/rules/objects/{{family}}/{{id}}/state/{parts[8]}"
             return "/api/v1/<unmatched>"
+        if (
+            len(parts) == 8
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "items"
+            and parts[6:8] in (["recovery", "decision"], ["recovery", "metadata-search"])
+        ):
+            return f"/api/v1/tasks/{{task_id}}/items/{{item_id}}/recovery/{parts[7]}"
+        if (
+            len(parts) == 6
+            and parts[:3] == ["api", "v1", "tasks"]
+            and parts[4] == "recovery-batches"
+        ):
+            return "/api/v1/tasks/{task_id}/recovery-batches/{batch_id}"
         if len(parts) == 6 and parts[:3] == ["api", "v1", "tasks"] and parts[4] == "items":
             return "/api/v1/tasks/{task_id}/items/{item_id}"
         if (

@@ -76,6 +76,16 @@ import {
   type RuleFamily,
   type RulesWorkspaceModel,
 } from "../../entities/rules/rules-workspace";
+import {
+  normalizeManualRecoveryLink,
+  normalizeMetadataSearch,
+  normalizeRecoveryBatch,
+  normalizeTaskItemRecovery,
+  type ManualRecoveryLinkModel,
+  type MetadataSearchModel,
+  type RecoveryBatchModel,
+  type TaskItemRecoveryModel,
+} from "../../entities/operations/task-item-recovery";
 
 /**
  * The bounded recentLimit used by the proving route; the existing API accepts
@@ -1511,6 +1521,48 @@ export async function fetchRunItemEvidence(
   return parseRunDetailResponse(response, normalizeRunItemEvidence);
 }
 
+export async function fetchTaskItemRecovery(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<TaskItemRecoveryModel>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeTaskItemRecovery);
+}
+
+export async function fetchTaskRecoveryBatch(
+  token: string | null,
+  taskId: string,
+  batchId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OperationsRead<RecoveryBatchModel>> {
+  if (!isSafeIdentifier(taskId) || !/^[a-f0-9-]{36}$/i.test(batchId)) {
+    return { ok: false, failure: operationsFailure("not_found") };
+  }
+  let response: Response;
+  try {
+    response = await fetchImpl(
+      `/api/v1/tasks/${encodeURIComponent(taskId)}/recovery-batches/${encodeURIComponent(batchId)}`,
+      { method: "GET", headers: operationsHeaders(token) },
+    );
+  } catch {
+    return { ok: false, failure: operationsFailure("unavailable") };
+  }
+  return parseRunDetailResponse(response, normalizeRecoveryBatch);
+}
+
 /**
  * The run-scoped result package download read.  The backend's bounded error
  * code travels with the failure so the UI can distinguish "no linked Task
@@ -1722,7 +1774,10 @@ import {
   type WebhookDefinitionMutationModel,
   type WebhookTestResultModel,
 } from "../../entities/operations/notification";
-import { readRecord } from "../../entities/shared/normalize";
+import {
+  normalizeBoundedText,
+  readRecord,
+} from "../../entities/shared/normalize";
 
 // --- Manual action matrix ---
 
@@ -2199,6 +2254,183 @@ async function submitOrganizeMutation<T>(
   } catch {
     return { ok: false, status: response.status, code: "malformed_response" };
   }
+}
+
+export interface RecoveryCommandAck {
+  readonly identity: string;
+  readonly sideEffects: "none";
+  readonly nextAction: string;
+}
+
+function normalizeRecoveryCommandAck(payload: unknown): RecoveryCommandAck {
+  const source = readRecord(payload, "recoveryCommand");
+  if (source["sideEffects"] !== "none") {
+    throw new Error("recovery command side effects did not match the contract");
+  }
+  const identity =
+    source["continuation_id"] ??
+    source["continuationId"] ??
+    source["requestId"] ??
+    source["batch_id"];
+  return {
+    identity: normalizeBoundedText(identity, "recovery identity"),
+    sideEffects: "none",
+    nextAction: normalizeBoundedText(
+      source["next_action"] ?? source["nextAction"],
+      "next_action",
+    ),
+  };
+}
+
+function taskItemRecoveryBase(taskId: string, itemId: string): string {
+  return `/api/v1/tasks/${encodeURIComponent(taskId)}/items/${encodeURIComponent(itemId)}/recovery`;
+}
+
+export async function submitTaskItemRecoveryDecision(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  body: Record<string, unknown>,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<TaskItemRecoveryModel>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `${taskItemRecoveryBase(taskId, itemId)}/decision`,
+    body,
+    normalizeTaskItemRecovery,
+    fetchImpl,
+  );
+}
+
+export async function searchTaskItemMetadata(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  body: {
+    readonly expectedCheckpointVersion: string;
+    readonly query: string;
+    readonly mediaType: string;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<MetadataSearchModel>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `${taskItemRecoveryBase(taskId, itemId)}/metadata-search`,
+    body,
+    normalizeMetadataSearch,
+    fetchImpl,
+  );
+}
+
+export async function ignoreTaskItemReview(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  body: { readonly expectedCheckpointVersion: string; readonly note?: string },
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<RecoveryCommandAck>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    taskItemRecoveryBase(taskId, itemId),
+    { actionId: "ignore", ...body },
+    normalizeRecoveryCommandAck,
+    fetchImpl,
+  );
+}
+
+export async function continueTaskItemAnalysis(
+  token: string | null,
+  taskId: string,
+  itemId: string,
+  expectedCheckpointVersion: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<RecoveryCommandAck>> {
+  if (!isSafeIdentifier(taskId) || !isSafeIdentifier(itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `${taskItemRecoveryBase(taskId, itemId)}/continue`,
+    { expectedCheckpointVersion },
+    normalizeRecoveryCommandAck,
+    fetchImpl,
+  );
+}
+
+export async function submitTaskRecoveryBatch(
+  token: string | null,
+  taskId: string,
+  batchId: string,
+  items: readonly {
+    readonly itemId: string;
+    readonly expectedCheckpointVersion: string;
+  }[],
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<RecoveryBatchModel>> {
+  if (!isSafeIdentifier(taskId) || !/^[a-f0-9-]{36}$/i.test(batchId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/tasks/${encodeURIComponent(taskId)}/recovery/continue-batch`,
+    { batchId, items: items.map((item) => ({ ...item })) },
+    normalizeRecoveryBatch,
+    fetchImpl,
+  );
+}
+
+export async function authorizeTaskItemRecoveryOrganize(
+  token: string | null,
+  options: {
+    readonly taskId: string;
+    readonly itemId: string;
+    readonly expectedCheckpointVersion: string;
+    readonly allowOverwrite: boolean;
+    readonly allowSourceCleanup: boolean;
+  },
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<ManualRecoveryLinkModel>> {
+  if (!isSafeIdentifier(options.taskId) || !isSafeIdentifier(options.itemId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/tasks/${encodeURIComponent(options.taskId)}/items/${encodeURIComponent(options.itemId)}/recovery/authorize-organize`,
+    {
+      expectedCheckpointVersion: options.expectedCheckpointVersion,
+      confirmation: true,
+      allowOverwrite: options.allowOverwrite,
+      allowSourceCleanup: options.allowSourceCleanup,
+    },
+    normalizeManualRecoveryLink,
+    fetchImpl,
+  );
+}
+
+export async function executeTaskItemRecoveryOrganize(
+  token: string | null,
+  linkId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<OrganizeMutationResult<ManualRecoveryLinkModel>> {
+  if (!isSafeIdentifier(linkId)) {
+    return { ok: false, status: 0, code: "invalid_request" };
+  }
+  return submitOrganizeMutation(
+    token,
+    `/api/v1/manual-recovery-links/${encodeURIComponent(linkId)}/execute`,
+    { confirmation: true },
+    normalizeManualRecoveryLink,
+    fetchImpl,
+  );
 }
 
 export interface SubmitOrganizeIntentOptions {

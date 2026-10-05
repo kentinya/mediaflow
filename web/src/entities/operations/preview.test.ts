@@ -45,7 +45,7 @@ describe("normalizeManualPreview", () => {
         "this exact plan replaces and deletes nothing; source media is preserved by the reviewed operation",
     });
     expect(model.items[0]?.targetPath).toBe(
-      "Movies/Anime/One (2001)/One (2001).mkv",
+      "Movies/Movies/Anime/One (2001)/One (2001).mkv",
     );
     expect(model.items[0]?.policies).toEqual({
       recognitionTypePolicyId: "type-A",

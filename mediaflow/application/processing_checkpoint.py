@@ -361,6 +361,25 @@ class ProcessingCheckpointService:
         prior = results[1:]
         failure = decode_failure_explanation(item.error) or (latest.failure if latest else None)
         certainty = latest.effect_certainty if latest else EffectCertainty.UNKNOWN
+        if latest is None and failure is not None and failure.side_effects == "none":
+            # The durable failure envelope is the only evidence for this
+            # analysis attempt. It may prove zero effects when no Result row
+            # was produced, while legacy/malformed failures remain unknown.
+            certainty = EffectCertainty.NONE
+        # A persisted review resolution is still on the analysis side of the
+        # OrganizerExecutor boundary. When no Result exists, its known zero-
+        # mutation stage is sufficient evidence to offer one explicit DryRun
+        # continuation; this does not transfer execution authority.
+        if latest is None and (
+            _bounded(item.stage).endswith("_resolved")
+            or (
+                item_status is TaskItemStatus.PENDING
+                and _bounded(item.stage) == "task_retry_requested"
+                and active_request is not None
+                and any(value.status == "resolved" for value in blockers)
+            )
+        ):
+            certainty = EffectCertainty.NONE
         completed = latest.completed_operations if latest else ()
         uncertain = latest.uncertain_effects if latest else ()
         error_category = _error_category(item_status, item.stage, latest, failure)
@@ -850,6 +869,35 @@ def _actions(
             )
             return RetrySafety.UNSAFE, (action, ignore), None
         return RetrySafety.UNSAFE, (action,), None
+    if (
+        status is TaskItemStatus.PENDING
+        and raw_stage.endswith("_resolved")
+        and certainty is EffectCertainty.NONE
+    ):
+        if snapshot_resolvable is not True:
+            return (
+                RetrySafety.UNSAFE,
+                (
+                    CheckpointAction(
+                        "investigate",
+                        "Inspect unavailable configuration",
+                        False,
+                        "none",
+                        None,
+                        False,
+                    ),
+                ),
+                "analysis continuation is unavailable because the Task pin cannot be resolved",
+            )
+        return (
+            RetrySafety.SAFE,
+            (
+                CheckpointAction(
+                    "retry", "Continue safe analysis", True, "task_recovery", None, True
+                ),
+            ),
+            None,
+        )
     if raw_stage == "admission_interrupted":
         return (
             RetrySafety.UNSAFE,
@@ -920,6 +968,26 @@ def _actions(
             None,
         )
     if status is TaskItemStatus.PENDING and raw_stage == "task_retry_requested":
+        continuation_status = getattr(
+            getattr(recovery_continuation, "status", None),
+            "value",
+            getattr(recovery_continuation, "status", None),
+        )
+        if continuation_status == "completed":
+            return (
+                RetrySafety.UNSAFE,
+                (
+                    CheckpointAction(
+                        "inspect_analysis",
+                        "Inspect the completed linked analysis",
+                        False,
+                        "none",
+                        None,
+                        False,
+                    ),
+                ),
+                "analysis_already_completed: inspect the linked DryRun before any new work",
+            )
         if recovery_request is not None and recovery_request.active:
             if recovery_continuation is not None and recovery_continuation.active:
                 return (

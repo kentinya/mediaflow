@@ -54,7 +54,7 @@ from mediaflow.domain.organizer import (
     ExecutionResult,
     ExecutionStatus,
 )
-from mediaflow.domain.recognition import RecognitionType
+from mediaflow.domain.recognition import RecognitionResult, RecognitionStatus, RecognitionType
 from mediaflow.domain.recognition_review import RecognitionReviewStatus
 from mediaflow.domain.recovery_continuation import RecoveryContinuationStatus
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
@@ -1099,6 +1099,94 @@ class RecoveryContinuationTests(unittest.TestCase):
                 checkpoint["recovery_continuation"]["new_task_id"],
                 continuation.new_task_id,
             )
+
+    def test_native_recognition_resolution_continues_exact_item_without_storage_mutation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            environment = self._environment(directory)
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                snapshot_id, snapshot_digest = environment["snapshot"]
+                source_task = _coordinator(repository).create(
+                    "organize",
+                    execute_authorized=False,
+                    scope_path="Media/C/Review.2024.mkv",
+                    item_limit=10,
+                    configuration_snapshot_id=snapshot_id,
+                    configuration_snapshot_digest=snapshot_digest,
+                    require_configuration_snapshot=True,
+                )
+                source_item = _coordinator(repository).begin_item(
+                    source_task.task_id,
+                    "source-storage",
+                    "source",
+                    "Media/C/Review.2024.mkv",
+                    "Media/C/Review.2024.mkv",
+                )
+                review = RecognitionReviewService(
+                    repository,
+                    (
+                        RecognitionType("A", "Movie"),
+                        RecognitionType("B", "TV"),
+                        RecognitionType("C", "Special"),
+                    ),
+                ).create(
+                    source_item,
+                    RecognitionResult(status=RecognitionStatus.UNRECOGNIZED),
+                )
+            api = self._api(environment)
+            base = f"/api/v1/tasks/{source_task.task_id}/items/{source_item.item_id}"
+
+            status, detail = api_request(api, f"{base}/recovery")
+            self.assertEqual(200, status)
+            self.assertEqual("none", detail["sideEffects"])
+            self.assertEqual("recognition", detail["decision"]["kind"])
+            self.assertEqual(review.review_id, detail["decision"]["review_id"])
+            self.assertEqual(
+                {"A", "B", "C"},
+                {choice["recognition_type_id"] for choice in detail["decision"]["choices"]},
+            )
+            initial_version = detail["checkpoint"]["checkpoint_version"]
+
+            status, saved = api_request(
+                api,
+                f"{base}/recovery/decision",
+                method="POST",
+                body={
+                    "kind": "recognition",
+                    "expectedCheckpointVersion": initial_version,
+                    "recognitionTypeId": "C",
+                },
+            )
+            self.assertEqual(200, status)
+            self.assertIn("retry", saved["checkpoint"]["permitted_action_ids"])
+            self.assertEqual("none", saved["checkpoint"]["effects"]["certainty"])
+
+            # One visible Continue command composes the exact admission and the
+            # queued DryRun; the saved choice itself created no execution grant.
+            status, accepted = api_request(
+                api,
+                f"{base}/recovery/continue",
+                method="POST",
+                body={"expectedCheckpointVersion": saved["checkpoint"]["checkpoint_version"]},
+            )
+            if status != 202:
+                _read_status, current = api_request(api, f"{base}/recovery")
+                self.fail(
+                    f"native recovery continuation was refused: {accepted}; current={current}"
+                )
+            self.assertEqual("dry_run", accepted["executionMode"])
+            self.assertEqual(source_task.task_id, accepted["source_task_id"])
+            self.assertEqual(source_item.item_id, accepted["source_item_id"])
+
+            with SQLiteTaskRepository(environment["database"]) as repository:
+                decision = repository.get_recognition_review(review.review_id)
+                self.assertEqual("C", decision.selected_recognition_type)
+                queued = repository.get_recovery_continuation_for_request(accepted["request_id"])
+                self.assertIsNotNone(queued)
+                job = repository.get_job(accepted["job_id"])
+                self.assertIsNotNone(job)
+                self.assertFalse(job.execute_authorized)
+                self.assertEqual(b"unchanged-source", environment["source_file"].read_bytes())
+                self.assertEqual((), tuple(Path(environment["target_root"]).rglob("*")))
 
     def test_uncertain_effects_are_never_continued(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

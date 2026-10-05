@@ -618,6 +618,55 @@ export function OperationsLanding() {
                       ),
                     })
                   }
+                  onOpenRecoveryPreview={(
+                    previewId,
+                    linkId,
+                    sourceTaskId,
+                    sourceItemId,
+                  ) =>
+                    void navigate({
+                      to: "/operations/organize/preview/$previewId",
+                      params: { previewId },
+                      search: {
+                        recoveryLinkId: linkId,
+                        recoveryTaskId: sourceTaskId,
+                        recoveryItemId: sourceItemId,
+                        ...operationsReturnSearch(
+                          operationsReturnContextFromSearch({
+                            ...listSearch(selectedId),
+                            ...runDetailStateSearch(detailState),
+                          }),
+                        ),
+                      },
+                    })
+                  }
+                  onOpenLinkedAnalysis={(taskId, itemId) =>
+                    void navigate({
+                      to: "/operations/tasks/$taskId",
+                      params: { taskId },
+                      search: {
+                        returnOps: operationsReturnContextFromSearch({
+                          ...listSearch(selectedId),
+                          ...runDetailStateSearch(detailState),
+                        }),
+                        ...runDetailStateSearch(
+                          readRunDetailState({ tab: "detail", item: itemId }),
+                        ),
+                      },
+                    })
+                  }
+                  onOpenRecoveryExecution={(executionId) =>
+                    void navigate({
+                      to: "/operations/organize/execution/$executionId",
+                      params: { executionId },
+                      search: operationsReturnSearch(
+                        operationsReturnContextFromSearch({
+                          ...listSearch(selectedId),
+                          ...runDetailStateSearch(detailState),
+                        }),
+                      ),
+                    })
+                  }
                   onSelectRun={selectRun}
                 />
               )}
@@ -837,6 +886,9 @@ function RunDetailPanel({
   detailState,
   onDetailStateChange,
   onOpenPreview,
+  onOpenRecoveryPreview,
+  onOpenLinkedAnalysis,
+  onOpenRecoveryExecution,
   onSelectRun,
 }: {
   readonly query: UseQueryResult<RunOverviewRead, Error>;
@@ -845,6 +897,14 @@ function RunDetailPanel({
   readonly onDetailStateChange: (next: Partial<RunDetailState>) => void;
   /** Route to one freshly admitted exact organize Preview. */
   readonly onOpenPreview: (previewId: string) => void;
+  readonly onOpenRecoveryPreview: (
+    previewId: string,
+    linkId: string,
+    taskId: string,
+    itemId: string,
+  ) => void;
+  readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
+  readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
 }) {
@@ -1036,6 +1096,9 @@ function RunDetailPanel({
                 state={detailState}
                 onStateChange={onDetailStateChange}
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
+                onOpenRecoveryPreview={onOpenRecoveryPreview}
+                onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+                onOpenRecoveryExecution={onOpenRecoveryExecution}
                 facts={
                   <RunDetailFacts
                     run={run}

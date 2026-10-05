@@ -543,6 +543,10 @@ class ManualOperationsContractTests(unittest.TestCase):
             "Movies/Anime/One (2001)/One (2001).mkv",
             plan["destination"]["relativePath"],
         )
+        self.assertEqual(
+            "Movies/Movies/Anime/One (2001)/One (2001).mkv",
+            plan["destination"]["storageRelativePath"],
+        )
         self.assertEqual("target", plan["destination"]["storageId"])
 
     def test_resource_library_discovery_offers_no_action_without_a_selection(self) -> None:

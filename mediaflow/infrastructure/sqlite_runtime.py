@@ -1626,16 +1626,28 @@ class SQLiteTaskRepository:
                 ),
             )
             return
-        elif (
-            row["status"] == TaskItemStatus.PENDING.value and row["stage"] == "task_retry_requested"
+        elif row["status"] == TaskItemStatus.PENDING.value and (
+            row["stage"] == "task_retry_requested"
+            or row["stage"]
+            in {
+                "conflict_resolved",
+                "recognition_resolved",
+                "metadata_resolved",
+                "metadata_correction_resolved",
+                "classification_resolved",
+            }
         ):
             # Re-admission after a prior request reached a terminal state.  The
             # item stays pending and keeps its original evidence; only the
             # admission timestamp and audit advance.
             cursor = self._connection.execute(
-                """UPDATE task_items SET updated_at=?
+                """UPDATE task_items SET updated_at=?, stage='task_retry_requested'
                 WHERE item_id=? AND task_id=? AND status='pending'
-                AND stage='task_retry_requested'""",
+                AND stage IN (
+                    'task_retry_requested', 'conflict_resolved', 'recognition_resolved',
+                    'metadata_resolved', 'metadata_correction_resolved',
+                    'classification_resolved'
+                )""",
                 (
                     request.requested_at.isoformat(),
                     request.item_id,
