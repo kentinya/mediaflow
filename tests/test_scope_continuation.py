@@ -39,6 +39,7 @@ from mediaflow.application.scope_continuation import (
     ScopeContinuationService,
     ScopeContinuationWorkerService,
     continuation_obstacle,
+    continuation_origin,
     definition_occurrence_authority,
     is_continuable_task_command,
     remaining_scope,
@@ -1629,6 +1630,79 @@ class ScopeContinuationAuthorityWiringTests(unittest.TestCase):
         self.assertFalse(
             definition_occurrence_authority(self.repository, (definition,), _RevokedGrants())(task)
         )
+
+    def test_checker_follows_the_persisted_definition_ancestry(self) -> None:
+        """A later paused Task keeps the original Definition's live authority."""
+
+        original = self._occurrence_task()
+        admission = ScopeContinuationService(
+            self.repository, snapshot_validator=lambda *_: None
+        ).submit(
+            original.task_id,
+            expected_version=original.updated_at.isoformat(),
+            actor="operator",
+            maximum_active_jobs=10,
+            mutation_authority=lambda _task: True,
+        )
+        child = PersistentTaskCoordinator(self.repository, self.repository).create(
+            original.command,
+            execute_authorized=original.execute_authorized,
+            scope_path=original.scope_path,
+            item_limit=original.item_limit,
+            configuration_snapshot_id=original.configuration_snapshot_id,
+            configuration_snapshot_digest=original.configuration_snapshot_digest,
+            require_configuration_snapshot=True,
+            status=PersistentTaskStatus.PAUSED,
+        )
+        worker_service = ScopeContinuationWorkerService(self.repository)
+        worker_service.started(admission.job.job_id)
+        worker_service.bind(admission.job.job_id, child.task_id)
+
+        self.assertEqual(continuation_origin(self.repository, child).task_id, original.task_id)
+        calls = []
+
+        class _LiveGrants:
+            def assert_live(self, job, value):
+                calls.append((job, value))
+
+        checker = definition_occurrence_authority(
+            self.repository, (self._definition(),), _LiveGrants()
+        )
+        self.assertTrue(checker(child))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][0].job_id, "job-occurrence")
+
+    def test_corrupt_definition_ancestry_is_withheld_by_the_shared_obstacle(self) -> None:
+        original = self._occurrence_task(definition_id=None)
+        admission = ScopeContinuationService(
+            self.repository, snapshot_validator=lambda *_: None
+        ).submit(
+            original.task_id,
+            expected_version=original.updated_at.isoformat(),
+            actor="operator",
+            maximum_active_jobs=10,
+            mutation_authority=lambda _task: True,
+        )
+        child = PersistentTaskCoordinator(self.repository, self.repository).create(
+            original.command,
+            execute_authorized=False,
+            scope_path="Media/changed",
+            item_limit=original.item_limit,
+            configuration_snapshot_id=original.configuration_snapshot_id,
+            configuration_snapshot_digest=original.configuration_snapshot_digest,
+            require_configuration_snapshot=True,
+            status=PersistentTaskStatus.PAUSED,
+        )
+        worker_service = ScopeContinuationWorkerService(self.repository)
+        worker_service.started(admission.job.job_id)
+        worker_service.bind(admission.job.job_id, child.task_id)
+
+        reason, message, next_action = continuation_obstacle(
+            self.repository, child, lambda *_: None
+        )
+        self.assertIs(reason, ScopeContinuationReason.SNAPSHOT_UNAVAILABLE)
+        self.assertIn("continuation history", message or "")
+        self.assertIn("configuration history", next_action or "")
 
     def test_checker_refuses_without_a_definition_occurrence(self) -> None:
         """A one-shot mutation Task has no reusable authority left."""

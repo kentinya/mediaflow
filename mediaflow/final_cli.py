@@ -63,6 +63,7 @@ from mediaflow.application.scanner import StorageScanner, normalize_resource_roo
 from mediaflow.application.scope_continuation import (
     ScopeContinuationService,
     ScopeContinuationWorkerService,
+    continuation_origin,
     definition_occurrence_authority,
 )
 from mediaflow.application.strategy_test import strategy_runner_from_configuration
@@ -3224,6 +3225,8 @@ def _run_scope_continuation(
                 worker_service.cancelled(job.job_id)
                 raise AutomationCancelled()
             original = prepared.source_task
+            definition_origin = continuation_origin(repository, original)
+            original_job = repository.get_job_for_task(definition_origin.task_id)
             if (
                 configuration.configuration_snapshot_id
                 != prepared.continuation.configuration_snapshot_id
@@ -3326,7 +3329,8 @@ def _run_scope_continuation(
                 remaining_limit,
                 prepared.already_recorded,
                 workflow_stop,
-                original_job=repository.get_job_for_task(original.task_id),
+                original_job=original_job,
+                definition_origin=definition_origin,
             )
             if cancellation_check():
                 coordinator.cancel(continuation.task_id)
@@ -3450,7 +3454,8 @@ def _scope_continuation_mutation_authority(configuration, repository, original):
     checker = _scope_continuation_authority(configuration, repository)
     if not checker(original):
         return None
-    job = repository.get_job_for_task(original.task_id)
+    origin = continuation_origin(repository, original)
+    job = repository.get_job_for_task(origin.task_id)
     definitions = tuple(getattr(configuration, "automation_task_definitions", ()))
     definition_id = getattr(job, "definition_id", None)
     definition = next(
@@ -3485,6 +3490,7 @@ def _continue_scope_from_admission(
     cancellation_check: Callable[[], bool],
     *,
     original_job=None,
+    definition_origin: PersistentTask | None = None,
 ) -> MediaOrganizerBatchResult:
     """Walk only the original admitted scope that is not already recorded.
 
@@ -3510,7 +3516,7 @@ def _continue_scope_from_admission(
     if original.command == "scan":
         if original.scope_path is not None:
             library, storage_path, display_path = _continuation_scope(
-                configuration, original, original_job
+                configuration, original, original_job, definition_origin
             )
             entry = storages[library.storage_id].stat(storage_path)
             if entry.entry_type is not StorageEntryType.DIRECTORY:
@@ -3552,7 +3558,9 @@ def _continue_scope_from_admission(
             cancellation_check=cancellation_check,
             skip_sources=set(skip_sources),
         )
-    library, storage_path, display_path = _continuation_scope(configuration, original, original_job)
+    library, storage_path, display_path = _continuation_scope(
+        configuration, original, original_job, definition_origin
+    )
     entry = storages[library.storage_id].stat(storage_path)
     if entry.entry_type is StorageEntryType.DIRECTORY:
         scoped = replace(library, root_path=storage_path, scan_mode=ScanMode.INCREMENTAL)
@@ -3580,7 +3588,12 @@ def _continue_scope_from_admission(
     )
 
 
-def _continuation_scope(configuration, original: PersistentTask, original_job):
+def _continuation_scope(
+    configuration,
+    original: PersistentTask,
+    original_job,
+    definition_origin: PersistentTask | None = None,
+):
     """Resolve one paused scope from its pinned Definition or configured display root.
 
     Definition occurrences persist a Storage-relative Task path, while direct
@@ -3590,12 +3603,19 @@ def _continuation_scope(configuration, original: PersistentTask, original_job):
     """
 
     if original_job is not None and getattr(original_job, "definition_id", None):
+        pinned_task = definition_origin or original
         if (
-            getattr(original_job, "task_id", None) != original.task_id
+            getattr(original_job, "task_id", None) != pinned_task.task_id
             or getattr(original_job, "configuration_snapshot_id", None)
-            != original.configuration_snapshot_id
+            != pinned_task.configuration_snapshot_id
             or getattr(original_job, "configuration_snapshot_digest", None)
-            != original.configuration_snapshot_digest
+            != pinned_task.configuration_snapshot_digest
+            or original.command != pinned_task.command
+            or original.scope_path != pinned_task.scope_path
+            or original.item_limit != pinned_task.item_limit
+            or original.configuration_snapshot_id != pinned_task.configuration_snapshot_id
+            or original.configuration_snapshot_digest != pinned_task.configuration_snapshot_digest
+            or original.execute_authorized != pinned_task.execute_authorized
         ):
             raise ValueError("paused Definition Task no longer matches its pinned Job")
         definition = next(
@@ -3616,14 +3636,14 @@ def _continuation_scope(configuration, original: PersistentTask, original_job):
         if (
             expected_command is None
             or original_job.command is not expected_command
-            or original.command != expected_command.value
+            or pinned_task.command != expected_command.value
             or original_job.run_mode is not definition.mode
             or original_job.definition_fingerprint != definition.definition_fingerprint
             or original_job.resource_library_id != definition.resource_library_id
             or original_job.source_scope != definition.source_scope
             or original_job.limit != definition.item_limit
-            or original.item_limit != definition.item_limit
-            or original.execute_authorized != original_job.execute_authorized
+            or pinned_task.item_limit != definition.item_limit
+            or pinned_task.execute_authorized != original_job.execute_authorized
         ):
             raise ValueError("paused Definition Task no longer matches its pinned scope")
         libraries = tuple(
@@ -3638,7 +3658,7 @@ def _continuation_scope(configuration, original: PersistentTask, original_job):
         storage_path = normalize_resource_root(
             posixpath.join(normalize_resource_root(library.root_path), normalized_scope or "")
         )
-        if normalize_resource_root(original.scope_path or "") != storage_path:
+        if normalize_resource_root(pinned_task.scope_path or "") != storage_path:
             raise ValueError("paused Definition Task scope differs from its pinned Definition")
         display_roots = dict(configuration.resource_display_roots)
         display_root = display_roots.get(library.library_id, library.root_path)
