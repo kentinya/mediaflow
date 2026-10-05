@@ -841,3 +841,50 @@ Next: SAME TASK FIX LOOP
   当前合法且已检查激活的 `scan-and-plan` Definition（ResourceLibrary=`source`、sourceScope=`Authority`、itemLimit=2）经真实 IntervalScheduler、DefinitionScopedExecutionService 和 AutomationWorker 创建 Preview。实际 Pause API 返回 200，Task 安全确认 paused；第一次 Continue 返回 202，真实 queued Worker 完成一项并持久化 Result。此时实际 Pause API 再次返回 200，新的 continuation Task 安全确认 paused，仍有一项未处理。用户从该链接运行的原生控制继续时，backend 公告 Continue 可用、API 再次返回 202，但真实 AutomationWorker 将第二次 Job/continuation/Task 全部记录为 failed，0 items，剩余工作无法推进。
   证据：`.venv/bin/python /tmp/mediaflow-b42-4-r3-definition-repause-v4.py` → exit 1（用户路径验收断言）；原 Task `ee7990f4-d570-4cc2-8c7c-c5ddb25533a3`，第一次 continuation Task `8e4b6695-4639-486c-bc43-870d336baebd` paused/1 Result，第二次 Task `cd9bc87e-7a7a-46b4-a4d3-d7fca6bd6359` failed/0 items，Job error=`workflow failed (ValueError)`。同一生产 claim/handler 的独立复现 `...definition-repause-v3.py` 捕获具体异常 `paused Task scope is neither a pinned Definition nor a display path`。`_run_scope_continuation()` 仅向 `_continuation_scope()` 传当前 paused Task 的直接 Job；后者仅从该 Job 的 `definition_id` 恢复 Definition 身份，而新的 continuation Job 没有该身份，且继承的 `scope_path="Authority"` 是合法 Storage 相对路径。配置、pin、权限、Local Storage、claim/schema 和真实 Pause 均保留；原处理与后续执行在外部 Provider 装配处使用同一完整 synthetic registry，没有删除或隐藏生产能力。JSON/日志：`/tmp/mediaflow-b42-4-r3-definition-repause-v4.{json,log}`、`/tmp/mediaflow-b42-4-r3-definition-repause-v3.{json,log}`。
   修正：通过既有持久 continuation 关联恢复原 Definition occurrence、ResourceLibrary 与历史 scope 证据，使再次暂停的 continuation 仍能排队执行原范围的剩余工作；共享公告/受理/Worker 支持边界，保留原 pin、链级预算、已完成项排除与现有实时权限/authority 校验。覆盖真实 Definition→暂停→Continue→完成一项→再次暂停→Continue→真实 Worker 完成剩余项的闭环，不将合法相对 scope 改为猜测路径、扩大为全库、删除 Pause，或另建恢复引擎。
+### Correction Round 4 — Developer Completion Report
+
+#### Changed Files
+
+- `mediaflow/application/automation.py` — preserve the explicit child Task link on non-successful scope-continuation Job completion.
+- `tests/test_automation_definition_execution.py` — assert unified run count, deep-link resolution, paused progress/results, and reopened-database state.
+- `TASK.md` — this Developer Completion Report. The B-owned review diff present before implementation was preserved and excluded from the implementation checkpoint.
+
+#### Implemented
+
+When a `SCOPE_CONTINUATION` Worker outcome has no returned Task ID, the terminal Job now resolves its child only through the existing persisted `scope_continuations` row for that exact Job. The claim-fenced terminal Job update stores that Task ID in the existing `automation_jobs.task_id` link. This keeps a re-paused or failed continuation in one unified run, so counts, Job deep links, Task progress, results, and lifecycle actions resolve to the actual Task. The Job retains its own failure status and diagnostic. No schema, queue, authority, or scope behavior changed.
+
+#### Tests and Results
+
+- B blocker reproduction: `.venv/bin/python /tmp/mediaflow-b42-4-r4-definition-inventory-v3.py` → PASS. The real Worker/API flow now resolves the admission Job to the paused child Task with available progress and its durable Result; after SQLite/API restart the inventory contains exactly 3 runs.
+- Focused continuation regression:
+  - `.venv/bin/python -m unittest tests.test_automation_definition_execution.DefinitionScopedExecutionTests.test_paused_definition_relative_scope_continues_in_the_real_worker` → PASS.
+  - `.venv/bin/python -m unittest tests.test_scope_continuation` → 58 PASS.
+- Required focused Python groups → PASS: Task pause/persistence/workspace/inventory/detail (121); Automation API/admission/fencing/readiness/authorization (73); unattended grants/Definition execution/authorized matrix/configuration snapshot (86); transfers/manual organize/V2/API security (217); recovery/admission/checkpoints/manual operations contract (56).
+- `.venv/bin/python -m unittest discover -s tests` → 2,180 PASS, 7 skipped. The same full command was run again after adding the reopen assertions and returned 2,180 PASS, 7 skipped.
+- Web focused Vitest → 42 files / 698 PASS. Full `npm run test -- --run` → 63 files / 991 PASS.
+- Playwright Operations/Manual Organize/Manual Operations/Deep Link → 66 PASS, 2 FAIL (the same Base-proven deep-link failures noted below). Library Files → 40 PASS. Python-backed Operations → 16 PASS.
+- `npm run typecheck`, `npm run lint`, `npm run format:check`, and `npm run build` → PASS; build reports the existing large-chunk advisory.
+- `python3 scripts/check_governance.py`, `.venv/bin/ruff format --check .`, `.venv/bin/ruff check .`, `.venv/bin/python -m compileall -q mediaflow tests scripts`, `.venv/bin/python -m pip check`, and both required example-config validation commands → PASS.
+- Release/security, migration rehearsal, upgrade preflight → 19 PASS. `.venv/bin/python scripts/docker_release_security_smoke_test.py` → PASS.
+- `git diff --check` and Task-Base-to-worktree `git diff --check d52ce9299671ab05141f64848b8475cd4db11126` → PASS. The reference image SHA matches; `config/alist.json` remains ignored and untracked; the FFmpeg/FFprobe search returned no matches.
+- Attempt history: the initial focused selector using the nonexistent class name `AutomationDefinitionExecutionTests` failed before test discovery; the corrected `DefinitionScopedExecutionTests` selector above passed. The first Ruff format check also found the new condition needed standard formatting; that formatting was corrected and the final full check passed.
+
+#### Decisions
+
+- Reuse the persisted `scope_continuations.job_id → new_task_id` relation as the sole source of continuation identity, and persist it through the existing claim-fenced terminal Job update.
+- Keep continuation failure diagnostics on the Job while the unified run status and controls follow the linked Task's actual paused state.
+
+#### Remaining In-Slice Work
+
+RO-6 task-linked Recognition, Metadata, Classification, conflict decisions, and failed-analysis recovery remain outside this Task.
+
+#### Risks / Deviations
+
+- `FAIL / PRE-EXISTING / UNRELATED`: `deep-link.spec.ts` still has two failures: route choice at the authentication boundary times out waiting for the Review & Recovery link, and the V1 handoff page lacks the expected configuration heading. They match the failures B recorded against the untouched Task Base; no related frontend code or assertions changed here.
+- The full Python suite reports 7 existing skips. Python ResourceWarnings and jsdom unsupported-navigation/scroll warnings appeared during runs; they did not fail the suites.
+- The pre-existing B-owned `TASK.md` review diff and three untracked documentation images were preserved. The B review diff remains outside the implementation/report commits. `config/alist.json` was not read or staged.
+
+#### Checkpoint
+
+Status: READY FOR B REVIEW
+Head SHA: `73b171254f626f40364d910fe15583dd896e6da1`
