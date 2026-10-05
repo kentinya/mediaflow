@@ -27,6 +27,7 @@ class ApiPermission(StrEnum):
     EXECUTE_MANUAL_ORGANIZE = "execute_manual_organize"
     CANCEL_JOB = "cancel_job"
     RESOLVE_CONFIRMATION = "resolve_confirmation"
+    RESOLVE_RECOGNITION_REVIEW = "resolve_recognition_review"
     RESOLVE_METADATA_REVIEW = "resolve_metadata_review"
     RESOLVE_CLASSIFICATION_REVIEW = "resolve_classification_review"
     REMOTE_EXECUTE = "remote_execute"
@@ -44,6 +45,7 @@ ROLE_PERMISSIONS = {
             ApiPermission.SUBMIT_DRY_RUN,
             ApiPermission.CANCEL_JOB,
             ApiPermission.RESOLVE_CONFIRMATION,
+            ApiPermission.RESOLVE_RECOGNITION_REVIEW,
             ApiPermission.RESOLVE_METADATA_REVIEW,
             ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
             ApiPermission.EXECUTE_MANUAL_ORGANIZE,
@@ -55,6 +57,7 @@ ROLE_PERMISSIONS = {
             ApiPermission.SUBMIT_DRY_RUN,
             ApiPermission.CANCEL_JOB,
             ApiPermission.RESOLVE_CONFIRMATION,
+            ApiPermission.RESOLVE_RECOGNITION_REVIEW,
             ApiPermission.RESOLVE_METADATA_REVIEW,
             ApiPermission.RESOLVE_CLASSIFICATION_REVIEW,
             ApiPermission.REMOTE_EXECUTE,

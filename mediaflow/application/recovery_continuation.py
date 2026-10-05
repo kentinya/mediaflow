@@ -16,10 +16,15 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from mediaflow.application.processing_checkpoint import ProcessingCheckpointService
+from mediaflow.application.recovery_admission import RecoveryAdmissionService
 from mediaflow.domain.automation import AutomationCommand, AutomationJob, AutomationJobStatus
 from mediaflow.domain.configuration_management import RuntimeSnapshotUnavailable
 from mediaflow.domain.processing_checkpoint import EffectCertainty
-from mediaflow.domain.recovery import RecoveryRequest
+from mediaflow.domain.recovery import (
+    RecoveryAdmissionError,
+    RecoveryAdmissionReason,
+    RecoveryRequest,
+)
 from mediaflow.domain.recovery_continuation import (
     RecoveryContinuation,
     RecoveryContinuationError,
@@ -79,6 +84,11 @@ class RecoveryContinuationService:
         self._checkpoint_service = checkpoint_service or ProcessingCheckpointService(
             repository, snapshot_validator=snapshot_validator
         )
+        self._admission_service = RecoveryAdmissionService(
+            repository,
+            snapshot_validator=snapshot_validator,
+            checkpoint_service=self._checkpoint_service,
+        )
 
     @property
     def repository(self):
@@ -129,6 +139,29 @@ class RecoveryContinuationService:
                 "TaskItem was not found in the specified Task",
             )
         request = checkpoint.active_recovery_request
+        if request is None and "retry" in checkpoint.permitted_action_ids:
+            # One native Continue command composes only the existing safe
+            # analysis admission and its queued continuation. Exact checkpoint
+            # fencing happens at both boundaries; neither grants execution.
+            try:
+                self._admission_service.admit(
+                    task_id,
+                    item_id,
+                    action_id="retry",
+                    expected_checkpoint_version=expected,
+                    actor=actor,
+                )
+            except RecoveryAdmissionError as error:
+                raise RecoveryContinuationError(
+                    RecoveryContinuationReason.STALE_CHECKPOINT
+                    if error.reason is RecoveryAdmissionReason.STALE_CHECKPOINT
+                    else RecoveryContinuationReason.NO_CONTINUATION_BOUNDARY,
+                    "the selected item is no longer eligible for safe analysis",
+                    current_checkpoint_version=error.current_checkpoint_version,
+                ) from error
+            checkpoint = self._checkpoint_service.get(item_id, task_id=task_id)
+            request = checkpoint.active_recovery_request
+            expected = checkpoint.checkpoint_version
         if request is None:
             if checkpoint.effect_certainty in {
                 EffectCertainty.ATTEMPTED_UNVERIFIED,

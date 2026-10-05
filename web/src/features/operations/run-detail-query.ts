@@ -13,15 +13,25 @@ import {
   fetchRunItemEvidence,
   fetchRunItems,
   fetchRunRecords,
+  fetchTaskItemRecovery,
+  fetchTaskRecoveryBatch,
   type RunItemEvidenceRead,
   type RunItemsRead,
   type RunRecordsRead,
 } from "../../shared/api/api-client";
+import type { OperationsRead } from "../../shared/api/api-client";
+import type {
+  RecoveryBatchModel,
+  TaskItemRecoveryModel,
+} from "../../entities/operations/task-item-recovery";
 import { RUN_REFETCH_INTERVAL } from "./run-query";
 
 export const runItemsQueryKey = "operations.run-items" as const;
 export const runRecordsQueryKey = "operations.run-records" as const;
 export const runItemEvidenceQueryKey = "operations.run-item-evidence" as const;
+export const taskItemRecoveryQueryKey =
+  "operations.task-item-recovery" as const;
+export const recoveryBatchQueryKey = "operations.recovery-batch" as const;
 
 function detailRefetchInterval(active: boolean): number | false {
   return active ? RUN_REFETCH_INTERVAL : false;
@@ -110,6 +120,58 @@ export function runItemEvidenceQueryOptions(
     refetchOnReconnect: false,
     staleTime: 10_000,
     refetchInterval: detailRefetchInterval(context.active),
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function taskItemRecoveryQueryOptions(
+  token: string | null,
+  context: RunDetailQueryContext & {
+    readonly taskId: string;
+    readonly itemId: string;
+  },
+) {
+  return queryOptions({
+    queryKey: [taskItemRecoveryQueryKey, context.taskId, context.itemId],
+    queryFn: (): Promise<OperationsRead<TaskItemRecoveryModel>> =>
+      fetchTaskItemRecovery(token, context.taskId, context.itemId),
+    enabled:
+      token !== null && context.taskId.length > 0 && context.itemId.length > 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 0,
+    refetchInterval: detailRefetchInterval(context.active),
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function recoveryBatchQueryOptions(
+  token: string | null,
+  context: { readonly taskId: string; readonly batchId: string },
+) {
+  return queryOptions({
+    queryKey: [recoveryBatchQueryKey, context.taskId, context.batchId],
+    queryFn: (): Promise<OperationsRead<RecoveryBatchModel>> =>
+      fetchTaskRecoveryBatch(token, context.taskId, context.batchId),
+    enabled:
+      token !== null && context.taskId.length > 0 && context.batchId.length > 0,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: 0,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (
+        data?.ok === true &&
+        ["completed", "partial", "failed", "cancelled"].includes(
+          data.model.status,
+        )
+      ) {
+        return false;
+      }
+      return RUN_REFETCH_INTERVAL;
+    },
     refetchIntervalInBackground: false,
   });
 }

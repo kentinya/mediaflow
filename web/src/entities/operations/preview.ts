@@ -119,10 +119,11 @@ export interface ManualPreviewDestructiveImplicationsModel {
   readonly statement: string;
 }
 
-/** The MediaLibrary-relative proposed target. */
+/** The exact Storage-relative target plus its MediaLibrary-relative context. */
 export interface ManualPreviewDestinationModel {
   readonly storageId: string | null;
   readonly relativePath: string | null;
+  readonly storageRelativePath: string | null;
   readonly filename: string | null;
 }
 
@@ -557,6 +558,7 @@ function normalizeDestination(
     return {
       storageId: optionalText(source, "storageId"),
       relativePath: optionalText(source, "relativePath"),
+      storageRelativePath: optionalText(source, "storageRelativePath"),
       filename: optionalText(source, "filename"),
     };
   } catch {
@@ -927,7 +929,8 @@ function normalizePlanFields(
     policies,
     analysis,
     targetStorageId: destination?.storageId ?? null,
-    targetPath: destination?.relativePath ?? null,
+    targetPath:
+      destination?.storageRelativePath ?? destination?.relativePath ?? null,
     organizePolicy: policies === null ? null : policies.organizePolicyId,
     planStatus: plan === null ? null : optionalText(plan, "planStatus"),
     destination,

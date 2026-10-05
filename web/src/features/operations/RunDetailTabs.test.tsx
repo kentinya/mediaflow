@@ -38,6 +38,7 @@ afterEach(() => {
   authStore.clearToken();
   authStore.clearIntendedPath();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 function progressDocument(overrides: Record<string, unknown> = {}) {
@@ -1230,6 +1231,32 @@ describe("selected-run detail tabs", () => {
       await screen.findByText(
         "The connected API principal does not have permission to view this area.",
       ),
+    ).toBeVisible();
+  });
+
+  it("explains when browser storage cannot preserve a batch command identity", async () => {
+    const getItem = Storage.prototype.getItem;
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(function (
+      this: Storage,
+      key: string,
+    ) {
+      if (key === "mediaflow.operations.recovery-batch:task-001") {
+        throw new Error("session storage unavailable");
+      }
+      return getItem.call(this, key);
+    });
+    stubDetailJourney();
+    authStore.setToken(TOKEN);
+    renderApp("/ui-v2/operations?run=task-001");
+
+    const batch = await screen.findByRole("region", {
+      name: "批量失败分析恢复",
+    });
+    expect(
+      within(batch).getByRole("heading", { name: "批量恢复不可用" }),
+    ).toBeVisible();
+    expect(
+      within(batch).getByText(/批量提交已关闭，避免响应丢失后无法核对/),
     ).toBeVisible();
   });
 

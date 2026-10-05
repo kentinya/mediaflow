@@ -26,7 +26,9 @@ import {
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   executeOrganizePreview,
+  executeTaskItemRecoveryOrganize,
   fetchOrganizeAdmissionOutcome,
+  fetchTaskItemRecovery,
 } from "../../shared/api/api-client";
 import type {
   ManualPreviewItemModel,
@@ -214,10 +216,48 @@ export function OrganizePreviewPage() {
   });
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const filesReturn = readFilesReturnContext(searchParams);
+  const rawRecoveryLinkId = searchParams["recoveryLinkId"];
+  const hasRecoveryMarker = rawRecoveryLinkId !== undefined;
+  const recoveryLinkId =
+    typeof rawRecoveryLinkId === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(rawRecoveryLinkId)
+      ? rawRecoveryLinkId
+      : null;
+  const recoverySourceTaskId =
+    typeof searchParams["recoveryTaskId"] === "string"
+      ? (searchParams["recoveryTaskId"] as string)
+      : null;
+  const recoverySourceItemId =
+    typeof searchParams["recoveryItemId"] === "string"
+      ? (searchParams["recoveryItemId"] as string)
+      : null;
+  const recoveryReturnIsValid =
+    recoveryLinkId !== null &&
+    recoverySourceTaskId !== null &&
+    recoverySourceItemId !== null &&
+    /^[A-Za-z0-9._:-]{1,256}$/.test(recoverySourceTaskId) &&
+    /^[A-Za-z0-9._:-]{1,256}$/.test(recoverySourceItemId);
   const token = useAuthToken();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const previewQuery = useQuery(organizePreviewQueryOptions(token, previewId));
+  const recoveryLinkQuery = useQuery({
+    queryKey: [
+      "operations.task-item-recovery",
+      recoverySourceTaskId,
+      recoverySourceItemId,
+    ],
+    queryFn: () =>
+      fetchTaskItemRecovery(
+        token,
+        recoverySourceTaskId!,
+        recoverySourceItemId!,
+      ),
+    enabled: token !== null && recoveryReturnIsValid,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
   // Read this Preview's durable history before exposing Execute. If a browser
   // reload erased an in-memory unknown-outcome lock, an admitted execution
   // still closes this Preview to another command.
@@ -246,6 +286,7 @@ export function OrganizePreviewPage() {
     readonly intentVersion: number;
     readonly allowOverwrite: boolean;
     readonly allowSourceCleanup: boolean;
+    readonly recoveryLinkId: string | null;
   } | null>(null);
   const [reconciliation, setReconciliation] = useState<{
     readonly kind: "unknown" | "known" | "not_equivalent" | "not_admitted";
@@ -254,39 +295,79 @@ export function OrganizePreviewPage() {
     readonly taskId: string | null;
   } | null>(null);
   const operationsReturn = readOperationsReturnContext(searchParams);
+  const returnToRecoveryItem = () => {
+    if (!recoveryReturnIsValid) return;
+    void navigate({
+      to: "/operations",
+      search:
+        operationsReturn === null
+          ? {
+              run: recoverySourceTaskId!,
+              tab: "detail",
+              item: recoverySourceItemId!,
+            }
+          : operationsLandingSearch(operationsReturn, null),
+    });
+  };
 
   const executeMutation = useMutation({
-    mutationFn: (options: {
+    mutationFn: async (options: {
       readonly itemIds: readonly string[];
       readonly intentVersion: number;
       readonly allowOverwrite: boolean;
       readonly allowSourceCleanup: boolean;
       readonly recoverySourceTaskId: string | null;
-    }) =>
-      executeOrganizePreview(token, {
-        previewId,
-        itemIds: options.itemIds,
-        expectedIntentVersion: options.intentVersion,
-        allowOverwrite: options.allowOverwrite,
-        allowSourceCleanup: options.allowSourceCleanup,
-      }),
+      readonly recoveryLinkId: string | null;
+    }) => {
+      if (options.recoveryLinkId !== null) {
+        return {
+          kind: "recovery" as const,
+          result: await executeTaskItemRecoveryOrganize(
+            token,
+            options.recoveryLinkId,
+          ),
+        };
+      }
+      return {
+        kind: "preview" as const,
+        result: await executeOrganizePreview(token, {
+          previewId,
+          itemIds: options.itemIds,
+          expectedIntentVersion: options.intentVersion,
+          allowOverwrite: options.allowOverwrite,
+          allowSourceCleanup: options.allowSourceCleanup,
+        }),
+      };
+    },
     retry: false,
     onMutate: () => {
       setResult(null);
       setUnknownSubmission(null);
       setReconciliation(null);
     },
-    onSuccess: (value, options) => {
+    onSuccess: (submission, options) => {
       // This read is safe after every command outcome, including an ambiguous
       // 5xx or lost response. If the operator returns to this Preview later,
       // the query cache cannot hide a durable admission from the page.
       void queryClient.invalidateQueries({
         queryKey: [organizeExecutionListQueryKey],
       });
-      if (value.ok) {
+      if (submission.kind === "recovery" && submission.result.ok) {
+        queryClient.invalidateQueries({
+          queryKey: [
+            "operations.task-item-recovery",
+            recoverySourceTaskId,
+            recoverySourceItemId,
+          ],
+        });
+        returnToRecoveryItem();
+        return;
+      }
+      if (submission.kind === "preview" && submission.result.ok) {
+        const value = submission.result.model;
         // A repeated submission resolves to the same durable execution; the
         // page always continues to the durable identity it received.
-        if (value.model.taskId !== null && operationsReturn !== null) {
+        if (value.taskId !== null && operationsReturn !== null) {
           // Task-center-originated journey: return to the preserved list
           // context with the admitted run selected. The unified run anchor
           // of this standalone admission is its durable Task identity.
@@ -294,14 +375,14 @@ export function OrganizePreviewPage() {
             to: "/operations",
             search: operationsLandingSearch(
               operationsReturn,
-              options.recoverySourceTaskId ?? value.model.taskId,
+              options.recoverySourceTaskId ?? value.taskId,
             ),
           });
           return;
         }
         void navigate({
           to: "/operations/organize/execution/$executionId",
-          params: { executionId: value.model.executionId },
+          params: { executionId: value.executionId },
           search: {
             ...(filesReturn === null ? {} : filesReturnSearch(filesReturn)),
             ...operationsReturnSearch(operationsReturn),
@@ -309,9 +390,11 @@ export function OrganizePreviewPage() {
         });
         return;
       }
+      const value = submission.result;
       // A transport error, an unproven 5xx response or a malformed answer
       // cannot distinguish "never dispatched" from "admitted but the answer
       // was lost": the outcome is unknown, not absent.
+      if (value.ok) return;
       const outcomeUnknown =
         value.status === 0 ||
         value.status >= 500 ||
@@ -328,6 +411,7 @@ export function OrganizePreviewPage() {
           intentVersion: options.intentVersion,
           allowOverwrite: options.allowOverwrite,
           allowSourceCleanup: options.allowSourceCleanup,
+          recoveryLinkId: options.recoveryLinkId,
         });
         return;
       }
@@ -339,16 +423,75 @@ export function OrganizePreviewPage() {
   });
 
   const reconcileMutation = useMutation({
-    mutationFn: (submission: NonNullable<typeof unknownSubmission>) =>
-      fetchOrganizeAdmissionOutcome(token, {
-        previewId,
-        itemIds: submission.itemIds,
-        expectedIntentVersion: submission.intentVersion,
-        allowOverwrite: submission.allowOverwrite,
-        allowSourceCleanup: submission.allowSourceCleanup,
-      }),
+    mutationFn: async (submission: NonNullable<typeof unknownSubmission>) => {
+      if (
+        submission.recoveryLinkId !== null &&
+        recoverySourceTaskId !== null &&
+        recoverySourceItemId !== null
+      ) {
+        return {
+          kind: "recovery" as const,
+          read: await fetchTaskItemRecovery(
+            token,
+            recoverySourceTaskId,
+            recoverySourceItemId,
+          ),
+        };
+      }
+      return {
+        kind: "preview" as const,
+        read: await fetchOrganizeAdmissionOutcome(token, {
+          previewId,
+          itemIds: submission.itemIds,
+          expectedIntentVersion: submission.intentVersion,
+          allowOverwrite: submission.allowOverwrite,
+          allowSourceCleanup: submission.allowSourceCleanup,
+        }),
+      };
+    },
     retry: false,
-    onSuccess: (value) => {
+    onSuccess: (submission) => {
+      if (submission.kind === "recovery") {
+        if (submission.read.ok !== true) {
+          setReconciliation({
+            kind: "unknown",
+            message: `${submission.read.failure.title};${submission.read.failure.nextAction}`,
+            executionId: null,
+            taskId: null,
+          });
+          return;
+        }
+        const link = submission.read.model.manualRecoveryLink;
+        if (link?.status === "consumed" && link.executionId !== null) {
+          void queryClient.invalidateQueries({
+            queryKey: [
+              "operations.task-item-recovery",
+              recoverySourceTaskId,
+              recoverySourceItemId,
+            ],
+          });
+          returnToRecoveryItem();
+          return;
+        }
+        if (
+          link?.status === "authorized" &&
+          link.authorizationStatus === "active"
+        ) {
+          setUnknownSubmission(null);
+          setReconciliation({
+            kind: "not_admitted",
+            message:
+              "原条目仍记录同一个有效的一次性权限，且尚无执行结果。可以重新检查此精确计划，再明确决定是否执行。",
+            executionId: null,
+            taskId: recoverySourceTaskId,
+          });
+          return;
+        }
+        setUnknownSubmission(null);
+        returnToRecoveryItem();
+        return;
+      }
+      const value = submission.read;
       if (!value.ok) {
         setReconciliation({
           kind: "unknown",
@@ -524,6 +667,19 @@ export function OrganizePreviewPage() {
       ),
     [activeSelection, preview],
   );
+  const recoveryLink =
+    recoveryLinkQuery.data?.ok === true
+      ? recoveryLinkQuery.data.model.manualRecoveryLink
+      : null;
+  const recoveryAuthorityCoversPlan =
+    !hasRecoveryMarker ||
+    (recoveryReturnIsValid &&
+      recoveryLink?.linkId === recoveryLinkId &&
+      recoveryLink.previewId === previewId &&
+      recoveryLink.status === "authorized" &&
+      recoveryLink.authorizationStatus === "active" &&
+      (!requiresOverwrite || recoveryLink.allowOverwrite === true) &&
+      (!requiresCleanup || recoveryLink.allowSourceCleanup === true));
 
   return (
     <AuthorizedReadBoundary query={previewQuery} unavailableTitle="预览不可用">
@@ -595,6 +751,24 @@ export function OrganizePreviewPage() {
             </StatusBanner>
             {model.nextAction && (
               <p className="mf-dashboard-meta">{model.nextAction}</p>
+            )}
+            {hasRecoveryMarker && !recoveryAuthorityCoversPlan && (
+              <StatusBanner
+                variant="warning"
+                title="此恢复链接没有所需的精确执行权限"
+              >
+                <p>
+                  当前精确计划需要额外的覆盖或来源目录清理权限，已保存的一次性权限没有包含它；执行保持关闭。返回原条目检查当前来源并准备新的恢复
+                  Preview。
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={returnToRecoveryItem}
+                >
+                  返回原条目
+                </Button>
+              </StatusBanner>
             )}
             {executionHistory === undefined ? (
               <StatusBanner variant="warning" title="无法确认预览的执行记录">
@@ -733,6 +907,7 @@ export function OrganizePreviewPage() {
                   type="button"
                   disabled={
                     !execute.available ||
+                    !recoveryAuthorityCoversPlan ||
                     !executionHistorySafe ||
                     executeMutation.isPending ||
                     unknownSubmission !== null ||
@@ -748,6 +923,9 @@ export function OrganizePreviewPage() {
                       allowSourceCleanup:
                         requiresCleanup && effectiveAllowSourceCleanup,
                       recoverySourceTaskId: model.recoverySourceTaskId,
+                      recoveryLinkId: recoveryReturnIsValid
+                        ? recoveryLinkId
+                        : null,
                     })
                   }
                 >

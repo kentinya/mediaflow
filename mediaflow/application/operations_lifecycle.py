@@ -1611,13 +1611,14 @@ def _bounded_destructive_implications(plan: dict[str, object]) -> dict[str, obje
 
 
 def _bounded_preview_destination(value: object) -> dict[str, object] | None:
-    """The MediaLibrary-relative proposed target, never its host root."""
+    """The exact Storage-relative target and its MediaLibrary-relative context."""
 
     if not isinstance(value, dict):
         return None
     return {
         "storageId": _bounded_identifier(value.get("storageId")),
         "relativePath": _bounded_identity_path(value.get("relativePath")),
+        "storageRelativePath": _bounded_identity_path(value.get("path")),
         "filename": _bounded_location(value.get("path"), segments=1),
     }
 

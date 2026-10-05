@@ -484,12 +484,27 @@ class ManualRecoveryContinuationService:
             authorization = self._execution.get_authorization(link.authorization_id)
             value["authorization_status"] = authorization.status.value
             value["execution_id"] = value["execution_id"] or authorization.execution_id
+            value["allow_overwrite"] = authorization.allow_overwrite
+            value["allow_source_cleanup"] = authorization.allow_source_cleanup
             value["authorizationPath"] = (
                 "/api/v1/manual-execution-authorizations/" + link.authorization_id
             )
         except Exception:
             pass
         return value
+
+    def supports_source_item(self, source_task_id: str, source_item_id: str) -> bool:
+        """Whether this exact item belongs to one persisted manual execution."""
+
+        executions = self._repository.list_manual_executions_for_task_item(
+            source_task_id, source_item_id
+        )
+        if len(executions) != 1:
+            return False
+        return any(
+            item.task_id == source_task_id and item.task_item_id == source_item_id
+            for item in executions[0].items
+        )
 
     @staticmethod
     def _actor(value: str) -> str:

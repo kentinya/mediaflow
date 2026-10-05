@@ -419,8 +419,9 @@ describe("Operations manual Scan/Preview journeys", () => {
     expect(screen.getAllByText("Zero-mutation").length).toBeGreaterThan(0);
     expect(screen.getByRole("cell", { name: "One" })).toBeVisible();
     expect(
-      screen.getAllByText("target:Movies/Anime/One (2001)/One (2001).mkv")
-        .length,
+      screen.getAllByText(
+        "target:Movies/Movies/Anime/One (2001)/One (2001).mkv",
+      ).length,
     ).toBeGreaterThan(0);
     expect(
       screen.getByRole("heading", { name: "Findings for One" }),

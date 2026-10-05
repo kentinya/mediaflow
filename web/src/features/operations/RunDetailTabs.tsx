@@ -18,7 +18,7 @@
  */
 
 import { useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthToken } from "../../shared/api/auth-context";
 import {
   fetchRunExportPackage,
@@ -47,10 +47,15 @@ import {
 } from "../../entities/operations/run-detail";
 import {
   runItemEvidenceQueryOptions,
+  runItemsQueryKey,
   runItemsQueryOptions,
   runRecordsQueryOptions,
+  recoveryBatchQueryKey,
+  recoveryBatchQueryOptions,
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
+import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
+import { submitTaskRecoveryBatch } from "../../shared/api/api-client";
 
 /** Chinese labels for the bounded audit actions of the records stream. */
 const RUN_AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
@@ -524,6 +529,14 @@ export interface RunDetailTabsProps {
   readonly active: boolean;
   /** Optional run facts rendered inside 任务详情 above the progress card. */
   readonly facts?: ReactNode;
+  readonly onOpenRecoveryPreview?: (
+    previewId: string,
+    linkId: string,
+    taskId: string,
+    itemId: string,
+  ) => void;
+  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
 
 export function RunDetailTabs({
@@ -533,7 +546,11 @@ export function RunDetailTabs({
   onStateChange,
   active,
   facts,
+  onOpenRecoveryPreview,
+  onOpenLinkedAnalysis,
+  onOpenRecoveryExecution,
 }: RunDetailTabsProps) {
+  const authToken = useAuthToken();
   /** A filter change always starts from the first page: a cursor minted for
    * the previous filter state is never carried into a new one (the server
    * would refuse it anyway). */
@@ -585,6 +602,12 @@ export function RunDetailTabs({
           <ProgressCard progress={progress} />
           {facts}
           <RunItemsSection
+            key={JSON.stringify([
+              runId,
+              state.itemStatus,
+              state.itemCursor,
+              authToken,
+            ])}
             runId={runId}
             state={state}
             onStatusChange={changeItemStatus}
@@ -597,6 +620,9 @@ export function RunDetailTabs({
               runId={runId}
               itemId={state.evidenceItem}
               active={active}
+              onOpenRecoveryPreview={onOpenRecoveryPreview}
+              onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+              onOpenRecoveryExecution={onOpenRecoveryExecution}
               onClose={() => inspectItem(null)}
             />
           )}
@@ -798,6 +824,9 @@ function RunItemsSection({
       active,
     }),
   );
+  const [selectedRecoveryItems, setSelectedRecoveryItems] = useState<
+    Record<string, string>
+  >({});
   return (
     <section className="mf-count-section" aria-label="主条目">
       <div className="mf-run-items-head">
@@ -866,6 +895,7 @@ function RunItemsSection({
                       <th>目标</th>
                       <th>失败证据</th>
                       <th>操作</th>
+                      <th>批量分析</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -902,6 +932,39 @@ function RunItemsSection({
                             查看证据
                           </button>
                         </td>
+                        <td>
+                          {page.taskId !== null &&
+                            item.status === "failed" &&
+                            item.checkpoint?.retrySafety === "safe" &&
+                            item.checkpoint.checkpointVersion !== null &&
+                            item.checkpoint.permittedActionIds.includes(
+                              "retry",
+                            ) && (
+                              <label>
+                                <input
+                                  type="checkbox"
+                                  aria-label={`选择 ${item.itemId} 进行单项分析恢复`}
+                                  checked={
+                                    selectedRecoveryItems[item.itemId] ===
+                                    item.checkpoint.checkpointVersion
+                                  }
+                                  onChange={(event) => {
+                                    setSelectedRecoveryItems((current) => {
+                                      const next = { ...current };
+                                      if (event.target.checked) {
+                                        next[item.itemId] =
+                                          item.checkpoint!.checkpointVersion!;
+                                      } else {
+                                        delete next[item.itemId];
+                                      }
+                                      return next;
+                                    });
+                                  }}
+                                />
+                                选择
+                              </label>
+                            )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -926,10 +989,327 @@ function RunItemsSection({
                   ? ` / 运行共 ${page.total} 条(状态分布按整个运行统计)`
                   : ` / 运行共 ${page.total} 条`}
               </p>
+              {page.taskId !== null && (
+                <FailedAnalysisBatchControls
+                  key={page.taskId}
+                  taskId={page.taskId}
+                  runId={runId}
+                  selected={selectedRecoveryItems}
+                  onSelectionChange={setSelectedRecoveryItems}
+                />
+              )}
             </>
           );
         }}
       </AuthorizedReadBoundary>
+    </section>
+  );
+}
+
+interface SavedBatchCommand {
+  readonly batchId: string;
+  readonly items: readonly {
+    readonly itemId: string;
+    readonly expectedCheckpointVersion: string;
+  }[];
+}
+
+function parseSavedBatchCommand(
+  value: string | null,
+): SavedBatchCommand | null {
+  if (value === null || value.length > 32_000) return null;
+  try {
+    const parsed = JSON.parse(value) as Record<string, unknown>;
+    if (
+      typeof parsed.batchId !== "string" ||
+      !/^[a-f0-9-]{36}$/i.test(parsed.batchId) ||
+      !Array.isArray(parsed.items) ||
+      parsed.items.length === 0 ||
+      parsed.items.length > 100
+    ) {
+      return null;
+    }
+    const items = parsed.items.map((entry) => {
+      if (typeof entry !== "object" || entry === null)
+        throw new Error("bad batch item");
+      const item = entry as Record<string, unknown>;
+      if (
+        typeof item.itemId !== "string" ||
+        !/^[A-Za-z0-9._:-]{1,256}$/.test(item.itemId) ||
+        typeof item.expectedCheckpointVersion !== "string" ||
+        !/^[a-f0-9]{64}$/.test(item.expectedCheckpointVersion)
+      ) {
+        throw new Error("bad batch item");
+      }
+      return {
+        itemId: item.itemId,
+        expectedCheckpointVersion: item.expectedCheckpointVersion,
+      };
+    });
+    return { batchId: parsed.batchId, items };
+  } catch {
+    return null;
+  }
+}
+
+function FailedAnalysisBatchControls({
+  taskId,
+  runId,
+  selected,
+  onSelectionChange,
+}: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly selected: Readonly<Record<string, string>>;
+  readonly onSelectionChange: (value: Record<string, string>) => void;
+}) {
+  const token = useAuthToken();
+  const queryClient = useQueryClient();
+  const storageKey = `mediaflow.operations.recovery-batch:${taskId}`;
+  const [batchStorage] = useState(() => {
+    try {
+      return {
+        command: parseSavedBatchCommand(
+          window.sessionStorage.getItem(storageKey),
+        ),
+        available: true,
+      };
+    } catch {
+      return { command: null, available: false };
+    }
+  });
+  const [command, setCommand] = useState<SavedBatchCommand | null>(
+    batchStorage.command,
+  );
+  const hydrated = batchStorage.available;
+  const [repeatLocked, setRepeatLocked] = useState(false);
+  const [knownSubmitted, setKnownSubmitted] = useState(false);
+  const [message, setMessage] = useState<string | null>(
+    batchStorage.available
+      ? null
+      : "此浏览器无法保留批量命令编号；批量提交已关闭，避免响应丢失后无法核对。",
+  );
+  const batchQuery = useQuery(
+    recoveryBatchQueryOptions(token, {
+      taskId,
+      batchId: command?.batchId ?? "",
+    }),
+  );
+  const batchMutation = useMutation({
+    mutationFn: (value: SavedBatchCommand) =>
+      submitTaskRecoveryBatch(token, taskId, value.batchId, value.items),
+    retry: false,
+    onSuccess: (result, value) => {
+      if (result.ok) {
+        setKnownSubmitted(true);
+        queryClient.setQueryData(
+          [recoveryBatchQueryKey, taskId, value.batchId],
+          { ok: true as const, model: result.model },
+        );
+        setRepeatLocked(false);
+        setMessage("已读取批次受理结果。每个条目都保留独立状态和下一步。");
+        void queryClient.invalidateQueries({
+          queryKey: [runItemsQueryKey, runId],
+        });
+        return;
+      }
+      const unknown =
+        result.status === 0 ||
+        result.status >= 500 ||
+        result.code === "malformed_response";
+      setRepeatLocked(true);
+      setMessage(
+        unknown
+          ? "批量命令响应未能确认。先读取这个固定批次的持久记录；不能新建另一批或重新发送。"
+          : "批次没有返回可确认的受理结果。先读取这个固定批次的持久记录。",
+      );
+      void batchQuery.refetch();
+    },
+  });
+
+  const submitExact = (value: SavedBatchCommand) => {
+    setRepeatLocked(true);
+    setMessage(
+      "批量分析只提交所选条目和打开时的检查点；正在等待独立逐项结果。",
+    );
+    batchMutation.mutate(value);
+  };
+  const begin = () => {
+    const items = Object.entries(selected)
+      .map(([itemId, expectedCheckpointVersion]) => ({
+        itemId,
+        expectedCheckpointVersion,
+      }))
+      .sort((left, right) => left.itemId.localeCompare(right.itemId));
+    if (items.length === 0 || items.length > 100) return;
+    let batchId: string;
+    try {
+      batchId = crypto.randomUUID();
+      const value = { batchId, items };
+      window.sessionStorage.setItem(storageKey, JSON.stringify(value));
+      setCommand(value);
+      submitExact(value);
+    } catch {
+      setMessage(
+        "无法保存精确批次编号或选择记录；没有发送批量命令。请检查浏览器会话存储后重试。",
+      );
+    }
+  };
+  const reconcile = async () => {
+    const result = await batchQuery.refetch();
+    if (result.data?.ok === true) {
+      setRepeatLocked(false);
+      setMessage("已找到精确批次记录。请检查每个条目的独立结果。");
+    } else if (
+      result.data?.ok === false &&
+      result.data.failure.kind === "not_found"
+    ) {
+      setRepeatLocked(false);
+      setMessage(
+        "该批次编号下尚无持久记录。可以明确重发相同编号和完全相同的所选条目。",
+      );
+    } else {
+      setRepeatLocked(true);
+      setMessage("批次记录读取失败。保留锁定；恢复读取后再处理。");
+    }
+  };
+  const clearForNewBatch = () => {
+    try {
+      window.sessionStorage.removeItem(storageKey);
+    } catch {
+      // The durable terminal batch remains safe; clearing a browser hint is optional.
+    }
+    setCommand(null);
+    setRepeatLocked(false);
+    setKnownSubmitted(false);
+    setMessage(null);
+    onSelectionChange({});
+  };
+
+  const batch = batchQuery.data?.ok === true ? batchQuery.data.model : null;
+  const batchMissing =
+    batchQuery.data?.ok === false &&
+    batchQuery.data.failure.kind === "not_found";
+  const settled =
+    batch !== null &&
+    ["completed", "partial", "failed", "cancelled"].includes(batch.status);
+  const labels: Readonly<Record<string, string>> = {
+    partial: "部分完成",
+    selected: "等待准入",
+    accepted: "已受理",
+    queued: "已排队",
+    running: "Worker 处理中",
+    completed: "分析已完成",
+    failed: "失败",
+    cancelled: "已取消",
+    refused: "未受理",
+    waiting: "等待条件恢复",
+    unchanged: "未变化",
+  };
+
+  return (
+    <section className="mf-count-section" aria-label="批量失败分析恢复">
+      <h5>批量失败分析恢复</h5>
+      <p className="mf-dashboard-meta">
+        仅选择当前页里检查点明确允许安全重试的 Failed 条目。最多 100
+        项；每项绑定自己的检查点，成功、已忽略和效果未知的条目不会自动加入。
+      </p>
+      {command === null && message !== null && (
+        <StatusBanner variant="warning" title="批量恢复不可用">
+          <p>{message}</p>
+        </StatusBanner>
+      )}
+      {Object.keys(selected).length > 0 && command === null && (
+        <div className="mf-actions">
+          <button
+            type="button"
+            className="mf-button"
+            disabled={!hydrated || batchMutation.isPending}
+            onClick={begin}
+          >
+            {batchMutation.isPending
+              ? "正在提交…"
+              : `继续所选分析(${Object.keys(selected).length})`}
+          </button>
+        </div>
+      )}
+      {command !== null && (
+        <>
+          {message && (
+            <StatusBanner
+              variant={repeatLocked ? "warning" : "info"}
+              title="批量恢复状态"
+            >
+              <p>{message}</p>
+            </StatusBanner>
+          )}
+          {(repeatLocked ||
+            (batch === null &&
+              batchQuery.data?.ok === false &&
+              (!batchMissing || knownSubmitted))) && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={batchQuery.isFetching}
+              onClick={() => void reconcile()}
+            >
+              {batchQuery.isFetching ? "正在核对…" : "核对这个批次"}
+            </button>
+          )}
+          {batchMissing && !repeatLocked && !knownSubmitted && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              disabled={batchMutation.isPending}
+              onClick={() => submitExact(command)}
+            >
+              明确重发同一批次和所选条目
+            </button>
+          )}
+          {batchQuery.isFetching && batch === null && (
+            <p className="mf-dashboard-meta">正在读取已保存的批次…</p>
+          )}
+          {batch && (
+            <>
+              <h6>
+                批次结果：{labels[batch.status] ?? batch.status}(
+                {batch.children.length} 项)
+              </h6>
+              <ul className="mf-dashboard-meta">
+                {batch.children.map((child) => (
+                  <li key={child.itemId}>
+                    {child.itemId} — {labels[child.status] ?? child.status}
+                    {child.error ? `：${child.error}` : ""}；下一步：
+                    {child.nextAction}
+                    {child.newTaskId && (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <a
+                          href={`/operations?run=${encodeURIComponent(child.newTaskId)}&tab=detail`}
+                        >
+                          查看关联分析 Task
+                        </a>
+                      </>
+                    )}
+                    {child.newResultId && ` · Result ${child.newResultId}`}
+                  </li>
+                ))}
+              </ul>
+              <p className="mf-dashboard-meta">{batch.nextAction}</p>
+            </>
+          )}
+          {settled && (
+            <button
+              type="button"
+              className="mf-button mf-button-secondary"
+              onClick={clearForNewBatch}
+            >
+              开始新的批量选择
+            </button>
+          )}
+        </>
+      )}
     </section>
   );
 }
@@ -940,11 +1320,22 @@ function RunEvidenceSection({
   runId,
   itemId,
   active,
+  onOpenRecoveryPreview,
+  onOpenLinkedAnalysis,
+  onOpenRecoveryExecution,
   onClose,
 }: {
   readonly runId: string;
   readonly itemId: string;
   readonly active: boolean;
+  readonly onOpenRecoveryPreview?: (
+    previewId: string,
+    linkId: string,
+    taskId: string,
+    itemId: string,
+  ) => void;
+  readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
+  readonly onOpenRecoveryExecution?: (executionId: string) => void;
   readonly onClose: () => void;
 }) {
   const token = useAuthToken();
@@ -1157,6 +1548,16 @@ function RunEvidenceSection({
                   ))}
                 </ul>
               )}
+              <TaskItemRecoveryPanel
+                key={`${evidence.taskId}:${itemId}:${token ?? "disconnected"}`}
+                taskId={evidence.taskId}
+                itemId={itemId}
+                runId={runId}
+                active={active}
+                onOpenRecoveryPreview={onOpenRecoveryPreview}
+                onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+                onOpenRecoveryExecution={onOpenRecoveryExecution}
+              />
             </>
           );
         }}

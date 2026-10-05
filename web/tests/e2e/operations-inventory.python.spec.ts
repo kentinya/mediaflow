@@ -1522,3 +1522,439 @@ test("a mutation-authorized paused run without live authority is refused nativel
   expect(refusal.error.details.nextAction).toContain("exact Preview");
   expect(refusal.error.details.nextAction).not.toContain("mediaflow tasks");
 });
+
+test("native task-item recognition recovery reaches a separately authorized linked execution", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery`,
+  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly itemId: string;
+    readonly sourcePath: string;
+  };
+
+  const api = recordApiCalls(page);
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  const sourceItemRow = items.getByRole("row").filter({
+    hasText: seeded.sourcePath,
+  });
+  await expect(sourceItemRow).toHaveCount(1);
+  await sourceItemRow.getByRole("button", { name: "查看证据" }).click();
+
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  await expect(
+    recovery.getByRole("heading", { name: "待处理的识别决策" }),
+  ).toBeVisible();
+  await expect(
+    recovery.getByText(/保存仅记录人工决定，不执行 OrganizerExecutor/),
+  ).toBeVisible();
+  const selectedRecognition = recovery.getByRole("radio").last();
+  await selectedRecognition.check();
+  const decisionResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/decision`,
+  );
+  const continuationResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.itemId}/recovery/continue`,
+  );
+  await recovery
+    .getByRole("button", { name: "保存决策并继续安全分析" })
+    .click();
+  const saved = await decisionResponse;
+  expect(saved.status()).toBe(200);
+  expect(saved.request().postDataJSON()).toMatchObject({
+    kind: "recognition",
+    recognitionTypeId: "C",
+  });
+  const admitted = await continuationResponse;
+  expect(admitted.status()).toBe(202);
+  expect(await admitted.json()).toMatchObject({
+    source_task_id: seeded.taskId,
+    source_item_id: seeded.itemId,
+    executionMode: "dry_run",
+  });
+  await expect(
+    recovery.getByText(/單項分析已進入隊列|单项分析已进入队列/),
+  ).toBeVisible();
+
+  // The durable accepted request is an analysis-only job. The exact source is
+  // still present and the target has no Recovery plan output before the Worker.
+  let state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-state`)
+  ).json();
+  expect(state).toMatchObject({
+    taskId: seeded.taskId,
+    itemId: seeded.itemId,
+    sourceExists: true,
+    continuationStatus: "queued",
+  });
+  expect(state.targetFiles).not.toContain(
+    "Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
+  );
+
+  // Restart SQLite and the real API while the request is queued, then return
+  // through authentication to the exact selected run/item before the resident
+  // Worker claims the persisted DryRun.
+  const restarted = await request.post(`${BASE}/__harness__/restart`);
+  expect(restarted.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  await expect(page).toHaveURL(new RegExp(`item=${seeded.itemId}`));
+  const restored = page.getByRole("region", { name: "运行详情" });
+  const restoredRecovery = restored.getByRole("region", {
+    name: "条目审核与恢复",
+  });
+  await expect(restoredRecovery).toBeVisible();
+
+  const workerResponse = await request.post(
+    `${BASE}/__harness__/run-task-item-recovery-worker`,
+  );
+  expect(workerResponse.ok()).toBeTruthy();
+  const worker = await workerResponse.json();
+  if (worker.ran !== true) {
+    throw new Error(
+      `Recovery Worker did not claim its Job: ${JSON.stringify(worker)}`,
+    );
+  }
+  if (worker.continuationStatus !== "completed") {
+    const recoveryState = await (
+      await request.get(`${BASE}/__harness__/task-item-recovery-state`)
+    ).json();
+    throw new Error(
+      `Recovery Worker finished without a completed DryRun: ${JSON.stringify({ worker, recoveryState })}`,
+    );
+  }
+  expect(worker.taskId).toBeTruthy();
+  expect(worker.newResultId).toBeTruthy();
+  await restoredRecovery.getByRole("button", { name: "Refresh" }).click();
+  await expect(restoredRecovery.getByText(/单项分析已完成/)).toBeVisible();
+  await expect(
+    restoredRecovery.getByRole("button", { name: "准备精确 Preview" }),
+  ).toBeVisible();
+
+  state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-state`)
+  ).json();
+  expect(state.continuationStatus).toBe("completed");
+  expect(state.sourceExists).toBe(true);
+  expect(state.resultIds).toContain(worker.newResultId);
+  expect(state.targetFiles).not.toContain(
+    "Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
+  );
+
+  // The one explicit authorization opens the exact durable Preview. The
+  // browser must select and review its full plan and explicitly Execute there.
+  await restoredRecovery
+    .getByRole("button", { name: "准备精确 Preview" })
+    .click();
+  await expect(
+    restoredRecovery.getByText(/精确 Preview 和一次性授权已准备好/),
+  ).toBeVisible();
+  await restoredRecovery
+    .getByRole("button", { name: "查看已审核计划" })
+    .click();
+  await expect(page).toHaveURL(/\/operations\/organize\/preview\//);
+  await expect(page.getByRole("heading", { name: "整理预览" })).toBeVisible();
+  await expect(page.locator("body")).toContainText("Recovery.2005.mkv");
+  await expect(page.locator("body")).toContainText(
+    "Movies/Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
+  );
+  await page.getByLabel("选择 Recovery.2005.mkv").check();
+  const executeResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      /\/api\/v1\/manual-recovery-links\/[^/]+\/execute$/.test(
+        new URL(response.url()).pathname,
+      ),
+  );
+  await page.getByRole("button", { name: "确认执行所选条目" }).click();
+  const execute = await executeResponse;
+  expect(execute.status()).toBe(200);
+  expect(await execute.json()).toMatchObject({
+    status: "consumed",
+    execution_id: expect.any(String),
+  });
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  await expect(page).toHaveURL(new RegExp(`item=${seeded.itemId}`));
+
+  await page.getByRole("button", { name: "Refresh" }).first().click();
+  const completedRecovery = page.getByRole("region", {
+    name: "条目审核与恢复",
+  });
+  await expect(completedRecovery.getByText(/状态：consumed/)).toBeVisible();
+  await expect(
+    completedRecovery.getByRole("button", { name: "查看关联执行结果" }),
+  ).toBeVisible();
+
+  state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-state`)
+  ).json();
+  expect(state.sourceExists).toBe(false);
+  expect(state.targetFiles).toContain(
+    "Movies/Movies/Anime/Recovery (2005) [tmdbid-205]/Recovery (2005).mkv",
+  );
+  const executionPosts = api.filter(
+    (value) =>
+      value.method === "POST" &&
+      /\/api\/v1\/manual-recovery-links\/[^/]+\/execute$/.test(value.path),
+  );
+  expect(executionPosts).toHaveLength(1);
+  const pageContent = await page.content();
+  expect(pageContent).not.toContain("/tmp/");
+  expect(pageContent).not.toContain(ADMIN_TOKEN);
+});
+
+test("a failed item retry and a mixed batch preserve exact independent outcomes", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery-batch`,
+  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly singleItemId: string;
+    readonly batchEligibleItemId: string;
+    readonly staleItemId: string;
+    readonly successItemId: string;
+    readonly unknownItemId: string;
+    readonly ignoredItemId: string;
+    readonly singleSourcePath: string;
+  };
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  const detail = page.getByRole("region", { name: "运行详情" });
+  const items = detail.getByRole("region", { name: "主条目" });
+  const singleRow = items.getByRole("row").filter({
+    hasText: seeded.singleSourcePath,
+  });
+  await expect(singleRow).toHaveCount(1);
+  await singleRow.getByRole("button", { name: "查看证据" }).click();
+  const recovery = detail.getByRole("region", { name: "条目审核与恢复" });
+  await expect(recovery.getByText("safe", { exact: true })).toBeVisible();
+  const singleContinue = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/items/${seeded.singleItemId}/recovery/continue`,
+  );
+  await recovery.getByRole("button", { name: "继续此条目的安全分析" }).click();
+  const singleAdmission = await singleContinue;
+  expect(singleAdmission.status()).toBe(202);
+  expect(await singleAdmission.json()).toMatchObject({
+    source_task_id: seeded.taskId,
+    source_item_id: seeded.singleItemId,
+    executionMode: "dry_run",
+  });
+
+  let state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
+  ).json();
+  const initialTargetFiles = [...state.targetFiles].sort();
+  expect(state.sourceExists[seeded.singleSourcePath]).toBe(true);
+  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
+
+  // The explicit single-item retry is durable before the Worker is started.
+  // A real SQLite/API restart and fresh authentication return to this item.
+  const restarted = await request.post(`${BASE}/__harness__/restart`);
+  expect(restarted.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  await expect(page).toHaveURL(new RegExp(`item=${seeded.singleItemId}`));
+
+  const singleWorkerResponse = await request.post(
+    `${BASE}/__harness__/run-task-item-recovery-worker`,
+  );
+  expect(singleWorkerResponse.ok()).toBeTruthy();
+  const singleWorker = await singleWorkerResponse.json();
+  expect(singleWorker, JSON.stringify(singleWorker)).toMatchObject({
+    ran: true,
+    continuationStatus: "completed",
+  });
+  expect(singleWorker.newResultId).toBeTruthy();
+  await recovery.getByRole("button", { name: "Refresh" }).click();
+  await expect(recovery.getByText(/单项分析已完成/)).toBeVisible();
+
+  state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
+  ).json();
+  expect(state.sourceExists[seeded.singleSourcePath]).toBe(true);
+  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
+  expect(state.continuations.single[0]).toMatchObject({
+    status: "completed",
+    newResultId: singleWorker.newResultId,
+  });
+
+  // Only the two exact safe Failed rows have selectors. Existing success,
+  // ignored and uncertain-effect siblings cannot enter this batch.
+  await expect(
+    items.getByLabel(`选择 ${seeded.successItemId} 进行单项分析恢复`),
+  ).toHaveCount(0);
+  await expect(
+    items.getByLabel(`选择 ${seeded.unknownItemId} 进行单项分析恢复`),
+  ).toHaveCount(0);
+  await expect(
+    items.getByLabel(`选择 ${seeded.ignoredItemId} 进行单项分析恢复`),
+  ).toHaveCount(0);
+  const eligible = items.getByLabel(
+    `选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`,
+  );
+  const stale = items.getByLabel(`选择 ${seeded.staleItemId} 进行单项分析恢复`);
+  await expect(eligible).toBeVisible();
+  await expect(stale).toBeVisible();
+  await eligible.check();
+  await stale.check();
+
+  const submittedBatch: {
+    value: { batchId: string; items: readonly { itemId: string }[] } | null;
+  } = { value: null };
+  await page.route(
+    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+    async (route) => {
+      submittedBatch.value = route.request().postDataJSON() as {
+        batchId: string;
+        items: readonly { itemId: string }[];
+      };
+      const changed = await request.post(
+        `${BASE}/__harness__/stale-task-item-batch-selection`,
+      );
+      expect(changed.ok()).toBeTruthy();
+      expect(await changed.json()).toMatchObject({
+        changed: true,
+        itemId: seeded.staleItemId,
+      });
+      await route.continue();
+    },
+    { times: 1 },
+  );
+  const batchResponse = page.waitForResponse(
+    (response) =>
+      response.request().method() === "POST" &&
+      new URL(response.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+  );
+  const batchPanel = items.getByRole("region", { name: "批量失败分析恢复" });
+  await batchPanel.getByRole("button", { name: "继续所选分析(2)" }).click();
+  const admittedBatch = await batchResponse;
+  expect(admittedBatch.status()).toBe(202);
+  const batchDocument = await admittedBatch.json();
+  const submitted = submittedBatch.value;
+  if (submitted === null)
+    throw new Error("browser did not capture the exact batch request");
+  expect(submitted.items.map((item) => item.itemId).sort()).toEqual(
+    [seeded.batchEligibleItemId, seeded.staleItemId].sort(),
+  );
+  expect(
+    batchDocument.items.map(
+      (item: {
+        source_item_id: string;
+        status: string;
+        reason: string | null;
+      }) => ({
+        itemId: item.source_item_id,
+        status: item.status,
+        reason: item.reason,
+      }),
+    ),
+  ).toEqual([
+    expect.objectContaining({
+      itemId: seeded.batchEligibleItemId,
+      status: "queued",
+    }),
+    expect.objectContaining({
+      itemId: seeded.staleItemId,
+      status: "refused",
+      reason: "stale_checkpoint",
+    }),
+  ]);
+  expect(batchDocument.executionMode).toBe("dry_run");
+  expect(batchDocument.sideEffects).toBe("none");
+  await expect(batchPanel).toContainText(seeded.batchEligibleItemId);
+  await expect(batchPanel).toContainText(seeded.staleItemId);
+  await expect(batchPanel).toContainText("已排队");
+  await expect(batchPanel).toContainText("未受理");
+
+  // Restart while the accepted batch child is queued. The persisted batch ID
+  // and exact selection are reconciled after authentication before its Worker.
+  const batchId = submitted.batchId;
+  const batchRestart = await request.post(`${BASE}/__harness__/restart`);
+  expect(batchRestart.ok()).toBeTruthy();
+  await page.reload();
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(ADMIN_TOKEN);
+  await page.getByRole("button", { name: "Connect" }).click();
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  await expect(page).toHaveURL(new RegExp(`item=${seeded.singleItemId}`));
+  const batchWorkerResponse = await request.post(
+    `${BASE}/__harness__/run-task-item-recovery-worker`,
+  );
+  expect(batchWorkerResponse.ok()).toBeTruthy();
+  const batchWorker = await batchWorkerResponse.json();
+  expect(batchWorker, JSON.stringify(batchWorker)).toMatchObject({
+    ran: true,
+    continuationStatus: "completed",
+  });
+
+  await expect(batchPanel.getByText(/批次结果：部分完成/)).toBeVisible();
+  await expect(batchPanel).toContainText("分析已完成");
+  await expect(batchPanel).toContainText("未受理");
+  const persistedBatchResponse = await request.get(
+    `${BASE}/api/v1/tasks/${seeded.taskId}/recovery-batches/${batchId}`,
+    { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
+  );
+  expect(persistedBatchResponse.ok()).toBeTruthy();
+  const persistedBatch = await persistedBatchResponse.json();
+  expect(persistedBatch.status).toBe("partial");
+  expect(persistedBatch.items).toHaveLength(2);
+  expect(
+    persistedBatch.items.find(
+      (item: { source_item_id: string }) =>
+        item.source_item_id === seeded.batchEligibleItemId,
+    ),
+  ).toMatchObject({ status: "completed", new_result_id: expect.any(String) });
+  expect(
+    persistedBatch.items.find(
+      (item: { source_item_id: string }) =>
+        item.source_item_id === seeded.staleItemId,
+    ),
+  ).toMatchObject({ status: "refused", reason: "stale_checkpoint" });
+
+  state = await (
+    await request.get(`${BASE}/__harness__/task-item-recovery-batch-state`)
+  ).json();
+  expect(state.itemStatuses.success).toBe("success");
+  expect(state.itemStatuses.unknown).toBe("failed");
+  expect(state.itemStatuses.ignored).toBe("ignored");
+  expect(state.continuations.unknown).toEqual([]);
+  expect([...state.targetFiles].sort()).toEqual(initialTargetFiles);
+  expect(state.sourceExists["Batch/C/BatchSingle.2006.mkv"]).toBe(true);
+  expect(state.sourceExists["Batch/C/BatchEligible.2007.mkv"]).toBe(true);
+});

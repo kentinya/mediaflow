@@ -948,7 +948,8 @@
           "destination": {
             "filename": "One (2001).mkv",
             "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
-            "storageId": "target"
+            "storageId": "target",
+            "storageRelativePath": "Movies/Movies/Anime/One (2001)/One (2001).mkv"
           },
           "destructiveImplications": {
             "overwriteRequired": false,
@@ -1200,7 +1201,8 @@
           "destination": {
             "filename": "One (2001).mkv",
             "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
-            "storageId": "target"
+            "storageId": "target",
+            "storageRelativePath": "Movies/Movies/Anime/One (2001)/One (2001).mkv"
           },
           "destructiveImplications": {
             "overwriteRequired": false,
@@ -1429,7 +1431,8 @@
           "destination": {
             "filename": "One (2001).mkv",
             "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
-            "storageId": "target"
+            "storageId": "target",
+            "storageRelativePath": "Movies/Movies/Anime/One (2001)/One (2001).mkv"
           },
           "destructiveImplications": {
             "overwriteRequired": false,
@@ -1655,7 +1658,8 @@
           "destination": {
             "filename": "One (2001).mkv",
             "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
-            "storageId": "target"
+            "storageId": "target",
+            "storageRelativePath": "Movies/Movies/Anime/One (2001)/One (2001).mkv"
           },
           "destructiveImplications": {
             "overwriteRequired": false,
@@ -1887,7 +1891,8 @@
               "destination": {
                 "filename": "One (2001).mkv",
                 "relativePath": "Movies/Anime/One (2001)/One (2001).mkv",
-                "storageId": "target"
+                "storageId": "target",
+                "storageRelativePath": "Movies/Movies/Anime/One (2001)/One (2001).mkv"
               },
               "destructiveImplications": {
                 "overwriteRequired": false,

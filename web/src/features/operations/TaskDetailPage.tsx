@@ -39,6 +39,11 @@ import {
 import { AuthorizedReadBoundary } from "../../shared/auth/AuthorizedReadBoundary";
 import { RefreshControl } from "../../shared/ui/RefreshControl";
 import { StatusBanner } from "../../shared/ui/StatusBanner";
+import {
+  OPERATIONS_RETURN_KEY,
+  operationsLandingSearch,
+  readOperationsReturnContext,
+} from "../../shared/navigation/operations-return";
 /** Bounded operator copy per normalized lifecycle rejection reason. */
 const LIFECYCLE_REJECTION_COPY: Readonly<Record<string, string>> = {
   stale_task_state:
@@ -138,6 +143,7 @@ export function TaskDetailPage() {
   const searchParams = useSearch({ strict: false }) as Record<string, unknown>;
   const navigate = useNavigate();
   const listReturnSearch = returnSearch(searchParams);
+  const operationsReturn = readOperationsReturnContext(searchParams);
   const token = useAuthToken();
   const queryClient = useQueryClient();
   // The compatibility detail read still supplies the Task aggregate,
@@ -371,8 +377,42 @@ export function TaskDetailPage() {
               state={detailState}
               onStateChange={applyDetailState}
               active={!isTerminalTaskStatus(task.status)}
+              onOpenLinkedAnalysis={(linkedTaskId, linkedItemId) =>
+                void navigate({
+                  to: "/operations/tasks/$taskId",
+                  params: { taskId: linkedTaskId },
+                  search: {
+                    ...(operationsReturn === null
+                      ? {}
+                      : { [OPERATIONS_RETURN_KEY]: operationsReturn }),
+                    ...runDetailStateSearch(
+                      readRunDetailState({ tab: "detail", item: linkedItemId }),
+                    ),
+                  },
+                })
+              }
+              onOpenRecoveryExecution={(executionId) =>
+                void navigate({
+                  to: "/operations/organize/execution/$executionId",
+                  params: { executionId },
+                  search: {
+                    ...(operationsReturn === null
+                      ? {}
+                      : { [OPERATIONS_RETURN_KEY]: operationsReturn }),
+                  },
+                })
+              }
             />
             <div className="mf-actions">
+              {operationsReturn !== null && (
+                <Link
+                  className="mf-button mf-button-secondary"
+                  to="/operations"
+                  search={operationsLandingSearch(operationsReturn, null)}
+                >
+                  返回原运行
+                </Link>
+              )}
               <Link
                 className="mf-button mf-button-secondary"
                 to="/operations/tasks"
