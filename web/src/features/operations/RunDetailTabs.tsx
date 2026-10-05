@@ -56,6 +56,7 @@ import {
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
 import { submitTaskRecoveryBatch } from "../../shared/api/api-client";
+import { recoveryBatchSessionKey } from "./recovery-batch-session";
 
 /** Chinese labels for the bounded audit actions of the records stream. */
 const RUN_AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
@@ -536,6 +537,10 @@ export interface RunDetailTabsProps {
     itemId: string,
   ) => void;
   readonly onOpenLinkedAnalysis?: (taskId: string, itemId: string) => void;
+  readonly onOpenBatchLinkedAnalysis?: (
+    taskId: string,
+    sourceItemId: string,
+  ) => void;
   readonly onOpenRecoveryExecution?: (executionId: string) => void;
 }
 
@@ -548,6 +553,7 @@ export function RunDetailTabs({
   facts,
   onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
+  onOpenBatchLinkedAnalysis,
   onOpenRecoveryExecution,
 }: RunDetailTabsProps) {
   const authToken = useAuthToken();
@@ -613,6 +619,7 @@ export function RunDetailTabs({
             onStatusChange={changeItemStatus}
             onStateChange={onStateChange}
             onInspectItem={inspectItem}
+            onOpenBatchLinkedAnalysis={onOpenBatchLinkedAnalysis}
             active={active}
           />
           {state.evidenceItem !== null && (
@@ -806,6 +813,7 @@ function RunItemsSection({
   onStatusChange,
   onStateChange,
   onInspectItem,
+  onOpenBatchLinkedAnalysis,
   active,
 }: {
   readonly runId: string;
@@ -813,6 +821,10 @@ function RunItemsSection({
   readonly onStatusChange: (status: RunDisposition | null) => void;
   readonly onStateChange: (next: Partial<RunDetailState>) => void;
   readonly onInspectItem: (itemId: string) => void;
+  readonly onOpenBatchLinkedAnalysis?: (
+    taskId: string,
+    sourceItemId: string,
+  ) => void;
   readonly active: boolean;
 }) {
   const token = useAuthToken();
@@ -996,6 +1008,7 @@ function RunItemsSection({
                   runId={runId}
                   selected={selectedRecoveryItems}
                   onSelectionChange={setSelectedRecoveryItems}
+                  onOpenLinkedAnalysis={onOpenBatchLinkedAnalysis}
                 />
               )}
             </>
@@ -1057,15 +1070,20 @@ function FailedAnalysisBatchControls({
   runId,
   selected,
   onSelectionChange,
+  onOpenLinkedAnalysis,
 }: {
   readonly taskId: string;
   readonly runId: string;
   readonly selected: Readonly<Record<string, string>>;
   readonly onSelectionChange: (value: Record<string, string>) => void;
+  readonly onOpenLinkedAnalysis?: (
+    taskId: string,
+    sourceItemId: string,
+  ) => void;
 }) {
   const token = useAuthToken();
   const queryClient = useQueryClient();
-  const storageKey = `mediaflow.operations.recovery-batch:${taskId}`;
+  const storageKey = recoveryBatchSessionKey(taskId);
   const [batchStorage] = useState(() => {
     try {
       return {
@@ -1281,15 +1299,19 @@ function FailedAnalysisBatchControls({
                     {child.itemId} — {labels[child.status] ?? child.status}
                     {child.error ? `：${child.error}` : ""}；下一步：
                     {child.nextAction}
-                    {child.newTaskId && (
+                    {child.newTaskId && onOpenLinkedAnalysis && (
                       <>
                         {" "}
                         ·{" "}
-                        <a
-                          href={`/operations?run=${encodeURIComponent(child.newTaskId)}&tab=detail`}
+                        <button
+                          type="button"
+                          className="mf-button mf-button-secondary"
+                          onClick={() =>
+                            onOpenLinkedAnalysis(child.newTaskId!, child.itemId)
+                          }
                         >
                           查看关联分析 Task
-                        </a>
+                        </button>
                       </>
                     )}
                     {child.newResultId && ` · Result ${child.newResultId}`}

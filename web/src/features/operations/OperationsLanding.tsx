@@ -655,6 +655,23 @@ export function OperationsLanding() {
                       },
                     })
                   }
+                  onOpenBatchLinkedAnalysis={(taskId, sourceItemId) => {
+                    const returnState = {
+                      ...detailState,
+                      tab: "detail" as const,
+                      evidenceItem: sourceItemId,
+                    };
+                    void navigate({
+                      to: "/operations/tasks/$taskId",
+                      params: { taskId },
+                      search: {
+                        returnOps: operationsReturnContextFromSearch({
+                          ...listSearch(selectedId),
+                          ...runDetailStateSearch(returnState),
+                        }),
+                      },
+                    });
+                  }}
                   onOpenRecoveryExecution={(executionId) =>
                     void navigate({
                       to: "/operations/organize/execution/$executionId",
@@ -888,6 +905,7 @@ function RunDetailPanel({
   onOpenPreview,
   onOpenRecoveryPreview,
   onOpenLinkedAnalysis,
+  onOpenBatchLinkedAnalysis,
   onOpenRecoveryExecution,
   onSelectRun,
 }: {
@@ -904,6 +922,10 @@ function RunDetailPanel({
     itemId: string,
   ) => void;
   readonly onOpenLinkedAnalysis: (taskId: string, itemId: string) => void;
+  readonly onOpenBatchLinkedAnalysis: (
+    taskId: string,
+    sourceItemId: string,
+  ) => void;
   readonly onOpenRecoveryExecution: (executionId: string) => void;
   /** Select another run in place, keeping the list state. */
   readonly onSelectRun: (runId: string) => void;
@@ -1098,6 +1120,7 @@ function RunDetailPanel({
                 active={!TERMINAL_RUN_STATUSES.includes(run.status)}
                 onOpenRecoveryPreview={onOpenRecoveryPreview}
                 onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+                onOpenBatchLinkedAnalysis={onOpenBatchLinkedAnalysis}
                 onOpenRecoveryExecution={onOpenRecoveryExecution}
                 facts={
                   <RunDetailFacts
