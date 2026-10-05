@@ -804,6 +804,20 @@ class AutomationWorker:
                 failure_retry_safe=None,
                 failure_next_action=None,
             )
+        if finished.task_id is None and job.command is AutomationCommand.SCOPE_CONTINUATION:
+            # A scope continuation can durably create and bind its processing
+            # Task, then exit non-successfully when that Task pauses again or
+            # encounters a later failure.  Preserve that exact persisted link
+            # on the admission Job so the unified run projection keeps one
+            # stable identity and can show the Task's actual progress/actions.
+            # This is read only from the continuation's explicit Job→Task
+            # record; it is never inferred from timing, scope or filenames.
+            reader = getattr(self._repository, "get_scope_continuation_for_job", None)
+            if callable(reader):
+                continuation = reader(job.job_id)
+                continuation_task_id = getattr(continuation, "new_task_id", None)
+                if isinstance(continuation_task_id, str) and continuation_task_id.strip():
+                    finished = replace(finished, task_id=continuation_task_id)
         if not self._repository.complete_claimed_job(finished):
             current = self._repository.get_job(job.job_id)
             if current is None:
