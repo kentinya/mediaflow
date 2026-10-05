@@ -710,21 +710,134 @@ Status: READY FOR B REVIEW
 
 Head SHA: `887e744e48feb170744629708936fa9584e97d79`
 
+### Correction Round 3 — Developer Completion Report
+
+#### Changed Files
+
+- `mediaflow/application/scope_continuation.py` — resolves the original Task only through persisted
+  continuation child→parent links; checks command, exact scope, item limit and immutable pin on each
+  edge. The shared lifecycle/admission/Worker obstacle now refuses corrupt or incomplete ancestry.
+- `mediaflow/final_cli.py` — resolves the original Definition Job and ResourceLibrary scope for a
+  re-paused continuation; live unattended authority and every mutation-boundary grant check use
+  that same original occurrence.
+- `tests/test_automation_definition_execution.py` — real Worker regression for Pause→Continue→one
+  durable Result→Pause→Continue→remaining item completed, with sibling/parent scope excluded.
+- `tests/test_scope_continuation.py` — ancestry-based live-authority and malformed-link refusal
+  coverage.
+- `TASK.md` — this correction-round report; B's updated review boundary and blocker are preserved.
+
+#### Implemented
+
+Repeated Continue now walks only the explicit persisted continuation ancestry to recover the root
+Definition Task/Job. It verifies that every parent link retains the original command, Storage scope,
+item limit and configuration pin, then applies the existing Definition fingerprint, ResourceLibrary,
+source-scope and exact-path checks. Chain item budgeting and already-recorded source exclusion still
+come from the existing shared continuation service. Missing, cyclic, inconsistent or overlong
+ancestry fails closed. No schema or stored authority change was introduced.
+
+#### Tests and Results
+
+- B blocker reproductions, rerun against correction commit `981667f65443f56fbd02921d143b937c8557a881`:
+  `.venv/bin/python /tmp/mediaflow-b42-4-r3-definition-repause-v4.py` → PASS; the second API
+  admission returned 202 and the real Worker completed the remaining `Authority` item.
+  `.venv/bin/python /tmp/mediaflow-b42-4-r3-definition-repause-v3.py` → PASS; same second-Worker
+  completion through the production claim/handler.
+- `.venv/bin/python -m unittest tests.test_task_pause_resume tests.test_task_persistence
+  tests.test_operations_workspace tests.test_operations_run_inventory
+  tests.test_operations_run_detail` → 121 PASS.
+- `.venv/bin/python -m unittest tests.test_automation_api tests.test_automation_admission
+  tests.test_automation_job_fencing tests.test_processing_worker_readiness
+  tests.test_execution_authorization` → 73 PASS.
+- `.venv/bin/python -m unittest tests.test_automation_unattended_grant
+  tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix
+  tests.test_configuration_snapshot` → 86 PASS.
+- `.venv/bin/python -m unittest tests.test_direct_file_transfers
+  tests.test_media_library_transfers tests.test_manual_organize_execution
+  tests.test_v2_manual_organize tests.test_api_security` → 217 PASS.
+- `.venv/bin/python -m unittest tests.test_recovery_continuation
+  tests.test_processing_recovery_admission tests.test_processing_checkpoint
+  tests.test_manual_operations_contract` → 56 PASS.
+  `.venv/bin/python -m unittest tests.test_scope_continuation` → 58 PASS, including the new ancestry
+  and repeat-pause cases.
+- `.venv/bin/python -m unittest discover -s tests` → 2,180 PASS, 7 existing skips.
+- `npm run test -- --run src/entities/operations src/features/operations src/features/library
+  src/shared/api src/shared/navigation src/routes` → 42 files / 698 PASS.
+- `npm run test:e2e -- tests/e2e/operations.spec.ts tests/e2e/manual-organize.spec.ts
+  tests/e2e/manual-operations.spec.ts tests/e2e/deep-link.spec.ts` → 66 PASS, 2 FAIL.
+  `npm run test:e2e -- tests/e2e/library-files.spec.ts` → 40 PASS.
+  `npm run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` → 16 PASS, including real Worker
+  Continue/restart and live-authority refusal.
+- `npm run test -- --run` → 63 files / 991 PASS. `npm run typecheck`, `npm run lint`,
+  `npm run format:check`, and `npm run build` → PASS; build retained the existing large-chunk
+  advisory.
+- `python3 scripts/check_governance.py`, `.venv/bin/ruff format --check .`,
+  `.venv/bin/ruff check .`, `.venv/bin/python -m compileall -q mediaflow tests scripts`, and
+  `.venv/bin/python -m pip check` → PASS.
+- `.venv/bin/python -m mediaflow.cli --config config/strategy.example.json config validate` and
+  `.venv/bin/python -m mediaflow.cli --config config/mediaflow.phase13.2.example.json config
+  validate` → PASS.
+- `.venv/bin/python -m unittest tests.test_release_security tests.test_release_validation
+  tests.test_migration_rehearsal tests.test_upgrade_preflight` → 19 PASS.
+- `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w
+  /tmp/mediaflow-wheel-r3.AoP8tn` and `.venv/bin/python scripts/wheel_smoke_test.py
+  /tmp/mediaflow-wheel-r3.AoP8tn/mediaflow-2.0.0.dev0-py3-none-any.whl` → PASS (runtime
+  Schema 44).
+  `.venv/bin/python scripts/docker_release_security_smoke_test.py` against the correction commit
+  → UNAVAILABLE: isolated image build's `npm ci`
+  exited with `EIDLETIMEOUT` for `registry.npmjs.org` after 355.6 seconds. The host registry probe
+  returned HTTP 200, but the BuildKit build network did not complete the registry request. An
+  earlier pre-commit run is not counted for this checkpoint.
+- `git diff --check` and `git diff --check d52ce9299671ab05141f64848b8475cd4db11126` → PASS.
+  `sha256sum docs/pics/操作与任务.png` matches
+  `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`.
+  `git check-ignore config/alist.json` identifies the ignored file and `git ls-files
+  config/alist.json` is empty. The FFmpeg/FFprobe dependency search has no matches.
+
+#### Decisions
+
+- Follow only the existing queued-continuation link for Definition ancestry; never infer it from a
+  path shape, label or creation time.
+- Treat disagreement in a persisted link as an unavailable exact scope, so the shared projection,
+  admission and Worker all withhold unsafe continuation.
+- Reuse the root Job/Definition for existing live grant checks; do not copy or revive authority on a
+  continuation Job.
+
+#### Remaining In-Slice Work
+
+RO-6 task-linked Recognition/Metadata/Classification/conflict decision forms and single/failed-
+analysis batch retry remain outside this Task.
+
+#### Risks / Deviations
+
+- `FAIL / PRE-EXISTING / UNRELATED`: the two deep-link browser failures are the route-choice
+  boundary timeout and V1 handoff heading; they match the failures already proven on Task Base and
+  are unchanged by this backend-only correction.
+- `UNAVAILABLE`: correction-commit Docker smoke could not finish its isolated registry download;
+  see the exact `npm ci` timeout above. No application or assertion failure was reported.
+- The test's first continuation Task is durably paused with one Result after the requested stop; the
+  existing Worker reports that continuation Job failed because the Task paused before exhausting
+  its remaining scope. The next Continue is admitted and completes the remaining item. This round
+  leaves that existing stop/outcome mapping unchanged.
+- Seven full-Python skips are the existing skips; this round added no skips and changed no assertions
+  outside the regression coverage.
+
+#### Checkpoint
+
+Status: READY FOR B REVIEW
+
+Head SHA: `981667f65443f56fbd02921d143b937c8557a881`
+
 ## B Review Result
 
 ```text
-Reviewed: d52ce9299671ab05141f64848b8475cd4db11126..f4aace533c2d62aead50f9b6a4fde81f0061bf24
+Reviewed: d52ce9299671ab05141f64848b8475cd4db11126..887e744e48feb170744629708936fa9584e97d79
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — exact Preview 恢复执行未计入源运行的范围、预算和关联历史（AC-T4/T6；Scope 4/5/7；RO-5/RO-7）。**
-  当前合法 managed Local `organize --execute` 形态的暂停运行（有效历史 pin、scope 为配置显示根内的目录、limit=2），从原生“查看剩余范围的精确预览”生成 201 Preview，再明确 Execute 返回 202，真实 Manual Worker 完成 2 个文件。回到原运行后它仍为 paused、`continuation=null`；在该目录新增一份测试媒体，原生剩余范围 Preview 再次返回 201，Execute 再次返回 202，真实 Worker 又完成第 3 个文件。用户通过同一原运行的恢复入口突破了已耗尽的原限额，且原运行无法查看恢复执行的关联历史。
-  证据：`node /tmp/mediaflow-b42-4-r2-proof.mjs`（校准合法显示根后的日志 `/tmp/mediaflow-b42-4-r2-proof-v2.log`），以及 `node /tmp/mediaflow-b42-4-r2-recovery-budget.mjs`；预算断言 exit 1。源 Task `027acd51-0814-4ec8-b63c-ad00e1da753e` 限额 2，后续 Task `90c754f6-e53e-49cb-ad2c-fe949bcd8270` completed/2 items，第二次恢复 Task `b3783c7e-b869-4af4-9973-eff3fbbf00c8` completed/1 item。首轮 Preview 导航还丢失 `returnOps`，Execute 后进入独立 execution 页，未返回任务中心选择关联运行。`runTaskId` 只附在 Preview 受理响应中，未形成 `remaining_scope()` 可追踪的持久恢复关联。
-  修正：使原运行→remaining Preview→fresh intent→execution/Task 的关联与预算消耗持久化，并由后端 remaining-scope 判定/受理/Worker 共同使用；耗尽范围拒绝再次恢复，保存成功/ignored/uncertain 排除规则、原 pin 和历史。原生 Preview 保留任务中心返回上下文，成功受理后选择关联运行，并能从源运行查看后续结果。证据 JSON：`/tmp/mediaflow-b42-4-r2-proof.json`、`/tmp/mediaflow-b42-4-r2-recovery-budget.json`。
-
-- **P1 — 当前 Definition-scoped Preview 的 Continue 无法执行合法 Storage 相对 scope（AC-T3/T4/T7；Scope 3/4；RO-5）。**
-  当前已检查并激活的 `scan-and-plan` Automation Definition（ResourceLibrary `source`、sourceScope=`Authority`、itemLimit=2）经真实 IntervalScheduler 发出 occurrence、真实 DefinitionScopedExecutionService 创建 Task；实际 Pause API 返回 200，生产执行在安全边界确认 paused，持久 command=`preview`、scope_path=`Authority`。当前 API 公告 Continue 可用并返回 202，但真实 claim/queued Worker 随即失败，continuation 与新 Task 均为 failed，0 items，异常为 `ValueError: path is not inside a configured ResourceLibrary`。用户在任务中心继续当前受支持的暂停 Definition Preview 会进入无法推进的失败循环。
-  证据：`.venv/bin/python /tmp/mediaflow-b42-4-r2-definition-proof-v2.py`，生产路径断言 exit 1；源 Task `180ed1a4-ea23-41ec-b0bd-02438acc9a4b`，失败的新 Task `eee1143a-8611-4924-ba9c-15d423315dd7`。合法配置/源目录/完整 pin/权限/Local Storage/claim 均保持真实；原处理与 continuation 仅在外部 Provider 装配处使用相同完整 synthetic registry，没有删除或隐藏当前能力。失败发生在任何媒体 item/Provider lookup 之前，不以缺少 TMDB credential 的首次环境失败作为阻塞证据。当前 Definition 生产者持久化 Storage-relative scoped root，而 `_continue_scope_from_admission()` 对 preview/organize 把它交给宿主 `Path` / `_resource_library()` 解析。
-  修正：依据当前生产 Task/Definition 的持久库身份与历史 pin，通过既有 Storage/ResourceLibrary scope 边界解析并执行原 scope，保留限额、排除集合和安全 checkpoint；让公告、受理与 Worker 支持矩阵一致，保留当前 Definition Pause/Continue 能力。覆盖合法 Definition 的实际暂停→排队继续→Worker 结果，不能用只含 CLI 绝对 scope 或 scan 全库 fixture 代替。证据 JSON/日志：`/tmp/mediaflow-b42-4-r2-definition-proof-v2.json`、`/tmp/mediaflow-b42-4-r2-definition-proof-v2.log`。
+- **P1 — Definition 的 continuation 再次暂停后，第二次 Continue 丢失原 Definition scope 关联（AC-T3/T4/T7；Scope 3/4；RO-5）。**
+  当前合法且已检查激活的 `scan-and-plan` Definition（ResourceLibrary=`source`、sourceScope=`Authority`、itemLimit=2）经真实 IntervalScheduler、DefinitionScopedExecutionService 和 AutomationWorker 创建 Preview。实际 Pause API 返回 200，Task 安全确认 paused；第一次 Continue 返回 202，真实 queued Worker 完成一项并持久化 Result。此时实际 Pause API 再次返回 200，新的 continuation Task 安全确认 paused，仍有一项未处理。用户从该链接运行的原生控制继续时，backend 公告 Continue 可用、API 再次返回 202，但真实 AutomationWorker 将第二次 Job/continuation/Task 全部记录为 failed，0 items，剩余工作无法推进。
+  证据：`.venv/bin/python /tmp/mediaflow-b42-4-r3-definition-repause-v4.py` → exit 1（用户路径验收断言）；原 Task `ee7990f4-d570-4cc2-8c7c-c5ddb25533a3`，第一次 continuation Task `8e4b6695-4639-486c-bc43-870d336baebd` paused/1 Result，第二次 Task `cd9bc87e-7a7a-46b4-a4d3-d7fca6bd6359` failed/0 items，Job error=`workflow failed (ValueError)`。同一生产 claim/handler 的独立复现 `...definition-repause-v3.py` 捕获具体异常 `paused Task scope is neither a pinned Definition nor a display path`。`_run_scope_continuation()` 仅向 `_continuation_scope()` 传当前 paused Task 的直接 Job；后者仅从该 Job 的 `definition_id` 恢复 Definition 身份，而新的 continuation Job 没有该身份，且继承的 `scope_path="Authority"` 是合法 Storage 相对路径。配置、pin、权限、Local Storage、claim/schema 和真实 Pause 均保留；原处理与后续执行在外部 Provider 装配处使用同一完整 synthetic registry，没有删除或隐藏生产能力。JSON/日志：`/tmp/mediaflow-b42-4-r3-definition-repause-v4.{json,log}`、`/tmp/mediaflow-b42-4-r3-definition-repause-v3.{json,log}`。
+  修正：通过既有持久 continuation 关联恢复原 Definition occurrence、ResourceLibrary 与历史 scope 证据，使再次暂停的 continuation 仍能排队执行原范围的剩余工作；共享公告/受理/Worker 支持边界，保留原 pin、链级预算、已完成项排除与现有实时权限/authority 校验。覆盖真实 Definition→暂停→Continue→完成一项→再次暂停→Continue→真实 Worker 完成剩余项的闭环，不将合法相对 scope 改为猜测路径、扩大为全库、删除 Pause，或另建恢复引擎。
