@@ -148,6 +148,28 @@ describe("authStore", () => {
     ).toBeNull();
   });
 
+  it("encodes Unicode principal IDs without losing exact identity", () => {
+    const chineseId = "值班管理员";
+    const key = recoveryBatchSessionKey(chineseId, "task-001");
+
+    expect(key).toBe(
+      `mediaflow.operations.recovery-batch:v2:${encodeURIComponent(chineseId)}:task-001`,
+    );
+    expect(key).not.toContain(chineseId);
+    expect(key).toMatch(/^[\x20-\x7e]+$/);
+    expect(recoveryBatchSessionKey("值班管理员", "task-001")).not.toBe(
+      recoveryBatchSessionKey("值班管理員", "task-001"),
+    );
+  });
+
+  it("safely encodes malformed UTF-16 without aliasing a valid principal", () => {
+    const malformedKey = recoveryBatchSessionKey("\ud800", "task-001");
+    const validKey = recoveryBatchSessionKey("%u16%d800", "task-001");
+
+    expect(malformedKey).toContain(":%u16%d800:task-001");
+    expect(malformedKey).not.toBe(validKey);
+  });
+
   it("advances an in-memory generation when authenticated authority changes", () => {
     const startingGeneration = authStore.getGeneration();
     authStore.setToken("principal-token");

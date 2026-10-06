@@ -108,6 +108,16 @@ describe("Task item recovery contract", () => {
     expect(batch.actor).toBe("harness-admin");
     expect(batch.children[1].nextAction).toBe("refresh this item");
 
+    const exactActor = normalizeRecoveryBatch({
+      batch_id: "batch-2",
+      source_task_id: "task-1",
+      actor: "值班管理员 ",
+      status: "queued",
+      items: [],
+      next_action: "wait for analysis",
+    });
+    expect(exactActor.actor).toBe("值班管理员 ");
+
     expect(() =>
       normalizeTaskItemRecovery({
         task_id: "task-1",

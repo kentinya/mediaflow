@@ -1,4 +1,5 @@
 import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
+import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 
 const RECOVERY_BATCH_SESSION_PREFIX = "mediaflow.operations.recovery-batch:";
 const SCOPED_RECOVERY_BATCH_SESSION_PREFIX = `${RECOVERY_BATCH_SESSION_PREFIX}v2:`;
@@ -7,13 +8,13 @@ export function recoveryBatchSessionKey(
   principalId: string,
   taskId: string,
 ): string {
-  return `${SCOPED_RECOVERY_BATCH_SESSION_PREFIX}${encodeURIComponent(principalId)}:${taskId}`;
+  return `${SCOPED_RECOVERY_BATCH_SESSION_PREFIX}${principalIdStorageSegment(principalId)}:${taskId}`;
 }
 
 /** Keep only the current backend-confirmed principal's recovery commands. */
 export function clearOtherRecoveryBatchSessions(principalId: string): void {
   if (typeof window === "undefined") return;
-  const keepPrefix = `${SCOPED_RECOVERY_BATCH_SESSION_PREFIX}${encodeURIComponent(principalId)}:`;
+  const keepPrefix = `${SCOPED_RECOVERY_BATCH_SESSION_PREFIX}${principalIdStorageSegment(principalId)}:`;
   const storage = window.sessionStorage;
   const keys: string[] = [];
   for (let index = 0; index < storage.length; index += 1) {
