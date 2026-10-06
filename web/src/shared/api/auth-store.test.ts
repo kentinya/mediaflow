@@ -2,10 +2,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { authStore } from "./auth-store";
 import { destinations } from "../navigation/destination-model";
 import type { DestinationPath } from "../navigation/destination-model";
-import { recoveryBatchSessionKey } from "../../features/operations/recovery-batch-session";
+import {
+  clearOtherRecoveryBatchSessions,
+  recoveryBatchSessionKey,
+} from "../../features/operations/recovery-batch-session";
 
 afterEach(() => {
   authStore.clearToken();
+  window.sessionStorage.clear();
 });
 
 describe("authStore", () => {
@@ -105,7 +109,7 @@ describe("authStore", () => {
   });
 
   it("clears persisted recovery batch commands when a principal changes", () => {
-    const key = recoveryBatchSessionKey("task-001");
+    const key = recoveryBatchSessionKey("harness-admin", "task-001");
     window.sessionStorage.setItem(key, "admin-command");
     authStore.setToken("admin-token");
     authStore.setToken("viewer-token");
@@ -114,13 +118,44 @@ describe("authStore", () => {
   });
 
   it("preserves recovery batch reconciliation through same-principal auth return", () => {
-    const key = recoveryBatchSessionKey("task-001");
+    const key = recoveryBatchSessionKey("harness-admin", "task-001");
     window.sessionStorage.setItem(key, "durable-batch-hint");
     authStore.setToken("admin-token");
     authStore.clearRejectedAuthority();
     authStore.setToken("admin-reconnected-token");
 
     expect(window.sessionStorage.getItem(key)).toBe("durable-batch-hint");
+  });
+
+  it("scopes recovery batch session hints to the confirmed principal", () => {
+    const adminKey = recoveryBatchSessionKey("harness-admin", "task-001");
+    const viewerKey = recoveryBatchSessionKey("harness", "task-001");
+    window.sessionStorage.setItem(adminKey, "admin-command");
+    window.sessionStorage.setItem(viewerKey, "viewer-command");
+    window.sessionStorage.setItem(
+      "mediaflow.operations.recovery-batch:task-legacy",
+      "unscoped-command",
+    );
+
+    clearOtherRecoveryBatchSessions("harness");
+
+    expect(window.sessionStorage.getItem(adminKey)).toBeNull();
+    expect(window.sessionStorage.getItem(viewerKey)).toBe("viewer-command");
+    expect(
+      window.sessionStorage.getItem(
+        "mediaflow.operations.recovery-batch:task-legacy",
+      ),
+    ).toBeNull();
+  });
+
+  it("advances an in-memory generation when authenticated authority changes", () => {
+    const startingGeneration = authStore.getGeneration();
+    authStore.setToken("principal-token");
+    const connectedGeneration = authStore.getGeneration();
+    authStore.clearRejectedAuthority();
+
+    expect(connectedGeneration).toBeGreaterThan(startingGeneration);
+    expect(authStore.getGeneration()).toBeGreaterThan(connectedGeneration);
   });
 
   it("notifies subscribers until they unsubscribe", () => {

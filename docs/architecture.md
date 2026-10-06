@@ -597,7 +597,8 @@ Automation and Notifications. Review/Recovery remains an explicit migration hand
 and the general configuration lifecycle remain support/compatibility surfaces. Both UIs use the
 shared `/api/v1/*` application
 authority. The browser holds the API token only in memory and does not provide built-in account
-login.
+login. V2 recovery hints that must survive a page reload are scoped only after a read-only API
+response confirms the current principal; those hints do not grant authority or persist credentials.
 
 The `api serve` HTTP listener uses `wsgiref.simple_server` and remains a development/trusted-loopback
 boundary. Production Compose uses the explicitly selected `api serve-production` command with the

@@ -50,6 +50,15 @@ async function connect(page: Page, token = TOKEN): Promise<void> {
   ).toBeVisible();
 }
 
+async function reconnectAtCurrentRoute(
+  page: Page,
+  token: string,
+): Promise<void> {
+  await expect(page.getByLabel("API token")).toBeVisible();
+  await page.getByLabel("API token").fill(token);
+  await page.getByRole("button", { name: "Connect" }).click();
+}
+
 /** Record every product API request the page issues (methods included). */
 function recordApiCalls(
   page: Page,
@@ -1773,7 +1782,7 @@ test("explicit disconnect clears a lost-response batch before another principal 
     batchPanel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
   ).toBeVisible();
   const sourceUrl = page.url();
-  const storageKey = `mediaflow.operations.recovery-batch:${seeded.taskId}`;
+  const storageKey = `mediaflow.operations.recovery-batch:v2:harness-admin:${seeded.taskId}`;
   const originalCommand = await page.evaluate((key) => {
     const value = sessionStorage.getItem(key);
     return value === null ? null : JSON.parse(value);
@@ -1826,6 +1835,217 @@ test("explicit disconnect clears a lost-response batch before another principal 
       ),
     ),
   ).toEqual([]);
+});
+
+test("a batch hint survives same-principal reload and is removed after a different principal is confirmed", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery-batch`,
+  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly batchEligibleItemId: string;
+  };
+  const storageKey = `mediaflow.operations.recovery-batch:v2:harness-admin:${seeded.taskId}`;
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  await page
+    .getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`)
+    .check();
+
+  let recoveryPosts = 0;
+  page.on("request", (browserRequest) => {
+    if (
+      browserRequest.method() === "POST" &&
+      new URL(browserRequest.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`
+    ) {
+      recoveryPosts += 1;
+    }
+  });
+  await page.route(
+    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+    (route) => route.abort("failed"),
+    { times: 1 },
+  );
+  const panel = page.getByRole("region", { name: "批量失败分析恢复" });
+  await panel.getByRole("button", { name: "继续所选分析(1)" }).click();
+  await expect(
+    panel.getByRole("button", { name: "核对这个批次" }),
+  ).toBeVisible();
+  await panel.getByRole("button", { name: "核对这个批次" }).click();
+  await expect(
+    panel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
+  ).toBeVisible();
+
+  // A full reload clears the memory-only token. The same principal is verified
+  // by the API before its account-scoped hint may be reconciled.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  const restoredAdminPanel = page.getByRole("region", {
+    name: "批量失败分析恢复",
+  });
+  await expect(
+    restoredAdminPanel.getByRole("button", { name: "核对这个批次" }),
+  ).toBeVisible();
+  await restoredAdminPanel
+    .getByRole("button", { name: "核对这个批次" })
+    .click();
+  await expect(
+    restoredAdminPanel.getByRole("button", {
+      name: "明确重发同一批次和所选条目",
+    }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate((key) => sessionStorage.getItem(key), storageKey),
+  ).not.toBeNull();
+
+  // A second reload followed by another valid principal must not restore or
+  // submit the administrator's command. Identity confirmation prunes it.
+  await page.reload();
+  await reconnectAtCurrentRoute(page, TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  const viewerPanel = page.getByRole("region", {
+    name: "批量失败分析恢复",
+  });
+  await expect(viewerPanel).toBeVisible();
+  await expect(
+    viewerPanel.getByRole("button", { name: "核对这个批次" }),
+  ).toHaveCount(0);
+  await expect(
+    viewerPanel.getByRole("button", {
+      name: "明确重发同一批次和所选条目",
+    }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`),
+  ).not.toBeChecked();
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) =>
+        key.startsWith("mediaflow.operations.recovery-batch:"),
+      ),
+    ),
+  ).toEqual([]);
+  expect(recoveryPosts).toBe(1);
+});
+
+test("a rejected principal can return safely, then a different confirmed principal cannot recover its batch", async ({
+  page,
+  request,
+}) => {
+  const seededResponse = await request.post(
+    `${BASE}/__harness__/seed-task-item-recovery-batch`,
+  );
+  expect(seededResponse.ok()).toBeTruthy();
+  const seeded = (await seededResponse.json()) as {
+    readonly runId: string;
+    readonly taskId: string;
+    readonly batchEligibleItemId: string;
+  };
+
+  await connect(page, ADMIN_TOKEN);
+  await openInventory(page);
+  const sourceRun = page.getByRole("row").filter({ hasText: seeded.runId });
+  await expect(sourceRun).toHaveCount(1);
+  await sourceRun.getByRole("button").first().click();
+  await page
+    .getByLabel(`选择 ${seeded.batchEligibleItemId} 进行单项分析恢复`)
+    .check();
+
+  let recoveryPosts = 0;
+  page.on("request", (browserRequest) => {
+    if (
+      browserRequest.method() === "POST" &&
+      new URL(browserRequest.url()).pathname ===
+        `/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`
+    ) {
+      recoveryPosts += 1;
+    }
+  });
+  await page.route(
+    `**/api/v1/tasks/${seeded.taskId}/recovery/continue-batch`,
+    (route) => route.abort("failed"),
+    { times: 1 },
+  );
+  let panel = page.getByRole("region", { name: "批量失败分析恢复" });
+  await panel.getByRole("button", { name: "继续所选分析(1)" }).click();
+  await expect(
+    panel.getByRole("button", { name: "核对这个批次" }),
+  ).toBeVisible();
+  await panel.getByRole("button", { name: "核对这个批次" }).click();
+  await expect(
+    panel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
+  ).toBeVisible();
+
+  const rejectInventoryRead = async () => {
+    await page.route(
+      "**/api/v1/operations/runs?*",
+      (route) =>
+        route.fulfill({
+          status: 401,
+          contentType: "application/json",
+          body: JSON.stringify({ error: { code: "unauthorized" } }),
+        }),
+      { times: 1 },
+    );
+    await page.getByRole("button", { name: "Refresh" }).first().click();
+    await expect(
+      page.getByRole("heading", { name: "Not authorized" }),
+    ).toBeVisible();
+    await page
+      .getByRole("link", { name: "Enter an API principal token" })
+      .click();
+  };
+
+  // The same backend-confirmed principal keeps the unknown request locked to
+  // its exact durable identity after the rejected-authority route.
+  await rejectInventoryRead();
+  await reconnectAtCurrentRoute(page, ADMIN_TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  panel = page.getByRole("region", { name: "批量失败分析恢复" });
+  await expect(
+    panel.getByRole("button", { name: "核对这个批次" }),
+  ).toBeVisible();
+  await panel.getByRole("button", { name: "核对这个批次" }).click();
+  await expect(
+    panel.getByRole("button", { name: "明确重发同一批次和所选条目" }),
+  ).toBeVisible();
+
+  // The same authentication boundary now reconnects a different principal.
+  // The session hint is pruned only after that principal is confirmed by API.
+  await rejectInventoryRead();
+  await reconnectAtCurrentRoute(page, TOKEN);
+  await expect(page).toHaveURL(new RegExp(`run=${seeded.runId}`));
+  const viewerPanel = page.getByRole("region", {
+    name: "批量失败分析恢复",
+  });
+  await expect(viewerPanel).toBeVisible();
+  await expect(
+    viewerPanel.getByRole("button", { name: "核对这个批次" }),
+  ).toHaveCount(0);
+  await expect(
+    viewerPanel.getByRole("button", {
+      name: "明确重发同一批次和所选条目",
+    }),
+  ).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      Object.keys(sessionStorage).filter((key) =>
+        key.startsWith("mediaflow.operations.recovery-batch:"),
+      ),
+    ),
+  ).toEqual([]);
+  expect(recoveryPosts).toBe(1);
 });
 
 test("a failed item retry and a mixed batch preserve exact independent outcomes", async ({

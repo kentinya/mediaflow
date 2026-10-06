@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  fetchAuthenticatedPrincipal,
   fetchJobList,
   fetchRunExportPackage,
   fetchRunInventory,
@@ -730,6 +731,37 @@ describe("selected-run detail reads", () => {
   it("treats an unmodelled package as a malformed read, never a file", async () => {
     stubFetch(async () => jsonResponse({ packageKind: "something.else" }));
     await expect(fetchRunExportPackage("token", "task-1")).rejects.toThrow();
+  });
+});
+
+describe("authenticated principal read", () => {
+  it("returns only the backend-confirmed principal identity", async () => {
+    const fetchMock = stubFetch(async (input, init) => {
+      expect(String(input)).toBe("/api/v1/auth/principal");
+      expect(init?.method).toBe("GET");
+      expect(new Headers(init?.headers).get("Authorization")).toBe(
+        "Bearer ephemeral-token",
+      );
+      return jsonResponse({ principal_id: "harness-admin" });
+    });
+
+    const principal = await fetchAuthenticatedPrincipal("ephemeral-token");
+
+    expect(principal).toEqual({ principalId: "harness-admin" });
+    expect(JSON.stringify(principal)).not.toContain("ephemeral-token");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed when the server cannot confirm the current principal", async () => {
+    stubFetch(async () =>
+      jsonResponse({ error: { code: "unauthorized" } }, 401),
+    );
+
+    await expect(
+      fetchAuthenticatedPrincipal("expired-token"),
+    ).rejects.toMatchObject({
+      category: "unauthorized",
+    });
   });
 });
 

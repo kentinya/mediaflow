@@ -17,10 +17,11 @@
  * durable link.
  */
 
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthGeneration, useAuthToken } from "../../shared/api/auth-context";
 import {
+  fetchAuthenticatedPrincipal,
   fetchRunExportPackage,
   type RunExportRead,
 } from "../../shared/api/api-client";
@@ -50,13 +51,16 @@ import {
   runItemsQueryKey,
   runItemsQueryOptions,
   runRecordsQueryOptions,
-  recoveryBatchQueryKey,
+  recoveryBatchQueryCacheKey,
   recoveryBatchQueryOptions,
 } from "./run-detail-query";
 import type { RunDetailState, RunDetailTab } from "./run-detail-state";
 import { TaskItemRecoveryPanel } from "./TaskItemRecoveryPanel";
 import { submitTaskRecoveryBatch } from "../../shared/api/api-client";
-import { recoveryBatchSessionKey } from "./recovery-batch-session";
+import {
+  clearOtherRecoveryBatchSessions,
+  recoveryBatchSessionKey,
+} from "./recovery-batch-session";
 
 /** Chinese labels for the bounded audit actions of the records stream. */
 const RUN_AUDIT_ACTION_LABELS: Readonly<Record<string, string>> = {
@@ -1082,8 +1086,73 @@ function FailedAnalysisBatchControls({
   ) => void;
 }) {
   const token = useAuthToken();
+  const authGeneration = useAuthGeneration();
+  const principalQuery = useQuery({
+    queryKey: ["authenticated-principal", authGeneration],
+    queryFn: () => fetchAuthenticatedPrincipal(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+
+  return (
+    <AuthorizedReadBoundary
+      query={principalQuery}
+      unavailableTitle="当前账号身份暂不可验证"
+    >
+      {({ data }) =>
+        data === undefined ? (
+          <section className="mf-count-section" aria-label="批量失败分析恢复">
+            <h5>批量失败分析恢复</h5>
+            <p className="mf-dashboard-meta">
+              正在向服务端确认当前账号，确认前不会恢复批量命令。
+            </p>
+          </section>
+        ) : (
+          <VerifiedFailedAnalysisBatchControls
+            key={`${authGeneration}:${data.principalId}:${taskId}`}
+            taskId={taskId}
+            runId={runId}
+            selected={selected}
+            onSelectionChange={onSelectionChange}
+            onOpenLinkedAnalysis={onOpenLinkedAnalysis}
+            principalId={data.principalId}
+            authGeneration={authGeneration}
+          />
+        )
+      }
+    </AuthorizedReadBoundary>
+  );
+}
+
+function VerifiedFailedAnalysisBatchControls({
+  taskId,
+  runId,
+  selected,
+  onSelectionChange,
+  onOpenLinkedAnalysis,
+  principalId,
+  authGeneration,
+}: {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly selected: Readonly<Record<string, string>>;
+  readonly onSelectionChange: (value: Record<string, string>) => void;
+  readonly onOpenLinkedAnalysis?: (
+    taskId: string,
+    sourceItemId: string,
+  ) => void;
+  readonly principalId: string;
+  readonly authGeneration: number;
+}) {
+  const token = useAuthToken();
   const queryClient = useQueryClient();
-  const storageKey = recoveryBatchSessionKey(taskId);
+  const storageKey = recoveryBatchSessionKey(principalId, taskId);
+  // This component mounts only after the server confirms principalId. Reading
+  // the principal-scoped hint during its first render is therefore fenced by
+  // backend identity and cannot happen while memory auth is null or unverified.
   const [batchStorage] = useState(() => {
     try {
       return {
@@ -1096,21 +1165,36 @@ function FailedAnalysisBatchControls({
       return { command: null, available: false };
     }
   });
+  const hydrated = batchStorage.available;
   const [command, setCommand] = useState<SavedBatchCommand | null>(
     batchStorage.command,
   );
-  const hydrated = batchStorage.available;
-  const [repeatLocked, setRepeatLocked] = useState(false);
-  const [knownSubmitted, setKnownSubmitted] = useState(false);
-  const [message, setMessage] = useState<string | null>(
-    batchStorage.available
-      ? null
-      : "此浏览器无法保留批量命令编号；批量提交已关闭，避免响应丢失后无法核对。",
+  const [repeatLocked, setRepeatLocked] = useState(
+    batchStorage.command !== null,
   );
+  const [knownSubmitted, setKnownSubmitted] = useState(false);
+  const [message, setMessage] = useState<string | null>(() =>
+    !batchStorage.available
+      ? "此浏览器无法读取账号隔离的批量命令记录；批量提交已关闭，避免响应丢失后无法核对。"
+      : batchStorage.command === null
+        ? null
+        : "正在核对当前账号上次批量恢复的持久状态。",
+  );
+
+  useEffect(() => {
+    try {
+      clearOtherRecoveryBatchSessions(principalId);
+    } catch {
+      // Storage is only a hint; the identity-scoped key is still safe to read.
+    }
+  }, [principalId]);
+
   const batchQuery = useQuery(
     recoveryBatchQueryOptions(token, {
       taskId,
       batchId: command?.batchId ?? "",
+      principalId,
+      authGeneration,
     }),
   );
   const batchMutation = useMutation({
@@ -1119,9 +1203,27 @@ function FailedAnalysisBatchControls({
     retry: false,
     onSuccess: (result, value) => {
       if (result.ok) {
+        if (result.model.actor !== principalId) {
+          try {
+            window.sessionStorage.removeItem(storageKey);
+          } catch {
+            // The mismatch remains locked even if browser storage is unavailable.
+          }
+          setCommand(null);
+          setRepeatLocked(true);
+          setMessage(
+            "服务端批次属于其他账号；已清除本账号的批量命令记录。请重新选择条目。",
+          );
+          return;
+        }
         setKnownSubmitted(true);
         queryClient.setQueryData(
-          [recoveryBatchQueryKey, taskId, value.batchId],
+          recoveryBatchQueryCacheKey({
+            taskId,
+            batchId: value.batchId,
+            principalId,
+            authGeneration,
+          }),
           { ok: true as const, model: result.model },
         );
         setRepeatLocked(false);
@@ -1146,6 +1248,7 @@ function FailedAnalysisBatchControls({
   });
 
   const submitExact = (value: SavedBatchCommand) => {
+    if (!hydrated || token === null) return;
     setRepeatLocked(true);
     setMessage(
       "批量分析只提交所选条目和打开时的检查点；正在等待独立逐项结果。",
@@ -1153,6 +1256,7 @@ function FailedAnalysisBatchControls({
     batchMutation.mutate(value);
   };
   const begin = () => {
+    if (!hydrated || token === null) return;
     const items = Object.entries(selected)
       .map(([itemId, expectedCheckpointVersion]) => ({
         itemId,
@@ -1204,7 +1308,21 @@ function FailedAnalysisBatchControls({
     onSelectionChange({});
   };
 
-  const batch = batchQuery.data?.ok === true ? batchQuery.data.model : null;
+  const queriedBatch =
+    batchQuery.data?.ok === true ? batchQuery.data.model : null;
+  const foreignBatch =
+    queriedBatch !== null && queriedBatch.actor !== principalId;
+  const batch = foreignBatch ? null : queriedBatch;
+  useEffect(() => {
+    if (!foreignBatch) return;
+    try {
+      window.sessionStorage.removeItem(storageKey);
+    } catch {
+      // The mismatched batch is still hidden and cannot be submitted.
+    }
+    onSelectionChange({});
+  }, [foreignBatch, onSelectionChange, storageKey]);
+
   const batchMissing =
     batchQuery.data?.ok === false &&
     batchQuery.data.failure.kind === "not_found";
@@ -1237,6 +1355,11 @@ function FailedAnalysisBatchControls({
           <p>{message}</p>
         </StatusBanner>
       )}
+      {foreignBatch && (
+        <StatusBanner variant="warning" title="批量命令账号不匹配">
+          <p>服务端批次不属于当前账号；已隐藏批次内容并清除命令记录。</p>
+        </StatusBanner>
+      )}
       {Object.keys(selected).length > 0 && command === null && (
         <div className="mf-actions">
           <button
@@ -1251,7 +1374,7 @@ function FailedAnalysisBatchControls({
           </button>
         </div>
       )}
-      {command !== null && (
+      {command !== null && !foreignBatch && (
         <>
           {message && (
             <StatusBanner

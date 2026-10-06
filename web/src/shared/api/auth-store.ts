@@ -17,6 +17,8 @@ export type AuthListener = () => void;
 
 export interface MemoryAuthStore {
   getToken(): string | null;
+  /** Monotonic in-memory auth session identity; it contains no credential. */
+  getGeneration(): number;
   setToken(token: string): void;
   clearToken(): void;
   /**
@@ -57,6 +59,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   let intendedPath: DestinationPath | null = null;
   let intendedSearch: string | null = null;
   let rejected = false;
+  let generation = 0;
   const listeners = new Set<AuthListener>();
   const emit = () => {
     for (const listener of listeners) {
@@ -72,12 +75,14 @@ export function createMemoryAuthStore(): MemoryAuthStore {
   };
   return {
     getToken: () => token,
+    getGeneration: () => generation,
     isRejected: () => rejected,
     setToken: (next) => {
       if (token !== null && token !== next) {
         clearPrincipalSessionData();
       }
       token = next;
+      generation += 1;
       // A freshly entered principal resets the rejected-authority boundary.
       rejected = false;
       emit();
@@ -89,6 +94,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
       clearPrincipalSessionData();
       token = null;
       rejected = false;
+      generation += 1;
       clearIntendedPathInternal();
       emit();
     },
@@ -98,6 +104,7 @@ export function createMemoryAuthStore(): MemoryAuthStore {
       }
       token = null;
       rejected = true;
+      generation += 1;
       // Intentionally does NOT clear the intended path, so the operator
       // can explicitly re-enter a valid principal and continue to the same
       // safe route after a rejected 401 read.

@@ -33,6 +33,21 @@ export const taskItemRecoveryQueryKey =
   "operations.task-item-recovery" as const;
 export const recoveryBatchQueryKey = "operations.recovery-batch" as const;
 
+export function recoveryBatchQueryCacheKey(context: {
+  readonly taskId: string;
+  readonly batchId: string;
+  readonly principalId: string;
+  readonly authGeneration: number;
+}) {
+  return [
+    recoveryBatchQueryKey,
+    context.authGeneration,
+    context.principalId,
+    context.taskId,
+    context.batchId,
+  ] as const;
+}
+
 function detailRefetchInterval(active: boolean): number | false {
   return active ? RUN_REFETCH_INTERVAL : false;
 }
@@ -148,10 +163,15 @@ export function taskItemRecoveryQueryOptions(
 
 export function recoveryBatchQueryOptions(
   token: string | null,
-  context: { readonly taskId: string; readonly batchId: string },
+  context: {
+    readonly taskId: string;
+    readonly batchId: string;
+    readonly principalId: string;
+    readonly authGeneration: number;
+  },
 ) {
   return queryOptions({
-    queryKey: [recoveryBatchQueryKey, context.taskId, context.batchId],
+    queryKey: recoveryBatchQueryCacheKey(context),
     queryFn: (): Promise<OperationsRead<RecoveryBatchModel>> =>
       fetchTaskRecoveryBatch(token, context.taskId, context.batchId),
     enabled:
