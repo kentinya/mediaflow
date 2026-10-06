@@ -1563,6 +1563,47 @@ export async function fetchTaskRecoveryBatch(
   return parseRunDetailResponse(response, normalizeRecoveryBatch);
 }
 
+export interface AuthenticatedPrincipalModel {
+  readonly principalId: string;
+}
+
+/** Read the principal identity confirmed by the current backend token. */
+export async function fetchAuthenticatedPrincipal(
+  token: string | null,
+  fetchImpl: FetchLike = fetch,
+): Promise<AuthenticatedPrincipalModel> {
+  if (token === null) throw new OperationsApiError("unauthorized");
+  let response: Response;
+  try {
+    response = await fetchImpl("/api/v1/auth/principal", {
+      method: "GET",
+      headers: operationsHeaders(token),
+    });
+  } catch {
+    throw new OperationsApiError("unavailable");
+  }
+  const result = await parseRunDetailResponse(response, (payload) => {
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      Array.isArray(payload)
+    ) {
+      throw new Error("authenticated principal response is malformed");
+    }
+    const principalId = (payload as Record<string, unknown>)["principal_id"];
+    if (typeof principalId !== "string" || !SAFE_IDENTIFIER.test(principalId)) {
+      throw new Error("authenticated principal response is malformed");
+    }
+    return { principalId };
+  });
+  if (!result.ok) {
+    throw new OperationsApiError(
+      result.failure.kind === "unavailable" ? "unavailable" : "rejected",
+    );
+  }
+  return result.model;
+}
+
 /**
  * The run-scoped result package download read.  The backend's bounded error
  * code travels with the failure so the UI can distinguish "no linked Task

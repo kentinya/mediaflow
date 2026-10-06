@@ -125,6 +125,7 @@ export interface RecoveryBatchChild {
 export interface RecoveryBatchModel {
   readonly batchId: string;
   readonly taskId: string;
+  readonly actor: string;
   readonly status: string;
   readonly children: readonly RecoveryBatchChild[];
   readonly nextAction: string;
@@ -419,6 +420,7 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
   return {
     batchId: text(source, "batch_id"),
     taskId: text(source, "source_task_id"),
+    actor: text(source, "actor"),
     status: text(source, "status"),
     children: rawItems.map((value) => {
       const item = readRecord(value, "recoveryBatch.child");

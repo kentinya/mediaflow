@@ -7015,6 +7015,14 @@ class MediaFlowApi:
                 200,
                 {"items": [self._value(item) for item in self._repository.list_security_audit()]},
             )
+        if parts == ["api", "v1", "auth", "principal"] and method == "GET":
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "authenticated principal")
+            return self._response(
+                start_response,
+                200,
+                {"principal_id": principal.principal_id},
+            )
         if parts == ["api", "v1", "dashboard"] and method == "GET":
             self._require(principal, ApiPermission.READ)
             return self._response(

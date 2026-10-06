@@ -186,6 +186,24 @@ class ApiSecurityTests(unittest.TestCase):
                     200,
                 )
 
+    def test_authenticated_principal_read_returns_only_current_principal_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:
+                api = MediaFlowApi(repository, None, principals=principals())
+                status, document = request(
+                    api,
+                    "GET",
+                    "/api/v1/auth/principal",
+                    token="viewer-token",
+                )
+                self.assertEqual(status, 200)
+                self.assertEqual(document, {"principal_id": "viewer"})
+                self.assertNotIn("token", json.dumps(document).lower())
+                self.assertEqual(
+                    request(api, "GET", "/api/v1/auth/principal")[0],
+                    401,
+                )
+
     def test_authentication_compares_against_every_configured_principal(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with SQLiteTaskRepository(Path(directory, "runtime.sqlite3")) as repository:

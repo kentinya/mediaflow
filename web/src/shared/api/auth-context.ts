@@ -15,6 +15,15 @@ export function useAuthToken(): string | null {
   );
 }
 
+/** In-memory auth generation for fencing authenticated reads across token changes. */
+export function useAuthGeneration(): number {
+  return useSyncExternalStore(
+    authStore.subscribe,
+    authStore.getGeneration,
+    () => 0,
+  );
+}
+
 export function useIsConnected(): boolean {
   return useAuthToken() !== null;
 }

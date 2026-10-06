@@ -71,6 +71,7 @@ describe("Task item recovery contract", () => {
     const batch = normalizeRecoveryBatch({
       batch_id: "batch-1",
       source_task_id: "task-1",
+      actor: "harness-admin",
       status: "partial",
       items: [
         {
@@ -104,6 +105,7 @@ describe("Task item recovery contract", () => {
       "queued",
       "refused",
     ]);
+    expect(batch.actor).toBe("harness-admin");
     expect(batch.children[1].nextAction).toBe("refresh this item");
 
     expect(() =>

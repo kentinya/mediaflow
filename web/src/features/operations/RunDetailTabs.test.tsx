@@ -719,6 +719,9 @@ function stubDetailJourney(requested: string[] = []) {
   return stubFetch(async (input) => {
     const url = String(input);
     requested.push(url);
+    if (url === "/api/v1/auth/principal") {
+      return jsonResponse({ principal_id: "test-principal" });
+    }
     if (url.startsWith("/api/v1/operations/runs?")) {
       return jsonResponse({
         items: [overviewDocument()],
@@ -1240,23 +1243,36 @@ describe("selected-run detail tabs", () => {
       this: Storage,
       key: string,
     ) {
-      if (key === "mediaflow.operations.recovery-batch:task-001") {
+      if (
+        key === "mediaflow.operations.recovery-batch:v2:test-principal:task-001"
+      ) {
         throw new Error("session storage unavailable");
       }
       return getItem.call(this, key);
     });
-    stubDetailJourney();
+    const requested: string[] = [];
+    stubDetailJourney(requested);
     authStore.setToken(TOKEN);
-    renderApp("/ui-v2/operations?run=task-001");
+    const { queryClient } = renderApp("/ui-v2/operations?run=task-001");
+
+    await waitFor(() => expect(requested).toContain("/api/v1/auth/principal"));
+    await waitFor(() =>
+      expect(
+        queryClient.getQueryData([
+          "authenticated-principal",
+          authStore.getGeneration(),
+        ]),
+      ).toEqual({ principalId: "test-principal" }),
+    );
 
     const batch = await screen.findByRole("region", {
       name: "批量失败分析恢复",
     });
     expect(
-      within(batch).getByRole("heading", { name: "批量恢复不可用" }),
+      await within(batch).findByRole("heading", { name: "批量恢复不可用" }),
     ).toBeVisible();
     expect(
-      within(batch).getByText(/批量提交已关闭，避免响应丢失后无法核对/),
+      await within(batch).findByText(/批量提交已关闭，避免响应丢失后无法核对/),
     ).toBeVisible();
   });
 
@@ -1292,6 +1308,9 @@ describe("selected-run detail tabs", () => {
 /** Split out so the GET-only test can reuse the full stub's responses. */
 function stubDetailJourneyResponse(url: string): Response {
   const notFound = jsonResponse({ error: { code: "not_found" } }, 404);
+  if (url === "/api/v1/auth/principal") {
+    return jsonResponse({ principal_id: "test-principal" });
+  }
   if (url.startsWith("/api/v1/operations/runs?")) {
     return jsonResponse({
       items: [overviewDocument()],
