@@ -7,7 +7,10 @@ export default defineConfig({
   // The isolated real-Python browser spec runs only under
   // playwright.python.config.ts, which starts the Python harness instead of
   // the Node fake; the fake-path suite must never pick it up.
-  testIgnore: "**/operations-inventory.python.spec.ts",
+  testIgnore: [
+    "**/operations-inventory.python.spec.ts",
+    "**/operations-principal-identity.python.spec.ts",
+  ],
   fullyParallel: true,
   forbidOnly: true,
   reporter: [["list"]],

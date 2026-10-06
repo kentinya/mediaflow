@@ -1,7 +1,9 @@
 import {
+  MAX_TEXT_LENGTH,
   normalizeBoolean,
   normalizeBoundedCount,
   normalizeBoundedText,
+  normalizeIdentityText,
   normalizeOptionalText,
   normalizeTextArray,
   readRecord,
@@ -420,7 +422,7 @@ export function normalizeRecoveryBatch(payload: unknown): RecoveryBatchModel {
   return {
     batchId: text(source, "batch_id"),
     taskId: text(source, "source_task_id"),
-    actor: text(source, "actor"),
+    actor: normalizeIdentityText(source["actor"], "actor", MAX_TEXT_LENGTH),
     status: text(source, "status"),
     children: rawItems.map((value) => {
       const item = readRecord(value, "recoveryBatch.child");

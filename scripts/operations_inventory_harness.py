@@ -62,6 +62,7 @@ import argparse
 import dataclasses
 import io
 import json
+import os
 import socketserver
 import sys
 import threading
@@ -132,6 +133,7 @@ from mediaflow.infrastructure.local_storage import LocalStorage  # noqa: E402
 from mediaflow.infrastructure.memory_file_index import InMemoryFileIndexRepository  # noqa: E402
 from mediaflow.infrastructure.runtime_configuration import (  # noqa: E402
     load_managed_runtime_configuration,
+    load_runtime_configuration,
     with_managed_snapshot,
 )
 from mediaflow.infrastructure.sqlite_configuration_management import (  # noqa: E402
@@ -166,6 +168,28 @@ ADMIN_PRINCIPAL = ResolvedApiPrincipal(
     HARNESS_ADMIN_TOKEN,
     frozenset(ApiPermission),
 )
+
+
+def configured_harness_admin(principal_id: str) -> ResolvedApiPrincipal:
+    """Resolve a synthetic test principal through production config validation."""
+
+    document = json.loads(
+        (REPO_ROOT / "config" / "strategy.example.json").read_text(encoding="utf-8")
+    )
+    document["api"] = {
+        "principals": [
+            {
+                "id": principal_id,
+                "tokenEnv": "MEDIAFLOW_HARNESS_ADMIN_TOKEN",
+                "roles": ["admin"],
+            }
+        ]
+    }
+    with patch.dict(os.environ, {"MEDIAFLOW_HARNESS_ADMIN_TOKEN": HARNESS_ADMIN_TOKEN}):
+        resolved = load_runtime_configuration(document).resolve_api_principals()
+    if len(resolved) != 1 or resolved[0].principal_id != principal_id:
+        raise RuntimeError("harness principal configuration did not retain its identity")
+    return resolved[0]
 
 
 @dataclasses.dataclass(frozen=True)
@@ -2012,11 +2036,21 @@ def application(environ, start_response):
 
 
 def main(argv: list[str] | None = None) -> int:
+    global ADMIN_PRINCIPAL
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4183)
     parser.add_argument("--database", type=Path, default=None)
+    parser.add_argument(
+        "--admin-principal-id",
+        default=None,
+        help="test-only principal ID resolved through the example runtime config",
+    )
     args = parser.parse_args(argv)
+
+    if args.admin_principal_id is not None:
+        ADMIN_PRINCIPAL = configured_harness_admin(args.admin_principal_id)
 
     if not (asset_root() / "index.html").is_file():
         print(

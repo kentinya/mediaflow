@@ -1591,10 +1591,8 @@ export async function fetchAuthenticatedPrincipal(
       throw new Error("authenticated principal response is malformed");
     }
     const principalId = (payload as Record<string, unknown>)["principal_id"];
-    if (typeof principalId !== "string" || !SAFE_IDENTIFIER.test(principalId)) {
-      throw new Error("authenticated principal response is malformed");
-    }
-    return { principalId };
+    const validatedPrincipalId = normalizePrincipalId(principalId);
+    return { principalId: validatedPrincipalId };
   });
   if (!result.ok) {
     throw new OperationsApiError(
@@ -1819,6 +1817,7 @@ import {
   normalizeBoundedText,
   readRecord,
 } from "../../entities/shared/normalize";
+import { normalizePrincipalId } from "../auth/principal-identity";
 
 // --- Manual action matrix ---
 

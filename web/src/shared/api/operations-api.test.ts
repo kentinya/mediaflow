@@ -752,6 +752,24 @@ describe("authenticated principal read", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("preserves bounded Unicode principal IDs exactly", async () => {
+    stubFetch(async () => jsonResponse({ principal_id: "值班管理员 " }));
+
+    await expect(
+      fetchAuthenticatedPrincipal("ephemeral-token"),
+    ).resolves.toEqual({
+      principalId: "值班管理员 ",
+    });
+  });
+
+  it("rejects blank or overlong principal identities", async () => {
+    stubFetch(async () => jsonResponse({ principal_id: "   " }));
+    await expect(fetchAuthenticatedPrincipal("token")).rejects.toThrow();
+
+    stubFetch(async () => jsonResponse({ principal_id: "值".repeat(1025) }));
+    await expect(fetchAuthenticatedPrincipal("token")).rejects.toThrow();
+  });
+
   it("fails closed when the server cannot confirm the current principal", async () => {
     stubFetch(async () =>
       jsonResponse({ error: { code: "unauthorized" } }, 401),
