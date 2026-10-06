@@ -28,6 +28,7 @@ only in [the development workflow](development-workflow.md).
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
+| 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers | ACTIVE | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
 
 ## Current boundary
 
@@ -116,8 +117,8 @@ This Roadmap does not retain the retired Slice 34–36 program rows.
 
 ## Current closed Slice boundary
 
-Slice 42 — V2 Operations and Tasks Workspace — is the most recently closed large Slice under
-`SLICE.md`: PASS / CLOSED on 2026-10-06, Base `ffee77348cebcb05e356c8111c5861ed64ca0388`,
+Slice 42 — V2 Operations and Tasks Workspace — is the most recently closed large Slice:
+PASS / CLOSED on 2026-10-06, Base `ffee77348cebcb05e356c8111c5861ed64ca0388`,
 Implementation Head `ce3fc2a3e70d40279fa725b5d7dc838d11123980`. It uses `docs/pics/操作与任务.png`
 as a business/style reference, not fixed data. It delivered the task-center journey from live
 selected-file organization and queue visibility to
@@ -128,9 +129,25 @@ introduced. These accepted capabilities are CURRENT.
 Task-scoped Recognition/Metadata/Classification/conflict decisions and bounded failed-analysis
 recovery are included. A global Review inbox, cross-task bulk review, history retention/deletion,
 unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
-redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
-and retired Slice boundaries are unchanged. No implementation Task or next Slice is active. A
-selects the next large Slice in a separate turn after closure; this Roadmap does not pre-split Tasks.
+redesign, universal rollback and automatic uncertain replay were excluded from Slice 42. Prior
+closure scopes and retired Slice boundaries are unchanged; its complete closure remains in Git at
+the next Slice's Base.
+
+## Current active Slice boundary
+
+Slice 43 — V2 Automation Workspace and Engine Settings — is ACTIVE under `SLICE.md`. The two
+Automation PNGs define business logic/composition/style only, not runtime values or fixed fixtures.
+The selected journey covers definition lifecycle with one checked Save, exact Preview and revocable
+scheduled authority, explicit definition-bound Run once, cross-definition statistics/history and
+native Operations recovery, plus four global engine settings with actual Worker/Scheduler adoption.
+Manual real execution keeps its exact one-shot authority; scheduled grants are not repurposed as
+manual permission. Activity capacity is not execution concurrency, and stale observation is not
+automatic cancellation/replay. Existing pipeline, queue, configuration and task authority are reused.
+
+Notifications redesign, new scheduling modes/backfill/overlap policy, queue/distributed-worker
+redesign, general deployment administration, history retention/deletion and uncertain-effect replay
+remain deferred. B plans coherent implementation Tasks after this activation checkpoint; A does not
+pre-split them. No implementation Task has been created by this planning change.
 
 ## Roadmap rules
 

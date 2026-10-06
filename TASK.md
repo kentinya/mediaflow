@@ -2,15 +2,15 @@
 
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
-Parent Slice: 42 — V2 Operations and Tasks Workspace
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Parent Slice: 43 — V2 Automation Workspace and Engine Settings
+Next Action: B PLANS THE FIRST COHERENT IMPLEMENTATION TASK
 ```
 
-Slice 42 is PASS / CLOSED after A's 2026-10-06 review of the entire immutable Base..Implementation
-Head. The Contract, Closure Packet, decision and validation reconciliation are in
-[SLICE.md](SLICE.md). Detailed Task/Developer/B review history remains reachable in Git, including
-the Developer report at `f2ac5f84d0cd0c44c78fc547ad44f9c5b9e17903` and B's closure submission at
-`df4391bd2ff351cbcfc34d24f193aff5abb59dbc`.
+A has activated Slice 43 in [SLICE.md](SLICE.md). Once the Contract and ACTIVE Roadmap row are
+checkpointed, B must run the governance preflight, inspect actual code/tests, and plan the first
+coherent vertical Task inside its Required Outcomes. No implementation is authorized until that
+Task exists. A has not pre-split Tasks or assigned Task-level Difficulty/Test Level.
 
-No implementation Task or next Slice is authorized. A selects the next large Slice in a separate
-turn after this closure.
+Slice 42 remains PASS / CLOSED. Its complete Contract, Closure Packet and A Final Review are
+preserved at Slice 43 Base `853973dbbf8289fa2ad40657033e94e870a690e4`; detailed Task and review
+history remains reachable in Git. Slice 43 planning does not change that accepted history.

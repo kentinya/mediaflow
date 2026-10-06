@@ -1,498 +1,363 @@
-# Slice 42 — V2 Operations and Tasks Workspace
+# Slice 43 — V2 Automation Workspace and Engine Settings
 
-This A-owned Contract delivers one daily operator journey: start bounded manual organization,
-follow one visible run from queue admission through per-item results, and safely control or recover
-that work from the native V2 task center.
+This A-owned Contract delivers the complete Automation journey: manage bounded definitions,
+preview and authorize scheduled work, start one deliberate run, follow independent outcomes and
+recovery, and publish engine settings whose actual runtime consumption is visible.
 
 ```text
-Slice ID: 42
-Name: V2 Operations and Tasks Workspace
+Slice ID: 43
+Name: V2 Automation Workspace and Engine Settings
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PASS / CLOSED
-Base SHA: ffee77348cebcb05e356c8111c5861ed64ca0388
-Implementation Head: ce3fc2a3e70d40279fa725b5d7dc838d11123980
-Contract Revision: 2026-09-30 — A activation from the operations/tasks reference analysis
+Status: ACTIVE
+Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
+Implementation Head: NOT SET
+Contract Revision: 2026-10-06 — A activation from the two Automation references
 Risk: High
 Final Test Level: T4
-Next Action: A SELECTS THE NEXT LARGE SLICE
+Next Action: B PLANS THE FIRST COHERENT IMPLEMENTATION TASK
 ```
 
 ## Authority and sequencing
 
-The user requested analysis of `docs/pics/操作与任务.png`, specifying business logic and visual style
-rather than actual data, then requested Slice planning. This activation implements that planning
-request, not product code. Slice 41 remains PASS / CLOSED; its Contract, Closure Packet and A review
-remain reachable at this Slice's Base. Its immutable Base and accepted Implementation Head are not
-changed. Retired Slices 34–36 are not reactivated.
+The user first requested analysis of `docs/pics/自动化.png` and
+`docs/pics/自动化-全局设置.png`, then explicitly authorized A to plan this Slice. This checkpoint
+changes planning documents only. Slice 42 remains PASS / CLOSED; its complete Contract, Closure
+Packet and A Final Review are retained at this Slice's Base. Earlier closures and their deferrals
+remain historical facts. This Slice selects Automation redesign previously deferred by Slice 42;
+it does not reopen that Slice or authorize Notifications redesign.
 
-A owns this Contract, its TARGET journey/architecture and stable V2 requirements. Root `TASK.md`
-remains a no-active-Task notice. B sizes coherent implementation Tasks only after the Contract and
-Roadmap are committed. The sole lifecycle authority is `docs/development-workflow.md`.
+`AGENTS.md` and `docs/development-workflow.md` remain authoritative. Applicable product requirements
+include UX-001 through UX-010, REQ-SCHED-001 through REQ-SCHED-007, REQ-TASK-001/002/003/005/006/007/008/009,
+REQ-RECOVERY-002/006/009, REQ-SAFE-008 and the existing Storage, execution and configuration invariants.
+V2-AUTO-001 through V2-AUTO-008 refine this journey without changing frozen V1 authority semantics.
+B plans Tasks only after this Contract and the matching ACTIVE Roadmap row are committed.
+`TASK.md` remains an explicit no-active-Task notice until B acts.
 
-## User Goal
+## User Goal and Journey
 
-An operator opens `操作与任务`, finds current or historical work by business name, scope, type and
-time, understands whether it is queued, progressing, waiting for a decision or finished, and sees
-what happened to every selected file. They can start an exact bounded organize journey, request
-supported pause/cancel, continue safely paused work, resolve a linked decision or retry eligible
-failed analysis without replaying successful siblings or uncertain mutations. Normal completion
-requires neither CLI commands nor V1 handoffs nor manual execution-token handling.
+An operator can configure when a bounded ResourceLibrary source is scanned or organized, understand
+what will happen, deliberately permit unattended execution, run the published definition once,
+find each run and resolve its affected items, and adjust the engine without confusing saved values
+with parameters actually used by resident processes.
 
-## Reference interpretation
+- **Entry:** shared-shell `自动化`, an existing definition/occurrence deep link, or the Automation
+  settings section reached from System Settings. Preserve existing compatible links and return context.
+- **Visible state:** definition inventory, mode/scope/schedule/limit, enabled versus authorized versus
+  running state, next scheduled run, real summary statistics, independent run outcomes, and published
+  versus process-consumed settings. Internal IDs remain optional diagnostic details.
+- **Action:** create/copy/edit/enable/disable/reference-safe remove; one checked Save; exact Preview;
+  grant/revoke; Run once; inspect filtered history and task-linked recovery; save global settings.
+- **Success:** the published definition and current authority govern newly admitted bounded work;
+  scheduled occurrences do not require another per-run click; manual real execution retains its
+  one-shot intent. Runs and outcomes survive refresh/restart. Settings changes are visibly adopted
+  by the actual eligible consumers without routine process restart.
+- **Failure:** invalid/stale configuration, missing dependency, unavailable Worker/Scheduler,
+  insufficient/revoked permission, capacity, conflict, changed source, invalid pin or uncertain media
+  effects are attached to the affected definition/run/item/consumer with durable-state explanation.
+- **Recovery:** correct and Save, repreview/regrant where required, reconcile an unknown submission,
+  restore consumer readiness, or follow the linked native task decision/continuation path. No generic
+  Retry may replay successful or uncertain effects, and no failure erases sibling outcomes.
 
-- Use `docs/pics/操作与任务.png` unchanged. Original SHA-256:
-  `a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86`.
-- Adopt the existing light AppShell, blue primary action, summary cards, compact filter bar, task
-  table, selected row and right detail panel with `任务详情` / `操作记录`. No second shell.
-  Default entry is a full-width list with no selected run; explicit selection opens detail. A
-  supported detail link opens that run. Narrow layouts provide complete full-screen detail and
-  accessible return to the same list context.
-- Counts, names, paths, dates, progress, ETA, posters and administrator identity in the image are
-  not production truth or fixed fixtures. Type icons suffice; poster fetching is excluded.
-  Pixel-identical comparison is not acceptance.
-- `媒体库` / `单个文件` describe example scope, not domain command. Distinguish operation kind,
-  source scope and trigger. ResourceLibrary is the ordinary organize source; MediaLibrary remains
-  the classified destination and a separate direct-file-management scope.
-- Preserve queued, paused, partial success and waiting-decision states. The sample cards cannot
-  justify dropping states or claiming queue completion/partial results are success.
-- Server cursor paging is acceptable; fabricated totals/page jumps are not. Cancellation is a
-  request and never claims to roll back completed effects.
+## CURRENT Audit and Reuse Boundary
 
-## Baseline and applicable requirements
+The Base already has immutable managed configuration, typed Automation definitions with all three
+modes, ResourceLibrary sub-scope and item limit, interval/Cron timezone scheduling, durable due state
+and occurrences, exact Preview, scoped revocable unattended grants, pinned Worker processing and
+TaskItem/Result/checkpoint recovery. V2 has definition/list/editor/Preview/occurrence pages; Slice 42
+provides the shared Operations run inventory and native task-linked controls/recovery.
 
-At Base, code/tests provide persistent Job/Task/TaskItem/Result, bounded status/command queries,
-backend lifecycle projections, checkpoints, review/correction/conflict services, recovery admission
-and continuations, result export/logs, Worker readiness, immutable pins and fenced OrganizerExecutor
-execution. V2 has separate Operations, Tasks, Jobs and detail pages, Scan/Preview and manual Organize.
-Files supports bounded selected live ResourceLibrary files and exact Preview; `OrganizeNewPage`
-currently directs the ordinary journey to Files rather than creating an intent from FileIndex.
+The current list is a bounded card projection with a truncation marker, not the reference table with
+cross-definition metrics/history. Its editor exposes separate Draft/save/validate/activate steps.
+No complete definition-bound Run-once journey is currently advertised by its action projection.
 
-Gaps, not delivered claims: unified inventory/metrics; text/time/scope queries; business labels and
-historical scope summaries; complete progress facets; task-scoped native V2 recovery; and general
-queued Web continuation of safely paused operator workflows. Files transfers already have safe
-continuation, but that does not establish generic Task resume. `completed_items` is not a universal
-organize-success count; some failure counts include scan errors. Paged items cannot supply totals.
-
-Compose these foundations without replacing the task engine, resolver, configuration authority or
-queue. Applicable requirements: `UX-001`–`UX-010`, `REQ-TASK-*`, `REQ-RECOVERY-*`, `REQ-LOG-*`,
-`REQ-RESULT-*`, relevant `REQ-ORG-*`, `REQ-SCAN-*`, `REQ-SCHED-*`, `REQ-API-*`, `REQ-WEB-*`,
-`REQ-SAFE-*`, `V2-UX-*`, `V2-AUTH-*`, `V2-MIG-*`, `V2-SAFE-001`, `V2-FILES-*`, `V2-MEDIALIB-*`
-and new `V2-OPS-001`–`V2-OPS-008`. Explicit deferrals narrow delivery, not stable product requirements.
-
-## Operator journey and Required Surfaces
-
-| Stage | Required experience |
-|---|---|
-| Entry | Shared-shell `操作与任务` at `/ui-v2/operations`, existing Task/Job links, Files completion or a linked Automation run. Opening creates no work. |
-| Visible state | Bounded searchable runs, trustworthy counts, operation/scope/trigger, queue/Worker conditions, stages, per-item outcomes, known effects and safe next actions. |
-| Action | Inspect detail/records/export; start selected-file organization through live Files selection and exact Preview; request permitted pause/cancel; safely continue or resolve an item and reanalyze/re-authorize where required. |
-| Success | Admission promptly yields a durable visible run; items survive refresh/restart; progress reflects known outcomes; continuation links to the original item and preserves siblings. |
-| Failure | No ready Worker, missing pin, changed source, stale decision, permission denial, Provider/Storage failure, partial/unknown effect or unknown submission outcome retains durable state and a meaningful next action. |
-| Recovery | Refresh actual state after uncertain admission; fix the named prerequisite; retain input; resolve the exact item, rerun bounded analysis and confirm the reviewed plan if mutation is needed. Unknown effects stay investigation-only. |
-
-Required surfaces: native V2 list/detail/records and task-linked recovery; typed API read/command
-boundaries; shared Python projection/admission/Worker behavior; durable historical links/evidence;
-Files/Preview/execution return context; compatible `/api/v1/*`, V1, Task/Job and Automation links.
-Automation definitions and Notifications keep their own pages.
+All four engine fields exist. `maximumActiveJobs` counts pending plus running Jobs in the shared
+AutomationJob admission pool, not execution parallelism. `staleJobAgeSeconds` is a stale-update
+observation threshold, not a task timeout or automatic replay instruction. Settings metadata labels
+polling values hot-consumed, but the Base resident Worker/Scheduler capture their poll interval at
+startup and `ResidentLoop` retains that value. API configuration binding alone is not evidence that
+those processes changed cadence. This Slice must close that concrete consumption gap for its four
+fields; it is not authorization to rewrite the queue or general deployment administration.
 
 ## Required Outcomes
 
-### RO-1 — Unified, reference-aligned task center
+### RO-1 — Reference-aligned inventory and truthful statistics
 
-- Replace the Operations hub with the real inventory, summary cards, text search, status/operation-
-  kind/time filters, refresh and bounded paging. Distinguish no work, no matches, unavailable data,
-  stale data and insufficient permission.
-- Selection opens the detail panel; close restores the list. Supported detail URLs, browser history,
-  refresh and authentication continuation preserve bounded context. Existing Task/Job links remain
-  meaningful after a Job acquires a Task.
-- Chinese business labels describe operation/state. Internal IDs, commands, pins and fences are not
-  mandatory steps; bounded diagnostic identity is available when useful.
-- Keep existing Scan/Preview discoverable. Automation and Notifications remain separate; their
-  configuration/delivery journeys are not redesigned.
-- Keyboard, narrow-screen, loading, empty, 401/403, malformed-response and reconnect paths work.
-  Poll bounded reads for active work, back off on failure, pause hidden-page polling and settle on
-  terminal state. Refresh/reconnect never replays a command.
+Deliver one native Automation workspace with `任务列表 / 执行记录 / 全局设置`. The header's settings
+shortcut opens that same settings surface. Reuse the existing shared light shell, typography,
+icons, blue primary actions, light borders and status badges; no alternate shell.
 
-### RO-2 — One truthful run projection and server-side queries
+The list has name, scheduling enabled state, mode, source ResourceLibrary/scope, readable schedule
+and timezone, item limit, next scheduled run, latest processing outcome/time and available actions.
+Its secondary text may derive from scope/mode; a new free-form description field is not required.
+New/Edit/Preview/detail open only by explicit navigation. Provide real empty/setup/dependency/error,
+loading and denied states, responsive layout, keyboard use and refresh-safe deep links.
 
-- Compose explicit durable Job/Task/manual-execution links into one visible run. Pre-Task pending
-  or failed admissions and standalone Tasks remain visible. Never join by filename/time/labels.
-  Queue completion cannot override the linked Task's partial or failed result.
-- Count linked admission/processing once. Different Automation occurrences, retries and recovery
-  continuations remain traceable attempts; continuation does not erase original results. All
-  existing command families, including both library kinds' direct-file operations/transfers, are
-  discoverable; unfamiliar legacy commands get safe labels rather than disappearing.
-- Search business label/safe scope and filter status, operation kind and creation-time range on
-  the server. Deterministic bounded paging binds cursors to filters and authorization context.
-  The browser cannot filter/merge independently truncated collections.
-- Cards and filtered totals use the same authorized population and consistent read basis. Status
-  counts partition it; `待处理` is a labelled overlapping attention facet, not another mutually
-  exclusive terminal state. Card click applies its filter. Label count scope; no page-only totals
-  or unavailable-as-zero. Concrete card grouping may follow this semantics without fixing sample counts.
-- Supply stable business name, operation kind, trigger and historical source/target scope from
-  durable admission evidence or the pinned snapshot. New work retains necessary display context;
-  legacy missing evidence is explicitly unavailable. Current Active rename/delete/root changes
-  cannot rewrite history. Names/paths/search/errors/export cannot expose host roots or secrets.
-- Necessary projections/indexes/additive persistence are allowed with compatible migration and
-  bounded query cost. They are not a second execution authority.
+Backend-authoritative bounded search, enabled/mode/source filters, stable sorting and pagination
+must keep every authorized definition reachable. Draft-only legacy definitions remain labelled and
+reachable for recovery, never counted or toggled as published. New definitions start disabled;
+copy creates a new identity, disabled schedule and no copied execution authority.
 
-### RO-3 — Truthful progress, detail and operation records
+Provide published definition/enabled counts, month-to-date admitted run count, mode-aware run success
+rate, and clearly labelled run-count comparison with the previous month's equivalent elapsed local
+calendar period (clamped to that month's end). Return the actual timezone/window and metric basis.
+Use the configured system timezone for these cards, separately from each Cron timezone; no timezone
+editor is added here. Scheduled and manual definition-linked runs count once by durable admission;
+Job/Task/execution links must not double count. Standalone diagnostic/grant-preflight Preview and
+grant attempts or rejected admissions are not runs; an admitted scan-and-plan run does count even
+though its processing command is Preview. The success denominator is terminal runs in that admitted cohort, including failed,
+partial, cancelled and terminal-uncertain outcomes; active/waiting runs are separately visible and
+excluded. A successful no-work completion is labelled as such; skipped files are not organized files.
+No denominator or comparable prior count means `暂无可比数据`, not invented percentages. Unavailable
+queries are not zero. Cards query the full authorized population, never just the current page;
+state clearly which filters apply and maintain a consistent server read basis.
 
-- Aggregate state, pipeline stage and item disposition remain distinct. Show readiness blockers and
-  pause/cancel request versus acknowledgement without claiming instantaneous interruption. Concurrent
-  work may show active item count/list rather than inventing one uniquely current file.
-- Use durable task-kind-specific progress. Unknown discovery totals are indeterminate. Known totals
-  reconcile mutually exclusive pending/active/waiting/success/skipped/failed-partial/ignored/cancelled
-  item counts as applicable. Analysis completion is not Storage success; scan errors and attachment
-  steps stay separate from primary-item counts. Waiting/ignored/uncertain never means success;
-  completion percentage is not success percentage. ETA can be omitted/unknown; prediction is not required.
-- Detail shows scope, trigger, times, progress and independently paged/filterable items.
-  `操作记录` shows durable item plan/result/steps and bounded related control/recovery audit/log
-  evidence. Result truth does not depend on logs; missing legacy detail is not invented.
-- Explain recognition identity, policies, target, conflict, completed steps, cleanup and effect
-  certainty where applicable. Fetch task-linked logs on the server, not the entire global log.
-  Export eligible results through existing secret-free JSON packages, labelling bounded/truncated
-  export instead of implying completeness.
+### RO-2 — Native definition lifecycle with one checked Save
 
-### RO-4 — New organize entry completes the live-file journey
+Provide typed create/edit/copy, enable/disable and reference-safe removal of a definition, using the
+existing ResourceLibrary IDs, safe relative sub-scope, three modes, item bound and exactly one of
+interval or Cron with required IANA timezone. Daily/weekly convenience controls compile to the same
+supported Cron semantics; advanced Cron remains available. Preview upcoming times and invalid/DST
+behavior through the same backend schedule calculation, without emitting work.
 
-- `新建整理任务` starts native bounded ResourceLibrary file selection using existing Files authority
-  and return context. Reusing the Files route is acceptable; a generic explanation/link page alone
-  is insufficient.
-- Single or bounded multiple eligible live files enter the existing intent/Preview/confirm flow.
-  Server resolves SourceIdentity, RecognitionType-bound policies and immutable plan; FileIndex
-  cannot authorize physical selection or execution.
-- Preview explains targets, operations, attachments, conflicts and destructive implications.
-  Explicit execution submits the exact reviewed selection with server-held authority, no CLI/token
-  handling. Known admission returns to the task center with that run selected, including Worker waiting.
-- Missing setup/policies/permissions, stale file/Preview, conflicts and unknown admission preserve
-  selection/input or durable work and offer a safe next action. No repeated admission/fallback.
-  Files-originated Organize and existing bounded Scan/Preview remain usable.
+Save and lifecycle commands compose a focused successor from the exact published Active, validate
+the whole candidate and applicable evidence, then atomically publish it. The operator does not
+manually orchestrate Draft/Validate/Activate. No unrelated open Draft edits or sibling definition
+changes ride along. Stale/failed publication preserves the previous Active and correctable input;
+unknown submission is read back before deliberate resubmission. Reads never create Drafts.
 
-### RO-5 — Backend-authoritative controls and safe Web continuation
+Published, enabled, authorized and execution-ready remain distinct. Saving an enabled definition
+makes it eligible for future Scheduler evaluation but never synchronously emits a Job or grants
+execution authority. Show missing grant/readiness as a blocker, not a working green switch alone.
+Disabling stops future scheduled emission at the checked boundary; it is not cancellation or grant
+revocation and does not silently rewrite already admitted work. Separate existing cancel/revoke
+controls explain their effects. Removal enforces the existing configuration/revocation permissions,
+stops future scheduling and revokes future unattended
+mutation authority without erasing grants/audits, historical pins, occurrences or linked results;
+in-flight effects remain subject to existing safe-boundary semantics. Reference conflicts return
+bounded repair guidance. Retained history remains readable even after the definition leaves Active.
 
-- Render backend-advertised actions; revalidate permission, state, ownership and optimistic version
-  on submission, with duplicate/concurrent protection. Explain actual unavailable actions; frontend
-  state never grants authority.
-- Cancellation targets the actual queue/execution owner. Pause/cancel is cooperative, preserves
-  completed effects and explains in-flight calls. Request acceptance and observed stopping stay
-  distinct; no force-kill, implicit rollback or media deletion.
-- Safely paused asynchronous operator workflows that offer Pause must provide native Web Continue
-  for the exact remaining admitted scope. Extend durable queued continuation where needed using
-  existing Worker/checkpoint/admission/fencing, not long synchronous HTTP or shelling out to CLI.
-  Preserve existing safe Files transfer continuation.
-- Continue preserves pin and excludes completed/ignored/uncertain effects, rechecks source,
-  capability/current permissions and applies the execution path's authority rules. A stored
-  `execute_authorized` flag cannot reissue consumed one-shot authority or override a revoked
-  unattended grant. Changed plans or insufficient authority require native Preview/explicit intent.
-- Legacy/synchronous work that cannot safely continue explains missing evidence/unsupported path.
-  This exception cannot omit Continue for new supported pauseable async work or make CLI the
-  ordinary recovery path.
+### RO-3 — Exact Preview and scoped unattended execution
 
-### RO-6 — Task-scoped native recovery without replay
+Native forms complete the existing zero-media-mutation Preview and explicit grant/revoke journey.
+Preview shows source bound, RecognitionType/policies, identity, destination, operation, conflicts,
+capabilities, expected effects, ineligible items and next actions. Long analysis uses durable work.
+Evidence identifies the exact tested candidate/published definition and becomes stale when its
+required binding changes; a draft Preview is never shown as Active or as execution authority.
 
-- Every failed/waiting/partial item exposes stage, blocker, durable state, known operations, effect
-  certainty, retry safety and allowed actions. Success stays terminal and visible. Unknown media
-  effects offer investigation/evidence/export, not Retry/Execute.
-- Complete task-linked Recognition selection/ignore, Metadata candidate/correction/ignore,
-  Classification decision and conflict-resolution through existing services and legal choices.
-  Typed forms preserve input and reject stale checkpoints. Saved review decisions do not execute
-  media or grant overwrite/delete permission.
-- An explicit continuation may compose safe decision persistence and bounded analysis admission
-  while keeping exact Preview/mutation authorization separate. Only meaningful intent, ambiguity
-  or authority needs operator interaction. No raw checkpoint/revision/token entry, V1 or CLI fallback
-  for the ordinary task-linked recovery journey.
-- Support single eligible failed analysis and explicitly selected bounded failed-item batches
-  through existing recovery gates. Revalidate each selection: mixed eligible/stale/successful/unknown
-  items have independent accepted/refused outcomes. No resetting all failed statuses, automatically
-  including future failures or replaying siblings.
-- Link original item, decision, continuation, new Preview/execution and outcome. Preserve original
-  history after failure/restart. Missing pins refuse safely; fixing Active does not repin history.
-  Configuration editing stays in Settings/Rules with safe return/refreshed eligibility.
-- Retired file-level re-recognition, metadata rematch, file re-plan and recognition retry-pending
-  endpoints stay retired. Use retained Task/checkpoint/decision boundaries.
+Initial unattended grant requires exact valid Preview and explicit review of scope, limits, mode
+and permitted effects. Keep existing grant validity/revocation rules authoritative; saving, copying,
+enabling or broadening a definition cannot silently create or expand authority. Valid scheduled
+authority permits future due runs without per-run Preview/Execute clicks, while normal per-item
+planning and current mutation checks still apply. Blocked items remain independently recoverable.
 
-### RO-7 — Integration, privacy and failure recovery
+Scheduler remains an idempotent due-occurrence emitter, preserving existing interval coalescing,
+Cron/timezone/DST and restart behavior. It cannot choose policies or mutate media. Existing locks,
+claims and fences protect overlapping manual/scheduled work; no new overlap/backfill policy is added.
 
-- History, controls and admitted continuations survive restart/Active changes with pins and fences.
-  Missing/stale Worker, schema mismatch, unsupported command and missing pinned dependency explain
-  waiting/refusal and the next action.
-- Web/API share application behavior. Existing Files, MediaLibrary, Rules, Automation, Notifications
-  and V1 remain functional, with links returning to the affected run/item.
-- Read/detail/filter/refresh/export creates no work, invokes no Provider and mutates no Storage.
-  Explicit eligible correction/search/analysis uses the bounded Provider abstraction. Failed reads
-  are not empty/success and cannot authorize resubmission.
-- Backend redacts secrets, endpoints, host paths and adapter exceptions. Reconcile unknown command
-  outcome from durable identity before another explicit action. Forms/selections/cache do not leak
-  across principals after authentication changes.
+### RO-4 — Deliberate Run once with unchanged schedule
 
-## Safety Invariants
+`运行一次` uses the exact published definition, source scope, mode and item limit. A disabled
+schedule may be run manually with current command permissions; this does not enable the schedule,
+revive a grant or bypass execution gates. Draft-only work must first be published.
 
-1. Storage ports confine media I/O; only OrganizerExecutor mutates. Scanner, Parser, Recognition,
-   Metadata, Naming, Classification, Planner and DryRun remain zero-mutation.
-2. Job, Task, item, Result and Automation Definition stay distinct. Run projection grants no authority
-   and creates no parallel queue/task state machine.
-3. RBAC, exact scope, live source identity, capability, immutable pin, locks/leases/fences, audit and
-   optimistic admission remain backend-authoritative at every applicable boundary.
-4. Preview/decision persistence grants no execution. Delete/Overwrite/cleanup require explicit policy
-   and authority. No silent operation fallback or scope expansion.
-5. Continue/retry does not replay success, ignored terminal items or unknown effects; partial known
-   effects continue only where the safety gate proves the specific next operation safe.
-6. New Active governs new admission, not historical repinning. RecognitionType C remains C under
-   A Naming/Classification/Organize reuse.
-7. Pause/cancel is cooperative and does not undo effects. Worker ownership/command readiness, not
-   API liveness or UI state, governs execution availability.
-8. Memory-only principal authentication, bounded redacted evidence and no FFmpeg/FFprobe remain.
+Scan-only and scan-and-plan admit bounded existing asynchronous work with the appropriate command
+permission. Automatic-organization Run once enters the existing manual exact Preview and explicit
+one-shot execution journey: discover/select a bounded live source set within the definition scope,
+show the reviewed effects, then execute exactly that selection. Reuse existing selection/Preview/
+execution authority; do not turn a persistent scheduled grant into manual execution permission or
+execute a changing whole-library scope. Expensive discovery/analysis is durable and cancellable at
+existing safe boundaries. A preflight is not counted as an admitted media execution.
 
-## Explicitly Deferred / Excluded
+Pin configuration/definition context at creation, refuse stale admission without silently repinning,
+and preserve the historical origin through the linked Job/Task or existing manual execution record.
+Use existing corresponding admission/Worker services; do not create a dummy Job or parallel engine
+merely to satisfy a display model. A durable manual trigger link distinguishes it from scheduled
+occurrences and makes it visible in both Automation history and Operations without double counting.
 
-- Unbounded whole-library manual organize, MediaLibrary as new organize source, new pipeline modes,
-  file operations/providers, media uploads/downloads or automatic scheduling from this page.
-- Automation definition/global-settings redesign, notification or dashboard redesign, standalone
-  global Review inbox, cross-task bulk review, arbitrary historical Reprocess and V1 retirement.
-- History deletion/retention/archival, task rename/edit, priority/reordering, queue replacement,
-  distributed workers, hard interruption and universal rollback. REQ-TASK-004's broader history
-  management remains a product requirement outside this delivery boundary.
-- Automatic uncertain-effect reconciliation/replay, new destructive authority, failed-batch automatic
-  execution and new Provider switching/identity/secret-store systems.
-- Poster acquisition, fabricated ETA/byte-speed, required ETA prediction, WebSocket/SSE infrastructure,
-  exact numbered-page jumps, pixel-identical fixtures and image changes/recompression.
-- New policy semantics or restoration of retired direct file retry/re-recognition/rematch/re-plan APIs.
+Atomic request reconciliation prevents double-click, concurrent or ambiguous-network resubmission
+from creating duplicate work or consuming authority twice. Preserve principal isolation across
+reload/reconnect, including Unicode identities. Manual runs do not advance/reset next due time or
+consume a scheduled occurrence. Capacity, authorization, missing pin and readiness failures return
+safe next actions; success immediately links to the selected durable run and back to its definition.
+
+### RO-5 — Cross-definition history, results and native recovery
+
+Provide bounded server-filtered history by definition, mode, trigger, outcome and time, including
+scheduled occurrences and manually admitted runs. Pending/pre-Task failures remain visible. Keep
+scheduler blocked-emission diagnostics distinct from actual admitted runs and processing outcomes.
+Latest-result projection and statistics must respect linked Task/items, not interpret Job completion
+as successful organization. History preserves name/scope/mode/version at admission or labels missing
+legacy evidence; current rename/remove cannot rewrite it.
+
+Expose start/end, counts, reached item bound, failure/effect certainty and concrete next action.
+Reached bound does not prove scope exhaustion. Reuse native Operations detail, records/export,
+cooperative controls and per-item decision/analysis/continuation instead of another recovery engine.
+Preserve list/filter/definition context when returning. Original, continuation and sibling results
+remain independently traceable across restart; uncertain effects stay investigation-only.
+
+### RO-6 — Global settings with actual consumer adoption
+
+Provide the reference-style form, help panel and schedule/timezone explanation. Its four fields are:
+
+| Field | Operator meaning and authority |
+|---|---|
+| `automation.maximumActiveJobs` | Maximum pending + running Jobs in the shared admission pool, not number of threads/workers or media-file concurrency. Lowering it blocks new admissions until capacity becomes available; existing work is not killed. |
+| `automation.staleJobAgeSeconds` | Age since last durable running-Job update used for stale observation. It neither limits total runtime nor authorizes cancellation/requeue/replay. |
+| `automation.workerPollSeconds` | Actual resident processing Worker polling cadence, separate from heartbeat/lease and from per-Job pipeline policy. |
+| `automation.schedulerPollSeconds` | Actual resident Scheduler due-check cadence, separate from each definition's schedule and timezone. |
+
+Use backend validation and units, including finite positive numeric checks and existing integer
+bounds; reference example values/ranges are not new defaults or validation authority. Unsupported or
+unknown settings fail before publication. Optional Advanced JSON shows only the safe supported subset.
+
+One Save performs exact focused managed publication for these fields; no unrelated Draft changes,
+secret values, deployment changes or media work. System Settings and Automation share this authority
+and consistent links/readback rather than maintaining duplicate settings stores.
+
+For the supported resident deployment, actual Worker/Scheduler loops adopt new configured polling
+values at a safe loop boundary without routine restart, including idle and busy transitions and
+startup before first Active. A bounded configuration recheck must also handle a previously long wait;
+settings adoption must not depend on work arriving. Keep heartbeats/leases alive and preserve pins
+and authority of admitted/in-flight work. API/admission/Scheduler capacity and stale observations use
+the appropriate current settings without rewriting an old Job's media pipeline configuration.
+
+Expose published target and actual consumed values/version with freshness per relevant live consumer.
+A process report is evidence only after that consumer adopts the values. Missing/stale/stopped or
+mixed-version consumers show pending/unavailable with a next action, never collective success inferred
+from an API-loaded snapshot. Explicit CLI/deployment poll overrides retain precedence and are clearly
+shown as overrides; Web Save cannot rewrite them or claim adoption. Invalid/unavailable Active stops
+new unsafe admission/emission, leaves actionable waiting state and does not silently use cached
+business authority. Intact admitted pins remain governed by their existing execution boundary.
+
+### RO-7 — Shared authority, compatibility and complete failure journeys
+
+Web/API use the same validation, applicability, permissions, publication, admission, grants, query and
+recovery services. Existing V1/API/CLI configuration and old Automation/Task/Job links remain compatible
+or resolve through a truthful contextual route. Empty Active is valid and offers dependency guidance;
+absence of Active leads to Settings, while broken prior Active offers recovery rather than new setup.
+
+Permission loss, stale forms/evidence, conflicts, missing secret/pin, storage/provider faults,
+malformed responses, 401/403 and unknown submissions preserve independent durable state and operator
+input where safe. Neither browsing nor polling invokes Provider/Storage mutation, creates work or
+implicitly grants authority. Redact credentials and private host roots. Preserve C identity under
+NamingPolicy A and ClassificationPolicy A. Cross-page Settings, Rules, Files, Operations, admitted
+transfers and resident service behavior remain protected.
+
+## Required Surfaces
+
+- Shared-shell V2 Automation inventory, typed lifecycle/Preview/authority journey, records and settings.
+- Typed authenticated API read/command projections over shared Python application authority.
+- Existing managed configuration, scheduled occurrence and manual admission/Worker/persistence paths.
+- Real resident Worker/Scheduler settings adoption and fresh per-consumer readback.
+- Native Operations detail/recovery and System Settings/ResourceLibrary/Rules return links.
+- Compatible existing routes and additive durable migration for any necessary links/consumer evidence.
+
+## Safety Invariants and UX Constraints
+
+All permanent invariants apply: Storage-only file access, OrganizerExecutor-only mutation,
+zero-media-mutation Scan/Parse/Recognition/Metadata/Naming/Classification/Planner/Preview,
+explicit overwrite/delete policy and intent, capability checks without silent operation fallback,
+source confinement and stability, bounded work, current RBAC, audit/redaction, exact immutable pins,
+atomic admission/publication, locks/claims/leases/fences and no automatic uncertain-effect replay.
+
+ResourceLibrary is the organizing source. Definition and Scheduler never select per-file Provider,
+Naming/Classification policies, final MediaLibrary path or transfer action; the existing
+RecognitionType policy chain does. Scan/plan-only cannot acquire mutation capability. Grant/revoke
+is separate from Preview, schedule enablement and manual one-shot authority. Long work is durable;
+controls operate at safe boundaries and do not promise rollback or immediate interruption.
+
+The two PNGs define business relationships, composition and visual style only. Names, counts,
+dates, paths, timing values and suggested ranges are illustrative. Preserve originals, do not add
+sample business configuration or reproduce fixture data. Use real backend actions and bounded
+explanations; no raw token/identifier ceremony. Reference checksums at activation:
+
+- `docs/pics/自动化.png`: `d2f759ead56a30dce344ccce97e7c119e144ca728a31b3af8e9a355eefa6ba34`
+- `docs/pics/自动化-全局设置.png`: `68d91070e859dd363d3e45dd2d21e38783e0cfbef0867ce28c3f42eac7d6c7b9`
+
+These user-supplied files are pre-existing untracked workspace artifacts at Base. Preserve them and
+the unrelated `docs/pics/媒体库.png`; do not stage/recompress them as part of this activation. Missing
+reference availability must be reported rather than replacing the originals with approximations.
+
+## Explicitly Deferred
+
+- New pipeline modes, scheduled cache/log cleanup, backfill/catch-up controls, overlapping-run policy,
+  priority/reordering, queue replacement, distributed workers or new concurrency/throughput controls.
+- New Providers/Storage operations, per-definition policy/destination overrides, MediaLibrary as
+  organizing source, unbounded whole-library manual execution or file uploads/downloads.
+- Notifications/Dashboard/global System Settings redesign beyond necessary Automation integration;
+  identity/Secret Store/deployment editing, changing CLI override authority or auto-restarting services.
+- Global Review inbox, cross-task bulk review, arbitrary historical Reprocess, new recovery semantics,
+  history deletion/retention/archiving, universal rollback or automatic uncertain-mutation replay.
+- New metadata acquisition, media thumbnails/posters, free-form definition descriptions, pixel-exact
+  reference fixtures, image edits, fabricated statistics/ETA or mandatory streaming infrastructure.
+- V1 retirement and changes to frozen V1 requirements or accepted historical Slice boundaries.
 
 ## Slice Acceptance Criteria
 
 | ID | Acceptance |
 |---|---|
-| AC-1 | Native shared-shell inventory/detail/records follows reference structure/style with real data, closed detail on entry, selected detail/deep links, narrow/keyboard use and preserved context. |
-| AC-2 | Run remains visible before/after Task creation without double count; direct Tasks/all existing command families remain visible; continuations retain linked independent history. |
-| AC-3 | Server text/status/kind/time filters, bound cursors, totals and status/attention counts stay authorized and truthful across pages, changed filters, concurrent work and empty/failure states. |
-| AC-4 | Historical name/scope is durable/pinned or explicitly unavailable; Active rename/delete never rewrites history; library kinds and privacy remain distinct. |
-| AC-5 | Unknown totals, queue/wait/pause/partial/ignored/unknown effects, concurrent stages and scan errors yield reconcilable progress; Preview is not organize success and ETA is not invented. |
-| AC-6 | Detail/records provide independent paged items/steps/results, explanations, task-linked logs/audit and scoped JSON export without hiding siblings or relying on logs as sole truth. |
-| AC-7 | New-task and Files-selected-file journeys reach exact Preview, explicit authorized execution and the selected durable run; stale/unknown admission never duplicates work or changes source authority. |
-| AC-8 | Backend pause/cancel and native Continue work at safe async boundaries; duplicate/stale controls, in-flight calls, lost Worker and insufficient/revoked authority remain safe/actionable. |
-| AC-9 | Task-linked recognition/metadata/classification/conflict decisions and single/bounded failed-analysis recovery complete in V2 through exact checkpoints, analysis and separately authorized mutation. |
-| AC-10 | Mixed recovery preserves per-item admitted/refused state; successful/ignored/unknown effects are not replayed; original and continuation history survive restart. |
-| AC-11 | Reads/refresh/export are side-effect free; malformed/401/403/unknown outcomes/missing pins preserve evidence and privacy; Active changes cannot rewrite admitted work or C identity. |
-| AC-12 | Focused/full validation, real Python/Worker browser journeys, compatible affected migrations/packaging and unchanged reference satisfy final T4 evidence; deferrals stay excluded. |
+| AC-1 | Reference-aligned list/records/settings use real data, shared shell, refresh-safe navigation, responsive/keyboard behavior and actionable empty/error/denied states. |
+| AC-2 | Server search/filter/sort/page and full-population metrics remain consistent, authorized and truthful across pages, month/timezone boundaries, zero denominators and unavailable data. |
+| AC-3 | Typed lifecycle and one checked Save publish only the intended change; stale/concurrent/failed/unknown publication preserves prior authority and recovery without sibling Draft activation. |
+| AC-4 | Schedule, scope, limits and next times use existing semantics; exact Preview/grant/revoke complete natively, copies gain no authority, broadened scope cannot reuse insufficient authority. |
+| AC-5 | Due occurrences remain unique across concurrency/restart/DST; scheduled valid grants execute without per-run clicks while current scope/capability/conflict/revocation gates remain enforced. |
+| AC-6 | Run once completes all three modes with bounded live-source authority, manual exact one-shot execution where needed, duplicate/unknown-admission reconciliation and no schedule advancement. |
+| AC-7 | Definition, manual/scheduled run, Job/Task/execution and per-item results retain durable links without double count; pre-Task failures and removed-definition history remain reachable. |
+| AC-8 | Latest outcomes/progress/bounds and native task-linked recovery preserve independent results; waiting/partial/unknown effects are not false success or replay candidates. |
+| AC-9 | Settings Save validates/publishes the exact four-field scope; capacity and stale observation retain their real semantics and no setting grants media authority. |
+| AC-10 | Real running Worker/Scheduler adopt new polling values without restart or work arrival; fresh per-consumer evidence distinguishes target/adopted/pending/override/stale state and retains old work pins. |
+| AC-11 | Web/API RBAC, Active/Draft separation, redaction, zero-side-effect reads, C identity and compatible Settings/Rules/Files/Operations/V1 journeys are maintained. |
+| AC-12 | T4 final regression, real Python/Worker/Scheduler browser/process paths, affected upgrade/packaging and reference/private-file checks establish the promised outcomes without expanding deferrals. |
 
 ## Final Validation Expectations
 
-- B assigns Task levels by actual risk. Lifecycle/continuation, execution authority, pins, migrations
-  and fencing require T4; isolated presentation/projection may justify T2/T3. This activation is
-  documentation planning, not a product-test pass or implementation claim.
-- Build focused Python evidence on Operations workspace, Task persistence/pause/retry, recovery
-  admission/single/batch continuation, recognition/metadata/classification/conflict, manual Organize,
-  Files transfers, Worker, logs/export and API security suites.
-- Exercise repository queries across pages and Job-to-Task transition, consistent counts, legacy
-  missing evidence, command families, concurrent changes and redaction; not only field assertions
-  or frontend fixtures.
-- Prove success, invalid input, conflict, stale/duplicate admission, permission denial, lost Worker,
-  missing pin/secret, changed source, partial/unknown effects, sibling exclusion, Active A-to-B
-  isolation and restart/fencing with temporary storage and fake/local services.
-- Web model/query/component tests cover navigation, filters, polling, control reconciliation, stale
-  forms and mixed recovery. Real Python/Worker browser paths cover selected-file organize, queue
-  visibility, pause/continue/cancel, decision-to-result recovery and investigation-only unknown effects.
-- Slice Final normally runs full Python/Web regressions; affected browser tests; frontend typecheck,
-  lint/format/build; Python format/lint/compile; governance, whitespace and Base..Head manifest/private
-  file audit; package/static serving and schema/upgrade rehearsal if persistence changes. Prove
-  resident continuation after restart in the supported deployment boundary, not only mocked HTTP.
-- Instrument no media mutation on reads/Preview/decision-only actions, no Provider on page reads,
-  redaction and C identity. Verify original reference checksum. Production TMDB/SMB/OpenList/S3/R2
-  or user media is not required for unit tests; unavailable real-service gates are not PASS.
+This is scope/architecture planning, not an ordinary factual T0 sync or an implementation-test PASS.
+B assigns Task levels by actual risk; Active publication, grants, execution, migrations and resident
+adoption require T4. B sizes coherent vertical Tasks, normally roughly 3–7; more than 8 requires the
+workflow complexity reassessment, not one Task per tab/field/endpoint/test.
+
+- Exercise existing Automation definitions, occurrence/Cron/DST, Preview/grant/execution, admission/
+  fencing, settings/configuration and resident suites plus Operations/manual-organize/recovery/RBAC.
+- Cover success, invalid/finite/boundary input, missing dependencies, stale/concurrent publication,
+  unknown admission, Unicode principal isolation, capacity reduction, revocation during work,
+  missing pin/secret, source change, mixed outcomes, current Active A-to-B isolation and restart.
+- Query fixtures exceed page limits and include scheduled/manual links, pre-Task failure, partial/
+  waiting/cancelled/uncertain/no-work runs, removed definitions, legacy missing evidence and calendar
+  boundaries. Validate database-level query/metric behavior, not only frontend fixtures.
+- Native Web tests cover form dependencies, check/save/grant separation, polling, return routes,
+  denied/stale/unknown states and settings consumption. Real Python/SQLite/Storage/Provider/Worker/
+  Scheduler browser paths prove create -> Save -> Preview -> grant -> scheduled result, all Run-once
+  modes -> Operations, and an affected item's existing native recovery.
+- Actual resident subprocess tests change settings while processes are idle/busy, start before Active,
+  observe adopted cadence independently of HTTP echoes, and cover long waits, override, loss of
+  consumer, DB/config failure and restart. Assert process identities persist when no restart is needed,
+  and admitted old work stays pinned. Use controlled clocks/fakes where appropriate for DST/metrics.
+- Slice Final normally runs full Python/Web regression, affected browser/process suites, Python
+  format/lint/compile, Web typecheck/lint/format/build, governance/whitespace and exact Base..Head
+  manifest/private-file audits. Rehearse Base schema44 -> final migration and preserved historical
+  rows/pins/authorities if schema changes; include wheel/static serving and supported Compose lifecycle
+  checks material to resident changes. Record actual failures/skips/unavailable gates honestly.
+- Instrument reads, publication and Preview for zero media mutation; passive reads call no Provider.
+  Retain C-with-A/A regression. Use temporary storage/fake/local services, never production media or
+  private credentials. Verify both reference checksums; do not weaken tests to turn missing evidence
+  into PASS. No FFmpeg/FFprobe.
 
 ## Delegated factual updates and stop rule
 
-After activation checkpoint, B owns Task sizing/review. Delegation covers only factual Implementation
-Head, Task progress, Closure Packet and test evidence. Material outcomes, deferrals, Base, safety or
-acceptance changes return to A. Normally plan roughly 3–7 coherent vertical Tasks; more than 8 needs
-workflow complexity reassessment. Do not plan one Task per tab/field/endpoint/test.
-
-After every Task PASS, reevaluate RO-1 through RO-7. Once outcomes are met, run Slice Final, emit one
-Closure Packet with `SLICE READY FOR A REVIEW`, set `READY FOR A REVIEW` and stop. Only A reviews
-Base..Implementation Head and declares PASS / CLOSED; P2 polish is not a new Task.
+Only A materially changes this Contract, Base, Required Outcomes, safety, acceptance or deferrals.
+After activation B/Developer may update factual Implementation Head, Task progress and test evidence
+within their roles. B owns Task sizing/review. After each Task PASS reevaluate RO-1 through RO-7.
+Once all are satisfied, stop creating Tasks, run Slice Final, prepare the Closure Packet, set
+`READY FOR A REVIEW` and report `SLICE READY FOR A REVIEW`. Only A reviews the complete
+Base..Implementation Head and declares PASS / CLOSED; non-blocking polish is not another Task.
 
 ## Closure Packet
 
-```text
-Slice: 42 — V2 Operations and Tasks Workspace
-Base SHA: ffee77348cebcb05e356c8111c5861ed64ca0388
-Head SHA: ce3fc2a3e70d40279fa725b5d7dc838d11123980
-Developer report: f2ac5f84d0cd0c44c78fc547ad44f9c5b9e17903
-```
-
-Required Outcomes:
-
-- RO-1 COMPLETE — unified reference-aligned inventory, selection, filters, paging, polling,
-  deep links/authentication continuation and bounded error/empty/narrow/keyboard states.
-- RO-2 COMPLETE — explicit Job/Task/execution links, authorized server queries and consistent
-  counts, durable public scope labels and independently traceable continuations.
-- RO-3 COMPLETE — task-kind-specific progress, uncertainty, paged items/records, exact result/
-  step evidence, related logs/audit and bounded redacted JSON export.
-- RO-4 COMPLETE — new organize -> live ResourceLibrary Files selection -> exact Preview ->
-  explicit execution -> selected durable run, with safe stale/unknown admission recovery.
-- RO-5 COMPLETE — cooperative owner-aware controls and real queued remaining-scope continuation,
-  original scope/pin/budget/fences, native exact Preview when renewed authority is needed.
-- RO-6 COMPLETE — native Recognition/Metadata/correction/Classification/conflict/ignore decisions,
-  safe single and mixed selected batch analysis, separate reviewed execution and linked outcomes.
-- RO-7 COMPLETE — shared API/Web application gates, restart/Active isolation, zero-side-effect
-  reads, redaction, exact principal/session isolation and legal Unicode identity recovery.
-
-Required Surfaces:
-
-- Native V2 list/detail/records and task-linked recovery: COMPLETE.
-- Typed API read/command boundaries: COMPLETE.
-- Shared Python projection/admission/resident Worker behavior: COMPLETE.
-- Durable historical links/evidence: COMPLETE.
-- Files/Preview/execution return context: COMPLETE.
-- Compatible /api/v1/*, V1 and Task/Job links: COMPLETE.
-- Automation run links with independent Automation/Notifications pages: COMPLETE.
-
-Implemented:
-
-- Shared authoritative run queries/projection/history and native task-center presentation.
-- Exact live-file organize entry, cooperative lifecycle controls and durable fenced continuation.
-- Native task-item decisions and bounded safe analysis, explicit mutation authority and per-item links.
-- Additive runtime schema39->44 migration, durable scope/display context and compatible reads.
-
-Tasks completed:
-
-- 42.1 — Unified run inventory/query/navigation — ac5a43ed89d5d782809569ce5e58aedb8f2b03cb.
-- 42.2 — Run detail/progress/records/export — faabf20dc034c4c8da310928b3f39b0512616da6.
-- 42.3 — Native new organize/admission/return — c0559eba2585fc6cd5650e21e24b3125f7526e01.
-- 42.4 — Native controls and safe queued continuation — 73b171254f626f40364d910fe15583dd896e6da1.
-- 42.5 — Native task-item decisions/failed-analysis recovery — ce3fc2a3e70d40279fa725b5d7dc838d11123980.
-
-Final Tests:
-
-- `.venv/bin/python -m unittest discover -s tests`: final serial PASS,2184 total/2177 passed/
-  7 explicit skips,386.617s. First concurrent attempt FAIL,1 Rules race failure/7 skips,604.979s;
-  unchanged `tests.test_v2_rules_workspace_commands` rerun41/41 PASS. No assertion/timeout/skip edits.
-- `web/: npm run test -- --run`: final serial PASS,65 files/1005 tests,0 skips,370.33s. First attempt FAIL,1004 passed/1 failed
-  of1005; unchanged AutomationRouter module rerun11/11 PASS. No failure relabelled PASS.
-- Five required focused Python groups combined:507/507 PASS,173.637s. Release/security/
-  migration/upgrade four modules:19/19 PASS. Full Web covers the required affected modules.
-  Exact module lists/commands are retained at `git show f2ac5f84d0cd0c44c78fc547ad44f9c5b9e17903:TASK.md`
-  under Required Tests and in `/tmp/mediaflow-b42-final/review-evidence.md`.
-- `web/: npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`:
-  21/21 PASS,1.9m,actual Python/API/SQLite/Storage/Provider/Worker.
-- `web/: npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts`:
-  1/1 PASS,16.9s,production-config Chinese principal and exact post-reload reconciliation/resend.
-- `web/: npm run test:e2e -- tests/e2e/library-files.spec.ts`:40/40 PASS,49.6s.
-- Affected Operations/manual-organize/manual-operations/deep-link specs:66 PASS/2 FAIL,2.2m.
-  Same two failures independently reproduced on unchanged original Slice Base with
-  `tests/e2e/deep-link.spec.ts --grep 'an explicit route choice at the boundary|V1 handoff does not leak'`.
-  Marked FAIL/PRE-EXISTING/UNRELATED, never PASS or hidden skip.
-- Ruff format339/check,compileall,pip check,both example config validations; Web typecheck/
-  lint/format/build; governance/whitespace/reference/private-file and exact manifest audits:PASS.
-- `pip wheel . --no-deps --no-build-isolation` and `scripts/wheel_smoke_test.py`:
-  PASS,isolated installed CLI/database/backup/restore/upgrade and lease-contention checks.
-- Real original Slice Base39 API/Preview/Worker fixture -> current44:PASS,every old column/row,
-  pins,consumed one-shot authority,plans,Tasks,Results,audits preserved; idempotent second reopen.
-- `scripts/docker_release_security_smoke_test.py`:attempts1/2 build/image/Compose inspection PASS,
-  then health wait FAIL; actual unchanged3s probe timeout evidence retained. Serial rebuild attempt3
-  UNAVAILABLE at external setuptools>=68 download. Verified reuse of the exact already-built image
-  `sha256:b189638532fc73e27984a5bd0edd684f61e09187fe7713abcb60d4b755bbc4d8`
-  matches all158 Python files and4 built Web assets. Unmodified runtime/security/host-boundary
-  assertions PASS via transparent `/tmp/mediaflow-b42-final/docker_verified_image.py` build reuse.
-  Four services healthy; resident Worker completion,static serving,RBAC,privacy checks PASS.
-- Optional dedicated real SMB/S3/OpenList acceptance and Local/SMB/OpenList/S3 endurance profiles:
-  7 explicitly SKIPPED/UNAVAILABLE; their gate-validation subset6 PASS. No production service claimed.
-- Exact attempts/logs/reproduction/manifest evidence: `/tmp/mediaflow-b42-final/review-evidence.md`.
-
-Safety Evidence:
-
-- Read/refresh/export/Preview/decision paths perform no media mutation; passive reads invoke no
-  Provider. Real recovery analysis and later explicit OrganizerExecutor mutation remain distinct.
-- RBAC,exact SourceIdentity/selection/checkpoint,pin,one-shot/grant authority,claims/locks/fences and
-  audit remain backend-authoritative. Success/ignored/uncertain siblings are not replayed.
-- Original history survives restart/Active changes; new Active never repins prior work; C with A/A
-  policies stays C. Unknown admission is reconciled before deliberate repeat; tokens remain memory-only.
-- No removed/weakened tests,hidden skips,silent operation fallback,private config or real credentials.
-  Reference SHA256 unchanged:a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86.
-  `config/alist.json` ignored/untracked/unstaged and not read. No FFmpeg/FFprobe. User PNGs preserved.
-
-Known Non-blocking Issues:
-
-- P2: two pre-existing Deep-link tests expect the retired Review link/Configuration handoff;
-  same failures on original Slice Base,current required native recovery/settings journeys work.
-- P3: existing bundle-size advisory,SQLite ResourceWarnings and jsdom navigation notices remain.
-- Validation variability: failed initial concurrent regressions/health checks and external dependency
-  download attempt remain recorded separately from passing unchanged serial/runtime validations.
-
-Explicitly Deferred:
-
-- Unbounded whole-library manual organize, MediaLibrary as new organize source, new pipeline modes,
-  file operations/providers, media uploads/downloads or automatic scheduling from this page.
-- Automation definition/global-settings redesign, notification or dashboard redesign, standalone
-  global Review inbox, cross-task bulk review, arbitrary historical Reprocess and V1 retirement.
-- History deletion/retention/archival, task rename/edit, priority/reordering, queue replacement,
-  distributed workers, hard interruption and universal rollback. REQ-TASK-004's broader history
-  management remains a product requirement outside this delivery boundary.
-- Automatic uncertain-effect reconciliation/replay, new destructive authority, failed-batch automatic
-  execution and new Provider switching/identity/secret-store systems.
-- Poster acquisition, fabricated ETA/byte-speed, required ETA prediction, WebSocket/SSE infrastructure,
-  exact numbered-page jumps, pixel-identical fixtures and image changes/recompression.
-- New policy semantics or restoration of retired direct file retry/re-recognition/rematch/re-plan APIs.
-
-Documentation Reconciliation Needed:
-
-- A reconciles Slice42 TARGET to accepted CURRENT in the Chinese canonical specification,
-  docs/product-experience.md,docs/v2-requirements.md and docs/architecture.md,including native
-  recovery replacing ordinary V1 handoff and actual runtime schema44/shared continuation boundaries.
-- A reconciles Roadmap/Progress status once after its Final Review; B has not closed the Slice.
-
-Decision: SLICE READY FOR A REVIEW
+Not submitted. No implementation Task has been planned or implemented for this Slice.
+B supplies the workflow packet with RO/surface coverage, Base/Head, compact Task references,
+actual tests/safety evidence, known non-blockers, deferrals and documentation reconciliation needed.
 
 ## A Final Review
 
-```text
-Reviewed Range: ffee77348cebcb05e356c8111c5861ed64ca0388..ce3fc2a3e70d40279fa725b5d7dc838d11123980
-Decision: PASS
-Review Date: 2026-10-06
-P0/P1 Blockers: NONE
-Closure Reconciliation: COMPLETE — one factual documentation checkpoint; repository-local closure
-```
-
-A reviewed the entire Slice range, the actual implementation and tests, the B Closure Packet and
-its retained logs. RO-1 through RO-7 and all Required Surfaces are satisfied. No Material Contract
-Change or rescope is required; Base, Implementation Head, acceptance and Explicitly Deferred remain
-unchanged.
-
-| Accepted outcome | Review evidence |
-|---|---|
-| RO-1 / RO-2 | Native shared-shell inventory, selection/detail, narrow return, auth/deep links and bounded polling; SQLite explicit-link run queries, consistent counts, filter-bound cursors and durable historical display context. Queue completion cannot replace Task outcome. |
-| RO-3 | Kind-specific progress and separate scan/attachment evidence; independently paged items/records, persisted plans/results/checkpoints, task-linked logs/audit and bounded redacted export. |
-| RO-4 | Real Python/Worker browser journey from New Task through live ResourceLibrary selection, exact Preview, explicit execution, lost-admission reconciliation and selected durable run. FileIndex and MediaLibrary do not become organizing-source authority. |
-| RO-5 | Backend cooperative controls and durable Worker continuation retain exact pin, remaining scope, budget, ownership and fences. Current authority is checked; consumed one-shot permission and revoked grants cannot be revived. |
-| RO-6 | Native task-linked legal decision forms compose existing checkpoint/recovery services; explicit bounded analysis and later authorized mutation stay separate. Single/mixed batches retain independent admitted/refused outcomes and linked history. |
-| RO-7 / Safety | Restart/Active isolation, principal-scoped reconciliation and fail-closed missing evidence; passive reads invoke no Provider or media mutation. OrganizerExecutor remains the sole media mutator; C retains C under A/A policy reuse. No private config, FFmpeg/FFprobe or reference-image change enters the range. |
-
-Validation reconciliation:
-
-- A independently ran 10 affected Python modules: **297 PASS**, 63.855s. Real Python/Worker
-  browser suite: unchanged serial rerun **21 PASS**, 1.3m; production Unicode-principal
-  reconciliation: **1 PASS**, 7.4s. Screenshots confirmed the shared-shell wide detail and complete
-  narrow detail; pixel identity is not an acceptance requirement.
-- A's first browser attempt remains **18 PASS / 3 FAIL**. The initiating failure was the existing
-  manual-choice Save/refetch versus Preview race; two later fixture-count failures followed the
-  missing admission. Source comparison confirms the same sequencing at Base. The stale Preview
-  is refused without media effects and offers refresh/regeneration; the unchanged serial rerun
-  completes the journey. This recoverable P2 issue does not leave a Required Outcome incomplete.
-- B's retained final serial regressions are credible: Python **2177 PASS / 7 SKIP** out of 2184;
-  Web **1005 PASS**. Focused, security, wheel/install and real Base39-to-schema44 upgrade evidence
-  was checked against actual logs. Earlier concurrent failures remain FAIL, not relabelled PASS.
-- The two affected Deep-link browser failures reproduce at original Base and concern retired
-  compatibility handoffs (P2). Docker health-probe failures and the later external build-download
-  UNAVAILABLE remain recorded. The exact verified implementation image passed the unmodified
-  runtime/security checks after transparent build reuse; that does not turn the failed rebuild
-  attempts into passes. Optional real-service/endurance gates remain SKIP/UNAVAILABLE.
-- Evidence: `/tmp/mediaflow-a42-review/` and the B logs indexed by
-  `/tmp/mediaflow-b42-final/review-evidence.md`. Governance, reviewed-range whitespace, reference
-  checksum and private-file/manifest checks pass. Pre-existing user PNGs remain untracked.
-
-Closure reconciliation records accepted CURRENT facts in Product Experience, Architecture
-(runtime schema44), the canonical Chinese specification and V2 requirements; Roadmap and the compact
-Progress ledger record PASS / CLOSED. `TASK.md` has no active implementation Task. No product code,
-stable requirement meaning, safety boundary or deferred scope changes in this closure. The next
-large Slice is selected in a separate A turn; none is activated here.
+Not performed. This activation is not product acceptance. Final review covers the full immutable
+Base..Implementation Head and reconciles TARGET to CURRENT only after accepted implementation.

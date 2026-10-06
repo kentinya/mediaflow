@@ -75,6 +75,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
     → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
     → Slice 42 — V2 Operations and Tasks Workspace (PASS / CLOSED; CURRENT below)
+    → Slice 43 — V2 Automation Workspace and Engine Settings (ACTIVE; TARGET below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -588,6 +589,42 @@ eligibility and authority are required before a due run may reach mutation. The 
 authority, scope, capabilities, conflicts and current snapshot at each mutation boundary. Revocation
 blocks future mutation without rewriting completed effects. Uncertain mutation is not automatically
 replayed.
+
+### TARGET — V2 Automation workspace and consumed engine settings (Slice 43)
+
+Reuse managed configuration, AutomationTaskDefinition/occurrence/grant, the existing Scheduler,
+admission/Worker pipeline and Operations query/recovery services. Typed page commands compose exact
+focused successor publication; they cannot publish unrelated Draft edits. Read models add bounded
+inventory/history and full-population metrics with real admission links and mode-aware outcomes.
+Historical display context comes from durable admission/pins, never a lookup of today's renamed or
+removed definition. Removed definitions retain readable run history and revoked authority evidence.
+
+Run once adds a durable manual-origin association, not another queue or processing model. Scan and
+plan reuse existing asynchronous command admission. Real manual organization composes bounded live
+source discovery/selection and the existing exact Preview/one-shot execution path. Its scheduled
+definition link does not authorize mutation. Admission reconciles the exact request/principal and
+definition pin atomically, preserves schedule due state, and resolves through the shared Operations
+run identity without a synthetic Job or duplicate count. Existing scheduled occurrence, miss/DST,
+grant revocation, claim/lock/fence and item recovery semantics remain authoritative.
+
+The current four Automation settings are retained. Capacity bounds the shared pending/running Job
+pool; stale age is observation of updates, not runtime termination/replay. At this Base, settings
+metadata labels poll fields hot-consumed but resident Worker/Scheduler copy the startup poll value
+into `ResidentLoop`. The API's settings-consumption projection verifies its own runtime binding;
+it does not establish another process's actual cadence. Slice 43 must implement safe loop-boundary
+adoption and fresh consumer-reported values/version before claiming these fields are effective.
+
+Separate the current engine control settings from each Job's immutable media pipeline pin. Support
+idle/busy transitions, startup without Active, bounded rechecks during long waits and unchanged
+heartbeat/lease ownership. Consumer evidence distinguishes target, adopted, pending, stale/missing
+and explicit deployment/CLI override; overrides retain precedence and cannot be changed by Web Save.
+Missing/corrupt Active does not permit stale business scheduling; independently valid old admitted
+pins retain existing execution rules. Additive persistence changes may store origin/display links
+and consumer evidence; preserve Base schema44 rows, authority, historical pins and compatibility.
+Do not add process supervision, new worker parallelism or another configuration store.
+
+These paragraphs are TARGET architecture, not a claim of completed implementation or a rewrite of
+earlier Slice acceptance. The current Slice defines the complete journey and validation boundary.
 
 ## API and Operator Web
 

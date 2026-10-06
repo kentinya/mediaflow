@@ -606,6 +606,54 @@ boundary.
 - **Recovery:** repair the definition or configuration, rerun Preview, regrant when scope changed,
   and use the item checkpoint/recovery path. No uncertain mutation is automatically replayed.
 
+### TARGET — V2 Automation workspace and engine settings (Slice 43)
+
+The two Automation references define composition/style and business relationships only. Their
+names, counts, paths, dates and parameter values are examples. Existing scheduled Automation remains
+CURRENT; this complete redesign and actual per-process settings adoption are not yet delivered.
+
+- **Goal/entry:** open shared-shell `自动化` to manage long-lived source/schedule intent, inspect
+  each run and adjust the engine. Use `任务列表 / 执行记录 / 全局设置`; the header settings shortcut
+  and System Settings link resolve to the same managed settings authority.
+- **Visible state:** real definition/source/mode/limit/schedule, enabled versus authorized/readiness
+  state, next run and actual latest outcome; server-paged inventory/history and labelled monthly
+  metrics. Draft-only objects remain recoverable but never appear as published. Job completion is
+  not media success, and reaching an item bound is not proof that the source is exhausted.
+- **Configure:** native typed create/copy/edit/enable/disable/reference-safe removal and one checked
+  Save publish only the intended exact successor. Preserve unrelated open Drafts. Copy starts
+  disabled without authority; removal preserves historical runs and revokes future unattended
+  mutation. Disabling future scheduling, cancelling existing work and revoking authority are
+  separate actions with explicit effects.
+- **Preview/authorize:** show the existing bounded zero-media-mutation chain and expected effects;
+  separately confirm scoped unattended permission. Valid future scheduled runs need no repeated
+  execution click. Relevant changes require fresh evidence/authority under the existing gates.
+- **Run once:** use the published source/mode/limit with current permissions, even if its schedule
+  is disabled. Scan/plan submit existing bounded work; automatic-organization mode enters bounded
+  live-source discovery/selection, exact manual Preview and explicit one-shot execution. Do not
+  reuse scheduled grants as manual permission or change the next due time. Show the durable run
+  immediately after admission; preflight Preview is not a completed or admitted media execution.
+- **Results/recovery:** cross-definition records preserve manual/scheduled origin and historical
+  scope, then link to native Operations detail, per-item decisions and safe continuation with
+  return context. Failed admission, capacity, invalid dependency, conflict, revoked authority,
+  stale Preview and uncertain effects explain durable state and the specific permitted next step.
+  Unknown submissions are reconciled before another attempt; successful siblings are preserved.
+- **Global settings:** present shared pending-plus-running Job capacity, no-update stale threshold,
+  Worker polling and Scheduler polling. One checked Save publishes only these fields. Show target
+  values separately from fresh actual consumer values/version; pending adoption, stopped/stale
+  process or deployment override cannot be shown as effective. Supported resident loops adopt
+  polling changes safely without routine restart; normal users do not manipulate revisions/tokens.
+- **Failure/recovery:** stale/failed Save preserves prior Active and correctable input; unknown Save
+  reads durable truth. Missing consumer evidence leads to refresh/readiness diagnosis, not a false
+  success banner. Empty Active offers dependency setup, broken prior Active offers recovery, and
+  insufficient permission offers appropriate administrator guidance. Ordinary journeys stay in Web.
+
+Statistics count each admitted definition-linked run once across Job/Task/execution links. Month
+windows use the declared system timezone; success is relative to run mode and excludes active/waiting
+work from the terminal denominator while partial/cancelled/failed/terminal-uncertain are not successes.
+Standalone diagnostic/grant-preflight Previews and rejected admissions are not runs; admitted
+scan-and-plan work does count. Previous-month comparison uses equivalent elapsed
+local calendar time, clamped to month end; absent denominators/data are explicitly unavailable.
+
 ## Operations administration
 
 ### Current
