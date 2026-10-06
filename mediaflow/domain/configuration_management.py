@@ -615,6 +615,61 @@ class RulesWorkspaceSaveError(ResourceLibrarySaveError):
         }
 
 
+class AutomationDefinitionSaveError(ResourceLibrarySaveError):
+    """A bounded, recoverable failure from one Automation definition command.
+
+    It extends the page-local Save semantics with the two facts an operator needs
+    to continue safely from the Automation workspace: which managed definition and
+    which stage of the one checked command failed.  Everything stays secret-free
+    and bounded, so a known failure keeps naming the correctable candidate while an
+    unknown outcome prompts Active verification instead of an automatic replay.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        status: int = 409,
+        definition_id: str | None = None,
+        stage: str | None = None,
+        revision_id: str | None = None,
+        durable_state: str = "active_preserved",
+        side_effects: str = "successor_draft_or_read_only_evidence_may_be_retained",
+        retry_safe: bool = True,
+        next_action: str = "correct the reported condition, then retry or refresh Active state",
+        authority_state: str | None = None,
+    ) -> None:
+        super().__init__(
+            code,
+            message,
+            status=status,
+            revision_id=revision_id,
+            durable_state=durable_state,
+            side_effects=side_effects,
+            retry_safe=retry_safe,
+            next_action=next_action,
+        )
+        self.definition_id = definition_id
+        self.stage = stage
+        self.authority_state = authority_state
+
+    @property
+    def details(self) -> dict[str, object]:
+        return {
+            **super().details,
+            **{
+                key: value
+                for key, value in {
+                    "definitionId": self.definition_id,
+                    "stage": self.stage,
+                    "authorityState": self.authority_state,
+                }.items()
+                if value is not None
+            },
+        }
+
+
 class RuntimeSnapshotUnavailable(RuntimeError):
     """The configured managed Active snapshot cannot safely be consumed."""
 

@@ -2590,6 +2590,7 @@ class ConfigurationObjectService:
         delete: bool = False,
         audit_action: str | None = None,
         audit_metadata: Mapping[str, object] | None = None,
+        allow_automation_definition_delete: bool = False,
     ) -> ManagedConfigurationRevision:
         section = self._section(kind)
         revision = self._managed.require(revision_id)
@@ -2619,7 +2620,11 @@ class ConfigurationObjectService:
         )
         current_by_id = {str(item.get("id", "")): item for item in current_values}
         if delete:
-            if kind is ConfigurationObjectKind.SCHEDULE:
+            if kind is ConfigurationObjectKind.SCHEDULE and not allow_automation_definition_delete:
+                # The general configuration surface keeps its historical
+                # "no definition deletion" boundary; the focused Automation
+                # workspace removal passes the explicit flag, and only after its
+                # own reference/authority gates have run.
                 raise ValueError("Automation Task Definition deletion is not part of this slice")
             if not object_id or object_id not in current_by_id:
                 raise LookupError(f"{kind.value} {object_id!r} was not found")

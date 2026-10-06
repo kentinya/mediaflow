@@ -20,6 +20,10 @@ from mediaflow.application.automation_definition_occurrence import (
 from mediaflow.application.automation_task_definition_preview import (
     AutomationTaskDefinitionPreviewService,
 )
+from mediaflow.application.automation_workspace_commands import (
+    AUTOMATION_DEFINITION_FORM_FIELDS,
+    AutomationWorkspaceCommandService,
+)
 from mediaflow.application.classification_review import ClassificationReviewService
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
@@ -121,6 +125,7 @@ from mediaflow.domain.automation import (
     WorkerStatus,
 )
 from mediaflow.domain.configuration_management import (
+    AutomationDefinitionSaveError,
     ConfigurationActivationConflict,
     ConfigurationFirstDraftConflict,
     ConfigurationObjectKind,
@@ -557,6 +562,18 @@ class MediaFlowApi:
         self._automation_occurrences = AutomationDefinitionOccurrenceService(repository)
         self._automation_occurrences.attach_unattended_grant_service(self._unattended_grants)
         self._automation_occurrences.attach_checkpoint_service(self._checkpoint_service)
+        # The V2 Automation workspace reuses the same managed-object authority as
+        # V1/API/CLI, so one checked Save cannot diverge from normalization,
+        # validation, audit, concurrency or checked activation semantics; it only
+        # composes the focused definition change and delegates publication.
+        self._automation_workspace = (
+            AutomationWorkspaceCommandService(
+                self._configuration_objects,
+                unattended_grants=self._unattended_grants,
+            )
+            if self._configuration_objects is not None
+            else None
+        )
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -870,6 +887,27 @@ class MediaFlowApi:
                 method,
                 path,
                 "files-direct-command",
+                "conflict" if error.status < 500 else "error",
+                error.status,
+            )
+            return self._error(
+                start_response,
+                error.status,
+                error.code,
+                str(error),
+                details=error.details,
+            )
+        except AutomationDefinitionSaveError as error:
+            # Handled before the generic page-local Save family because the
+            # Automation error adds the affected definition/stage/authority state
+            # the operator needs to continue; the bounded details stay secret-free.
+            self._safe_audit(
+                environ,
+                request_id,
+                locals().get("principal"),
+                method,
+                path,
+                "automation-definition-save",
                 "conflict" if error.status < 500 else "error",
                 error.status,
             )
@@ -3097,8 +3135,18 @@ class MediaFlowApi:
             "operations",
             "automation",
             "task-definitions",
-        ] and method in {"GET", "POST"}:
+        ] and method in {"GET", "POST", "PUT", "DELETE"}:
             return self._automation_operations_projection(
+                parts, method, environ, start_response, principal
+            )
+        if parts[:5] == [
+            "api",
+            "v1",
+            "operations",
+            "automation",
+            "definitions",
+        ] and method in {"GET", "POST", "PUT", "DELETE"}:
+            return self._automation_definition_focused_projection(
                 parts, method, environ, start_response, principal
             )
         if parts[:4] == ["api", "v1", "operations", "notifications"] and method in {
@@ -9198,6 +9246,8 @@ class MediaFlowApi:
             "/api/v1/operations/rules/objects/"
         ):
             return True
+        if path.startswith("/api/v1/operations/automation/definitions"):
+            return method in {"POST", "PUT", "DELETE"} and not path.endswith("schedule-preview")
         return method == "PUT" and path.startswith("/api/v1/storages/")
 
     @staticmethod
@@ -13863,6 +13913,501 @@ class MediaFlowApi:
                 parts[5], parts[7], environ, start_response
             )
         return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _automation_definition_focused_projection(
+        self,
+        parts: list[str],
+        method: str,
+        environ: dict,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+    ):
+        """The native V2 Automation definition lifecycle surface.
+
+        Routes (all under ``/api/v1/operations/automation/definitions``):
+
+        * ``GET  /``                     — form authority (fields/references/bounds)
+        * ``POST /``                     — one checked create Save
+        * ``POST /schedule-preview``     — zero-mutation upcoming-run calculation
+        * ``GET  /{id}``                 — typed edit prefill (published or Draft-only)
+        * ``PUT  /{id}``                 — one checked edit Save
+        * ``POST /{id}/copy``            — one checked copy publication (disabled, no authority)
+        * ``GET  /{id}/copy-candidate``  — read-only copy candidate
+        * ``POST /{id}/enable|disable``  — one checked enabled-state publication
+        * ``GET  /{id}/removal-impact``  — read-only removal evidence
+        * ``DELETE /{id}``               — one checked removal (revokes future authority first)
+
+        Every command reuses the shared application service, permissions,
+        validation, audit and concurrency boundaries.  Nothing here creates a
+        scan, Task, Job, schedule occurrence, notification, Provider call or
+        Storage mutation.
+        """
+
+        if self._automation_workspace is None or self._configuration_service is None:
+            return self._error(
+                start_response,
+                503,
+                "service_unavailable",
+                "managed configuration service is unavailable",
+            )
+        base = ["api", "v1", "operations", "automation", "definitions"]
+        if parts[:5] != base:
+            return self._error(start_response, 404, "not_found", "route was not found")
+
+        # -- collection ---------------------------------------------------
+        if parts == base:
+            if method == "GET":
+                self._require_empty_query(environ, "automation definition form authority")
+                self._require(principal, ApiPermission.READ)
+                return self._automation_definition_document(
+                    start_response, lambda: self._automation_workspace.form_authority()
+                )
+            if method == "POST":
+                self._require_empty_query(environ, "automation definition create")
+                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+                document = self._document(environ)
+                value, authority = self._automation_command_envelope(document, None)
+                return self._automation_definition_publish(
+                    start_response,
+                    principal,
+                    object_id=None,
+                    value=value,
+                    authority=authority,
+                    action="create",
+                )
+            return self._error(start_response, 405, "method_not_allowed", "GET or POST required")
+        if len(parts) == 6 and parts[5] == "schedule-preview":
+            if method != "POST":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "POST required for schedule preview"
+                )
+            self._require_empty_query(environ, "automation definition schedule preview")
+            self._require(principal, ApiPermission.READ)
+            document = self._document(environ)
+            if set(document) != {"candidate", "objectId"}:
+                raise ValueError("automation schedule preview requires candidate and objectId only")
+            candidate = document["candidate"]
+            if not isinstance(candidate, dict):
+                raise ValueError("automation schedule preview candidate must be an object")
+            object_id = document["objectId"]
+            if object_id is not None and (not isinstance(object_id, str) or not object_id.strip()):
+                raise ValueError("automation schedule preview objectId must be text or null")
+            return self._automation_definition_document(
+                start_response,
+                lambda: self._automation_workspace.schedule_preview(candidate, object_id=object_id),
+            )
+
+        if len(parts) < 6:
+            return self._error(start_response, 404, "not_found", "route was not found")
+        definition_id = parts[5]
+
+        if len(parts) == 6:
+            if method == "GET":
+                self._require_empty_query(environ, "automation definition edit projection")
+                self._require(principal, ApiPermission.READ)
+                return self._automation_definition_document(
+                    start_response,
+                    lambda: self._automation_workspace.edit_projection(definition_id),
+                )
+            if method == "PUT":
+                self._require_empty_query(environ, "automation definition edit")
+                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+                document = self._document(environ)
+                value, authority = self._automation_command_envelope(document, definition_id)
+                return self._automation_definition_publish(
+                    start_response,
+                    principal,
+                    object_id=definition_id,
+                    value=value,
+                    authority=authority,
+                    action="edit",
+                )
+            if method == "DELETE":
+                self._require_empty_query(environ, "automation definition removal")
+                self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+                self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+                document = self._document(environ)
+                allowed = {"expectedRevisionId", "expectedVersion", "expectedDigest", "reason"}
+                if set(document).difference(allowed):
+                    raise ValueError(
+                        "automation definition removal accepts the observed Active identity "
+                        "and an optional reason only"
+                    )
+                authority = self._automation_command_envelope(
+                    document, definition_id, object=False
+                )[1]
+                reason = document.get("reason")
+                if reason is not None and (not isinstance(reason, str) or len(reason) > 512):
+                    raise ValueError("automation definition removal reason must be bounded text")
+                return self._automation_definition_publish(
+                    start_response,
+                    principal,
+                    object_id=definition_id,
+                    value=None,
+                    authority=authority,
+                    action="remove",
+                    reason=reason,
+                )
+            return self._error(
+                start_response, 405, "method_not_allowed", "GET, PUT or DELETE required"
+            )
+
+        if len(parts) == 7 and parts[6] == "copy-candidate":
+            if method != "GET":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET required for a candidate read"
+                )
+            self._require_empty_query(environ, "automation definition copy candidate")
+            self._require(principal, ApiPermission.READ)
+            return self._automation_definition_document(
+                start_response,
+                lambda: self._automation_workspace.copy_projection(definition_id),
+            )
+        if len(parts) == 7 and parts[6] == "removal-impact":
+            if method != "GET":
+                return self._error(
+                    start_response, 405, "method_not_allowed", "GET required for removal evidence"
+                )
+            self._require_empty_query(environ, "automation definition removal impact")
+            self._require(principal, ApiPermission.READ)
+            return self._automation_definition_document(
+                start_response,
+                lambda: self._automation_workspace.removal_impact(definition_id),
+            )
+        if len(parts) == 7 and parts[6] in {"copy", "enable", "disable"}:
+            if method != "POST":
+                return self._error(
+                    start_response,
+                    405,
+                    "method_not_allowed",
+                    "POST required for a lifecycle command",
+                )
+            self._require_empty_query(environ, "automation definition lifecycle command")
+            self._require(principal, ApiPermission.MANAGE_CONFIGURATION)
+            self._require(principal, ApiPermission.ACTIVATE_CONFIGURATION)
+            document = self._document(environ)
+            authority = self._automation_command_envelope(document, definition_id, object=False)[1]
+            return self._automation_definition_publish(
+                start_response,
+                principal,
+                object_id=definition_id,
+                value=None,
+                authority=authority,
+                action=parts[6],
+            )
+        return self._error(start_response, 404, "not_found", "route was not found")
+
+    def _automation_definition_document(
+        self, start_response: Callable, produce: Callable[[], dict]
+    ):
+        try:
+            return self._response(start_response, 200, produce())
+        except LookupError as error:
+            return self._error(
+                start_response,
+                404,
+                "not_found",
+                str(error),
+                details={
+                    "durableState": "active_unchanged",
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "refresh the Active Automation inventory and choose an existing definition"
+                    ),
+                },
+            )
+        except RuntimeSnapshotUnavailable as error:
+            return self._error(
+                start_response,
+                503,
+                "configuration_unavailable",
+                str(error),
+                details={
+                    "reason": error.reason,
+                    "durableState": (
+                        "no_active_configuration"
+                        if error.reason == "active_missing"
+                        else "managed_active_unavailable"
+                    ),
+                    "sideEffects": "none",
+                    "retrySafe": True,
+                    "nextAction": (
+                        "complete first setup in Settings and activate a configuration, then "
+                        "return to Automation"
+                        if error.reason == "active_missing"
+                        else "repair or replace the unavailable Active configuration, then refresh"
+                    ),
+                },
+            )
+
+    @staticmethod
+    def _automation_command_envelope(
+        document: dict,
+        object_id: str | None,
+        *,
+        object: bool = True,
+    ) -> tuple[dict | None, tuple[str, int, str]]:
+        """Validate the bounded command envelope before it reaches the application.
+
+        Exactly the advertised fields are accepted: the typed definition for a
+        Save and the observed Active identity for every command.  A missing or
+        extra key is rejected rather than ignored, so a stale or partially-built
+        browser request can never publish a different successor than the operator
+        reviewed.
+        """
+
+        fields = {"expectedRevisionId", "expectedVersion", "expectedDigest"}
+        if object:
+            fields.add("object")
+        if set(document) != fields:
+            raise ValueError(
+                "automation definition command requires only the typed definition and the "
+                "exact Active identity"
+            )
+        expected_revision_id = document["expectedRevisionId"]
+        if not isinstance(expected_revision_id, str) or not expected_revision_id.strip():
+            raise ValueError("expectedRevisionId must be a non-empty string")
+        expected_digest = document["expectedDigest"]
+        if not isinstance(expected_digest, str) or not expected_digest.strip():
+            raise ValueError("expectedDigest must be a non-empty string")
+        expected_version = document["expectedVersion"]
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int):
+            raise ValueError("expectedVersion must be an integer")
+        value = document.get("object") if object else None
+        if object and not isinstance(value, dict):
+            raise ValueError("automation definition command requires a typed definition")
+        if object and set(value).difference(AUTOMATION_DEFINITION_FORM_FIELDS):
+            raise ValueError("automation definition command contains an unsupported field")
+        if object and object_id is not None:
+            submitted = value.get("id")
+            if submitted is not None and submitted != object_id:
+                raise AutomationDefinitionSaveError(
+                    "automation_definition_id_immutable",
+                    "the definition ID is immutable; an edit may only address the definition "
+                    "it opened",
+                    status=400,
+                    definition_id=object_id,
+                    stage="compose",
+                    durable_state="active_unchanged",
+                    side_effects="none",
+                    next_action="keep the definition ID and correct the editable fields instead",
+                )
+        return (value if object else None), (
+            expected_revision_id,
+            expected_version,
+            expected_digest,
+        )
+
+    def _automation_definition_publish(
+        self,
+        start_response: Callable,
+        principal: ResolvedApiPrincipal,
+        *,
+        object_id: str | None,
+        value: dict | None,
+        authority: tuple[str, int, str],
+        action: str,
+        reason: str | None = None,
+    ):
+        """Publish one exact focused successor and echo its durable truth."""
+
+        prepared: list[_ApiRuntimeBinding] = []
+        before_ids: set[str] = set()
+        if action == "copy":
+            # A copy allocates its new identity inside the application service, so
+            # the published successor is diffed against the observed Active.
+            active_before = self._configuration_service.active()
+            if active_before is not None:
+                before_ids = {
+                    str(item.get("id"))
+                    for item in self._configuration_objects._automation_definition_objects(
+                        active_before.document
+                    )
+                }
+        with self._runtime_binding_lock:
+            self._refresh_configuration_binding_locked()
+            try:
+                if action == "remove":
+                    revision = self._automation_workspace.remove_object(
+                        str(object_id),
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_automation_binding_for_revision(successor)
+                        ),
+                        reason=reason,
+                    )
+                elif action in {"enable", "disable"}:
+                    revision = self._automation_workspace.set_enabled(
+                        str(object_id),
+                        enabled=action == "enable",
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_automation_binding_for_revision(successor)
+                        ),
+                    )
+                elif action == "copy":
+                    revision = self._automation_workspace.copy_object(
+                        str(object_id),
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_automation_binding_for_revision(successor)
+                        ),
+                    )
+                else:
+                    assert value is not None
+                    revision = self._automation_workspace.save_object(
+                        value,
+                        actor=principal.principal_id,
+                        expected_revision_id=authority[0],
+                        expected_version=authority[1],
+                        expected_digest=authority[2],
+                        object_id=object_id,
+                        before_publish=lambda successor: prepared.append(
+                            self._prepare_automation_binding_for_revision(successor)
+                        ),
+                    )
+            except (ConfigurationActivationConflict, ConfigurationVersionConflict):
+                # The repository fences concurrency authoritatively: consume the
+                # winning Active before returning the stale/conflict result.
+                self._refresh_configuration_binding_locked()
+                raise
+            if len(prepared) != 1:
+                raise AutomationDefinitionSaveError(
+                    "automation_definition_runtime_failed",
+                    "the successor runtime binding was not prepared; the previous Active "
+                    "remains in use",
+                    status=503,
+                    definition_id=object_id,
+                    stage="activate",
+                    durable_state="active_preserved",
+                    next_action="refresh the current Active configuration and retry",
+                )
+            self._publish_runtime_binding(prepared[0])
+
+        subject_id = object_id
+        if subject_id is None and isinstance(value, dict):
+            candidate_id = value.get("id")
+            if isinstance(candidate_id, str):
+                subject_id = candidate_id
+        if action == "copy":
+            # A copy allocates its new identity inside the application service, so
+            # resolve it as the definition the publication added.
+            published_ids = [
+                str(item.get("id"))
+                for item in self._configuration_objects._automation_definition_objects(
+                    revision.document
+                )
+            ]
+            added = [item for item in published_ids if item not in before_ids]
+            subject_id = added[0] if len(added) == 1 else None
+        return self._automation_definition_publish_response(
+            start_response, revision, subject_id, action=action
+        )
+
+    def _automation_definition_publish_response(
+        self,
+        start_response: Callable,
+        revision,
+        subject_id: str | None,
+        *,
+        action: str,
+    ):
+        """One bounded publication document so the page can refresh from truth."""
+
+        published = self._configuration_objects._automation_definition_objects(revision.document)
+        item = next(
+            (value for value in published if str(value.get("id")) == str(subject_id)),
+            None,
+        )
+        if action != "remove" and item is None:
+            # Publication succeeded but the intended definition is absent from the
+            # new Active: that is a truth the operator must see, never a silent
+            # success and never an automatic replay.
+            raise AutomationDefinitionSaveError(
+                "automation_definition_runtime_failed",
+                "the successor was published but does not contain the intended definition; "
+                "verify the current Active Automation inventory",
+                status=503,
+                definition_id=subject_id,
+                stage="activate",
+                durable_state="successor_published",
+                side_effects="configuration_only",
+                retry_safe=False,
+                next_action="refresh the Active Automation inventory and verify the definitions",
+            )
+        if action == "remove" and item is not None:
+            raise AutomationDefinitionSaveError(
+                "automation_definition_runtime_failed",
+                "the successor was published but still contains the definition; verify current "
+                "Active",
+                status=503,
+                definition_id=subject_id,
+                stage="activate",
+                durable_state="successor_published",
+                side_effects="configuration_only",
+                retry_safe=False,
+                next_action="refresh the Active Automation inventory and verify the definitions",
+            )
+        return self._response(
+            start_response,
+            200,
+            {
+                "action": action,
+                "definition": item,
+                "removed": {"id": subject_id} if action == "remove" else None,
+                # The next command fences on the exact successor identity, so the
+                # published revision's digest is part of this readback document.
+                "active": {
+                    "revisionId": revision.revision_id,
+                    "version": revision.version,
+                    "revisionSequence": revision.revision_sequence or revision.version,
+                    "status": revision.status.value,
+                    "digest": revision.digest,
+                },
+                "configuration": {
+                    "authority": "MANAGED",
+                    "revisionId": revision.revision_id,
+                    "version": revision.version,
+                    "digest": revision.digest,
+                },
+                "sideEffects": "configuration_only",
+                "nextAction": (
+                    "refresh the Active Automation inventory; the published successor is the "
+                    "configuration runtime consumes"
+                ),
+            },
+        )
+
+    def _prepare_automation_binding_for_revision(self, revision):
+        """Bind the Automation successor to runtime, or fail with its own code."""
+
+        try:
+            return self._prepare_runtime_binding_for_revision(revision)
+        except ResourceLibrarySaveError as error:
+            if error.code != "resource_library_runtime_failed":
+                raise
+            raise AutomationDefinitionSaveError(
+                "automation_definition_runtime_failed",
+                str(error),
+                status=error.status,
+                revision_id=error.revision_id,
+                durable_state=error.durable_state,
+                side_effects=error.side_effects,
+                retry_safe=error.retry_safe,
+                next_action=error.next_action,
+            ) from error
 
     def _automation_definitions_operator_page(
         self, environ: dict, start_response: Callable, principal: ResolvedApiPrincipal

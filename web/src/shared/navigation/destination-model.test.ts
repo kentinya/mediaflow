@@ -40,6 +40,8 @@ describe("destination model", () => {
       "Organize execution",
       "Automation",
       "Create Automation definition",
+      "New Automation definition",
+      "Automation lifecycle",
       "Automation definition",
       "Automation Draft editor",
       "Automation Preview",

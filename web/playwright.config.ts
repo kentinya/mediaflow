@@ -10,6 +10,7 @@ export default defineConfig({
   testIgnore: [
     "**/operations-inventory.python.spec.ts",
     "**/operations-principal-identity.python.spec.ts",
+    "**/automation-lifecycle.python.spec.ts",
   ],
   fullyParallel: true,
   forbidOnly: true,
