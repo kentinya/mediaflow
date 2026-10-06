@@ -74,7 +74,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 39 — Storage Management Workspace (PASS / CLOSED)
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
     → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
-    → Slice 42 — V2 Operations and Tasks Workspace (ACTIVE; TARGET below)
+    → Slice 42 — V2 Operations and Tasks Workspace (PASS / CLOSED; CURRENT below)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base
@@ -440,7 +440,7 @@ The runtime SQLite repository persists FileIndex, Tasks, TaskItems, Results, loc
 manual intents/previews/executions, Automation Definitions/Jobs/occurrences, notification delivery,
 execution authority, security audit and operational logs. The configuration SQLite repository
 persists managed revisions, object/reference state, activation/test evidence and configuration audits.
-The implementation currently declares runtime schema `39`, configuration-management schema `10` and
+The implementation currently declares runtime schema `44`, configuration-management schema `10` and
 managed document schema `1`. These are compatibility markers, not feature statuses.
 
 Runtime database initialization is additive and refuses a newer unsupported schema. Backup, restore,
@@ -486,7 +486,7 @@ operator from a resolved conflict or review through exact-source re-analysis, co
 and the original Organize outcome. Successful siblings remain terminal and uncertain effects remain
 investigation-only.
 
-## TARGET — V2 Operations and Tasks Workspace (Slice 42)
+## CURRENT — V2 Operations and Tasks Workspace (Slice 42)
 
 The existing Job/Task/TaskItem/Result, manual execution and recovery services remain execution
 authority. A shared Python application projection joins only explicit durable links into one
@@ -506,9 +506,11 @@ V2 Operations inventory / selected detail / records / task-linked recovery
 Repositories supply bounded deterministic text/safe-scope/status/kind/time queries and aggregate
 counts from the same authorized population and consistent read basis. Cursors bind query and
 authorization context. No browser merge of independently paged Tasks/Jobs, page-only counts or
-reading global logs to find one task. Additive persisted display/admission context and indexes are
-allowed when needed, with schema compatibility and legacy unavailable-evidence projections. Names
-and scopes derive from durable admission or the pinned snapshot, never silently from current Active.
+reading global logs to find one task. SQLite reads the page and aggregates in the same read
+transaction. Additive schema40–42 indexes and `operations_run_display` retain bounded admission
+display context without rewriting legacy rows or creating authority. Names and scopes derive from
+durable admission or the pinned snapshot, never silently from current Active; missing legacy
+evidence remains explicitly unavailable.
 
 Progress is projected per work kind from durable evidence, independently of success rate. Unknown
 scan totals remain unknown; primary item counts reconcile, while scan errors and attachment steps
@@ -521,15 +523,18 @@ manual execution admission, preserving contextual return to the selected run. Fi
 physical source authority; MediaLibrary is not a new organizing source. Existing routes/links remain
 compatible, and the shared shell/authentication boundary is unchanged.
 
-Extend durable queued continuation only as needed to make supported safely paused asynchronous
-work and task-linked recovery Web-completable. Reuse existing checkpoint/recovery/Worker ports and
-source revalidation, locks/leases/fences. Never shell out to CLI or run long continuation inside HTTP.
-Continue preserves exact remaining scope and pin, excludes successful/ignored/uncertain effects,
-and rechecks applicable current authority. Persisted `execute_authorized` is not sufficient to
-reissue consumed one-shot authority or bypass unattended-grant revocation. A changed plan or
-insufficient authority returns to native exact Preview and explicit execution intent.
+`ScopeContinuationService` durably admits supported safely paused asynchronous work to the
+existing queue. Schema43 `scope_continuations` links the original Task, exact admitted command,
+remaining scope, budget and immutable pin to one continuation Job and its eventual Task. The
+resident Worker reuses existing source revalidation, locks/leases/fences and checkpoint accounting;
+HTTP does not run the long work or shell out to CLI. Continue excludes successful/ignored/uncertain
+effects and rechecks applicable current authority. Persisted `execute_authorized` cannot reissue
+consumed one-shot authority or bypass unattended-grant revocation. A changed plan or insufficient
+authority returns to native exact Preview and explicit execution intent. Schema44's nullable manual
+Preview origin-Task link preserves that continuation history without granting execution authority.
 
-Task-linked Recognition/Metadata/Classification/conflict forms call existing decision services.
+`TaskItemRecoveryService` composes existing checkpoint/review/recovery boundaries for the native
+task-linked Recognition/Metadata/Classification/conflict forms.
 Decision persistence is non-executing. Explicit bounded analysis and any later exact mutation
 admission remain separate authority boundaries even when safe non-mutating steps are composed.
 Mixed recovery batches preserve independent accepted/refused outcomes and link original item,
@@ -540,7 +545,8 @@ Bounded active-work polling and manual refresh are read-only; unknown mutation o
 before another explicit command. API/Web share permission/version/duplicate checks, redaction,
 readiness and safe recovery behavior. No additional scheduler, Worker supervisor, Provider, global
 Review inbox, history cleanup, universal rollback or automatic uncertain replay is introduced.
-These are TARGET changes under the active Contract, not CURRENT implementation claims.
+These are accepted CURRENT facts at Implementation Head
+`ce3fc2a3e70d40279fa725b5d7dc838d11123980`, reviewed by A on 2026-10-06.
 
 ## Manual organize
 
@@ -593,8 +599,10 @@ at the shared service boundary; 401/403 behavior and Web/API projections are tes
 The embedded V1 Operator Web and the React/TypeScript V2 SPA are static UIs served by the same
 Python application. V2 currently exposes Dashboard, ResourceLibrary Files, MediaLibrary, Storage,
 Settings, Rules and the Operations route family for Tasks, Jobs, manual Scan/Preview/Organize,
-Automation and Notifications. Review/Recovery remains an explicit migration handoff; Advanced JSON
-and the general configuration lifecycle remain support/compatibility surfaces. Both UIs use the
+Automation and Notifications. The unified Operations task center provides native task-linked
+decision/recovery and supported paused-scope continuation. Global Review and arbitrary historical
+Reprocess remain compatibility/deferred journeys; Advanced JSON and the general configuration
+lifecycle retain their support/compatibility surfaces alongside native V2 Settings. Both UIs use the
 shared `/api/v1/*` application
 authority. The browser holds the API token only in memory and does not provide built-in account
 login. V2 recovery hints that must survive a page reload are scoped only after a read-only API

@@ -8,13 +8,12 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 42 — **V2 Operations and Tasks Workspace** — is ACTIVE under
-[`SLICE.md`](../SLICE.md), with Base `ffee77348cebcb05e356c8111c5861ed64ca0388` and no Implementation
-Head or active implementation Task. B plans the first Task after the activation checkpoint.
-Slice 41 remains PASS / CLOSED at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and Implementation
-Head `8433319168272ecf7ccde017afc36525e8c62ea0` after A's 2026-09-30 final review; its full Contract
-and review remain in Git at the Slice 42 Base. Earlier closure-ledger entries remain unchanged;
-Slice 42 has no closure entry or product-completion claim.
+V2 remains active on `main`; Slice 42 — **V2 Operations and Tasks Workspace** — is PASS / CLOSED
+after A's 2026-10-06 final review of Base `ffee77348cebcb05e356c8111c5861ed64ca0388` through
+Implementation Head `ce3fc2a3e70d40279fa725b5d7dc838d11123980`. The decision and validation
+reconciliation are in [`SLICE.md`](../SLICE.md). No implementation Task is active; the next action
+is **A SELECTS THE NEXT LARGE SLICE** in a separate turn. Earlier closure-ledger entries remain
+unchanged.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`
@@ -326,6 +325,7 @@ backfilled or guessed; consult Git and the legacy archive for their detailed lin
 
 | Slice | Status | Base | Implementation Head | Final Audit | Delivered | Deferred |
 |---|---|---|---|---|---|---|
+| 42 — V2 Operations and Tasks Workspace | PASS / CLOSED | `ffee77348cebcb05e356c8111c5861ed64ca0388` | `ce3fc2a3e70d40279fa725b5d7dc838d11123980` | A Final Review PASS / CLOSED — 2026-10-06 | Native unified task center, authoritative queries/counts and historical progress/evidence, live-file exact organize return, cooperative controls, durable safe Web continuation and task-linked single/bounded decision and analysis recovery | Global Review/cross-task bulk, history retention/deletion, unbounded or MediaLibrary organize, arbitrary historical Reprocess, Automation/Notifications redesign, new authority/providers, uncertain replay, universal rollback and V1 retirement; other Contract deferrals unchanged |
 | 41 — V2 Organizing Rules Workspace | PASS / CLOSED | `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` | `8433319168272ecf7ccde017afc36525e8c62ea0` | A Final Review PASS / CLOSED — 2026-09-30 | Native V2 Rules graph workspace, typed editors, reference-safe lifecycle, exact-candidate zero-mutation analysis, one-Save checked publication and Settings readiness/recovery with preserved RecognitionType identity | Provider switching/new providers, Review/Recovery redesign, media execution from Rules, new rule/naming/classification domains, bulk/diff/rollback, V1 retirement/auth redesign and other unchanged Contract deferrals |
 | 40 — V2 Settings and Empty-Baseline Startup | PASS / CLOSED | `d814b7c1c6819e79271245a1126f53aca6aeaf69` | `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7` | A Final Review PASS / CLOSED — 2026-09-28 | Native V2 Settings and first-Draft lifecycle, legal empty-business Active, conditional publication, incremental successors, command readiness, media-free startup and resident service adoption without restart | Wholesale policy/Recognition/Review/Recovery migration, V1 cutover, generated onboarding defaults, new identity/Secret Store/deployment mutation, scheduler/queue redesign, new providers/commands and automatic uncertain replay |
 | 39 — Storage Management Workspace | PASS / CLOSED | `d02539e49d5c99c3e3c0c70de5e994e42824a18e` | `f458646d3dac280b118a511c60ec53a5d3075d67` | A Final Review PASS / CLOSED — 2026-09-27 | V2 Storage management workspace, typed checked lifecycle, zero-mutation diagnostics, provider-root/setup recovery, resident ResourceLibrary/MediaLibrary transfer continuity and truthful Worker readiness/waiting recovery | Mutation-based Storage probes, general Configuration/native V2 setup migration, new providers/Secret Store integration, new file commands, scheduler redesign, automatic uncertain replay and new identity/session systems |

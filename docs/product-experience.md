@@ -666,7 +666,9 @@ CLI and removed the direct browser Upload/Download vertical. Closed Slice 38 del
 MediaLibrary journey; Slice 39 delivered Storage management and transfer continuity; Slice 40
 delivered native Settings, empty-business activation and resident configuration adoption. Slice 41
 delivered the native organizing-rules graph journey, exact-candidate analysis and one-Save checked
-publication. The previously planned Slice 34–36 migration boundaries remain retired.
+publication. Slice 42 delivered the unified task center, durable safe Web continuation and native
+task-linked decision/failed-analysis recovery. The previously planned Slice 34–36 migration
+boundaries remain retired.
 
 ### CURRENT V2 FOUNDATION — Operator shell and Dashboard proving journey
 
@@ -742,11 +744,12 @@ publication. The previously planned Slice 34–36 migration boundaries remain re
   presenting unsafe replay as recovery.
 - **Recovery:** refresh the durable state, repair readiness, rerun a stale Preview, reauthorize the
   exact reviewed operation, repair/repreview/regrant Automation or use the delivery-specific
-  recovery action. Media review, checkpoint continuation, Reprocess and failed-item/batch recovery
-  hand off honestly to an existing supported V1 destination; the closed Slice 33 did not deliver
-  native task-linked Review/Recovery. Slice 42 targets that gap below; it is not yet implemented.
+  recovery action. Slice 42 adds native task-linked decisions, checkpoint/remaining-scope
+  continuation and single/bounded failed-analysis recovery below. The closed Slice 33 did not
+  deliver those surfaces; its historical boundary is unchanged. Global Review and arbitrary
+  historical Reprocess remain outside the new native task-center journey.
 
-### TARGET — V2 Operations and Tasks Workspace (Slice 42)
+### CURRENT — V2 Operations and Tasks Workspace (Slice 42 PASS / CLOSED)
 
 - **Goal:** find and follow one admitted run, understand every file outcome, and complete safe
   task-linked control/recovery in V2 without CLI commands, V1 fallback or internal-token handling.
@@ -780,12 +783,12 @@ publication. The previously planned Slice 34–36 migration boundaries remain re
   remain linked; successful/ignored/unknown effects are not replayed. Unknown effects stay
   investigation-only. Unknown submission first reads durable state; no automatic resubmission.
 
-Necessary durable Web continuation and task-scoped recovery are Required Outcomes, not cosmetic
-buttons over CLI-only behavior. A standalone global Review inbox, cross-task bulk review, history
+The accepted journey includes durable Worker-backed Web continuation and native task-scoped
+recovery. A standalone global Review inbox, cross-task bulk review, history
 deletion/retention, unbounded whole-library organize, arbitrary historical Reprocess, Automation or
-Notifications redesign, universal rollback and V1 retirement remain outside this TARGET. Retired
-file-level retry/re-recognition/rematch/re-plan entry points remain retired. Existing CURRENT
-Operations behavior remains the delivered baseline until this journey passes acceptance.
+Notifications redesign, universal rollback and V1 retirement remain outside this delivery. Retired
+file-level retry/re-recognition/rematch/re-plan entry points remain retired. A accepted the complete
+Slice Base..Implementation Head on 2026-10-06; its CURRENT scope does not expand earlier closures.
 
 ### Migration coexistence and deferrals
 
@@ -806,13 +809,14 @@ Operations behavior remains the delivered baseline until this journey passes acc
   policy management, reference-safe lifecycle, exact-candidate tests/previews and automatic checked
   publication over the same Python authority. Settings shows corresponding rule-family readiness
   and returns explicitly to the originating family.
-- **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Review/Recovery,
-  Provider switching and actual media execution from Rules remain outside the delivered workspace.
+- **DEFERRED:** `/ui` cutover and V1 retirement require separate parity acceptance. Global Review,
+  cross-task bulk review, arbitrary historical Reprocess, Provider switching and actual media
+  execution from Rules remain outside the delivered workspaces.
   Slice 40's historical deferrals are unchanged; Slice 41 delivers its organizing-policy migration
   portion without claiming the other deferred journeys have migrated.
-- **TARGET:** Slice 42 selects the reference-aligned task center and native task-scoped recovery/
-  continuation above. Global Review and other unselected migration work remain deferred; activation
-  does not claim the new journey is CURRENT.
+- **CURRENT V2 TASK CENTER:** Slice 42 delivers the reference-aligned inventory, truthful historical
+  detail/records, contextual live-file organize entry and native task-scoped recovery/continuation
+  above. Global Review and other unselected migration work remain deferred.
 
 ## Files Journey Update — 2026-09-14
 

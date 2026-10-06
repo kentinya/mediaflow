@@ -27,7 +27,7 @@ only in [the development workflow](development-workflow.md).
 | 39 — Storage Management Workspace | Deliver the V2 Storage management journey from the supplied reference: bounded provider inventory and references, typed Local/SMB/OpenList/S3/R2 configuration, page-local checked Active Add/Edit/copy/enable/disable/remove, and zero-mutation Connection/Read diagnostics; complete the existing admitted-transfer Worker handoff across first activation/configuration changes, with truthful health and waiting-state recovery | PASS / CLOSED | 38 and existing managed-configuration/Storage foundations |
 | 40 — V2 Settings and Empty-Baseline Startup | Start from management-only deployment, explicitly create/view/export/activate an empty business baseline in V2 Settings, edit supported configuration absent from other pages, then publish exact business-page successors with applicable checks and truthful command readiness; keep Worker, Scheduler and Notification Worker resident across setup and activation without mandatory media mounts | PASS / CLOSED | 39 closure and existing managed-configuration/operations foundations |
 | 41 — V2 Organizing Rules Workspace | Deliver the native V2 recognition-to-policy management journey: reference-aligned rule workspace, typed Recognition/Metadata/Naming/Classification/Organize editors, reference-safe object lifecycle, exact-revision zero-mutation tests/previews and one-click Save that automatically validates and atomically activates while preserving RecognitionType identity | PASS / CLOSED | 40 closure and existing managed-configuration/rule-engine/policy-preview foundations |
-| 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | ACTIVE | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
+| 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 
 ## Current boundary
 
@@ -55,7 +55,7 @@ mutation replay remain explicit V1.x/V2 or deployment-specialized work, not hidd
 ## V2 program boundary
 
 V2 remains active development for Operator Web Architecture & UX Modernization. Slices 30–33 and
-37–41 are closed capabilities. Slice 41 is PASS / CLOSED after A's 2026-09-30 final review of the
+37–42 are closed capabilities. Slice 41 is PASS / CLOSED after A's 2026-09-30 final review of the
 native V2 organizing-rules workspace selected from six user-supplied business/style references. Those
 images define relationship, composition and visual language rather than actual production data or
 pixel-identical fixtures. Slice 39 delivered the V2 Storage management
@@ -105,7 +105,7 @@ Head `7805fa09d540fdeb5f0b39a5e3ac39c8c5ff7bb7`. It delivered native V2 Settings
 business Active, conditional publication checks, command-specific readiness and resident service
 adoption without mandatory media mounts or process restart. Mandatory media-business onboarding,
 wholesale policy-page migration and V1 retirement remained deferred at that closure. Slice 41 is
-now the most recently closed large Slice at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and
+closed at Base `8a6a15597bab2fd10673db84d73a5bbc1d455ad8` and
 Implementation Head `8433319168272ecf7ccde017afc36525e8c62ea0`. It delivered `/ui-v2/rules`, the
 complete RecognitionType
 policy graph, typed policy forms, reference-safe lifecycle, exact-candidate tests/previews,
@@ -114,21 +114,23 @@ Metadata Provider switching, Review/Recovery migration, actual media execution f
 retirement and unrelated configuration redesign remained deferred at the Slice 41 closure.
 This Roadmap does not retain the retired Slice 34–36 program rows.
 
-## Active Slice boundary
+## Current closed Slice boundary
 
-Slice 42 — V2 Operations and Tasks Workspace — is ACTIVE under the current `SLICE.md`, following
-Slice 41's closure. It uses `docs/pics/操作与任务.png` as a business/style reference, not fixed data.
-It completes the task-center journey from live selected-file organization and queue visibility to
+Slice 42 — V2 Operations and Tasks Workspace — is the most recently closed large Slice under
+`SLICE.md`: PASS / CLOSED on 2026-10-06, Base `ffee77348cebcb05e356c8111c5861ed64ca0388`,
+Implementation Head `ce3fc2a3e70d40279fa725b5d7dc838d11123980`. It uses `docs/pics/操作与任务.png`
+as a business/style reference, not fixed data. It delivered the task-center journey from live
+selected-file organization and queue visibility to
 truthful detail, cooperative control and task-linked native recovery. Necessary durable safe Web
 continuation extends the existing Worker/admission/checkpoint boundary; no second task engine is
-introduced. Current implementation gaps remain TARGET until reviewed delivery.
+introduced. These accepted capabilities are CURRENT.
 
 Task-scoped Recognition/Metadata/Classification/conflict decisions and bounded failed-analysis
 recovery are included. A global Review inbox, cross-task bulk review, history retention/deletion,
 unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
 redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
-and retired Slice boundaries are unchanged. B plans coherent Tasks after the activation checkpoint;
-this Roadmap does not pre-split them.
+and retired Slice boundaries are unchanged. No implementation Task or next Slice is active. A
+selects the next large Slice in a separate turn after closure; this Roadmap does not pre-split Tasks.
 
 ## Roadmap rules
 
@@ -143,7 +145,7 @@ this Roadmap does not pre-split them.
   service configuration adoption; existing Files, MediaLibrary and other journeys remain protected.
 - Closed Slice 41 delivered the V2 organizing-rules workspace; actual media execution from Rules,
   Provider switching, Review/Recovery migration, V1 cutover and unrelated page redesign remain
-  outside its accepted boundary. Active Slice 42 selects task-linked recovery separately without
+  outside its accepted boundary. Closed Slice 42 delivered task-linked recovery separately without
   expanding that historical closure or authorizing a global Review workspace.
 - Task PASS, fixes, test counts, probes, rejected SHAs and review narratives never enter this file.
 - Safety, product and architecture requirements remain authoritative even when omitted from this

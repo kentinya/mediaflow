@@ -11,18 +11,17 @@ product and authority boundaries.
 ```text
 V1: RELEASED / MAINTENANCE — 1.0.0 — v1.0.0 — release/v1
 V2: ACTIVE DEVELOPMENT — main — package 2.0.0.dev0
-Most recently closed large Slice: Slice 41 — V2 Organizing Rules Workspace — PASS / CLOSED
-Slice 41 Base: 8a6a15597bab2fd10673db84d73a5bbc1d455ad8
-Slice 41 Implementation Head: 8433319168272ecf7ccde017afc36525e8c62ea0
-Slice 41 A Final Review: PASS / CLOSED — 2026-09-30
-Current Contract: Slice 42 — V2 Operations and Tasks Workspace — ACTIVE
+Most recently closed large Slice: Slice 42 — V2 Operations and Tasks Workspace — PASS / CLOSED
+Current Contract: Slice 42 — V2 Operations and Tasks Workspace — PASS / CLOSED
 Slice 42 Base: ffee77348cebcb05e356c8111c5861ed64ca0388
-Slice 42 Implementation Head: NOT SET; no active implementation Task
-Next action: B PLANS THE FIRST IMPLEMENTATION TASK AFTER THE ACTIVATION CHECKPOINT
+Slice 42 Implementation Head: ce3fc2a3e70d40279fa725b5d7dc838d11123980
+Slice 42 A Final Review: PASS / CLOSED — 2026-10-06
+Implementation Task: NO ACTIVE IMPLEMENTATION TASK
+Next action: A SELECTS THE NEXT LARGE SLICE
 ```
 
 The current V2 package version and implementation status are governance metadata, not stable
-product requirements. Slices 30, 31, 32, 33 and 37–41 are closed. Slice 37
+product requirements. Slices 30, 31, 32, 33 and 37–42 are closed. Slice 37
 replaced the prior V2 shell presentation and completed the Files workspace. The previously planned Slice 34–36 boundaries
 are retired from the current Roadmap; their historical references remain historical and do not change
 the stable requirements layer. The stable common-file-management target retains its broader future
@@ -38,9 +37,10 @@ implemented the native V2 organizing-rules workspace, typed graph/object editing
 analysis, checked one-Save publication and actionable recovery. Its six supplied page images describe
 business relationship and visual style, not actual production data or pixel-identical fixtures. The
 stable requirements below describe delivered boundaries and explicitly identified targets; Slice
-contracts own implementation scope and acceptance. Slice 42 activates the Operations/task-center
-TARGET below, including task-scoped native recovery and safe Web continuation. Its reference is
-`docs/pics/操作与任务.png`; example data is not authority. These new outcomes are not yet delivered.
+contracts own implementation scope and acceptance. Slice 42 has delivered the Operations/task-center
+requirements below, including task-scoped native recovery and safe Web continuation. Its reference
+is `docs/pics/操作与任务.png`; example data is not authority. Global Review, cross-task bulk review
+and arbitrary historical Reprocess remain deferred under the unchanged Slice boundary.
 
 The setup, empty-business configuration and resident-service requirements below are delivered Slice
 40 behavior. They replace the former mandatory Storage/library/policy setup wizard and the proposal
@@ -97,11 +97,12 @@ during migration; earlier closed Slice scope is unchanged.
 | V2-MEDIALIB-003 | Adding/editing/removing MediaLibrary configuration is a complete Web/API journey using actual managed runtime authority. | Page-local create/edit Save validates and atomically activates a successor; edit keeps ID immutable, preserves unexposed fields and rejects stale writers. Failures preserve Active and correctable input. Disabled libraries have a Web re-enable path; Storage/root edits and reference-protected removal never move or delete physical files. |
 | V2-MEDIALIB-004 | Files and MediaLibrary have distinct navigation identities while sharing suitable presentation and file-operation mechanisms. | Route changes preserve Files capabilities, Organize return context, authentication and other journeys. MediaLibrary follows its reference with type icons and without card statistics/placeholders, thumbnails or Organize actions; row sizes and bounded selection/operation summaries remain available. |
 
-## Operations and Tasks requirements — TARGET (Slice 42)
+## Operations and Tasks requirements — delivered baseline (Slice 42 PASS / CLOSED)
 
-These requirements extend the existing Operations foundation. They do not claim completion of the
-new task-center journey; CURRENT behavior and remaining gaps are documented in Architecture and
-Product Experience. Task-linked recovery is in scope; a standalone global Review inbox is not.
+These requirements extend the existing Operations foundation and are delivered within Slice 42's
+accepted boundary. CURRENT behavior and explicit deferrals are documented in Architecture and
+Product Experience. Task-linked recovery is delivered; a standalone global Review inbox is deferred.
+This factual status update does not change the stable requirement IDs or acceptance meaning below.
 
 | ID | Requirement | Acceptance meaning |
 |---|---|---|
