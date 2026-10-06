@@ -8,13 +8,13 @@ that work from the native V2 task center.
 Slice ID: 42
 Name: V2 Operations and Tasks Workspace
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: READY FOR A REVIEW
 Base SHA: ffee77348cebcb05e356c8111c5861ed64ca0388
-Implementation Head: NOT SET
+Implementation Head: ce3fc2a3e70d40279fa725b5d7dc838d11123980
 Contract Revision: 2026-09-30 — A activation from the operations/tasks reference analysis
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS THE FIRST IMPLEMENTATION TASK AFTER THIS CONTRACT IS CHECKPOINTED
+Next Action: A FINAL REVIEW
 ```
 
 ## Authority and sequencing
@@ -314,7 +314,135 @@ Base..Implementation Head and declares PASS / CLOSED; P2 polish is not a new Tas
 
 ## Closure Packet
 
-Not submitted. No implementation Task or product implementation checkpoint exists for this Slice.
+```text
+Slice: 42 — V2 Operations and Tasks Workspace
+Base SHA: ffee77348cebcb05e356c8111c5861ed64ca0388
+Head SHA: ce3fc2a3e70d40279fa725b5d7dc838d11123980
+Developer report: f2ac5f84d0cd0c44c78fc547ad44f9c5b9e17903
+```
+
+Required Outcomes:
+
+- RO-1 COMPLETE — unified reference-aligned inventory, selection, filters, paging, polling,
+  deep links/authentication continuation and bounded error/empty/narrow/keyboard states.
+- RO-2 COMPLETE — explicit Job/Task/execution links, authorized server queries and consistent
+  counts, durable public scope labels and independently traceable continuations.
+- RO-3 COMPLETE — task-kind-specific progress, uncertainty, paged items/records, exact result/
+  step evidence, related logs/audit and bounded redacted JSON export.
+- RO-4 COMPLETE — new organize -> live ResourceLibrary Files selection -> exact Preview ->
+  explicit execution -> selected durable run, with safe stale/unknown admission recovery.
+- RO-5 COMPLETE — cooperative owner-aware controls and real queued remaining-scope continuation,
+  original scope/pin/budget/fences, native exact Preview when renewed authority is needed.
+- RO-6 COMPLETE — native Recognition/Metadata/correction/Classification/conflict/ignore decisions,
+  safe single and mixed selected batch analysis, separate reviewed execution and linked outcomes.
+- RO-7 COMPLETE — shared API/Web application gates, restart/Active isolation, zero-side-effect
+  reads, redaction, exact principal/session isolation and legal Unicode identity recovery.
+
+Required Surfaces:
+
+- Native V2 list/detail/records and task-linked recovery: COMPLETE.
+- Typed API read/command boundaries: COMPLETE.
+- Shared Python projection/admission/resident Worker behavior: COMPLETE.
+- Durable historical links/evidence: COMPLETE.
+- Files/Preview/execution return context: COMPLETE.
+- Compatible /api/v1/*, V1 and Task/Job links: COMPLETE.
+- Automation run links with independent Automation/Notifications pages: COMPLETE.
+
+Implemented:
+
+- Shared authoritative run queries/projection/history and native task-center presentation.
+- Exact live-file organize entry, cooperative lifecycle controls and durable fenced continuation.
+- Native task-item decisions and bounded safe analysis, explicit mutation authority and per-item links.
+- Additive runtime schema39->44 migration, durable scope/display context and compatible reads.
+
+Tasks completed:
+
+- 42.1 — Unified run inventory/query/navigation — ac5a43ed89d5d782809569ce5e58aedb8f2b03cb.
+- 42.2 — Run detail/progress/records/export — faabf20dc034c4c8da310928b3f39b0512616da6.
+- 42.3 — Native new organize/admission/return — c0559eba2585fc6cd5650e21e24b3125f7526e01.
+- 42.4 — Native controls and safe queued continuation — 73b171254f626f40364d910fe15583dd896e6da1.
+- 42.5 — Native task-item decisions/failed-analysis recovery — ce3fc2a3e70d40279fa725b5d7dc838d11123980.
+
+Final Tests:
+
+- `.venv/bin/python -m unittest discover -s tests`: final serial PASS,2184 total/2177 passed/
+  7 explicit skips,386.617s. First concurrent attempt FAIL,1 Rules race failure/7 skips,604.979s;
+  unchanged `tests.test_v2_rules_workspace_commands` rerun41/41 PASS. No assertion/timeout/skip edits.
+- `web/: npm run test -- --run`: final serial PASS,65 files/1005 tests,0 skips,370.33s. First attempt FAIL,1004 passed/1 failed
+  of1005; unchanged AutomationRouter module rerun11/11 PASS. No failure relabelled PASS.
+- Five required focused Python groups combined:507/507 PASS,173.637s. Release/security/
+  migration/upgrade four modules:19/19 PASS. Full Web covers the required affected modules.
+  Exact module lists/commands are retained at `git show f2ac5f84d0cd0c44c78fc547ad44f9c5b9e17903:TASK.md`
+  under Required Tests and in `/tmp/mediaflow-b42-final/review-evidence.md`.
+- `web/: npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts`:
+  21/21 PASS,1.9m,actual Python/API/SQLite/Storage/Provider/Worker.
+- `web/: npm run test:e2e -- --config=playwright.python.unicode-principal.config.ts tests/e2e/operations-principal-identity.python.spec.ts`:
+  1/1 PASS,16.9s,production-config Chinese principal and exact post-reload reconciliation/resend.
+- `web/: npm run test:e2e -- tests/e2e/library-files.spec.ts`:40/40 PASS,49.6s.
+- Affected Operations/manual-organize/manual-operations/deep-link specs:66 PASS/2 FAIL,2.2m.
+  Same two failures independently reproduced on unchanged original Slice Base with
+  `tests/e2e/deep-link.spec.ts --grep 'an explicit route choice at the boundary|V1 handoff does not leak'`.
+  Marked FAIL/PRE-EXISTING/UNRELATED, never PASS or hidden skip.
+- Ruff format339/check,compileall,pip check,both example config validations; Web typecheck/
+  lint/format/build; governance/whitespace/reference/private-file and exact manifest audits:PASS.
+- `pip wheel . --no-deps --no-build-isolation` and `scripts/wheel_smoke_test.py`:
+  PASS,isolated installed CLI/database/backup/restore/upgrade and lease-contention checks.
+- Real original Slice Base39 API/Preview/Worker fixture -> current44:PASS,every old column/row,
+  pins,consumed one-shot authority,plans,Tasks,Results,audits preserved; idempotent second reopen.
+- `scripts/docker_release_security_smoke_test.py`:attempts1/2 build/image/Compose inspection PASS,
+  then health wait FAIL; actual unchanged3s probe timeout evidence retained. Serial rebuild attempt3
+  UNAVAILABLE at external setuptools>=68 download. Verified reuse of the exact already-built image
+  `sha256:b189638532fc73e27984a5bd0edd684f61e09187fe7713abcb60d4b755bbc4d8`
+  matches all158 Python files and4 built Web assets. Unmodified runtime/security/host-boundary
+  assertions PASS via transparent `/tmp/mediaflow-b42-final/docker_verified_image.py` build reuse.
+  Four services healthy; resident Worker completion,static serving,RBAC,privacy checks PASS.
+- Optional dedicated real SMB/S3/OpenList acceptance and Local/SMB/OpenList/S3 endurance profiles:
+  7 explicitly SKIPPED/UNAVAILABLE; their gate-validation subset6 PASS. No production service claimed.
+- Exact attempts/logs/reproduction/manifest evidence: `/tmp/mediaflow-b42-final/review-evidence.md`.
+
+Safety Evidence:
+
+- Read/refresh/export/Preview/decision paths perform no media mutation; passive reads invoke no
+  Provider. Real recovery analysis and later explicit OrganizerExecutor mutation remain distinct.
+- RBAC,exact SourceIdentity/selection/checkpoint,pin,one-shot/grant authority,claims/locks/fences and
+  audit remain backend-authoritative. Success/ignored/uncertain siblings are not replayed.
+- Original history survives restart/Active changes; new Active never repins prior work; C with A/A
+  policies stays C. Unknown admission is reconciled before deliberate repeat; tokens remain memory-only.
+- No removed/weakened tests,hidden skips,silent operation fallback,private config or real credentials.
+  Reference SHA256 unchanged:a8a5dc329891207b0feb487fa60690e97072d11b73da1136324459bf79915f86.
+  `config/alist.json` ignored/untracked/unstaged and not read. No FFmpeg/FFprobe. User PNGs preserved.
+
+Known Non-blocking Issues:
+
+- P2: two pre-existing Deep-link tests expect the retired Review link/Configuration handoff;
+  same failures on original Slice Base,current required native recovery/settings journeys work.
+- P3: existing bundle-size advisory,SQLite ResourceWarnings and jsdom navigation notices remain.
+- Validation variability: failed initial concurrent regressions/health checks and external dependency
+  download attempt remain recorded separately from passing unchanged serial/runtime validations.
+
+Explicitly Deferred:
+
+- Unbounded whole-library manual organize, MediaLibrary as new organize source, new pipeline modes,
+  file operations/providers, media uploads/downloads or automatic scheduling from this page.
+- Automation definition/global-settings redesign, notification or dashboard redesign, standalone
+  global Review inbox, cross-task bulk review, arbitrary historical Reprocess and V1 retirement.
+- History deletion/retention/archival, task rename/edit, priority/reordering, queue replacement,
+  distributed workers, hard interruption and universal rollback. REQ-TASK-004's broader history
+  management remains a product requirement outside this delivery boundary.
+- Automatic uncertain-effect reconciliation/replay, new destructive authority, failed-batch automatic
+  execution and new Provider switching/identity/secret-store systems.
+- Poster acquisition, fabricated ETA/byte-speed, required ETA prediction, WebSocket/SSE infrastructure,
+  exact numbered-page jumps, pixel-identical fixtures and image changes/recompression.
+- New policy semantics or restoration of retired direct file retry/re-recognition/rematch/re-plan APIs.
+
+Documentation Reconciliation Needed:
+
+- A reconciles Slice42 TARGET to accepted CURRENT in the Chinese canonical specification,
+  docs/product-experience.md,docs/v2-requirements.md and docs/architecture.md,including native
+  recovery replacing ordinary V1 handoff and actual runtime schema44/shared continuation boundaries.
+- A reconciles Roadmap/Progress status once after its Final Review; B has not closed the Slice.
+
+Decision: SLICE READY FOR A REVIEW
 
 ## A Final Review
 
