@@ -1,25 +1,25 @@
 # Slice 44 — Existing V2 Pages Functional Improvements
 
-This is an A-owned planning Contract for one Slice covering functional improvements across
+This is the A-owned ACTIVE Contract for one Slice covering functional improvements across
 already implemented pages. The user has selected consistent ordinary file-operation behavior for
 ResourceLibrary Files and MediaLibrary Files, reference-aligned organizing-rules presentation, and
 classification destinations defined by MediaLibrary plus `path`, plus object-scoped Rules tests
 with a separate complete-flow check, usable long-name breadcrumbs/toolbars on both library pages,
-and bounded ResourceLibrary folder/mixed-selection organization. Other page contents remain
-unspecified; this document does not yet constitute an ACTIVE implementation Contract.
+and bounded ResourceLibrary folder/mixed-selection organization. These six Required Outcomes
+define the activated boundary; unspecified improvements remain outside this Contract.
 
 ```text
 Slice ID: 44
 Name: Existing V2 Pages Functional Improvements
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: PLANNED
+Status: ACTIVE
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: NOT SET
-Contract Revision: 2026-10-07 — A incorporates ResourceLibrary folder/mixed-selection organization as RO-6; RO-1 through RO-5 retained
+Contract Revision: 2026-10-07 — A activates the user-approved RO-1 through RO-6 boundary; outcomes, acceptance and Base retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, folder admission/recovery, classification compatibility and configuration/evidence authority
-Final Test Level: T4 for selected outcomes; reassess complete boundary before activation
-Next Action: A COMPLETES AND ACTIVATES THE CONTRACT AFTER REMAINING SCOPE IS SET
+Final Test Level: T4 for the complete RO-1 through RO-6 boundary
+Next Action: B PLANS ONE COHERENT IMPLEMENTATION TASK INSIDE THIS ACTIVE CONTRACT
 ```
 
 ## Authority and sequencing
@@ -32,14 +32,14 @@ or reopening of an accepted historical Slice.
 
 The user subsequently granted A authority to incorporate the organizing-rules workspace visual
 correction into this existing Slice 44, then answered yes to including the earlier classification
-`library/path` behavior correction as well. RO-2 and RO-3 record that authorization. This selects
-one coherent Rules improvement alongside RO-1; it does not activate the Slice, create a Task,
-resume frozen Slice 43, or retrospectively change the accepted Slice 37/41 closure records.
+`library/path` behavior correction as well. RO-2 and RO-3 record that authorization. That amendment
+selected one coherent Rules improvement alongside RO-1; it did not activate the Slice, create a
+Task, resume frozen Slice 43, or change the accepted Slice 37/41 closure records.
 
 The user subsequently granted A authority to incorporate the reviewed page-local offline-test
 proposal into current Slice 44. RO-4 records that authorization: each editor tests its current
 object and necessary inputs, while complete-flow checks have an explicit separate entry. This
-remains a PLANNED scope amendment, not Slice activation or permission to implement without B's
+was a PLANNED scope amendment preceding this activation; implementation still requires B's
 active Task. It preserves the distinction between RecognitionType definition and RecognitionRule
 conditions, and does not weaken checked publication or runtime/execution prerequisites.
 
@@ -51,8 +51,8 @@ The existing product, architecture and permanent safety requirements remain auth
 
 The user subsequently accepted the existing same-Storage Move rules as the ordinary-file-operation
 baseline, requested other operations follow those rules, reviewed the operation-by-operation plan,
-and explicitly authorized A to incorporate it into Slice 44. This revision selects that outcome;
-it is not activation, B Task planning, implementation, or approval of unselected page work.
+and explicitly authorized A to incorporate it into Slice 44. That amendment selected the outcome;
+it did not itself authorize activation, B Task planning, implementation or unselected page work.
 
 The user further confirmed that every applicable common file-operation policy must apply to the
 MediaLibrary page as well. RO-1's MediaLibrary behavior is a required delivered surface, not only
@@ -68,7 +68,7 @@ Preview/source-authority rules or accepted historical closure records.
 
 The user subsequently reviewed the long-name toolbar repair proposal and explicitly authorized A
 to incorporate it into Slice 44. RO-5 selects that browsing/layout outcome on both library pages,
-including the reported Docker-served presentation. This scope amendment does not activate the
+including the reported Docker-served presentation. That scope amendment did not activate the
 Slice, create an implementation Task or authorize deployment. That amendment selected layout only;
 earlier metadata-score/manual-review questions and mixed file/directory Organize behavior remained
 outside it.
@@ -77,10 +77,17 @@ The user subsequently reviewed the ResourceLibrary folder/mixed-selection organi
 explicitly granted A authority to incorporate it into Slice 44. RO-6 selects recursive bounded
 discovery, mixed-selection deduplication, configured filtering/stability, background progress and
 safe continuation into the existing exact manual Preview/execution journey. The first delivery
-retains the existing 100-primary-media bound per organizing intent. This is a PLANNED scope
-amendment, not Slice activation, B Task planning, implementation or deployment authorization.
+retains the existing 100-primary-media bound per organizing intent. That was a PLANNED scope
+amendment; it did not itself authorize activation, B Task planning, implementation or deployment.
 MediaLibrary remains a destination/file-management surface, not an organizing source. RO-6 is
 separate from RO-1's direct-file optional-fingerprint policy and RO-5's presentation repair.
+
+The user has now explicitly requested activation of Slice 44 under A's granted authority. A
+activates the complete RO-1 through RO-6 Contract and its T4 final gate without changing the Base,
+required behavior, acceptance criteria or frozen Slice 43. Once this ACTIVE Contract and Roadmap
+are checkpointed, B may plan one coherent implementation Task. Activation creates no Task, claims
+no implemented outcome and grants no deployment or Slice 43 resumption authority. Any additional
+material scope change returns to A through the development workflow.
 
 Applicable guidance includes canonical Storage management/abstraction, direct file commands,
 MediaLibrary file management and file-list journeys; UX-001 through UX-010; REQ-STO-001/002/003/006,
@@ -155,8 +162,9 @@ recovery.
   current conflict, or use backend-advertised per-item continuation after reconciling effects.
   A timeout is not proof of failure and never triggers automatic mutation resubmission.
 
-Other existing-page improvements may be supplied within this Slice before activation; unspecified
-requests are not Required Outcomes. A single operation or page is not automatically another Slice.
+Unspecified existing-page improvements are outside the activated RO-1 through RO-6 boundary;
+material additions require A's Contract amendment. A single operation or page is not automatically
+another Slice.
 
 ## CURRENT Audit and TARGET Rule
 
@@ -751,9 +759,9 @@ explicit successor work and never rewrites a frozen list, historical pin, comple
 consumed execution authority. FileIndex synchronization remains post-result and its failure cannot
 trigger another media mutation.
 
-Other existing-page contents remain unselected. A will incorporate them and assess the complete
-boundary before activation; B must not invent additional outcomes or field/operation-sized Task
-ladders. RO-2 through RO-6 are outcomes, not pre-created implementation Tasks.
+RO-1 through RO-6 define the complete activated boundary. Other existing-page contents remain
+unselected and deferred; B must not invent additional outcomes or field/operation-sized Task
+ladders. Required Outcomes are not pre-created implementation Tasks.
 
 ## Required Surfaces
 
@@ -781,8 +789,9 @@ ladders. RO-2 through RO-6 are outcomes, not pre-created implementation Tasks.
   backend candidate/analysis/evidence behavior, actionable dependency guidance and historical
   complete Strategy Test/DryRun compatibility. Tests do not become a second publication authority.
 
-B determines coherent implementation units and Task Test Levels after A activation; A does not
-pre-plan a page-by-page implementation ladder or introduce simultaneous active Tasks here.
+B determines coherent implementation units and Task Test Levels within this checkpointed ACTIVE
+Contract; A does not pre-plan a page-by-page implementation ladder or introduce simultaneous
+active Tasks here.
 
 ## Safety Invariants and UX Constraints
 
@@ -861,8 +870,8 @@ checkpoint. Missing references are reported, not replaced with generated approxi
 ## Explicitly Deferred
 
 - Slice 43 implementation and its outstanding fix loop while the development hold is in effect.
-- Implementation of any Slice 44 feature before A checkpoints its complete ACTIVE Contract.
-- Features, pages or redesigns not selected in the eventual user-approved boundary.
+- Implementation before this ACTIVE Contract is checkpointed and B creates an active Task inside it.
+- Features, pages or redesigns outside the activated RO-1 through RO-6 boundary.
 - General browser Upload/Download, binary/media editing, unbounded work, cross-library-kind direct
   transfers, transfer Replace, new HardLink/SoftLink UI, universal rollback and new Storage providers.
 - Provider-generation/conditional-operation redesign, full-media hashing to prove Rename/Delete
@@ -1023,22 +1032,22 @@ The selected RO-6 is accepted only when:
     items. Overwrite/source removal/cleanup remain independently permitted, no silent operation
     fallback occurs, and FileIndex sync failure cannot replay media work. Web/API agree throughout.
 
-Additional-page acceptance is pending selection. RO-1 through RO-6 are not marked complete by
-this revision, and these acceptance groups are not a predetermined Task list.
+No additional-page acceptance is required outside RO-1 through RO-6. Activation does not mark any
+Required Outcome complete, and these acceptance groups are not a predetermined Task list.
 
 ## Final Validation Expectations
 
 RO-1 and RO-3 affect Storage mutation boundaries, core planning, immutable configuration, Worker
 recovery and compatibility: the selected Slice final gate is T4. RO-2 normally requires T3 Web/
-shared-shell integration evidence; B assigns Task levels from actual risk after activation rather
-than assuming all presentation changes are local CSS. This planning change does not stand in for
+shared-shell integration evidence; B assigns Task levels from actual risk within this Contract
+rather than assuming all presentation changes are local CSS. Activation does not stand in for
 product validation or create an implementation Task.
 RO-4 needs Application/API/Web integration evidence; changes touching candidate validation,
 publication evidence or historical compatibility receive T4 validation at those authority
 boundaries. A local test split is not permission to reduce the Slice's final T4 gate.
 RO-6 affects core source admission, immutable pins, Worker ownership, persistence and execution
-handoff: its affected authority boundaries require T4 validation. No formal Task Difficulty or
-Task list is assigned before activation; B plans coherent units from the complete Contract.
+handoff: its affected authority boundaries require T4 validation. Activation assigns no formal
+Task Difficulty or Task list; B plans coherent units and assigns their levels within this Contract.
 
 Require focused domain/application/Executor/API tests with provider-neutral absent/present/changing
 fingerprint fakes; Local temporary directories; bounded OpenList/SMB/S3 semantics through fakes/local
@@ -1096,7 +1105,7 @@ semantics and exact route/API paths. Use controlled synthetic entries and read-o
 not production-media mutations or user-private paths. Include affected shared-style regressions and
 Web lint/type/build gates. Validate built assets via an isolated production Docker instance and
 record served-artifact/browser evidence; unavailable isolated evidence must be reported explicitly.
-B assigns the coherent Task's Test Level after activation; RO-5 does not reduce the final T4 gate.
+B assigns the coherent Task's Test Level within this Contract; RO-5 does not reduce the final T4 gate.
 
 For RO-6, require application/authenticated API and real-Python native browser journeys for folder-
 only, file-only, multiple-folder and mixed selections in list/grid, plus Operations creation/return.
@@ -1120,9 +1129,9 @@ an actual migration/restart rehearsal; old work cannot gain directory scope or n
 Include affected full regression, safety, packaging/migration and Web lint/type/build gates;
 existing direct commands, MediaLibrary isolation, RO-3 destinations and RO-5 toolbar remain covered.
 
-Reassess the complete Slice's final validation when remaining page contents are selected. Before
-activation, validate and checkpoint this planning Contract/Roadmap relationship with governance
-and diff checks; no runtime acceptance is claimed from those checks.
+The complete activated boundary requires final T4 validation. Any future material Contract change
+requires A to reassess that gate. Validate and checkpoint the ACTIVE Contract/Roadmap relationship
+with governance and diff checks; those checks do not establish runtime acceptance.
 
 ## Closure Packet
 
@@ -1130,5 +1139,5 @@ Not submitted. No Slice 44 implementation Task exists, and no Required Outcome i
 
 ## A Final Review
 
-Not performed. This is a PLANNED Contract with RO-1 through RO-6 selected; no Slice acceptance or
+Not performed. This is the ACTIVE Contract for RO-1 through RO-6; no Slice acceptance or
 closure is claimed.

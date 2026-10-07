@@ -30,7 +30,7 @@ only in [the development workflow](development-workflow.md).
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; user-frozen on a preservation branch | PLANNED | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
-| 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution; other page contents pending | PLANNED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
+| 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages: consistent ResourceLibrary/MediaLibrary ordinary file operations with optional fingerprints; reference-aligned Rules presentation; classification destinations using MediaLibrary plus path with explicit legacy conversion and preserved historical authority; object-scoped Rules tests and separate complete-flow checks; usable long-name paths/toolbars on both library pages; bounded ResourceLibrary folder/mixed-selection organization through exact Preview and confirmed execution | ACTIVE | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 
 ## Current boundary
 
@@ -131,15 +131,15 @@ Task-scoped Recognition/Metadata/Classification/conflict decisions and bounded f
 recovery are included. A global Review inbox, cross-task bulk review, history retention/deletion,
 unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
 redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
-and retired Slice boundaries are unchanged. Slice 44 has selected file-operation and Rules outcomes but
-remains PLANNED, with no active implementation Task; this Roadmap does not pre-split Tasks.
+and retired Slice boundaries are unchanged. Slice 44 is ACTIVE for its six selected file-operation,
+Rules and browsing outcomes, with no active implementation Task; this Roadmap does not pre-split Tasks.
 
-## Current planning and suspended boundary
+## Current active and suspended boundary
 
 At the user's explicit request on 2026-10-07, Slice 43 is suspended and preserved on
 `frozen/slice-43-2026-10-07`. Its status is PLANNED with a development hold, not accepted or
 cancelled; its original scope, Base and unresolved review state remain recoverable in Git.
-Slice 44 is planned under root `SLICE.md` for improvements across implemented pages. The user has
+Slice 44 is ACTIVE under root `SLICE.md` for improvements across implemented pages. The user has
 authorized A to include ordinary file-operation consistency on ResourceLibrary and MediaLibrary
 Files, reference-aligned Rules presentation and classification destinations using MediaLibrary plus
 `path`, including explicit legacy conversion and pinned-work/authority protection, and object-scoped
@@ -149,11 +149,13 @@ include usable long-name breadcrumbs/toolbars while preserving exact paths and n
 ResourceLibrary Files also includes bounded recursive folder/mixed-selection discovery with
 deduplication, pinned filtering/stability, durable progress/recovery and the existing exact manual
 Preview/confirmed execution journey. MediaLibrary remains outside organizing-source scope.
-Other page contents remain pending. These are TARGET outcomes, not new CURRENT delivery or retroactive changes
-to Slice 37/41 closure. Slice 44 is PLANNED, not ACTIVE. The current working branch is
-`slice/44-page-improvements`, based on the accepted Slice 42 closure without Slice 43 code.
-Only after A completes and checkpoints an ACTIVE Contract may B plan a Task. Explicit A
-activation is also required before resuming Slice 43; no automatic integration is authorized.
+The user explicitly requested A activation of this complete six-outcome boundary on 2026-10-07.
+Other page contents are deferred. These remain TARGET outcomes, not new CURRENT delivery or
+retroactive changes to Slice 37/41 closure. The current working branch is
+`slice/44-page-improvements`, based on the accepted Slice 42 closure without Slice 43 code;
+the immutable Base is unchanged. Once the ACTIVE Contract and Roadmap are checkpointed, B may
+plan one coherent Task. Slice 43 still requires separate explicit A activation before resumption;
+no automatic integration is authorized.
 
 ## Roadmap rules
 

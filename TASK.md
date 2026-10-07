@@ -3,10 +3,10 @@
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
 Parent Slice: 44 — Existing V2 Pages Functional Improvements
-Next Action: A COMPLETES AND ACTIVATES THE CONTRACT AFTER REMAINING SCOPE IS SET
+Next Action: B PLANS ONE COHERENT IMPLEMENTATION TASK INSIDE THE ACTIVE SLICE 44 CONTRACT
 ```
 
-Slice 44 is PLANNED for functional improvements across implemented pages. A has incorporated the
+Slice 44 is ACTIVE for functional improvements across implemented pages. A has incorporated the
 user-authorized RO-1: consistent ordinary file operations on ResourceLibrary and MediaLibrary Files,
 using observable metadata and optional provider fingerprints; RO-2: reference-aligned Rules header,
 navigation, inventory controls and purpose-built forms; RO-3: classification destinations using
@@ -16,21 +16,22 @@ inputs and per-condition evidence, with separate downstream readiness and a nati
 check. Local passes never substitute for complete-flow, Save/activation or execution evidence.
 A has also incorporated RO-5: usable long-name breadcrumbs/toolbars on both library pages,
 preserving exact paths and complete-name access with responsive layout and production-Docker
-browser validation. This remains a planning outcome, not an implementation Task or deployment.
+browser validation. Activation does not create an implementation Task or authorize deployment.
 A has also incorporated RO-6: bounded ResourceLibrary folder/mixed-selection organization with
 recursive backend discovery, deduplication, pinned filtering and proven stability, background
 Task/Worker progress/control and the existing exact manual Preview/confirmed execution journey.
 The delivery retains the 100-primary-media intent bound and independent exclusions/failures/
 recovery; FileIndex is not source/stability authority and MediaLibrary is not an organizing source.
-Other page contents remain pending.
+RO-1 through RO-6 define the complete activated boundary; other page contents are deferred.
 RO-1's common policy and every applicable operation must be delivered and accepted on both
 ResourceLibrary Files and MediaLibrary Files, including their scoped APIs and Task/Worker recovery.
 MediaLibrary is not only regression coverage or deferred follow-up; a resource-only implementation
 or shared-service-only test cannot complete RO-1. Keep library-kind/root/permission isolation.
-Neither B Task planning nor Developer implementation is currently authorized; A must first complete
-and checkpoint its ACTIVE Contract. The operation descriptions in SLICE.md are acceptance behavior,
-not pre-created implementation Tasks. The user-authorized Rules correction is part of Slice 44,
-not a parallel implementation Task or resumption of frozen Slice 43.
+After the ACTIVE Contract and Roadmap checkpoint, B may plan one coherent implementation Task
+and assign Difficulty and Test Level. Developer implementation requires that active Task.
+The operation descriptions in SLICE.md are acceptance behavior, not pre-created implementation
+Tasks. The user-authorized Rules correction is part of Slice 44, not a parallel implementation
+Task or resumption of frozen Slice 43.
 
 Slice 43 is frozen on `frozen/slice-43-2026-10-07`, checkpoint
 `8a41e131f3a668388381ab51c8876668108871d8`. The complete Task 43.1 and latest B review remain at
