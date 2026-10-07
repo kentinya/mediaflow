@@ -14,7 +14,7 @@ Owner: A — Slice Owner / Architect / Final Reviewer
 Status: PLANNED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
 Implementation Head: NOT SET
-Contract Revision: 2026-10-07 — A incorporates object-scoped Rules tests and separate complete-flow checks
+Contract Revision: 2026-10-07 — A clarifies mandatory file-operation parity on both library pages; RO-1 through RO-4 retained
 Working Branch: slice/44-page-improvements
 Risk: High for Storage mutations, classification compatibility and configuration/evidence authority
 Final Test Level: T4 for selected outcomes; reassess complete boundary before activation
@@ -52,6 +52,10 @@ The user subsequently accepted the existing same-Storage Move rules as the ordin
 baseline, requested other operations follow those rules, reviewed the operation-by-operation plan,
 and explicitly authorized A to incorporate it into Slice 44. This revision selects that outcome;
 it is not activation, B Task planning, implementation, or approval of unselected page work.
+
+The user further confirmed that every applicable common file-operation policy must apply to the
+MediaLibrary page as well. RO-1's MediaLibrary behavior is a required delivered surface, not only
+a regression check or optional follow-up after ResourceLibrary Files is completed.
 
 This is an explicit TARGET change to the current technical fingerprint gate, not a claim that the
 baseline code already implements it. The CURRENT description in `docs/architecture.md` remains
@@ -192,6 +196,22 @@ Deliver the User Goal above on both library pages through shared backend behavio
 actions. The following operation semantics are one business-capability outcome, not a pre-split
 Task list. Preserve existing capability and library-kind boundaries; absence of a fingerprint is
 not absence of a supported Storage operation.
+
+#### Mandatory parity across ResourceLibrary and MediaLibrary pages
+
+Every operation below applies to both `/ui-v2/resourcelib/files` and `/ui-v2/medialib/files` where
+the existing surface supports it: browsing, Create Folder/Text File, file/directory Rename, single/
+batch/directory Delete, same/cross-Storage Copy/Move and bounded text Open/Edit/Save. Both share the
+same observable-metadata/optional-fingerprint policy, permission/capability/conflict checks,
+confirmation semantics, known/partial/uncertain results and safe recovery through application/API,
+Executor and Task/Worker behavior. Page-specific wiring must not retain a separate mandatory
+fingerprint gate or disable OpenList commands after the common backend supports them.
+
+Retain each page's own library-kind identity, roots, selection/return context and allowed actions;
+MediaLibrary transfers select MediaLibrary destinations, and ResourceLibrary transfers retain
+their existing destination rules. Shared logic does not grant cross-kind direct transfer or add
+Organize to MediaLibrary. B's Tasks and acceptance evidence must cover each affected surface before
+RO-1 is complete; a ResourceLibrary-only fix or shared-service test alone cannot satisfy it.
 
 #### Browsing and entry information
 
@@ -639,6 +659,8 @@ The selected RO-1 is accepted only when:
    OpenList/SMB-like provider lacking fingerprints can Rename files/directories, confirm and Delete
    bounded files/directories, and finish the source-removal stage of a verified cross-Storage Move.
    Provider capability/permission failures remain distinct from absent fingerprint.
+   Each applicable operation must complete from the MediaLibrary page and media-scoped API as well
+   as ResourceLibrary Files; shared backend success or resource-scoped coverage alone is insufficient.
 2. Observable file size/time/type changes and present-fingerprint changes/disappearance refuse
    stale operations; changed Delete scope and known non-empty final directories remain protected.
    Missing fingerprint alone is not a refusal. Deterministic identical-metadata/no-fingerprint
@@ -751,6 +773,14 @@ lint/type/build, packaging and migration gates. Include no-content-read spies, c
 scope failures, unchanged and changed observations, OpenList multi-stage Move and source-removal
 success/partial cases. Production media/services are not test prerequisites. Unavailable isolated
 real-service evidence must be reported honestly, never inferred from a fake.
+
+RO-1 evidence must map the affected operation cases to both native routes and their separately
+scoped APIs, including absent/present/changing fingerprint, no-content-read Rename/Delete,
+confirmed directory/batch Delete, cross-Storage source removal, conflict/denied/root refusal,
+partial/unknown outcomes, retained input and refreshed tree/selection/return context. Test
+MediaLibrary Task/Worker readback and continuation explicitly, and preserve equal-ID cross-kind
+evidence rejection. Shared tests may reuse fixtures, but must demonstrate both library-kind
+bindings; marking MediaLibrary merely "unaffected" or deferred does not meet RO-1 acceptance.
 
 For RO-2, require automated navigation/search/drawer/form/publication-recovery checks, Web build/
 type/lint gates, real-Python browser journeys and saved visual-review evidence at 1536 × 1024 and

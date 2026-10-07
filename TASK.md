@@ -15,6 +15,10 @@ protection; and RO-4: object-scoped Rules tests against the current unsaved cand
 inputs and per-condition evidence, with separate downstream readiness and a native complete-flow
 check. Local passes never substitute for complete-flow, Save/activation or execution evidence.
 Other page contents remain pending.
+RO-1's common policy and every applicable operation must be delivered and accepted on both
+ResourceLibrary Files and MediaLibrary Files, including their scoped APIs and Task/Worker recovery.
+MediaLibrary is not only regression coverage or deferred follow-up; a resource-only implementation
+or shared-service-only test cannot complete RO-1. Keep library-kind/root/permission isolation.
 Neither B Task planning nor Developer implementation is currently authorized; A must first complete
 and checkpoint its ACTIVE Contract. The operation descriptions in SLICE.md are acceptance behavior,
 not pre-created implementation Tasks. The user-authorized Rules correction is part of Slice 44,
