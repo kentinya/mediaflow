@@ -6,7 +6,7 @@ the current [`SLICE.md`](SLICE.md). It implements RO-1 and Slice Acceptance Crit
 ```text
 Task ID: 44.1
 Parent Slice: 44
-Status: IN PROGRESS
+Status: READY FOR B REVIEW
 Task Base: f57715c042ffa22c07d92950cc3de222946ed9b2
 Difficulty: High
 Test Level: T4
@@ -270,39 +270,112 @@ replace the direct-work historical compatibility rehearsal.
 
 ### Changed Files
 
-Pending implementation.
+- `TASK.md`, `docs/architecture.md`
+- `mediaflow/application/direct_file_commands.py`, `mediaflow/application/direct_file_transfers.py`,
+  `mediaflow/application/operations_lifecycle.py`, `mediaflow/application/organizer.py`,
+  `mediaflow/domain/direct_files.py`, `mediaflow/final_cli.py`,
+  `mediaflow/infrastructure/sqlite_runtime.py`, `mediaflow/interfaces/service_api.py`
+- `scripts/direct_files_browser_harness.py`, `scripts/direct_files_compatibility_rehearsal.py`,
+  `scripts/operations_inventory_harness.py`
+- `tests/test_direct_file_operations.py`, `tests/test_direct_file_transfers.py`,
+  `tests/test_media_library_direct_commands.py`, `tests/test_media_library_transfers.py`,
+  `tests/test_release_security.py`
+- `web/playwright.config.ts`, `web/playwright.direct-files.python.config.ts`,
+  `web/src/entities/library/direct-files.ts`, `web/src/features/library/FileCommandDialogs.tsx`,
+  `web/src/features/library/MediaLibraryCommands.test.tsx`,
+  `web/src/features/library/MediaLibraryFilesPage.tsx`,
+  `web/src/features/library/StorageFilesPage.test.tsx`,
+  `web/src/features/library/StorageFilesPage.tsx`, `web/src/shared/api/api-client.ts`,
+  `web/src/shared/api/media-library-commands-api.test.ts`,
+  `web/tests/e2e/direct-files.python.spec.ts`, `web/tests/e2e/library-files.spec.ts`,
+  `web/tests/e2e/medialib-commands.spec.ts`
 
 ### Implemented
 
-Pending implementation.
+- Rename and Delete evidence is metadata-only when a provider has no fingerprint, and binds the
+  library kind/ID, Storage/root, path and immutable configuration snapshot. A fingerprint remains
+  mandatory when it was present at observation. Cross-Storage Move now removes a fingerprintless
+  source only after verified destination copy and fresh source checks.
+- Confirmed Delete persists its flattened scope as per-entry TaskItems, then runs through the
+  existing Files Worker claim/fence boundary. Both library kinds expose durable status, pause,
+  safe continuation and uncertain-effect readback without replaying the request.
+- Both native Files pages now show queued/working/terminal Delete state, per-item outcomes and the
+  Operations recovery path. Added real Python/API/SQLite/Worker browser journeys and a Base-to-
+  candidate persistence rehearsal. `docs/architecture.md` records the narrow current behavior.
 
 ### Tests and Results
 
-Pending implementation. B's six baseline probes are not candidate acceptance evidence.
+- PASS — `.venv/bin/python -m unittest tests.test_direct_file_operations tests.test_media_library_direct_commands tests.test_direct_file_transfers tests.test_media_library_transfers` — 212 tests.
+- PASS — `.venv/bin/python -m unittest tests.test_organizer tests.test_organizer_mutation_authority tests.test_scope_continuation tests.test_processing_worker_readiness tests.test_runtime_files_browser` — 122 tests.
+- PASS — `.venv/bin/python -m unittest tests.test_local_storage tests.test_smb_storage tests.test_openlist_storage tests.test_s3_storage tests.test_migration_rehearsal tests.test_release_security tests.test_release_validation tests.test_container_deployment` — 122 tests; OpenList adapter exercised through a local HTTP server.
+- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,192 tests, 7 skipped; isolated full-suite run completed in 388.461s.
+- PASS — `.venv/bin/python scripts/check_governance.py`; `.venv/bin/ruff format --check .` (341 files); `.venv/bin/ruff check .`; `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`; `.venv/bin/mediaflow --config config/strategy.example.json config validate`; `.venv/bin/mediaflow --config config/mediaflow.phase13.2.example.json config validate`; `git diff --check`.
+- PASS — `rg -n -i 'ffprobe|ffmpeg' mediaflow pyproject.toml` — no matches (expected exit 1).
+- PASS — from `web/`: `npm run test -- --run` — 65 files / 1,006 tests; `npm run format:check`; `npm run lint`; `npm run typecheck`; `npm run build` (build reports the existing >500 KB minified-chunk warning).
+- PASS — from `web/`: `npm run test:e2e -- --config=playwright.python.config.ts tests/e2e/operations-inventory.python.spec.ts` — 21 tests.
+- PASS — from `web/`: `npm run test:e2e -- --config=playwright.direct-files.python.config.ts tests/e2e/direct-files.python.spec.ts` — 8 real-Python browser journeys, covering the same four flows on ResourceLibrary and MediaLibrary. Four bounded result screenshots are in ignored `web/test-results/`.
+
+| Journey evidence | ResourceLibrary | MediaLibrary |
+| --- | --- | --- |
+| File and directory Rename; single Delete | `tests/test_direct_file_operations.py`; Python browser `renameThroughNativePage` / `deleteThroughNativePage` | `tests/test_media_library_direct_commands.py`; Python browser `renameThroughNativePage` / `deleteThroughNativePage` |
+| Batch and recursive directory Delete; Worker readback/continuation | `tests.test_direct_file_operations`; `tests.test_direct_file_transfers`; Python browser `batchDeleteThroughNativePage` | `tests.test_media_library_direct_commands` (Media Worker pause/resume); `tests.test_media_library_transfers`; Python browser `batchDeleteThroughNativePage` |
+| Fingerprintless verified cross-Storage Move; pause and resume | `tests.test_direct_file_transfers`; Python browser `crossStorageMoveThroughNativePage` | `tests.test_media_library_transfers`; Python browser `crossStorageMoveThroughNativePage` |
+| Production OpenList adapter | `test_production_openlist_http_adapter_renames_and_deletes_without_fingerprints` uses a local HTTP server | Same shared OpenList adapter coverage; Media-specific command/readback tests above |
+
+- PASS — Base-to-candidate compatibility rehearsal: `.venv/bin/python scripts/direct_files_compatibility_rehearsal.py seed-base --base-tree /tmp/mediaflow-task44-1-base --state-root /tmp/mediaflow-task44-1-compat-script`; then `.venv/bin/python scripts/direct_files_compatibility_rehearsal.py verify-candidate --state-root /tmp/mediaflow-task44-1-compat-script` — schema 44 state, old evidence bytes, pins, results and pending work preserved; refused no-fingerprint partial Move did not gain source-delete authority.
+- PASS — `.venv/bin/python -m pip wheel . --no-deps --no-build-isolation -w /tmp/mediaflow-task44-1-final-wheel`; `.venv/bin/python scripts/wheel_smoke_test.py /tmp/mediaflow-task44-1-final-wheel/mediaflow-*.whl` — backup/restore and upgrade smoke passed. Wheel SHA-256: `09b9f528927df0ea76932a208515a87255f80f3f68d3e909590767209a12467`.
+- PASS — `.venv/bin/python scripts/docker_files_transfer_lifecycle_smoke_test.py --image mediaflow:task44-1-candidate-lifecycle` — candidate image `sha256:eca5c5d24ae5bcb98e2984ace5451ee10726635ffcbf0333b4243113a4ecd636`.
+- PASS — `.venv/bin/python scripts/docker_release_security_smoke_test.py --image mediaflow:task44-1-candidate-security` — candidate image `sha256:dfc88a3ab9b64121485a1f42fe27e1cf659634dfdf60fc21d181d140630a23c0`.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_files_transfer_impact_smoke_test.py --image mediaflow:task44-1-candidate-impact`: the unchanged harness calls `make_deployment_config.py` in default `bootstrap` mode, then indexes missing `resourceLibraries` (`KeyError`). The exact command reproduced the same failure at Task Base before starting its Compose stack.
+- FAIL / PRE-EXISTING / UNRELATED — `.venv/bin/python scripts/docker_upgrade_recovery_smoke_test.py`: migration, backup, failure injection and recovery completed, then the harness expected schema 39 while the runtime reported schema 44. The exact command reproduced the same assertion at Task Base.
+- FAIL / PRE-EXISTING / UNRELATED — from `web/`, `npm run test:e2e`: 204/235 passed and 31 failed (dashboard/deep-link placeholders and Storage Management cases). The same 31 failures were reproduced at Task Base; the Python-backed Operations and direct-Files suites above pass.
+
+Candidate evidence was built from implementation commit `91ac7c16b5e8492c62e2c5c01edad2122e492e20`. Seven full-suite skips are reported by `unittest`; production SMB/S3/TMDB endpoints were not exercised, and no production credentials or media were used. The OpenList adapter was exercised against a local server.
 
 ### Decisions
 
-Record evidence/context compatibility, directory checks, long-Delete admission/control, historical
-source-removal recovery and any narrow architecture adjustment with its reason.
+- Optional provider fingerprints strengthen the observed metadata fence; they are not invented or
+  replaced with content hashes. Directory evidence uses stable identity when available, otherwise
+  existence/type, so deleting confirmed children does not stale a Local parent through ctime.
+- Direct Delete reuses the existing Files transfer persistence, Worker claims, locks, leases and
+  mutation fences instead of introducing a second queue. A boundary with unknown effect is
+  investigated through readback and is never replayed.
+- Historical transfer authority remains unchanged. A refused/partial pre-upgrade no-fingerprint
+  Move cannot acquire source-removal authority after upgrade; the compatibility rehearsal seeded
+  that state using the actual Task Base implementation.
+- The Docker impact and generic upgrade harness failures above are outside this Task and were
+  reproduced at Base. An initial concurrent full Python run exposed two intermittent failures;
+  each exact case passed individually on candidate and Base, and the isolated candidate full-suite
+  run passed. They are retained as observed evidence, not classified as Base-pre-existing defects.
 
 ### Remaining In-Slice Work
 
-RO-1 awaits this Task. RO-2 through RO-6 remain outstanding; Developer does not plan their Tasks.
+RO-2 through RO-6 remain outstanding; Developer does not plan their Tasks.
 
 ### Risks / Deviations
 
-Record actual limits, Base-proven pre-existing failures, skips/unavailable gates and Contract issues
-requiring A. Do not silently change Goal, Scope, Base or safety requirements.
+- Metadata-only observation cannot distinguish an external same-size/same-time replacement, and
+  provider APIs cannot close the external check-to-write window. This is the accepted TARGET limit.
+- The isolated full suite reported 7 skips. The first concurrent full Python run had two failures:
+  `test_concurrent_execute_consumes_authority_once` observed `preview_stale` instead of
+  `authorization_consumed`, and `test_simultaneous_saves_never_publish_a_mixed_or_lost_successor`
+  observed `rules_destination_check_failed`. Both exact tests passed individually on candidate and
+  Base; the isolated full candidate run passed. These failures are not classified as pre-existing.
+- The browser build retains its >500 KB chunk warning. Production SMB/S3/TMDB endpoints were not
+  exercised; provider coverage used fakes/local services, including the production OpenList adapter
+  over local HTTP. No production credentials or media were used.
+- The Docker impact and generic upgrade harness failures, and the default Web E2E failures, are
+  Base-proven unrelated gates listed above. No active-contract or scope deviation was made.
 
 ### Checkpoint
 
 ```text
-Status: NOT SUBMITTED
-Head SHA: NOT SET
+Status: READY FOR B REVIEW
+Head SHA: 91ac7c16b5e8492c62e2c5c01edad2122e492e20
 ```
 
-After implementation report the full committed SHA and set Task/checkpoint status to
-`READY FOR B REVIEW`. Keep ID/Base/Goal/Scope throughout any same-Task fix loop.
+The Head SHA identifies the tested implementation checkpoint; the final report is recorded in a
+follow-up documentation-only commit because a commit cannot contain its own SHA.
 
 ## B Review Result
 
