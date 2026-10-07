@@ -1220,9 +1220,11 @@ export function AutomationLifecyclePage() {
                           ? "Reading the durable copy evidence..."
                           : copyIntent.committed
                             ? `The copy committed durably as ${copyIntent.committedDefinitionId}. Refresh the inventory; no second copy is created.`
-                            : copyIntent.observedCommands > 0
-                              ? "No durable publication evidence exists for the submitted copy; after refreshing the inventory you may deliberately submit the copy again."
-                              : "No submitted copy command was observed in durable evidence; the outcome is genuinely unpublished."}
+                            : !copyIntent.evidenceComplete
+                              ? "The durable command evidence could not be read completely, so the submitted copy's outcome is still unknown. Reconcile from the current inventory; do not submit another copy for this intent."
+                              : copyIntent.observedCommands > 0
+                                ? "No durable publication evidence exists for the submitted copy; after refreshing the inventory you may deliberately submit the copy again."
+                                : "No submitted copy command was observed in durable evidence; the outcome is genuinely unpublished."}
                       </p>
                     )}
                     {copyIntent?.committed === true && (
@@ -1250,12 +1252,15 @@ export function AutomationLifecyclePage() {
                     )}
                     {copyIntent !== null &&
                       copyIntent.committed === false &&
-                      // A genuinely unpublished outcome is proven: no submitted
+                      // A genuinely unpublished outcome is proven only when the
+                      // durable evidence read was complete: no submitted
                       // command was ever observed for this intent, so the
                       // resubmission block is released. A located command
-                      // whose publication could not be proven stays an
-                      // unknown outcome — the block holds and the operator
-                      // reconciles from the durable inventory instead.
+                      // whose publication could not be proven — or an
+                      // incomplete/unavailable evidence read — stays an unknown
+                      // outcome: the block holds and the operator reconciles
+                      // from the durable inventory instead.
+                      copyIntent.evidenceComplete &&
                       copyIntent.observedCommands === 0 && (
                         <div className="mf-actions">
                           <Button

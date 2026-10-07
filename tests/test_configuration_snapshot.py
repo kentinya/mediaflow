@@ -1035,6 +1035,86 @@ class ManagedConfigurationSnapshotTests(unittest.TestCase):
                     2,
                 )
 
+    def test_paged_command_audits_use_the_ledger_sequence_as_a_real_cursor(self) -> None:
+        """The targeted reader pages by the ledger's own monotonic sequence.
+
+        This is the exact root cause B named: reconciliation pages the durable
+        audit trail and needs a *usable* cursor on the real domain object, so
+        the reader must return the stored sequence and page strictly downward
+        without repeating or skipping a row. The stored ``occurred_at`` values
+        are deliberately made to disagree with insertion order, so a page
+        ordered by wall-clock time would drop rows while a sequence-ordered
+        cursor still walks the whole trail.
+        """
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            document = example_document()
+            document["persistence"]["databasePath"] = str(root / "runtime.sqlite3")
+            with SQLiteConfigurationRepository(root / "configuration.sqlite3") as repository:
+                service = ManagedConfigurationService(repository)
+                revisions = [service.import_draft(document, actor="tester") for _ in range(6)]
+                # Invert wall-clock order relative to insertion order, keeping
+                # the monotonically increasing sequences untouched.
+                rows = repository._connection.execute(
+                    "SELECT sequence FROM configuration_change_audits "
+                    "WHERE action='draft_import' ORDER BY sequence"
+                ).fetchall()
+                sequences_in_order = [int(row["sequence"]) for row in rows]
+                self.assertEqual(len(sequences_in_order), len(revisions))
+                for position, sequence in enumerate(sequences_in_order):
+                    repository._connection.execute(
+                        "UPDATE configuration_change_audits SET occurred_at=? WHERE sequence=?",
+                        (
+                            datetime(2020, 1, 1, tzinfo=UTC)
+                            .replace(second=len(sequences_in_order) - position)
+                            .isoformat(),
+                            sequence,
+                        ),
+                    )
+                repository._connection.commit()
+                # Every row carries the real stored cursor, newest-first.
+                page = repository.list_command_audits_before(
+                    ("draft_import",),
+                    before_sequence=repository.latest_command_audit_sequence() + 1,
+                    limit=3,
+                )
+                self.assertEqual(len(page), 3)
+                sequences = [audit.sequence for audit in page]
+                self.assertTrue(all(isinstance(item, int) for item in sequences))
+                self.assertEqual(sequences, sorted(sequences, reverse=True))
+                # The newest sequence is the one anchored highest, independent
+                # of the inverted wall-clock values.
+                self.assertEqual(sequences[0], max(sequences_in_order))
+                # Paging strictly below the previous page's lowest sequence
+                # reaches the remaining rows with no gap and no repeat.
+                rest: list = []
+                marker = min(sequences)
+                while True:
+                    following = repository.list_command_audits_before(
+                        ("draft_import",), before_sequence=marker, limit=3
+                    )
+                    if not following:
+                        break
+                    rest.extend(following)
+                    marker = min(
+                        audit.sequence for audit in following if audit.sequence is not None
+                    )
+                collected = [audit.audit_id for audit in page] + [audit.audit_id for audit in rest]
+                self.assertEqual(len(collected), len(set(collected)))
+                self.assertEqual(
+                    set(collected),
+                    {
+                        audit.audit_id
+                        for audit in repository.list_command_audits_before(
+                            ("draft_import",),
+                            before_sequence=repository.latest_command_audit_sequence() + 1,
+                            limit=500,
+                        )
+                    },
+                )
+                self.assertEqual(len(collected), len(revisions))
+
     def test_missing_active_keeps_configuration_recovery_available_but_blocks_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -196,6 +196,7 @@ describe("normalizeAutomationCopyIntent", () => {
         published: true,
       },
       observedCommands: 1,
+      evidenceComplete: true,
       active,
       sideEffects: "none",
       nextAction: "the copy committed durably",
@@ -203,9 +204,31 @@ describe("normalizeAutomationCopyIntent", () => {
     expect(model.committed).toBe(true);
     expect(model.committedDefinitionId).toBe("nightly-copy");
     expect(model.lastObserved?.candidateId).toBe("nightly-copy");
+    expect(model.evidenceComplete).toBe(true);
   });
 
   it("projects a genuinely unpublished unknown outcome", () => {
+    const model = normalizeAutomationCopyIntent({
+      definitionId: "nightly",
+      sourcePresent: true,
+      committed: false,
+      committedDefinitionId: null,
+      lastObserved: null,
+      observedCommands: 0,
+      evidenceComplete: true,
+      active,
+      sideEffects: "none",
+      nextAction: "no pending copy command was observed",
+    });
+    expect(model.committed).toBe(false);
+    expect(model.committedDefinitionId).toBeNull();
+    expect(model.evidenceComplete).toBe(true);
+  });
+
+  it("fails closed when the evidence-completeness signal is absent", () => {
+    // An older or truncated response without the explicit completeness proof
+    // must normalize to incomplete: the page may then never release the
+    // duplicate-copy block on it.
     const model = normalizeAutomationCopyIntent({
       definitionId: "nightly",
       sourcePresent: true,
@@ -217,8 +240,7 @@ describe("normalizeAutomationCopyIntent", () => {
       sideEffects: "none",
       nextAction: "no pending copy command was observed",
     });
-    expect(model.committed).toBe(false);
-    expect(model.committedDefinitionId).toBeNull();
+    expect(model.evidenceComplete).toBe(false);
   });
 
   it("fails closed on a committed outcome without its identity", () => {

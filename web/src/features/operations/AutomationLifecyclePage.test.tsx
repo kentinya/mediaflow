@@ -759,6 +759,7 @@ describe("AutomationLifecyclePage", () => {
             published: true,
           },
           observedCommands: 1,
+          evidenceComplete: true,
           active: ACTIVE,
           sideEffects: "none",
           nextAction: "the copy committed durably",
@@ -1063,8 +1064,9 @@ describe("AutomationLifecyclePage", () => {
       }
       if (call.url.includes("/nightly/copy-intent")) {
         copyIntentCalls.push(call.url);
-        // A genuinely unpublished outcome: no submitted copy command was ever
-        // observed in durable evidence, so the resubmission block is released.
+        // A genuinely unpublished outcome: the read was complete and no
+        // submitted copy command was ever observed in durable evidence, so the
+        // resubmission block is released.
         return jsonResponse({
           definitionId: "nightly",
           sourcePresent: true,
@@ -1072,6 +1074,7 @@ describe("AutomationLifecyclePage", () => {
           committedDefinitionId: null,
           lastObserved: null,
           observedCommands: 0,
+          evidenceComplete: true,
           active: ACTIVE,
           sideEffects: "none",
           nextAction: "no submitted copy command was observed",
@@ -1171,6 +1174,7 @@ describe("AutomationLifecyclePage", () => {
             published: false,
           },
           observedCommands: 1,
+          evidenceComplete: true,
           active: ACTIVE,
           sideEffects: "none",
           nextAction:
@@ -1206,6 +1210,155 @@ describe("AutomationLifecyclePage", () => {
         name: "Reconciled: no copy was published",
       }),
     ).toBeNull();
+    sessionStorage.clear();
+  });
+
+  it("never releases the Copy block when the durable evidence read is incomplete", async () => {
+    // P1 (fix loop 4) regression: an incomplete/truncated evidence read must
+    // not be presented as a proven non-publication. The backend reports zero
+    // observed commands *and* `evidenceComplete: false`, the exact shape a
+    // bounded read produces after a committed Copy falls outside its window.
+    // No release action may appear, so a duplicate copy cannot be allocated.
+    sessionStorage.clear();
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (call.url.includes("/nightly/copy-intent")) {
+        // The durable read could not be completed: zero commands observed,
+        // but that absence is not evidence of non-publication.
+        return jsonResponse({
+          definitionId: "nightly",
+          sourcePresent: true,
+          committed: false,
+          committedDefinitionId: null,
+          lastObserved: null,
+          observedCommands: 0,
+          evidenceComplete: false,
+          active: ACTIVE,
+          sideEffects: "none",
+          nextAction:
+            "the submitted copy outcome is unknown: the durable command evidence could not be read completely",
+        });
+      }
+      return undefined;
+    });
+    sessionStorage.setItem(
+      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
+      JSON.stringify({
+        sourceId: "nightly",
+        authority: {
+          revisionId: ACTIVE_REVISION,
+          version: 3,
+          digest: DIGEST,
+        },
+      }),
+    );
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    const copy = screen.getByRole("button", {
+      name: "Copy as disabled definition",
+    });
+    expect(copy).toBeDisabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+    );
+    await screen.findByText(/could not be read completely/i);
+    // The block holds: an incomplete read proves nothing.
+    expect(
+      screen.queryByRole("button", {
+        name: "Reconciled: no copy was published",
+      }),
+    ).toBeNull();
+    expect(copy).toBeDisabled();
+    sessionStorage.clear();
+  });
+
+  it("releases the Copy block only for a complete, command-free evidence read", async () => {
+    // The positive counterpart: a complete read that observed no command is a
+    // genuine non-publication, so the operator can deliberately release the
+    // block. This pins the exact contract the incomplete case must not meet.
+    sessionStorage.clear();
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (call.url.includes("/nightly/copy-intent")) {
+        return jsonResponse({
+          definitionId: "nightly",
+          sourcePresent: true,
+          committed: false,
+          committedDefinitionId: null,
+          lastObserved: null,
+          observedCommands: 0,
+          evidenceComplete: true,
+          active: ACTIVE,
+          sideEffects: "none",
+          nextAction:
+            "no pending copy command was observed for this definition",
+        });
+      }
+      return undefined;
+    });
+    sessionStorage.setItem(
+      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
+      JSON.stringify({
+        sourceId: "nightly",
+        authority: {
+          revisionId: ACTIVE_REVISION,
+          version: 3,
+          digest: DIGEST,
+        },
+      }),
+    );
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+    );
+    await screen.findByText(/genuinely unpublished/);
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Reconciled: no copy was published",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy as disabled definition" }),
+      ).toBeEnabled(),
+    );
     sessionStorage.clear();
   });
 });

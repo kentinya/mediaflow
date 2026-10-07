@@ -503,6 +503,79 @@ test("a lost Copy response stays unknown across reload until reconciled", async 
   ]);
 });
 
+test("a committed Copy beyond the audit page boundary still reconciles after reload", async ({
+  page,
+}) => {
+  // P1 (fix loop 4) regression: the exact production shape B reproduced. A
+  // real Copy commits durably; ordinary focused publications then push its
+  // command row past a full evidence page. A reconciliation read that stopped
+  // at its first page — or that anchored on a cursor the domain audit object
+  // never carried — reported the committed Copy as unpublished and released a
+  // duplicate. The read must page the durable ledger to its end, resolve the
+  // original committed identity from that command revision's own activation
+  // authority, survive a real reload, and leave no second copy.
+  await openLifecycleNew(page);
+  await fillCreateForm(page);
+  await page.getByRole("button", { name: "保存" }).click();
+  await expect(
+    page.getByText(/published definition is the Active/),
+  ).toBeVisible();
+
+  await openLifecycle(page, DEFINITION_ID);
+  // Drop only the Copy response: the backend still executes the command.
+  await page.route("**/copy", (route) => {
+    void route.fetch().then(() => route.abort());
+  });
+  await page
+    .getByRole("button", { name: "Copy as disabled definition" })
+    .click();
+  await expect(page.getByText(/outcome unknown/i)).toBeVisible();
+
+  // Crowd the durable command trail with real focused publications past a full
+  // evidence page. This travels the same production command service the
+  // browser uses; only the number of steps is impractical to click.
+  const crowd = await page.request.post(
+    "/__harness__/crowd-automation-command-trail?edits=260",
+  );
+  const crowdBody = (await crowd.json()) as { published?: number };
+  expect(crowdBody.published).toBe(260);
+  const crowded = await harnessState(page);
+  expect(crowded.definitions.map((item) => item.id)).toContain(
+    `${DEFINITION_ID}-copy`,
+  );
+
+  // A real reload: the pending intent survives in principal-scoped session
+  // storage, Copy stays blocked, and the reconciliation pages the durable
+  // ledger to resolve the original committed copy rather than allocating a
+  // duplicate.
+  await page.reload();
+  await connectOn(
+    page,
+    `/ui-v2/operations/automation/lifecycle/${DEFINITION_ID}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Edit Automation definition" }),
+  ).toBeVisible();
+  const copy = page.getByRole("button", {
+    name: "Copy as disabled definition",
+  });
+  await expect(copy).toBeDisabled();
+  await page
+    .getByRole("button", { name: "Reconcile the submitted Copy" })
+    .click();
+  await expect(page.getByText(/committed durably as/)).toBeVisible();
+  await page.getByRole("button", { name: "Open the committed copy" }).click();
+  await expect(page).toHaveURL(/lifecycle\/.+\/?$/);
+
+  // The original committed identity is the one resolved, and no second copy
+  // exists for the unresolved intent.
+  const state = await harnessState(page);
+  expect(state.definitions.map((item) => item.id).sort()).toEqual([
+    DEFINITION_ID,
+    `${DEFINITION_ID}-copy`,
+  ]);
+});
+
 test("retained history shows the published configuration, never an open Draft", async ({
   page,
 }) => {

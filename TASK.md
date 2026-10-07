@@ -811,72 +811,6 @@ Status: READY FOR B REVIEW
 Head SHA: bb4367fad6cd94a7d3781e5ab096f7b02760ccea
 ```
 
-## B Review Result
-
-```text
-Reviewed: 79544d9aba697036405b06054c0c56a740281bab..bb4367fad6cd94a7d3781e5ab096f7b02760ccea
-Decision: FIX REQUIRED
-Slice Required Outcomes all satisfied: NO
-Next: SAME TASK FIX LOOP
-```
-
-- **P1 — Known failed removal still revokes authority in the current production database
-  arrangement (AC-T2/T5/T6; Shared publication and lifecycle 5; RO-2 removal).**
-  Re-ran `.venv/bin/python /tmp/mediaflow-b-review-43-1-r2-python.py` against this checkpoint;
-  evidence is `/tmp/mediaflow-b-review-43-1-r3-python.log`, case
-  `known-activation-write-lock-failure`. The fixture keeps all real services/guards and places
-  configuration and runtime repositories in the same SQLite file, matching production.
-  Real exact Preview, confirmed API grant and Scheduler admission succeed; a second actual
-  SQLite writer holds `BEGIN IMMEDIATE` after real runtime preparation and before activation.
-  Removal now raises a bounded `AutomationDefinitionSaveError`, but Active is unchanged,
-  the grant is still `revoked`, and the previously authorized Job fails in the real Worker
-  with `unattended_execution_grant_revoked` before Task creation or media mutation. The new
-  compensation writes cannot restore authority while that same database remains locked.
-  The added application/API lock tests instead hold `configuration.sqlite3` while grant
-  restoration writes a different runtime database, so their PASS does not establish the
-  reported production result. Preserve known-failure authority and admitted work at the
-  actual shared persistence/concurrency boundary, covering live Worker observation and
-  activation rollback. Reuse the existing configuration/grant persistence boundary; do not
-  rely on another best-effort automatic replacement grant after committed revocation. Test
-  this same-file production assembly and report actual/unknown durable state truthfully.
-
-- **P1 — Stale recovery adopts cached old values with a newer publication fence and still
-  overwrites the concurrent edit (AC-T2/T6; Shared publication and lifecycle 1; RO-2 recovery).**
-  The real Web/Python reproduction opens `r3-stale` with item limit 5 and changes Name only.
-  Another legitimate API writer publishes item limit 9. Refresh blocks Save, but pressing
-  `Review current values and re-adopt them` loads the cached limit 5, pairs it with the new
-  Active fence, and enables Save. Save returns 200 and durably changes the peer's limit back
-  to 5. Evidence: `node /tmp/mediaflow-b-review-43-1-r3-browser.mjs`, case
-  `stale-recovery-repins-old-read` in `/tmp/mediaflow-b-review-43-1-r3-browser.log`.
-  This uses the actual built Web and temporary-data Python harness
-  (`npm --prefix web run build`; `.venv/bin/python scripts/operations_inventory_harness.py
-  --port 4190`). Refresh reads form authority, but `adoptCurrentValues` uses the separately
-  cached `loadedForRoute` definition with `latestAuthority`. The new browser regression
-  asserts the unchanged Name and enabled Save, but does not verify the peer's changed limit
-  or Save it again. Load the current definition and its associated immutable identity
-  together before offering re-adoption; every candidate fence must belong to the values
-  actually reviewed. Preserve correctable input without joining a new identity to an older
-  cached definition. Prove recovery followed by Save preserves the peer's durable fields.
-
-- **P1 — The bounded audit scan turns a committed Copy into a false unpublished outcome
-  and permits duplicate submission (AC-T6; RO-2 unknown-submission reconciliation).**
-  The same real browser reproduction executes Copy for `r3-bounded` through the actual
-  backend (200), drops only its response, then performs 105 ordinary supported focused
-  edits on an unrelated definition. The first copy `r3-bounded-copy` remains published and
-  readable. Its intent-bound reconciliation nevertheless returns `committed: false`,
-  `observedCommands: 0` because the original command is outside the newest 200 global audit
-  rows. Web offers `Reconciled: no copy was published`; after that action and Refresh,
-  another Copy succeeds as `r3-bounded-copy-2`. Evidence:
-  `committed-copy-outside-audit-window` in `/tmp/mediaflow-b-review-43-1-r3-browser.log`.
-  This requires no future adapter, unsupported configuration or capability-removing fake;
-  all intervening changes use current authenticated production API commands on temporary
-  data. Reconciliation must find the exact submitted command/publication through durable
-  intent-bound evidence, or retain an unknown/unavailable result when proof is missing.
-  Absence from a bounded recent scan is not proof of rejection or non-publication and cannot
-  release the resubmission block. Reuse targeted durable audit/revision reads rather than
-  increasing the global scan limit or introducing another copy engine. Cover committed
-  evidence beyond recent activity and distinguish proven-unpublished from unknown outcomes.
-
 ## Correction Report — Fix Loop 3 (B Decision: FIX REQUIRED, 79544d9..bb4367f)
 
 This correction addresses exactly the three P1 blockers listed in `## B Review Result` and their
@@ -1095,4 +1029,276 @@ remain in place and working alongside the native focused surface.
 ```text
 Status: READY FOR B REVIEW
 Head SHA: dc31b46d28b5d1cd2887dce39ccb5571ac70f747
+```
+
+## B Review Evidence — Fix Loop 3 Checkpoint
+
+Reviewed the actual `79544d9aba697036405b06054c0c56a740281bab..dc31b46d28b5d1cd2887dce39ccb5571ac70f747`
+implementation, including the correction diff from `bb4367f`. The latest Correction Report submits
+`dc31b46` as READY FOR B REVIEW; the top-level FIX REQUIRED still records the prior B decision.
+The current review below supersedes that decision without changing Task identity or scope.
+
+B independently ran:
+
+- `.venv/bin/python -m unittest tests.test_automation_definition_publication tests.test_v2_automation_lifecycle`
+  — PASS, 54 tests, no skips; `/tmp/mediaflow-b-review-43-1-r4-focused.log`.
+- `npm --prefix web run test -- run src/entities/operations/automation-lifecycle.test.ts src/features/operations/AutomationLifecyclePage.test.tsx`
+  — PASS, 2 files / 29 tests; `/tmp/mediaflow-b-review-43-1-r4-web.log`.
+- `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts tests/e2e/automation-lifecycle.python.spec.ts`
+  — PASS, 9/9; `/tmp/mediaflow-b-review-43-1-r4-e2e.log`.
+- `npm --prefix web run build` — PASS; `/tmp/mediaflow-b-review-43-1-r4-build.log`.
+- `.venv/bin/python /tmp/mediaflow-b-review-43-1-r4-python.py` — the real same-file SQLite,
+  Preview/grant/Scheduler and runtime-preparation reproduction confirms failed activation preserves
+  Active, the active grant and the admitted Job's authorization. Removed history resolves the
+  published name, not an unpublished Draft; `/tmp/mediaflow-b-review-43-1-r4-python.log`.
+- `node /tmp/mediaflow-b-review-43-1-r4-browser.mjs` against the built Web and
+  `.venv/bin/python scripts/operations_inventory_harness.py --port 4190` — stale re-adoption loads
+  the peer's limit 9 and Save preserves durable limit 9; the >500-edit Copy journey reproduces the
+  remaining blocker below; `/tmp/mediaflow-b-review-43-1-r4-browser.log`.
+- `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .` — PASS, 342 formatted files;
+  governance and exact reviewed-range whitespace check — PASS. Both Automation PNG checksums match
+  the Contract; `config/alist.json` remains ignored and untracked. Runtime/dependency search finds
+  no FFmpeg/FFprobe references. The reviewed manifest contains only Task-owned changes; all three
+  pre-existing untracked PNGs remain untouched.
+
+The full T4 counts and Docker unavailability above remain Developer-reported evidence; B did not
+rerun the entire T4 suite because the independent production-path reproduction already prevents
+Task PASS. Passing focused/browser tests do not resolve that contrary evidence. Slice Final has
+not run, and no Slice completion is claimed.
+
+## B Complexity Reassessment — Fourth Fix Requested
+
+Three correction checkpoints have now been reviewed, and this decision requires a fourth same-Task
+fix. Reconsidered the complete solution rather than requesting another unrelated assertion or Task.
+The repeated defects concern the lifecycle's persistence/readback boundary: compensating authority
+writes after failed publication, combining separately cached values and authority, and treating
+recent global activity as exact submitted-intent evidence. They do not establish a need for another
+media pipeline or broader Slice scope. The current checkpoint removes the first compensation path
+and reads current values with their own identity; the remaining correction should converge on the
+existing revision/audit persistence authority for the exact command and its publication.
+
+Do not add a parallel copy engine, another compensation/state-machine layer, or an ever-larger
+recent-history limit. Prefer a complete targeted evidence read (or correctly cursor-bounded pages)
+over the existing SQLite history, and preserve unknown/unavailable state when that read cannot
+complete. Keep the existing organizer/Preview/grant/Worker boundaries, Task ID/Base/Goal/Scope and
+all Contract clauses unchanged. No Contract change or A RESCOPE is currently necessary.
+
+## B Review Result
+
+```text
+Reviewed: 79544d9aba697036405b06054c0c56a740281bab..dc31b46d28b5d1cd2887dce39ccb5571ac70f747
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — Copy reconciliation still mistakes a committed submission outside recent activity for
+  an unpublished outcome and releases duplicate submission (AC-T6; RO-2 unknown-submission
+  reconciliation; Shared publication and lifecycle / API recovery).** Current production
+  reachability is reproduced with the actual built Web, Python API and SQLite harness on temporary
+  data: Copy `r3-bounded` returns 200 from the backend; only delivery of that response is aborted.
+  Another definition then receives 505 ordinary authenticated focused edits, each returning 200.
+  Intent-fenced reconciliation returns `committed: false`, `observedCommands: 0`, and
+  `no pending copy command was observed for this definition`, although `r3-bounded-copy` remains
+  published. The operator can click `Reconciled: no copy was published`, Refresh, and Copy again;
+  this creates `r3-bounded-copy-2`. Both copies subsequently read back as published, disabled
+  definitions with HTTP 200. This is a current user-visible duplicate lifecycle outcome, not a
+  future adapter or a test double that removes production capabilities.
+  Evidence: `node /tmp/mediaflow-b-review-43-1-r4-browser.mjs`, case
+  `committed-copy-outside-audit-window` in `/tmp/mediaflow-b-review-43-1-r4-browser.log`.
+  In the reviewed code, `_definition_command_audits` starts with 500 recent `draft_edit` rows,
+  then derives its next-page marker from `ConfigurationChangeAudit.sequence`; that attribute
+  does not exist on the real domain object and is not returned by SQLite `_audit`, so the reader
+  stops after its first page. `_candidate_publication` also still calls `_published_revision_ids`,
+  which reads only 500 recent activation audits. The added 300-edit tests remain inside both
+  windows and therefore do not prove the reported window-independent reconciliation.
+  Correct the exact intent/publication evidence lookup using existing durable revision/audit
+  authority, with a real usable cursor if paging is chosen and publication proof scoped to the
+  command revision rather than recent global activations. Do not enlarge the window again.
+  A truncated, failed or otherwise incomplete evidence read must remain unknown/unavailable and
+  must not permit the unpublished-release action. Verify the actual SQLite/API/browser journey
+  beyond the production page boundary with the submitted fence: it resolves the original committed
+  identity, survives reload/reconnect, and cannot create a second copy for that unresolved intent.
+
+## Correction Report — Fix Loop 4 (B Decision: FIX REQUIRED, 79544d9..dc31b46)
+
+This correction addresses exactly the one P1 blocker listed in `## B Review Result` and its direct
+root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion, Contract
+wording or Task Base was altered.
+
+### Changed Files (fix loop 4)
+
+Modified:
+
+- `mediaflow/domain/configuration_management.py` — `ConfigurationChangeAudit` now carries an
+  optional durable `sequence` cursor, validated at construction. It stays `None` for a
+  not-yet-persisted audit and is filled by repository readers.
+- `mediaflow/infrastructure/sqlite_configuration_management.py` — `_audit` populates the real
+  stored `sequence`; `list_command_audits_before` now orders by the ledger's monotonic
+  `sequence DESC` instead of `occurred_at DESC, sequence DESC`, so the sequence cursor it pages
+  with cannot skip or repeat a row when wall-clock order disagrees with insertion order. No
+  schema change and no window enlargement.
+- `mediaflow/application/automation_workspace_commands.py` — the copy-intent reconciliation reads
+  a `_DefinitionCommandEvidence` (commands plus an explicit `complete` flag) and proves
+  publication through a `_PublicationProof` (revision identity plus `available`). The trail walk
+  starts just above `latest_command_audit_sequence()` and pages strictly downward on the real
+  cursor until a short page proves the end; publication is proven from the command revision's own
+  per-revision `activate` audit (`list_revision_audits`) rather than the recent global activation
+  window. An incomplete walk, an unreadable proof, a missing revision or a possibly-truncated
+  per-revision audit trail all stay unknown; a truncated/failed read can no longer be reported as
+  "genuinely unpublished". `_published_revision_ids` remains only for the retained-history
+  resolution path, which the blocker did not concern. `COMMAND_TRAIL_PAGE_SIZE` documents the
+  page bound as a query bound, not an answer bound.
+- `web/src/entities/operations/automation-lifecycle.ts` (+ test) — `AutomationCopyIntentModel`
+  gains `evidenceComplete`, normalized fail-closed from the explicit backend `true`.
+- `web/src/features/operations/AutomationLifecyclePage.tsx` — the "Reconciled: no copy was
+  published" release now additionally requires `evidenceComplete`; an incomplete read renders an
+  unknown-outcome explanation and keeps the Copy block.
+- `scripts/operations_inventory_harness.py` — one additive bounded control route
+  (`POST /__harness__/crowd-automation-command-trail?edits=N`) that publishes ordinary focused
+  successor revisions through the real `AutomationWorkspaceCommandService`, so the browser proof
+  can cross the production paging boundary without thousands of clicks.
+- `tests/test_automation_definition_publication.py` — 3 new regressions (34 total): a committed
+  copy outside a window-only reader stays unknown and blocked, an incomplete/truncated read
+  reports `evidenceComplete: False`, and the unproven-publication regression now hides the
+  command revision's own activation evidence instead of a global window.
+- `tests/test_configuration_management.py` — 1 new regression (4 total): the audit cursor is
+  optional but must be an integer when present.
+- `tests/test_configuration_snapshot.py` — 1 new regression (45 total): the paged command-audit
+  reader returns the real stored sequence, anchors newest-first by sequence, and walks the whole
+  trail with no gap or repeat even when stored `occurred_at` values deliberately invert insertion
+  order. Verified to fail against the previous `occurred_at DESC, sequence DESC` ordering.
+- `tests/test_v2_automation_lifecycle.py` — the beyond-window API regression now crowds an
+  unrelated definition past a full page and reads with the submitted fence (23 total), plus 1
+  new regression that an incomplete API evidence read stays unknown and does not release.
+- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — 2 new component regressions
+  (16 total): an incomplete evidence read never releases the block, and a complete command-free
+  read still does.
+- `web/tests/e2e/automation-lifecycle.python.spec.ts` — 1 new real-Python browser journey
+  (10 total): a committed Copy whose command row is crowded past a full page still reconciles to
+  the original committed identity after a real reload, and no second copy is created.
+
+### Implemented (fix loop 4)
+
+- **P1 — Committed Copy outside the bounded scan (AC-T6; RO-2 unknown-submission reconciliation).**
+  B's reproduction is fixed at its exact root causes rather than by widening any window.
+  (1) *A real usable cursor.* `ConfigurationChangeAudit.sequence` now exists on the real domain
+  object and every repository reader fills it from the stored row, so `_definition_command_evidence`
+  can page with it instead of stopping after its first page as the reviewed code did. The reader
+  also orders by `sequence DESC` alone: paging on `sequence` while ordering by `occurred_at` can
+  skip a row whenever wall-clock order disagrees with insertion order, and a skipped row would have
+  been silently reported as an absent command. (2) *Publication proof scoped to the command
+  revision.* `_candidate_publication` no longer consults the recent-500 global activation window;
+  it proves publication from the command revision's own `activate` audit through the per-revision
+  reader, and treats a missing revision, an unreadable reader or a possibly-truncated per-revision
+  trail as unavailable rather than as non-publication. (3) *Completeness is explicit.* The read
+  reports `evidenceComplete`, which is true only when the trail was walked to its end and every
+  relevant proof was readable; the Web release action requires it, so a truncated, failed or
+  otherwise incomplete read stays unknown and cannot release a duplicate Copy. Verified by an
+  application reproduction (`/tmp/repro-copy-window.py`: a Copy followed by 520 focused edits now
+  reports `committed: True`, `observedCommands: 1`, `nightly-copy`; previously
+  `committed: False`/`observedCommands: 0`), by new application/API/component regressions at and
+  beyond a full page, and by a real built-Web/Python/SQLite browser journey that crowds 260 real
+  focused publications past the page boundary, reloads, reconciles the original committed identity
+  through the submitted fence, and leaves exactly one copy.
+
+### Tests and Results (fix loop 4)
+
+All commands run from the repository root.
+
+- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
+- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication
+  tests.test_v2_automation_lifecycle tests.test_configuration_management
+  tests.test_configuration_snapshot` — 106 tests (34 + 23 + 4 + 45).
+- PASS — `.venv/bin/python -m unittest tests.test_configuration_management
+  tests.test_configuration_snapshot tests.test_configuration_objects
+  tests.test_storage_configuration_management` — 131 tests (4 + 45 + 71 + 11).
+- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition
+  tests.test_v2_automation_operations tests.test_configuration_successor_draft
+  tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 110 tests.
+- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,243 tests, 7 skipped (the same
+  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures. Two clean
+  consecutive full runs; see Risks for one intermittent observation.
+- PASS — `.venv/bin/python -m unittest tests.test_release_security tests.test_migration_rehearsal
+  tests.test_upgrade_preflight tests.test_container_deployment tests.test_container_probe` —
+  41 tests (6 + 6 + 4 + 13 + 12).
+- PASS — `.venv/bin/ruff check .`; `.venv/bin/ruff format --check .` (342 files).
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
+- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `--config config/mediaflow.phase13.2.example.json config validate`.
+- PASS — `npm --prefix web run test -- run` — 67 files / 1,037 tests.
+- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`;
+  `npm --prefix web run format:check`; `npm --prefix web run build`.
+- PASS — `npm --prefix web run test:e2e` (Node-fake path) — 203 tests.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-lifecycle.python.spec.ts` — 10/10, including the new
+  "a committed Copy beyond the audit page boundary still reconciles after reload" journey.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — 21/21.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.unicode-principal.config.ts
+  tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
+- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
+  `config/alist.json` remains ignored, untracked and unstaged.
+- Schema unchanged: no migration rehearsal required (the rehearsal suites were still run and pass).
+
+### Decisions (fix loop 4)
+
+- **Fix the cursor and the proof, never the window.** B forbade enlarging the audit window and
+  required a *real usable cursor* plus revision-scoped publication proof. Both are now structural:
+  the cursor is a first-class field on the persisted audit row, and publication is answered by the
+  command revision's own activation evidence. No window constant was increased; the previous
+  per-page bound of 500 was in fact reduced to a documented 200-row page, which only makes an
+  incomplete read more detectable.
+- **Order by `sequence`, not `occurred_at`.** The reviewed reader paged on `sequence` but ordered
+  by `occurred_at`. Those can disagree, and a row skipped in that disagreement would have been
+  reported as an absent command — the same class of false "unpublished" outcome B found. The
+  targeted reader now orders by the ledger's monotonic sequence alone.
+- **Completeness is a first-class, fail-closed field.** "Observed zero commands" is only evidence
+  of non-publication when the read actually completed. The backend states `evidenceComplete`
+  explicitly and the Web model defaults an absent or malformed value to `false`, so a truncated
+  response can never release the duplicate-copy block by omission.
+- **Unknown stays unknown on every unreadable path.** A missing revision, a failing reader, a
+  full-page per-revision audit trail (possibly truncated), or a trail walk that could not anchor
+  its next page all yield unknown rather than a proven non-publication.
+- **Harness crowd route reuses production commands.** The browser proof needs to cross a real page
+  boundary; the control route issues the same focused `save_object` publications the browser does,
+  so the journey exercises production behavior rather than a database edit.
+
+### Remaining In-Slice Work
+
+Unchanged from the checkpoint: definition-bound Run once/manual-origin admission, consolidated
+metrics/reporting and full server inventory/search/paging/reference tabs, and global settings
+plus resident adoption. `AutomationTaskDefinitionService`, the Draft-based
+`AutomationNewPage`/`AutomationEditorPage` routes and the existing `/activate-draft` path
+remain in place and working alongside the native focused surface.
+
+### Risks / Deviations (fix loop 4)
+
+- One full-regression run (`unittest discover -s tests`) reported 1 failure
+  (`-1 != 0 ... OperationalError: database is locked`) while Playwright suites were running
+  concurrently on this machine; two clean consecutive full runs immediately afterwards passed
+  2,243 tests / 7 skipped / 0 failures with no repository change in between, and the affected
+  module (`tests.test_resident_services`, 28 tests) passed three further sequential runs and four
+  concurrent runs. The touched code does not include `sqlite_runtime.py`, `cli.py` or the resident
+  services; the observation is consistent with transient SQLite lock contention under load.
+  Reported honestly for B to assess rather than dismissed.
+- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
+- UNAVAILABLE — the Docker release-security smoke gate (see the Tests note; the harness
+  bind-source mount limitation is pre-existing and unrelated to this Task).
+- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
+  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
+- `_definition_was_published` still resolves retained history through a bounded recent activation
+  window. That is the *retained-history* path, not the copy-intent blocker B named, and it answers
+  a different question (whether a definition was ever published) truthfully for its own retention
+  semantics. Left unchanged to keep this correction inside the blocker's scope.
+- The audit cursor is an additive field with no schema change; the `configuration` schema version
+  is unchanged, so no migration rehearsal was required.
+- A pre-existing untracked PNG (`docs/pics/整理规则需修复.png`) appeared in the working tree during
+  this session; it is not Task-owned, was not staged, and was left untouched.
+
+### Checkpoint (fix loop 4)
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: PENDING_COMMIT
 ```

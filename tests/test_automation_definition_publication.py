@@ -968,27 +968,29 @@ class AutomationPublicationTests(unittest.TestCase):
     def test_copy_intent_keeps_an_unknown_outcome_when_publication_cannot_be_proven(self) -> None:
         """A located command whose publication cannot be proven stays unknown.
 
-        A copy command is audited (its Draft edit exists) but the activation
-        evidence for its recorded revision does not exist — the honest report
-        is an unknown outcome, never "genuinely unpublished", so the operator
-        reconciles against the durable inventory instead of blindly
-        resubmitting a second copy.
+        A copy command is audited (its Draft edit exists) but the durable
+        activation evidence for its own recorded revision does not name an
+        activation — the honest report is an unknown outcome, never "genuinely
+        unpublished", so the operator reconciles against the durable inventory
+        instead of blindly resubmitting a second copy.
         """
 
         self.save(definition("nightly"))
-        # Record a real copy command, then hide its activation evidence from
-        # the reconciliation reads only (the publication boundary itself is
-        # untouched): the located command's candidate can then not be proven
-        # published from durable evidence.
-        real_audits = self.repository.list_recent_command_audits
+        # Record a real copy command, then hide its revision's own activation
+        # evidence from the reconciliation reads only (the publication boundary
+        # itself is untouched): the located command's candidate can then not be
+        # proven published from durable evidence.
+        real_revision_audits = self.repository.list_revision_audits
 
-        def activation_hidden(_repository, actions, *, limit=200):
-            if "activate" in actions:
-                return ()
-            return real_audits(actions, limit=limit)
+        def activation_hidden(_repository, revision_id, *, limit=50):
+            return tuple(
+                audit
+                for audit in real_revision_audits(revision_id, limit=limit)
+                if audit.action != "activate"
+            )
 
         self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
-        with patch.object(type(self.repository), "list_recent_command_audits", activation_hidden):
+        with patch.object(type(self.repository), "list_revision_audits", activation_hidden):
             intent = self.commands.copy_intent("nightly")
         # The command is located and observed...
         self.assertEqual(intent["observedCommands"], 1)
@@ -1000,6 +1002,76 @@ class AutomationPublicationTests(unittest.TestCase):
         self.assertFalse(intent["committed"])
         self.assertIsNone(intent["committedDefinitionId"])
         self.assertIn("reconcile", intent["nextAction"].lower())
+
+    def test_copy_intent_reports_incomplete_evidence_as_unknown_and_blocks_release(self) -> None:
+        """A truncated/incomplete durable read is unknown, never "unpublished".
+
+        P1 (fix loop 4) regression: the release action must depend on a
+        *complete* evidence read. When the durable audit readers fail (a
+        truncated or unavailable read), the reconciliation must not claim that
+        no command was ever submitted — even though it observed zero commands —
+        because absence of evidence is not evidence of absence. A duplicate
+        copy must therefore stay blocked.
+        """
+
+        self.save(definition("nightly"))
+
+        def failing_before(*args, **kwargs):
+            raise RuntimeError("simulated truncating audit read failure")
+
+        def failing_latest():
+            raise RuntimeError("simulated truncating audit read failure")
+
+        with (
+            patch.object(type(self.repository), "list_command_audits_before", failing_before),
+            patch.object(type(self.repository), "latest_command_audit_sequence", failing_latest),
+        ):
+            intent = self.commands.copy_intent("nightly")
+        # Nothing was disproven, so nothing may be presented as proven
+        # non-publication: the evidence read is explicitly incomplete and the
+        # duplicate-copy block must hold.
+        self.assertFalse(intent["committed"])
+        self.assertIsNone(intent["committedDefinitionId"])
+        self.assertEqual(intent["observedCommands"], 0)
+        self.assertFalse(intent["evidenceComplete"])
+        self.assertIn("unknown", intent["nextAction"].lower())
+
+    def test_copy_intent_never_releases_a_committed_copy_outside_a_window_reader(self) -> None:
+        """A window-only reader must not release a copy it cannot see.
+
+        P1 (fix loop 4) regression, the exact production shape B reproduced:
+        a Copy commits durably, then ordinary focused edits push its command
+        row outside a *bounded* reader's window. The bounded reader observes
+        zero commands — which used to read as "genuinely unpublished" and
+        released a second Copy. The read must instead report the evidence as
+        incomplete so the block holds and no duplicate is allocated.
+        """
+
+        self.save(definition("nightly"))
+        published = self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
+        copy_id = published.document[AUTOMATION_DEFINITION_SECTION][-1]["id"]
+        # Push the copy's command row beyond a 200-row window with ordinary
+        # supported focused edits.
+        for index in range(205):
+            self.save({"id": "nightly", "name": f"Edit {index}"}, object_id="nightly")
+        with (
+            patch.object(type(self.repository), "list_command_audits_before", None),
+            patch.object(type(self.repository), "latest_command_audit_sequence", None),
+        ):
+            intent = self.commands.copy_intent("nightly")
+        # The bounded reader cannot see the committed command...
+        self.assertEqual(intent["observedCommands"], 0)
+        # ...so the outcome must stay unknown instead of claiming a proven
+        # non-publication that would release a duplicate Copy.
+        self.assertFalse(intent["evidenceComplete"])
+        self.assertFalse(intent["committed"])
+        self.assertIsNone(intent["committedDefinitionId"])
+        self.assertIn("unknown", intent["nextAction"].lower())
+        # The real paging reader still resolves the original committed identity.
+        resolved = self.commands.copy_intent("nightly")
+        self.assertTrue(resolved["evidenceComplete"])
+        self.assertTrue(resolved["committed"])
+        self.assertEqual(resolved["committedDefinitionId"], copy_id)
 
     def test_no_active_configuration_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

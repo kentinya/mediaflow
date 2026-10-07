@@ -1531,6 +1531,7 @@ class SQLiteConfigurationRepository:
 
     @staticmethod
     def _audit(row: sqlite3.Row) -> ConfigurationChangeAudit:
+        sequence = row["sequence"] if "sequence" in row.keys() else None
         return ConfigurationChangeAudit(
             row["audit_id"],
             ConfigurationObjectKind(row["object_kind"]),
@@ -1540,6 +1541,7 @@ class SQLiteConfigurationRepository:
             json.loads(row["after_json"]),
             datetime.fromisoformat(row["occurred_at"]),
             row["actor"],
+            int(sequence) if sequence is not None else None,
         )
 
     def _reference_count(
@@ -1625,9 +1627,14 @@ class SQLiteConfigurationRepository:
         never happened: absence from the newest N rows is not evidence of
         non-publication. Reconciliation reads therefore use this targeted,
         sequenced scan to look past recent activity for one specific durable
-        intent without increasing the global scan bound. The result is
-        newest-first and every row passes through the same redaction the
-        recent reader uses.
+        intent without increasing the global scan bound.
+
+        The ordering is the ledger's own ``sequence DESC`` — a strictly
+        monotonic, gap-free cursor. That matters: ordering by ``occurred_at``
+        while paging on ``sequence`` can skip or repeat a row whenever a clock
+        adjustment makes wall-clock order disagree with insertion order, and a
+        skipped row would be silently reported as an absent command. Every row
+        passes through the same redaction the recent reader uses.
         """
 
         if (
@@ -1646,7 +1653,7 @@ class SQLiteConfigurationRepository:
                 f"""
                 SELECT * FROM configuration_change_audits
                 WHERE action IN ({placeholders}) AND sequence < ?
-                ORDER BY occurred_at DESC, sequence DESC LIMIT ?
+                ORDER BY sequence DESC LIMIT ?
                 """,
                 (*actions, before_sequence, limit),
             ).fetchall()

@@ -316,6 +316,13 @@ export interface AutomationCopyIntentModel {
     readonly published: boolean;
   } | null;
   readonly observedCommands: number;
+  /**
+   * Whether the backend walked the whole durable command trail and could read
+   * every publication proof it needed. Only a complete read may be presented
+   * as a proven non-publication; when it is false the outcome stays unknown and
+   * the resubmission block must hold.
+   */
+  readonly evidenceComplete: boolean;
   readonly active: AutomationActiveIdentityModel;
   readonly nextAction: string;
 }
@@ -360,6 +367,11 @@ export function normalizeAutomationCopyIntent(
             published: flag(observed, "published"),
           },
     observedCommands: count(source, "observedCommands"),
+    // Fail closed: only an explicit `true` from the backend proves the durable
+    // evidence read was complete. An absent, malformed or false value leaves
+    // the outcome unknown, so the release action can never appear merely
+    // because a field was missing from the response.
+    evidenceComplete: source["evidenceComplete"] === true,
     active: normalizeAutomationActiveIdentity(source["active"]),
     nextAction: text(source, "nextAction"),
   };

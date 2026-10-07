@@ -352,8 +352,18 @@ class ConfigurationChangeAudit:
     after: dict[str, object]
     occurred_at: datetime
     actor: str
+    # Durable, monotonic position in the persisted audit ledger.  A
+    # not-yet-persisted audit leaves it ``None``; every repository reader fills
+    # it from the stored row, so a caller pages the real ledger with a usable
+    # cursor instead of deriving one from wall-clock ordering (which a clock
+    # adjustment can invert).
+    sequence: int | None = None
 
     def __post_init__(self) -> None:
+        if self.sequence is not None and (
+            isinstance(self.sequence, bool) or not isinstance(self.sequence, int)
+        ):
+            raise ValueError("configuration audit sequence must be an integer")
         if not isinstance(self.object_kind, ConfigurationObjectKind):
             raise ValueError("configuration audit kind is required")
         if not self.audit_id or len(self.audit_id) > 128:

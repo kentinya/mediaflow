@@ -2015,6 +2015,55 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
     }
 
 
+def crowd_automation_command_trail(state: AppState, *, edits: int) -> dict[str, object]:
+    """Publish ordinary focused Automation edits to crowd the command trail.
+
+    The Copy-reconciliation proof must cross the production paging boundary the
+    real browser journey cannot reach economically by clicking: after a real
+    Copy commits, this control publishes ordinary focused successor revisions
+    (the same ``AutomationWorkspaceCommandService`` commands the browser issues,
+    not database writes) so the committed Copy's command row is only reachable
+    by a reader that pages the durable ledger with a real cursor. The edit
+    target is deliberately a definition other than the copy's source, matching
+    the shape B reproduced.
+    """
+
+    workspace = getattr(state.api, "_automation_workspace", None)
+    configuration_service = state.managed.configuration_service
+    active = configuration_service.active()
+    if workspace is None or active is None:
+        return {"error": "no Active Automation workspace"}
+    definition_ids = [
+        str(item.get("id"))
+        for item in active.document.get("automationTaskDefinitions", [])
+        if isinstance(item, dict) and isinstance(item.get("id"), str)
+    ]
+    if not definition_ids:
+        return {"error": "no definition to crowd the trail with"}
+    target = definition_ids[-1]
+    published = 0
+    for index in range(max(0, int(edits))):
+        try:
+            current = configuration_service.active()
+            if current is None:
+                break
+            workspace.save_object(
+                {"id": target, "name": f"Harness crowd {index}"},
+                actor="harness",
+                object_id=target,
+                expected_revision_id=current.revision_id,
+                expected_version=current.revision_sequence or current.version,
+                expected_digest=current.digest,
+            )
+        except Exception as error:
+            return {
+                "error": f"crowd publication failed: {type(error).__name__}",
+                "published": published,
+            }
+        published += 1
+    return {"published": published, "target": target}
+
+
 def run_automation_scheduler_tick(state: AppState) -> dict[str, object]:
     """Invoke the real managed-definition Scheduler once against the Active.
 
@@ -2266,6 +2315,14 @@ def application(environ, start_response):
             document = reset_automation_definitions(STATE)
         elif path == "/__harness__/run-automation-scheduler-tick" and method == "POST":
             document = run_automation_scheduler_tick(STATE)
+        elif path == "/__harness__/crowd-automation-command-trail" and method == "POST":
+            query = urllib.parse.parse_qs(str(environ.get("QUERY_STRING", "")))
+            raw_edits = (query.get("edits") or ["0"])[0]
+            try:
+                requested_edits = max(0, min(1000, int(raw_edits)))
+            except ValueError:
+                requested_edits = 0
+            document = crowd_automation_command_trail(STATE, edits=requested_edits)
         elif path == "/__harness__/restart" and method == "POST":
             STATE.restart()
             document = {"restarted": True}

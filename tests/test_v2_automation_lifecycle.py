@@ -520,34 +520,95 @@ class AutomationLifecycleApiTests(unittest.TestCase):
     def test_copy_intent_resolves_a_committed_copy_beyond_the_recent_audit_window(
         self,
     ) -> None:
-        """P1 regression: absence from a bounded recent scan is not proof.
+        """P1 regression (fix loop 4): a real cursor, not a bigger window.
 
-        A Copy commits durably through the real API; hundreds of ordinary
-        supported focused edits then push the original command far outside any
-        recent global audit window. The reconciliation must still locate the
-        submitted command through the targeted durable audit trail and prove
-        its candidate's publication from that revision's activation evidence.
+        A Copy commits durably through the real API. Another definition then
+        receives enough ordinary authenticated focused edits to push the
+        original command past a full scan page, so a reader that stopped at its
+        first page — or that re-anchored on a cursor the domain object never
+        carried — would report `committed: false`/`observedCommands: 0` and
+        release a duplicate Copy, exactly as B reproduced. The submitted fence
+        must still resolve the original committed identity, the publication
+        proof must come from that command revision's own activation authority,
+        and the read must report its evidence as complete.
         """
 
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        # The intent's fence is the authority the Copy is submitted against,
+        # captured before the command advances the Active revision.
+        fence = self.authority()
         status, published = self.request("POST", f"{BASE}/nightly/copy", self.authority())
         self.assertEqual(status, 200)
         copy_id = published["definition"]["id"]
-        for index in range(300):
+        # An unrelated definition then receives more focused edits than one
+        # full scan page, so the copy's command row is only reachable by
+        # paging with a real durable cursor.
+        self.request("POST", BASE, {**self.authority(), "object": _definition("other")})
+        for index in range(210):
             status, _body = self.request(
                 "PUT",
-                f"{BASE}/nightly",
-                {**self.authority(), "object": {"id": "nightly", "name": f"Edit {index}"}},
+                f"{BASE}/other",
+                {**self.authority(), "object": {"id": "other", "name": f"Edit {index}"}},
             )
             self.assertEqual(status, 200)
-        status, intent = self.request("GET", f"{BASE}/nightly/copy-intent")
+        status, intent = self.request(
+            "GET",
+            f"{BASE}/nightly/copy-intent",
+            query=(
+                f"expectedRevisionId={fence['expectedRevisionId']}"
+                f"&expectedVersion={fence['expectedVersion']}"
+                f"&expectedDigest={fence['expectedDigest']}"
+            ),
+        )
         self.assertEqual(status, 200)
+        self.assertTrue(intent["evidenceComplete"])
         self.assertTrue(intent["committed"])
         self.assertEqual(intent["committedDefinitionId"], copy_id)
         self.assertIsNotNone(intent["lastObserved"])
         self.assertTrue(intent["lastObserved"]["published"])
         self.assertEqual(intent["lastObserved"]["candidateId"], copy_id)
         self.assertTrue(intent["sourcePresent"])
+        # The published copy is still readable, so no second copy was needed.
+        status, detail = self.request("GET", f"{BASE}/{copy_id}")
+        self.assertEqual(status, 200)
+
+    def test_copy_intent_never_releases_a_duplicate_when_evidence_is_incomplete(self) -> None:
+        """P1 regression (fix loop 4): an incomplete read is unknown, not unpublished.
+
+        When the durable audit readers cannot complete, the read observes zero
+        commands. That absence must never be presented as a proven
+        non-publication that releases a second Copy; the response must mark the
+        evidence incomplete and keep the operator on the reconciliation path.
+        """
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        repository = self.api._configuration_service.repository
+        real_before = repository.list_command_audits_before
+        real_latest = repository.latest_command_audit_sequence
+
+        def failing_before(*args, **kwargs):
+            raise RuntimeError("simulated truncating audit read failure")
+
+        def failing_latest():
+            raise RuntimeError("simulated truncating audit read failure")
+
+        repository.list_command_audits_before = failing_before
+        repository.latest_command_audit_sequence = failing_latest
+        try:
+            status, intent = self.request("GET", f"{BASE}/nightly/copy-intent")
+        finally:
+            repository.list_command_audits_before = real_before
+            repository.latest_command_audit_sequence = real_latest
+        self.assertEqual(status, 200)
+        self.assertFalse(intent["committed"])
+        self.assertIsNone(intent["committedDefinitionId"])
+        self.assertEqual(intent["observedCommands"], 0)
+        self.assertFalse(intent["evidenceComplete"])
+        self.assertIn("unknown", intent["nextAction"].lower())
+        # With the real readers the same read is complete and honest.
+        status, healthy = self.request("GET", f"{BASE}/nightly/copy-intent")
+        self.assertEqual(status, 200)
+        self.assertTrue(healthy["evidenceComplete"])
 
     def test_removal_persistence_failure_reports_preserved_authority(self) -> None:
         """P1 regression: a known failed removal inside the real publication

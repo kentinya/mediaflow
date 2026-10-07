@@ -58,6 +58,15 @@ MAX_DEFINITION_INTERVAL_SECONDS = AutomationTaskDefinition.MAX_INTERVAL_SECONDS
 UPCOMING_RUN_LIMIT = 5
 HISTORICAL_REVISION_SCAN_LIMIT = 200
 
+#: Rows read per page when walking a definition's durable command trail. This
+#: is a *page* size, not a window on the answer: the walk continues with a real
+#: monotonic cursor until a short page proves the trail ended, so the bound
+#: limits one query, never the amount of evidence that can be reconciled. It is
+#: deliberately no larger than the smallest reader bound the repository offers,
+#: so an incomplete read is always detectable rather than silently mistaken for
+#: the end of the trail.
+COMMAND_TRAIL_PAGE_SIZE = 200
+
 AUTOMATION_DEFINITION_SECTION = "automationTaskDefinitions"
 
 #: The exact typed-form surface one focused Automation definition command owns.
@@ -110,6 +119,38 @@ class _DefinitionCommandAudit:
     action: str
     occurred_at: str
     context: dict[str, object]
+
+
+@dataclass(frozen=True)
+class _DefinitionCommandEvidence:
+    """The result of reading one definition's durable command trail.
+
+    ``complete`` is the truthfulness gate: it is ``True`` only when the whole
+    trail was walked to its end *and* every located command's publication proof
+    was readable.  An incomplete read can never be reported as "no command was
+    ever submitted", because absence of evidence is not evidence of absence.
+    """
+
+    commands: tuple[_DefinitionCommandAudit, ...]
+    complete: bool
+
+
+@dataclass(frozen=True)
+class _PublicationProof:
+    """Whether one command's own revision provably published its candidate.
+
+    ``revision_id`` names the publishing revision when publication is proven.
+    ``available`` is ``False`` when the durable proof could not be read at all
+    (a repository failure); the outcome is then *unknown*, and must never be
+    presented as a proven non-publication.
+    """
+
+    revision_id: str | None
+    available: bool
+
+    @property
+    def published(self) -> bool:
+        return self.revision_id is not None
 
 
 def _bounded(value: object, maximum: int) -> str | None:
@@ -296,14 +337,15 @@ class AutomationWorkspaceCommandService:
         submission's copy as this one's outcome.
 
         The evidence scan is *targeted, not bounded by recent activity*: the
-        copy commands and their candidates are located through the durable
-        per-object audit trail of the submitted intent, and each observed
-        command's publication is proven — or disproven — through the revision
-        its recorded fence names.  Absence from a recent window is therefore
-        never reported as "genuinely unpublished"; only a located command whose
-        recorded revision provably published its candidate commits the intent,
-        and a located command whose proof cannot be resolved stays an unknown
-        outcome.  The read creates nothing and starts no work.
+        durable command trail is walked to its end from a real, monotonic ledger
+        cursor, so a Copy submitted long before later activity is still located,
+        and each observed command's publication is proven from *that exact
+        revision's* own durable activation authority rather than from a recent
+        global activation window.  Absence from any bounded recent scan is
+        therefore never reported as "genuinely unpublished", and a trail or proof
+        that cannot be read completely is reported as an unknown outcome that
+        keeps the resubmission block in place.  The read creates nothing and
+        starts no work.
         """
 
         self._identifier(definition_id, "copy intent")
@@ -332,10 +374,12 @@ class AutomationWorkspaceCommandService:
                     next_action="reload the Active Automation inventory and reconcile again",
                 )
         published_ids = self._active_ids(active)
+        trail = self._definition_command_evidence(definition_id)
         evidence: dict[str, object] | None = None
         committed_id: str | None = None
         observed_commands = 0
-        for command in self._definition_command_audits(definition_id):
+        unresolved_proof = False
+        for command in trail.commands:
             change = command.context
             command_action = command.action
             candidate = change.get("after") or change.get("candidate")
@@ -353,8 +397,25 @@ class AutomationWorkspaceCommandService:
             command_fence = str(change.get("publishedFromRevisionId") or "")
             if expected_revision_id is not None and command_fence != expected_revision_id:
                 continue
-            publication = self._candidate_publication(command.revision_id, candidate_id)
-            if publication is not None:
+            proof = self._candidate_publication(command.revision_id, candidate_id)
+            if not proof.available:
+                # The command is located but its own revision's publication
+                # proof could not be read from durable authority.  That is an
+                # unknown outcome, never a proven rejection: the block must
+                # hold so no second copy can be allocated for this intent.
+                unresolved_proof = True
+                if evidence is None:
+                    evidence = {
+                        "auditId": command.audit_id[:64],
+                        "action": command_action,
+                        "occurredAt": command.occurred_at,
+                        "candidateId": candidate_id,
+                        "published": False,
+                    }
+                if expected_revision_id is not None:
+                    break
+                continue
+            if proof.published:
                 committed_id = candidate_id
                 evidence = {
                     "auditId": command.audit_id[:64],
@@ -362,7 +423,7 @@ class AutomationWorkspaceCommandService:
                     "occurredAt": command.occurred_at,
                     "candidateId": candidate_id,
                     "published": True,
-                    "publishedRevisionId": publication,
+                    "publishedRevisionId": proof.revision_id,
                 }
                 if expected_revision_id is None:
                     break
@@ -379,6 +440,34 @@ class AutomationWorkspaceCommandService:
                 }
             if expected_revision_id is not None:
                 break
+        # Completeness is the truthfulness gate the page binds to: only a trail
+        # walked to its end whose every relevant proof was readable may be
+        # presented as a proven non-publication.
+        evidence_complete = trail.complete and not unresolved_proof
+        if committed_id is not None:
+            next_action = (
+                f"the copy of {definition_id!r} committed durably as {committed_id!r}; "
+                "reload the current authority instead of submitting another copy"
+            )
+        elif not evidence_complete:
+            next_action = (
+                "the submitted copy outcome is unknown: the durable command evidence could "
+                "not be read completely, so reconcile the current Active Automation inventory "
+                "and do not submit another copy for this intent"
+            )
+        elif observed_commands > 0 and evidence is not None:
+            next_action = (
+                "the submitted copy command's publication could not be proven from "
+                "durable evidence; reconcile the current Active Automation inventory "
+                "and resubmit the copy deliberately"
+            )
+        elif observed_commands > 0:
+            next_action = (
+                "no submitted copy command was observed in durable evidence; the "
+                "outcome is genuinely unpublished"
+            )
+        else:
+            next_action = "no pending copy command was observed for this definition"
         return {
             "definitionId": definition_id,
             "sourcePresent": definition_id in published_ids,
@@ -386,37 +475,29 @@ class AutomationWorkspaceCommandService:
             "committedDefinitionId": committed_id,
             "lastObserved": evidence,
             "observedCommands": observed_commands,
+            "evidenceComplete": evidence_complete,
             "active": self._safe_active(active),
             "sideEffects": "none",
-            "nextAction": (
-                f"the copy of {definition_id!r} committed durably as {committed_id!r}; "
-                "reload the current authority instead of submitting another copy"
-                if committed_id is not None
-                else (
-                    "the submitted copy command's publication could not be proven from "
-                    "durable evidence; reconcile the current Active Automation inventory "
-                    "and resubmit the copy deliberately"
-                    if observed_commands > 0 and evidence is not None
-                    else (
-                        "no submitted copy command was observed in durable evidence; the "
-                        "outcome is genuinely unpublished"
-                        if observed_commands > 0
-                        else "no pending copy command was observed for this definition"
-                    )
-                )
-            ),
+            "nextAction": next_action,
         }
 
-    def _definition_command_audits(self, definition_id: str) -> list[_DefinitionCommandAudit]:
+    def _definition_command_evidence(self, definition_id: str) -> _DefinitionCommandEvidence:
         """The definition's durable create/copy command audits, newest first.
 
-        The scan is targeted at the exact definition's audit trail rather than
-        a global recent window, so a committed intent submitted long before
-        later activity is still located.  Repository doubles that predate the
-        targeted readers retain the bounded recent-window fallback, which the
-        read then treats honestly: commands located inside it are reconciled
-        through their own durable publication evidence, and nothing outside a
-        *located* command is ever called "genuinely unpublished".
+        The walk is targeted at the durable command trail rather than a global
+        recent window, so a committed intent submitted long before later
+        activity is still located.  Paging uses the ledger's own monotonic
+        ``sequence`` as a real cursor: the first page starts just above the
+        newest persisted sequence and each following page anchors strictly
+        below the previous page's lowest sequence, so pages can neither repeat
+        nor skip a row.  The walk stops when a page comes back short, which is
+        the only condition that proves the trail was read to its end.
+
+        ``complete`` reports that proof honestly.  A repository double that
+        offers only the bounded recent reader still reconciles the commands it
+        can see, but its read is never presented as a complete trail — an
+        incomplete read must not be mistaken for "no command was ever
+        submitted".
         """
 
         commands: list[_DefinitionCommandAudit] = []
@@ -459,32 +540,39 @@ class AutomationWorkspaceCommandService:
 
         repository = self._managed.repository
         targeted = getattr(repository, "list_command_audits_before", None)
+        latest = getattr(repository, "latest_command_audit_sequence", None)
         recent = getattr(repository, "list_recent_command_audits", None)
-        if callable(targeted) and callable(recent):
+        page_size = COMMAND_TRAIL_PAGE_SIZE
+        complete = False
+        if callable(targeted) and callable(latest):
             try:
-                # Page through the full durable audit trail newest-first: the
-                # recent window is only the first slice, and each page's
-                # lowest sequence anchors the next targeted look-behind. The
-                # scan is bounded by the trail's actual length.
-                marker: int | None = None
+                marker = int(latest()) + 1
                 while True:
-                    if marker is None:
-                        audits = recent(("draft_edit",), limit=500)
-                    else:
-                        audits = targeted(("draft_edit",), before_sequence=marker, limit=500)
-                    if not audits:
-                        break
-                    for audit in audits:
+                    page = targeted(("draft_edit",), before_sequence=marker, limit=page_size)
+                    for audit in page:
                         accept(audit)
-                    marker = (
-                        min(getattr(audit, "sequence", None) for audit in audits)
-                        if any(hasattr(audit, "sequence") for audit in audits)
-                        else None
-                    )
-                    if marker is None:
+                    if len(page) < page_size:
+                        # A short page is the end of the trail: the walk is
+                        # complete and absence from it is real evidence.
+                        complete = True
                         break
+                    sequences = [
+                        int(audit.sequence)
+                        for audit in page
+                        if getattr(audit, "sequence", None) is not None
+                    ]
+                    if not sequences:
+                        # A full page with no usable cursor cannot be paged
+                        # safely; report the read as incomplete rather than
+                        # risk skipping evidence.
+                        break
+                    next_marker = min(sequences)
+                    if next_marker >= marker:
+                        break
+                    marker = next_marker
             except Exception:
                 commands = []
+                complete = False
         elif callable(recent):
             try:
                 audits = recent(("draft_edit",), limit=200)
@@ -499,34 +587,63 @@ class AutomationWorkspaceCommandService:
                 continue
             seen.add(command.audit_id)
             deduplicated.append(command)
-        deduplicated.sort(key=lambda item: item.occurred_at, reverse=True)
-        return deduplicated
+        return _DefinitionCommandEvidence(tuple(deduplicated), complete)
 
-    def _candidate_publication(self, command_revision_id: str, candidate_id: str) -> str | None:
-        """The durable revision identity that published one copy candidate.
+    def _candidate_publication(
+        self, command_revision_id: str, candidate_id: str
+    ) -> _PublicationProof:
+        """Whether one command's own revision provably published its candidate.
 
         The command's Draft edit audit row carries the revision it was edited
-        into (``object_id``).  That revision's publication is proven when its
-        activation evidence exists *and* its activated document contains the
-        candidate.  The Active pointer may have moved on since; the historical
-        revision still proves the publication.
+        into (``object_id``).  Publication is proven from *that exact
+        revision's* durable activation authority — its own ``activate`` audit
+        read through the per-revision reader — instead of from a bounded window
+        of recent global activations, so a revision published long ago is
+        proven just as reliably as a fresh one and no activation window can
+        limit the answer.
+
+        The activated document must also still contain the candidate.  The
+        Active pointer may have moved on since; the historical revision still
+        proves the publication.  ``available`` is ``False`` when the durable
+        proof could not be read at all, which the caller reports as an unknown
+        outcome rather than a proven non-publication.
         """
 
         try:
             revision = self._repository.get_revision(command_revision_id)
         except Exception:
-            return None
+            return _PublicationProof(None, False)
         if revision is None:
-            return None
-        if str(revision.revision_id) not in self._published_revision_ids():
-            return None
+            # The command names a revision that durable authority no longer
+            # holds: the proof is unavailable, not disproven.
+            return _PublicationProof(None, False)
         try:
             values = self._objects._automation_definition_objects(revision.document)
         except (ValueError, KeyError):
-            return None
-        if any(str(item.get("id")) == candidate_id for item in values):
-            return revision.revision_id
-        return None
+            return _PublicationProof(None, False)
+        if not any(str(item.get("id")) == candidate_id for item in values):
+            # The revision is readable and provably does not contain this
+            # candidate, so this command did not publish it. That is a real
+            # negative answer, not unavailable evidence.
+            return _PublicationProof(None, True)
+        reader = getattr(self._repository, "list_revision_audits", None)
+        if not callable(reader):
+            return _PublicationProof(None, False)
+        try:
+            audits = reader(command_revision_id, limit=500)
+        except Exception:
+            return _PublicationProof(None, False)
+        if len(audits) >= 500:
+            # The per-revision trail may be truncated, so the absence of an
+            # activation audit cannot be proven: fail closed to unknown.
+            return _PublicationProof(None, False)
+        for audit in audits:
+            if audit.action != "activate":
+                continue
+            if str(audit.object_id) != str(revision.revision_id):
+                continue
+            return _PublicationProof(str(revision.revision_id), True)
+        return _PublicationProof(None, True)
 
     def schedule_preview(
         self,
