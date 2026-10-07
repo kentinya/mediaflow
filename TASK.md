@@ -1083,7 +1083,7 @@ over the existing SQLite history, and preserve unknown/unavailable state when th
 complete. Keep the existing organizer/Preview/grant/Worker boundaries, Task ID/Base/Goal/Scope and
 all Contract clauses unchanged. No Contract change or A RESCOPE is currently necessary.
 
-## B Review Result
+## B Review Result — Superseded Fix Loop 3
 
 ```text
 Reviewed: 79544d9aba697036405b06054c0c56a740281bab..dc31b46d28b5d1cd2887dce39ccb5571ac70f747
@@ -1302,3 +1302,120 @@ remain in place and working alongside the native focused surface.
 Status: READY FOR B REVIEW
 Head SHA: b364a04d1c916ed327e3e8f470dc05e413ad80e6
 ```
+
+## B Review Evidence — Fix Loop 4 Checkpoint
+
+Reviewed the actual
+`79544d9aba697036405b06054c0c56a740281bab..b364a04d1c916ed327e3e8f470dc05e413ad80e6`
+implementation and the `dc31b46..b364a04` correction, at repository HEAD
+`5484e837dedbd5d27685fd82cd1a717d2cf0c807` (completion-report documentation only).
+The latest Developer checkpoint is READY FOR B REVIEW; the top-level FIX REQUIRED was the prior
+decision. This review supersedes that prior decision without changing Task identity, Base, Goal,
+Scope or Acceptance Criteria. Slice 43 remains ACTIVE.
+
+B independently ran:
+
+- `.venv/bin/python -m unittest tests.test_automation_definition_publication
+  tests.test_v2_automation_lifecycle tests.test_configuration_management
+  tests.test_configuration_snapshot` — PASS, 106 tests, no skips; unclosed SQLite ResourceWarnings
+  remain visible in `/tmp/mediaflow-b-review-43-1-r5-focused.log`.
+- `npm --prefix web run test -- run src/entities/operations/automation-lifecycle.test.ts
+  src/features/operations/AutomationLifecyclePage.test.tsx` — PASS, 2 files / 32 tests;
+  `/tmp/mediaflow-b-review-43-1-r5-web.log`.
+- `npm --prefix web run build` — PASS; the bundle-size advisory remains visible;
+  `/tmp/mediaflow-b-review-43-1-r5-build.log`.
+- `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-lifecycle.python.spec.ts` — PASS, 10/10;
+  `/tmp/mediaflow-b-review-43-1-r5-e2e.log`.
+- `node /tmp/mediaflow-b-review-43-1-r5-browser.mjs` against the freshly built Web and
+  `.venv/bin/python scripts/operations_inventory_harness.py --port 4191` — real Python/API/SQLite/
+  browser reproduction, temporary data only. A committed Copy followed by 505 ordinary authenticated
+  focused publications and a reload resolves the original copy through its submitted fence,
+  reports `committed: true` and `evidenceComplete: true`, and exposes no unpublished-release action.
+  The same supported assembly reproduces the retained-history blocker below before and after
+  runtime restart; `/tmp/mediaflow-b-review-43-1-r5-browser.log`.
+- A read-only SQLite query of that harness's actual persisted rows proves that the removed
+  definition still has one occurrence, its exact superseded pinned revision, and that revision's
+  activation audit; `/tmp/mediaflow-b-review-43-1-r5-durable-history.log`. The harness's
+  `automation-lifecycle-state.occurrenceTotal` is scoped to its fixed fixture definition and is
+  not used as evidence for the independently named reproduction definition.
+- `.venv/bin/python /tmp/mediaflow-b-review-43-1-r4-python.py` — PASS for the independent
+  production-path checks: real Preview/grant/Scheduler/runtime preparation with configuration and
+  grants in one shared SQLite file; a foreign writer lock causing known failed activation preserves
+  Active, the live grant and the admitted Job's authorization. Removed history inside the current
+  window uses the published name rather than an unpublished Draft;
+  `/tmp/mediaflow-b-review-43-1-r5-removal.log`.
+- `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .` — PASS, 342 formatted files;
+  governance and whitespace check of the exact reviewed range — PASS. Both Automation PNG hashes
+  match the Contract. `config/alist.json` remains ignored, untracked and unstaged. The runtime/
+  dependency FFmpeg/FFprobe search returns no matches (expected exit 1). The 27-file reviewed
+  manifest contains Task-owned code, tests, harness/config and TASK.md; no frozen Slice/Roadmap/
+  product contract or private file is included. All four pre-existing untracked PNGs are untouched.
+
+The reported full T4 totals and Docker unavailability remain Developer-reported evidence; B did
+not rerun the entire T4 suite or mark that unavailable gate PASS. The independently reproduced
+current-production failure prevents Task PASS regardless of the passing focused/browser suites.
+No Slice Final or Slice completion is claimed.
+
+## B Complexity Reassessment — After Four Correction Checkpoints
+
+Reassessed the complete Task rather than creating another assertion-sized Task. The core feature
+still fits the Contract: typed forms compose existing managed successors, atomic publication and
+existing grant/Scheduler/Worker authority. It does not require another execution engine, another
+configuration store, distributed coordination or an A RESCOPE.
+
+The recovery reads are more complicated than this feature needs: copy reconciliation now uses
+durable cursor-based evidence and revision-specific publication proof, while retained-history
+resolution separately guesses from recent revisions, recent activations and a boolean
+ever-published scan. Those independent windows are inconsistent with the durable historical
+identity already recorded by the occurrence. This is the same evidence-boundary problem across
+two paths, not a need for broader product scope.
+
+Converge on the existing durable authority: when an occurrence supplies an exact revision pin,
+read that revision and its publication evidence directly; when no pin exists, use a complete
+targeted query or correct cursor paging over existing history. Distinguish unavailable/incomplete
+evidence from absence, and preserve the published-versus-Draft distinction. Do not enlarge window
+constants, introduce another cache/compensation/state-machine layer, or require operators to
+recreate definitions to recover records. The current Task already owns retained history under
+AC-T5/T6; fix it in this same Task with its existing Goal/Scope and no Contract changes.
+
+## B Review Result
+
+```text
+Reviewed: 79544d9aba697036405b06054c0c56a740281bab..b364a04d1c916ed327e3e8f470dc05e413ad80e6
+Decision: FIX REQUIRED
+Slice Required Outcomes all satisfied: NO
+Next: SAME TASK FIX LOOP
+```
+
+- **P1 — Removed-definition history becomes unreachable after ordinary subsequent publications
+  despite intact durable occurrence/pin/publication evidence (AC-T5/T6; RO-2 retained-history
+  readability; Shared publication and lifecycle 6; compatibility recovery).** Current production
+  reachability is independently reproduced with the actual built Web, real Python API, SQLite,
+  Local-backed temporary configuration and the production Scheduler: create `r5-history` in
+  scan-only mode, enable it, emit one due occurrence, then remove it through the authenticated
+  focused command (200). Its V2 occurrences route initially returns 200 with that run. Another
+  definition then receives 505 ordinary authenticated focused edits, all returning 200. The
+  removed definition's V2 detail and occurrences routes and V1 detail/grant routes now return 404;
+  opening `/ui-v2/operations/automation/occurrences/r5-history` shows `Record not found` and offers
+  only return links. A real runtime restart retains the same 404. This breaks the supported
+  operator journey of following a removed definition's existing run/authority history; no future
+  adapter, invalid configuration or capability-removing double is involved.
+  Evidence: `node /tmp/mediaflow-b-review-43-1-r5-browser.mjs`, cases
+  `removed-history-after-505-authenticated-publications` and
+  `removed-history-after-runtime-restart`, in `/tmp/mediaflow-b-review-43-1-r5-browser.log`.
+  The read-only database proof in `/tmp/mediaflow-b-review-43-1-r5-durable-history.log` confirms
+  one retained occurrence, its existing superseded pinned revision containing `r5-history`,
+  and one activation audit for that exact revision; neither history nor its evidence was deleted.
+  The Task-added `historical_definition` reads only 200 recent revisions before it even attempts
+  to match the supplied occurrence pin (`automation_workspace_commands.py:718`), then also
+  requires membership in 500 recent activation audits (`:793`). The related ever-published
+  classification checks only 200 recent activation audits (`:1927`). The Developer report's
+  claimed separate retention semantics cannot weaken the existing Contract: no such age/window
+  limit on readable removed history is authorized. Correct historical resolution using the
+  exact durable occurrence revision and revision-scoped publication proof; for definitions
+  without a pin, use complete durable targeted evidence rather than recent-window absence.
+  Keep unavailable evidence actionable and distinct from not-found/Draft-only state, preserve
+  unpublished-Draft exclusion and read-only behavior, and do not enlarge limits or add another
+  recovery engine. Verify the real API/browser removed-history journey beyond both current
+  windows and across restart, with exact historical identity and retained run/authority links.
