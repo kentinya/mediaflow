@@ -158,6 +158,38 @@ must resolve it to `ACTIVE` with a genuine Required-Outcome blocker and Task, or
 
 Only A can set `PASS / CLOSED`.
 
+### User-authorized development hold and priority change
+
+Only at the user's explicit request, A may suspend an unclosed Slice and select another priority
+before closure. This is a scheduling exception, not acceptance or permission to weaken a Contract.
+Use the existing `PLANNED` status for the suspended Slice and its Roadmap row, with an explicit
+`Development Hold: FROZEN BY USER` annotation. A newly reserved Slice whose contents are pending
+also stays `PLANNED`. Neither state authorizes a B implementation Task.
+
+Before replacing root documents or switching the workspace, checkpoint all current Slice changes
+and the exact Task report/B decision on a dedicated Git branch. Record the immutable Slice Base,
+latest implementation checkpoint, preservation branch and review-snapshot SHA. Preserve unrelated
+dirty/private/user files; do not use stash, destructive reset, history rewriting or a Task archive
+directory. Keep accepted historical closures intact and do not count suspended work as CURRENT.
+
+Root `TASK.md` becomes `NO ACTIVE IMPLEMENTATION TASK`; the suspended Task remains recoverable
+from its recorded Git snapshot with the same ID, Base, Goal, Scope and unresolved blockers. A
+planning placeholder must identify missing scope and cannot invent outcomes or acceptance from
+an unspecified request. The governance guard accepts committed `PLANNED` plus no active Task and
+a matching `PLANNED` Roadmap row, and rejects every active Task against a `PLANNED` Slice.
+
+An intervening Slice uses an isolated branch based on the accepted implementation line, so it
+does not silently inherit unaccepted suspended code. A records the actual code baseline and the
+user-authorized priority exception. Only after the user supplies the content does A complete and
+checkpoint an ACTIVE Contract; only then may B plan an implementation Task. The hold itself does
+not change product requirements or authorize application behavior changes.
+
+Resumption requires an explicit A activation checkpoint. Recover the suspended Contract and Task
+from their preservation snapshots, retain the original Slice Base and Task ID/Base/Goal/Scope,
+and reassess any intervening accepted changes before integration. Never silently rebase, repin,
+merge rejected code, reset blockers or treat prior FIX REQUIRED work as PASS. Ordinary Task/Slice
+review and final acceptance rules then apply.
+
 ## 4. Slice Contract
 
 Root `SLICE.md` is A-owned and contains at least:

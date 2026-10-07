@@ -8,12 +8,13 @@ workflow authority. Closure rules live only in
 
 ## Current development pointer
 
-V2 remains active on `main`; Slice 43 — **V2 Automation Workspace and Engine Settings** — is ACTIVE
-under [`SLICE.md`](../SLICE.md), with Base `853973dbbf8289fa2ad40657033e94e870a690e4`. This is an
-A-owned planning activation, not an implementation or acceptance claim. No implementation Task is
-active; the next action is **B PLANS THE FIRST COHERENT IMPLEMENTATION TASK** after the committed
-Contract/governance preflight. Slice 42 remains PASS / CLOSED; its full decision and validation
-reconciliation remain at this Base in Git. Earlier closure-ledger entries remain unchanged.
+Slice 43 — **V2 Automation Workspace and Engine Settings** — is suspended at the user's explicit
+request on 2026-10-07, represented by PLANNED plus a development hold. Its unaccepted implementation
+and full Task/B review context are preserved on `frozen/slice-43-2026-10-07`; its original Base is
+unchanged. No Task is active and no Slice completion is claimed. The user intends one new Slice
+for functional improvements across several implemented pages, with contents supplied later.
+A must complete and activate that Contract before B plans work. Slice 42 and all earlier
+closure-ledger entries remain unchanged.
 
 Slice 37 closure record (2026-09-23): delivered the shared V2 shell, live ResourceLibrary Files
 workspace, bounded common file management, safe Organize continuation, formal `library/path`

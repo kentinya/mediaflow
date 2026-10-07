@@ -75,7 +75,7 @@ Slice 30 — V2 Frontend Platform & Architecture
     → Slice 40 — V2 Settings and Empty-Baseline Startup (PASS / CLOSED; CURRENT below)
     → Slice 41 — V2 Organizing Rules Workspace (PASS / CLOSED; CURRENT below)
     → Slice 42 — V2 Operations and Tasks Workspace (PASS / CLOSED; CURRENT below)
-    → Slice 43 — V2 Automation Workspace and Engine Settings (ACTIVE; TARGET below)
+    → Slice 43 — V2 Automation Workspace and Engine Settings (PLANNED; user-frozen, unaccepted)
 ```
 
 Slice 30 is `PASS / CLOSED` under the A-owned Contract in [`SLICE.md`](../SLICE.md), with Base

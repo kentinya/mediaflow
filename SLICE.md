@@ -8,16 +8,41 @@ recovery, and publish engine settings whose actual runtime consumption is visibl
 Slice ID: 43
 Name: V2 Automation Workspace and Engine Settings
 Owner: A — Slice Owner / Architect / Final Reviewer
-Status: ACTIVE
+Status: PLANNED
 Base SHA: 853973dbbf8289fa2ad40657033e94e870a690e4
-Implementation Head: NOT SET
+Implementation Head: b364a04d1c916ed327e3e8f470dc05e413ad80e6
+Development Hold: FROZEN BY USER — 2026-10-07
 Contract Revision: 2026-10-06 — A activation from the two Automation references
 Risk: High
 Final Test Level: T4
-Next Action: B PLANS THE FIRST COHERENT IMPLEMENTATION TASK
+Next Action: A EXPLICITLY RESUMES THIS SLICE AFTER THE USER'S NEW PRIORITY
 ```
 
 ## Authority and sequencing
+
+### A development hold — 2026-10-07
+
+The user explicitly authorized A to freeze this development and preserve its implementation,
+then reserve one Slice for improvements across several already implemented pages; that Slice's
+contents will be supplied later. This is the user-authorized priority exception in
+`docs/development-workflow.md`, not Slice acceptance or a change to any outcome, surface,
+invariant, acceptance criterion or deferral below.
+
+- Preservation branch: `frozen/slice-43-2026-10-07`.
+- Exact implementation: `b364a04d1c916ed327e3e8f470dc05e413ad80e6` (not accepted).
+- Full Task 43.1 and latest B review snapshot: `a447e3129be89bd20f6a24831b2be122d4fdf955:TASK.md`.
+- Slice Base remains `853973dbbf8289fa2ad40657033e94e870a690e4`.
+- Task 43.1 remains FIX REQUIRED: removed-definition history becomes inaccessible after subsequent
+  ordinary publications despite intact durable run/pin/publication evidence. Its exact blocker,
+  reproduction and complexity assessment are retained in the recorded Task snapshot.
+
+Root `TASK.md` contains no active implementation Task. No B planning, Developer implementation,
+automatic continuation, Slice Final or completion claim is authorized on this held branch.
+To resume, A must explicitly reactivate this same Contract and recover Task 43.1 from the snapshot,
+retaining its original ID/Base/Goal/Scope and outstanding blocker. Intervening accepted work must
+be assessed before integration; no automatic merge or repinning is authorized.
+
+### Original activation authority (retained history)
 
 The user first requested analysis of `docs/pics/自动化.png` and
 `docs/pics/自动化-全局设置.png`, then explicitly authorized A to plan this Slice. This checkpoint

@@ -99,6 +99,29 @@ class GovernanceCheckTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotEqual(base_sha, git(repo, "rev-parse", "HEAD"))
 
+    def test_planned_slice_without_an_active_task_is_valid(self) -> None:
+        repo, _base_sha = init_repo(slice_status="PLANNED")
+        result = run_check(repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_planned_slice_cannot_authorize_any_active_task_status(self) -> None:
+        repo, base_sha = init_repo(slice_status="PLANNED")
+        for status in ("PLANNED", "IN PROGRESS", "FIX REQUIRED", "READY FOR B REVIEW"):
+            with self.subTest(status=status):
+                write(repo, "TASK.md", task_document(27, status, base_sha))
+                result = run_check(repo)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("ACTIVE or FIX REQUIRED", result.stderr)
+
+    def test_planned_slice_requires_a_planned_roadmap_row(self) -> None:
+        repo, _base_sha = init_repo(slice_status="PLANNED")
+        write(repo, "docs/roadmap.md", roadmap_document(27, "ACTIVE"))
+        git(repo, "add", "docs/roadmap.md")
+        git(repo, "commit", "-qm", "mismatched planned roadmap")
+        result = run_check(repo)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Roadmap Slice 27 must be PLANNED", result.stderr)
+
     def test_uncheckpointed_working_tree_slice_is_rejected(self) -> None:
         repo, base_sha = init_repo(slice_id=27, slice_status="PASS / CLOSED")
         write(repo, "SLICE.md", slice_document(28, "ACTIVE", base_sha))

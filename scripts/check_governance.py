@@ -17,7 +17,7 @@ from pathlib import Path
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 NO_ACTIVE_TASK = "NO ACTIVE IMPLEMENTATION TASK"
 ACTIVE_TASK_STATUSES = {"PLANNED", "IN PROGRESS", "FIX REQUIRED", "READY FOR B REVIEW"}
-SLICE_STATUSES = {"ACTIVE", "FIX REQUIRED", "READY FOR A REVIEW", "PASS / CLOSED"}
+SLICE_STATUSES = {"PLANNED", "ACTIVE", "FIX REQUIRED", "READY FOR A REVIEW", "PASS / CLOSED"}
 
 
 @dataclass(frozen=True)
@@ -154,6 +154,10 @@ def _check_no_active_task(
     roadmap: dict[int, RoadmapRow],
 ) -> None:
     row = _require_current_row(roadmap, slice_state)
+    if slice_state.status == "PLANNED":
+        if row.status != "PLANNED":
+            raise ValueError(f"Roadmap Slice {slice_state.slice_id} must be PLANNED")
+        return
     if slice_state.status == "FIX REQUIRED":
         raise ValueError("Slice FIX REQUIRED cannot have NO ACTIVE IMPLEMENTATION TASK")
     if slice_state.status == "ACTIVE":
