@@ -5,8 +5,10 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 from datetime import UTC, datetime, timedelta
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 from urllib.parse import urlsplit
@@ -14,7 +16,9 @@ from urllib.parse import urlsplit
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
+from mediaflow.application.direct_file_transfers import DirectFileTransferService
 from mediaflow.application.duplicates import StorageHasher
+from mediaflow.application.files_transfer_worker import FilesTransferWorker
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.domain.configuration_management import (
     ConfigurationDestinationPrecheckStatus,
@@ -25,6 +29,7 @@ from mediaflow.domain.direct_files import DirectEntryEvidence
 from mediaflow.domain.security import ApiPermission, ResolvedApiPrincipal
 from mediaflow.domain.storage import StorageCapabilities, StorageEntry, StorageEntryType
 from mediaflow.infrastructure.local_storage import LocalStorage
+from mediaflow.infrastructure.openlist_storage import OpenListStorage, OpenListStorageConfig
 from mediaflow.infrastructure.sqlite_configuration_management import (
     SQLiteConfigurationRepository,
 )
@@ -389,6 +394,21 @@ class _ReadSpyStorage(LocalStorage):
         return super().delete(path)
 
 
+class _PauseAfterFirstDeleteStorage(_ReadSpyStorage):
+    """Request a durable Task pause after the first confirmed deletion."""
+
+    def __init__(self, storage_id: str, root: Path, repository=None) -> None:
+        super().__init__(storage_id, root, publish_version=False)
+        self.repository = repository
+        self.task_id: str | None = None
+
+    def delete(self, path: str) -> None:
+        super().delete(path)
+        if self.task_id is not None:
+            self.repository.request_task_pause(self.task_id, datetime.now(UTC))
+            self.task_id = None
+
+
 def _direct_entry_evidence(storage, relative: str) -> DirectEntryEvidence:
     """The metadata-only exact-version evidence the application admits."""
 
@@ -455,44 +475,46 @@ class DirectFileExecutorTests(unittest.TestCase):
         self.assertFalse((self.root / "a.txt").exists())
         self.assertTrue((self.root / "c.txt").exists())
 
-    def test_rename_and_delete_require_provider_version_evidence(self) -> None:
-        """The executor's own boundary never mutates an unproved entry."""
+    def test_rename_and_delete_require_observed_metadata_evidence(self) -> None:
+        """The executor accepts metadata-only evidence without a fingerprint."""
 
         executor = OrganizerExecutor()
         (self.root / "keep.txt").write_text("x", encoding="utf-8")
+        (self.root / "rename.txt").write_text("rename", encoding="utf-8")
         (self.root / "folder").mkdir()
         missing = executor.execute_direct_rename(self.storage, "keep.txt", "moved.txt")
         self.assertEqual(missing.status.value, "FAILED")
         self.assertTrue(any("version evidence is required" in error for error in missing.errors))
         for name in ("keep.txt", "folder"):
+            observed = self.storage.stat(name)
             result = executor.execute_direct_delete(
                 self.storage,
                 name,
                 entry_evidence=DirectEntryEvidence(
-                    size=0,
-                    modified_at="1970-01-01T00:00:00+00:00",
+                    size=observed.size,
+                    modified_at=observed.modified_at.isoformat(),
                     is_directory=name == "folder",
-                    fingerprint="",
+                    fingerprint=None,
                 ),
             )
-            self.assertEqual(result.status.value, "FAILED")
-            self.assertTrue(any("version evidence is required" in error for error in result.errors))
-        refused_rename = executor.execute_direct_rename(
+            self.assertEqual(result.status.value, "SUCCESS")
+        observed = self.storage.stat("rename.txt")
+        renamed = executor.execute_direct_rename(
             self.storage,
-            "keep.txt",
+            "rename.txt",
             "moved.txt",
             source_evidence=DirectEntryEvidence(
-                size=1,
-                modified_at="1970-01-01T00:00:00+00:00",
+                size=observed.size,
+                modified_at=observed.modified_at.isoformat(),
                 is_directory=False,
-                fingerprint="",
+                fingerprint=None,
             ),
         )
-        self.assertEqual(refused_rename.status.value, "FAILED")
-        # Zero mutation: nothing was renamed or deleted.
-        self.assertTrue((self.root / "keep.txt").exists())
-        self.assertTrue((self.root / "folder").is_dir())
-        self.assertFalse((self.root / "moved.txt").exists())
+        self.assertEqual(renamed.status.value, "SUCCESS")
+        self.assertFalse((self.root / "rename.txt").exists())
+        self.assertFalse((self.root / "keep.txt").exists())
+        self.assertFalse((self.root / "folder").exists())
+        self.assertTrue((self.root / "moved.txt").exists())
 
     def test_delete_requires_existing_entry(self) -> None:
         executor = OrganizerExecutor()
@@ -633,6 +655,34 @@ class DirectFileOperationsTests(unittest.TestCase):
         binding = api._prepare_runtime_binding_for_revision(active)
         self.assertIsNotNone(binding.direct_files)
         return binding.direct_files
+
+    def _run_delete(self, service: DirectFileCommandService, **request) -> dict[str, object]:
+        """Drive a confirmed Delete through the real durable Worker boundary."""
+
+        admitted = service.execute_delete(**request)
+        return self._run_admitted_delete(service, admitted)
+
+    def _run_admitted_delete(
+        self, service: DirectFileCommandService, admitted: dict[str, object]
+    ) -> dict[str, object]:
+        """Drive an already admitted Delete through the real durable Worker."""
+
+        if admitted.get("taskId") is None or admitted.get("terminal") is True:
+            return admitted
+        command = str(admitted["taskCommand"])
+        transfer_service = DirectFileTransferService(
+            direct_files=service, executor=service._executor
+        )
+        worker = FilesTransferWorker(
+            None,
+            service._tasks.repository,
+            service_factory=lambda selected, _transfer: (
+                transfer_service if selected == command else None
+            ),
+            supported_commands=(command,),
+        )
+        self.assertIsNotNone(worker.run_next())
+        return service.delete_projection(str(admitted["taskId"]))
 
     # ------------------------------------------------------------------
     # Application service journeys
@@ -953,15 +1003,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "raced.txt").exists())
             self.assertEqual((root / "source" / "race.txt").read_text(encoding="utf-8"), "v2")
 
-    def test_rename_fails_closed_without_provider_entry_identity(self) -> None:
-        """A provider that publishes no entry identity never renames anything.
-
-        The read-spy provider stands in for SMB/OpenList: it yields no identity
-        for any entry, so evidence issuance, the command admission and the API
-        route all refuse with one stable actionable category, zero content read,
-        zero Task and zero mutation — instead of falling back to size, `mtime`
-        or a full content read.
-        """
+    def test_fingerprintless_rename_uses_metadata_and_rejects_changed_observations(self) -> None:
+        """OpenList/SMB-like entries remain renameable with metadata-only evidence."""
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -976,52 +1019,224 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "note.txt").write_text("note", encoding="utf-8")
             self.assertIsNone(storage.stat("note.txt").fingerprint)
 
-            for relative in ("note.txt", "folder"):
-                with self.assertRaises(DirectFileError) as refused:
-                    service.rename_evidence(library_id="source", path=relative)
-                self.assertEqual(refused.exception.code, "files_direct_entry_identity_unavailable")
-                self.assertEqual(refused.exception.category, "entry_identity_unavailable")
-                self.assertEqual(refused.exception.status, 400)
-                self.assertTrue(refused.exception.next_action)
-                self.assertEqual(refused.exception.details["sideEffects"], "none")
-
-            with self.assertRaises(DirectFileError) as command_refused:
+            evidence = service.rename_evidence(library_id="source", path="note.txt")
+            self.assertEqual(evidence.document()["size"], 4)
+            self.assertTrue(evidence.token.startswith("v1."))
+            (root / "source" / "note.txt").write_text("changed-size", encoding="utf-8")
+            with self.assertRaises(DirectFileError) as stale:
                 service.rename(
                     library_id="source",
                     path="note.txt",
                     name="renamed-note.txt",
-                    expected={
-                        "size": 4,
-                        "modifiedAt": storage.stat("note.txt").modified_at.isoformat(),
-                        "evidence": "v1." + "0" * 32,
-                    },
+                    expected=evidence.document(),
                 )
-            self.assertEqual(command_refused.exception.category, "entry_identity_unavailable")
-            for relative in ("note.txt", "folder"):
-                status, body = request(
-                    api,
-                    f"/api/v1/resource-libraries/source/files/rename-evidence?path={relative}",
-                )
-                self.assertEqual(status, 400, body)
-                self.assertEqual(body["error"]["code"], "files_direct_entry_identity_unavailable")
-                self.assertEqual(body["error"]["details"]["category"], "entry_identity_unavailable")
-                self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-                self.assertTrue(body["error"]["details"]["nextAction"])
-
-            self.assertEqual(storage.reads, [])
+            self.assertEqual(stale.exception.category, "stale_source")
             self.assertEqual(storage.mutations, [])
-            self.assertEqual(runtime.list_tasks(), ())
-            self.assertTrue((root / "source" / "note.txt").is_file())
+            status, body = request(
+                api,
+                "/api/v1/resource-libraries/source/files/rename-evidence?path=note.txt",
+            )
+            self.assertEqual(status, 200, body)
+            self.assertNotIn("fingerprint", body)
+            status, renamed = request(
+                api,
+                "/api/v1/resource-libraries/source/files/commands",
+                method="POST",
+                body={
+                    "operation": "rename",
+                    "path": "note.txt",
+                    "name": "renamed-note.txt",
+                    "expected": {
+                        "size": body["size"],
+                        "modifiedAt": body["modifiedAt"],
+                        "evidence": body["evidence"],
+                    },
+                },
+            )
+            self.assertEqual(status, 200, renamed)
+            self.assertEqual(renamed["status"], "SUCCESS")
+            self.assertEqual(storage.reads, [])
+            self.assertFalse((root / "source" / "note.txt").exists())
             self.assertTrue((root / "source" / "folder" / "keep.txt").is_file())
-            self.assertFalse((root / "source" / "renamed-note.txt").exists())
+            self.assertTrue((root / "source" / "renamed-note.txt").is_file())
 
-    def test_delete_fails_closed_without_provider_entry_identity(self) -> None:
-        """Delete confirmation is bound to a provider identity, or refused.
+    def test_production_openlist_http_adapter_renames_and_deletes_without_fingerprints(
+        self,
+    ) -> None:
+        """The actual OpenList HTTP adapter supports the confirmed journey."""
 
-        Every file and directory of the impact scope must be verifiable by the
-        provider; one unverifiable entry fails the whole impact, so no
-        confirmation scope, Task or Storage mutation can exist for it.
-        """
+        entries: dict[str, dict[str, object]] = {
+            "/Downloads": {"is_dir": True, "size": 0},
+            "/Downloads/note.txt": {"is_dir": False, "size": 4},
+            "/Downloads/rename-dir": {"is_dir": True, "size": 0},
+            "/Downloads/season": {"is_dir": True, "size": 0},
+            "/Downloads/season/episode.txt": {"is_dir": False, "size": 7},
+        }
+        calls: list[tuple[str, str]] = []
+        guard = threading.Lock()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):  # noqa: A002 - server API
+                return
+
+            def _reply(self, document: dict[str, object]) -> None:
+                body = json.dumps(document).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            @staticmethod
+            def _entry(path: str, value: dict[str, object]) -> dict[str, object]:
+                return {
+                    "name": path.rsplit("/", 1)[-1],
+                    "is_dir": value["is_dir"],
+                    "size": value["size"],
+                    "modified": "2026-10-07T00:00:00Z",
+                }
+
+            def do_GET(self) -> None:
+                if self.path == "/ping":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                self._reply({"code": 404, "message": "not found", "data": None})
+
+            def do_POST(self) -> None:
+                payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                with guard:
+                    calls.append((self.command, self.path))
+                    if self.path == "/api/fs/get":
+                        path = str(payload["path"])
+                        value = entries.get(path)
+                        if value is None:
+                            result = {"code": 404, "message": "file not found", "data": None}
+                        else:
+                            result = {
+                                "code": 200,
+                                "message": "success",
+                                "data": self._entry(path, value),
+                            }
+                    elif self.path == "/api/fs/list":
+                        path = str(payload["path"]).rstrip("/")
+                        prefix = path + "/"
+                        children = [
+                            (key, value)
+                            for key, value in sorted(entries.items())
+                            if key.startswith(prefix) and "/" not in key[len(prefix) :]
+                        ]
+                        page = int(payload["page"])
+                        size = int(payload["per_page"])
+                        selected = children[(page - 1) * size : page * size]
+                        result = {
+                            "code": 200,
+                            "message": "success",
+                            "data": {
+                                "content": [self._entry(key, value) for key, value in selected],
+                                "total": len(children),
+                            },
+                        }
+                    elif self.path == "/api/fs/rename":
+                        path = str(payload["path"])
+                        target = f"{path.rsplit('/', 1)[0]}/{payload['name']}"
+                        value = entries.pop(path, None)
+                        if value is None or target in entries:
+                            result = {
+                                "code": 409,
+                                "message": "entry exists or not found",
+                                "data": None,
+                            }
+                        else:
+                            entries[target] = value
+                            for child in tuple(entries):
+                                if child.startswith(path + "/"):
+                                    entries[target + child[len(path) :]] = entries.pop(child)
+                            result = {"code": 200, "message": "success", "data": None}
+                    elif self.path == "/api/fs/remove":
+                        parent = str(payload["dir"]).rstrip("/")
+                        name = str(payload["names"][0])
+                        path = parent + "/" + name
+                        value = entries.get(path)
+                        has_children = any(key.startswith(path + "/") for key in entries)
+                        if value is None:
+                            result = {"code": 404, "message": "file not found", "data": None}
+                        elif value["is_dir"] and has_children:
+                            result = {
+                                "code": 409,
+                                "message": "directory is not empty",
+                                "data": None,
+                            }
+                        else:
+                            entries.pop(path)
+                            result = {"code": 200, "message": "success", "data": None}
+                    else:
+                        result = {"code": 404, "message": "not found", "data": None}
+                self._reply(result)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(thread.join, 5)
+        self.addCleanup(server.shutdown)
+        config = OpenListStorageConfig(
+            "source-storage",
+            "Local OpenList test",
+            f"http://127.0.0.1:{server.server_port}",
+            "local-openlist-test-token",
+            root_path="/Downloads",
+            max_retries=0,
+        )
+        storage = OpenListStorage(config)
+        self.addCleanup(storage.close)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, active, _runtime = self._activate(
+                root, storage_adapters={"source-storage": storage}
+            )
+            service = self._service(api, active)
+            self.assertIsNone(storage.stat("note.txt").fingerprint)
+
+            file_evidence = service.rename_evidence(library_id="source", path="note.txt")
+            self.assertNotIn("fingerprint", file_evidence.document())
+            renamed_file = service.rename(
+                library_id="source",
+                path="note.txt",
+                name="renamed.txt",
+                expected=file_evidence.document(),
+            )
+            self.assertEqual(renamed_file["status"], "SUCCESS")
+
+            directory_evidence = service.rename_evidence(library_id="source", path="rename-dir")
+            renamed_directory = service.rename(
+                library_id="source",
+                path="rename-dir",
+                name="renamed-dir",
+                expected=directory_evidence.document(),
+            )
+            self.assertEqual(renamed_directory["status"], "SUCCESS")
+
+            impact = service.delete_impact(library_id="source", paths=["season"])
+            deleted = self._run_delete(
+                service,
+                library_id="source",
+                paths=["season"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(deleted["status"], "SUCCESS")
+            with guard:
+                self.assertIn("/Downloads/renamed.txt", entries)
+                self.assertIn("/Downloads/renamed-dir", entries)
+                self.assertNotIn("/Downloads/season", entries)
+            self.assertTrue(any(path == "/api/fs/rename" for _method, path in calls))
+            self.assertGreaterEqual(sum(path == "/api/fs/remove" for _method, path in calls), 2)
+            self.assertFalse(any(path == "/api/fs/put" for _method, path in calls))
+
+    def test_fingerprintless_delete_uses_complete_metadata_observation(self) -> None:
+        """Delete is available without a provider fingerprint and fences metadata."""
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1035,35 +1250,33 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "folder" / "keep.txt").write_text("keep", encoding="utf-8")
             (root / "source" / "single.txt").write_text("s", encoding="utf-8")
 
-            for paths in (["folder"], ["single.txt"], ["folder", "single.txt"]):
-                with self.assertRaises(DirectFileError) as preview:
-                    service.delete_impact(library_id="source", paths=paths)
-                self.assertEqual(preview.exception.code, "files_direct_entry_identity_unavailable")
-                self.assertEqual(preview.exception.category, "entry_identity_unavailable")
-                self.assertEqual(preview.exception.status, 400)
-                self.assertTrue(preview.exception.next_action)
+            impact = service.delete_impact(library_id="source", paths=["folder", "single.txt"])
+            self.assertTrue(impact.entries)
+            self.assertTrue(all(entry.fingerprint is None for entry in impact.entries))
+            self.assertNotIn("fingerprint", json.dumps(impact.document()))
+            self.assertEqual(storage.reads, [])
 
-            with self.assertRaises(DirectFileError) as command_refused:
-                service.execute_delete(
+            (root / "source" / "single.txt").write_text("changed", encoding="utf-8")
+            with self.assertRaises(DirectFileError) as stale:
+                self._run_delete(
+                    service,
                     library_id="source",
                     paths=["folder", "single.txt"],
-                    confirmation_digest="0" * 64,
+                    confirmation_digest=impact.scope_digest,
                 )
-            self.assertEqual(command_refused.exception.category, "entry_identity_unavailable")
-            status, body = request(
-                api,
-                "/api/v1/resource-libraries/source/files/delete-impact?path=single.txt",
-            )
-            self.assertEqual(status, 400, body)
-            self.assertEqual(body["error"]["code"], "files_direct_entry_identity_unavailable")
-            self.assertEqual(body["error"]["details"]["category"], "entry_identity_unavailable")
-            self.assertEqual(body["error"]["details"]["sideEffects"], "none")
-
-            self.assertEqual(storage.reads, [])
+            self.assertEqual(stale.exception.category, "stale_confirmation")
             self.assertEqual(storage.mutations, [])
-            self.assertEqual(runtime.list_tasks(), ())
-            self.assertTrue((root / "source" / "folder" / "keep.txt").is_file())
-            self.assertTrue((root / "source" / "single.txt").is_file())
+            refreshed = service.delete_impact(library_id="source", paths=["folder", "single.txt"])
+            deleted = self._run_delete(
+                service,
+                library_id="source",
+                paths=["folder", "single.txt"],
+                confirmation_digest=refreshed.scope_digest,
+            )
+            self.assertEqual(deleted["status"], "SUCCESS")
+            self.assertFalse((root / "source" / "folder").exists())
+            self.assertFalse((root / "source" / "single.txt").exists())
+            self.assertEqual(storage.reads, [])
 
     def test_rename_and_delete_never_read_content_or_hash_duplicates(self) -> None:
         """The whole Rename/Delete journey is metadata-only, end to end.
@@ -1101,14 +1314,16 @@ class DirectFileOperationsTests(unittest.TestCase):
                 )
                 self.assertEqual(outcome["status"], "SUCCESS")
                 impact = service.delete_impact(library_id="source", paths=["moved.txt"])
-                deleted = service.execute_delete(
+                deleted = self._run_delete(
+                    service,
                     library_id="source",
                     paths=["moved.txt"],
                     confirmation_digest=impact.scope_digest,
                 )
                 self.assertEqual(deleted["status"], "SUCCESS")
                 recursive = service.delete_impact(library_id="source", paths=["victim"])
-                recursive_outcome = service.execute_delete(
+                recursive_outcome = self._run_delete(
+                    service,
                     library_id="source",
                     paths=["victim"],
                     confirmation_digest=recursive.scope_digest,
@@ -1169,7 +1384,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertFalse((root / "source" / "renamed.txt").exists())
 
             with self.assertRaises(DirectFileError) as stale_confirmation:
-                service.execute_delete(
+                self._run_delete(
+                    service,
                     library_id="source",
                     paths=["swapped.txt"],
                     confirmation_digest=impact.scope_digest,
@@ -1189,7 +1405,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             )
             self.assertEqual(outcome["status"], "SUCCESS")
             refreshed = service.delete_impact(library_id="source", paths=["renamed.txt"])
-            deleted = service.execute_delete(
+            deleted = self._run_delete(
+                service,
                 library_id="source",
                 paths=["renamed.txt"],
                 confirmation_digest=refreshed.scope_digest,
@@ -1274,7 +1491,8 @@ class DirectFileOperationsTests(unittest.TestCase):
                 self.assertFalse((root / "source" / "raced.txt").exists())
 
                 storage.version = "v1"
-                delete_outcome = service.execute_delete(
+                delete_outcome = self._run_delete(
+                    service,
                     library_id="source",
                     paths=["deleted.txt"],
                     confirmation_digest=impact.scope_digest,
@@ -1301,7 +1519,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             later = datetime.now(UTC) + timedelta(seconds=120)
             os.utime(root / "source" / "victim.txt", (later.timestamp(), later.timestamp()))
             with self.assertRaises(DirectFileError) as stale:
-                service.execute_delete(
+                self._run_delete(
+                    service,
                     library_id="source",
                     paths=["victim.txt"],
                     confirmation_digest=impact.scope_digest,
@@ -1370,7 +1589,8 @@ class DirectFileOperationsTests(unittest.TestCase):
 
             impact = service.delete_impact(library_id="source", paths=["race-victim.txt"])
             with patch.object(service, "_executor", SwapInDeletePreflight(root)):
-                outcome = service.execute_delete(
+                outcome = self._run_delete(
+                    service,
                     library_id="source",
                     paths=["race-victim.txt"],
                     confirmation_digest=impact.scope_digest,
@@ -1489,7 +1709,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "season" / "inner" / "e1.mkv").write_bytes(b"01")
             (root / "source" / "season" / "e0.mkv").write_bytes(b"0")
             impact = service.delete_impact(library_id="source", paths=["season"])
-            outcome = service.execute_delete(
+            outcome = self._run_delete(
+                service,
                 library_id="source",
                 paths=["season"],
                 confirmation_digest=impact.scope_digest,
@@ -1576,40 +1797,35 @@ class DirectFileOperationsTests(unittest.TestCase):
                     (root / "source" / "parent" / "new.txt").read_text(encoding="utf-8"), "new"
                 )
 
-    def test_executor_refuses_delete_evidence_without_provider_identity(self) -> None:
-        """Empty provider identity is never a silent size/mtime fallback.
-
-        The operator's confirmed evidence carries no verifiable identity, so the
-        executor's last safe boundary refuses the mutation instead of trusting
-        "it is still a directory" or the entry's size: the replacement survives
-        and no delete is issued beyond the probe's own setup.
-        """
+    def test_executor_rejects_changed_metadata_without_provider_identity(self) -> None:
+        """Fingerprintless deletion still rejects changed observed metadata."""
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             storage = _FingerprintlessStorage("storage", root)
-            (root / "victim").mkdir()
-            observed = storage.stat("victim")
+            (root / "victim.txt").write_text("before", encoding="utf-8")
+            observed = storage.stat("victim.txt")
             self.assertIsNone(observed.fingerprint)
             evidence = DirectEntryEvidence(
-                size=0,
+                size=observed.size,
                 modified_at=observed.modified_at.isoformat(),
-                is_directory=True,
-                fingerprint="",
+                is_directory=False,
+                fingerprint=None,
             )
             # Same-name replacement: rmdir + mkdir of a fresh empty directory.
-            storage.delete("victim")
-            (root / "victim").mkdir()
+            (root / "victim.txt").write_text("replacement is larger", encoding="utf-8")
             result = OrganizerExecutor().execute_direct_delete(
-                storage, "victim", entry_evidence=evidence
+                storage, "victim.txt", entry_evidence=evidence
             )
             self.assertEqual(result.status.value, "FAILED")
             self.assertEqual(tuple(result.uncertain_effects), ())
-            self.assertTrue(any("version evidence is required" in error for error in result.errors))
+            self.assertTrue(
+                any("changed since it was confirmed" in error for error in result.errors)
+            )
             # The replacement survives; the only delete ever issued was the
             # probe's own removal of the original directory.
-            self.assertTrue((root / "victim").is_dir())
-            self.assertEqual(storage.deleted, ["victim"])
+            self.assertTrue((root / "victim.txt").is_file())
+            self.assertEqual(storage.deleted, [])
 
     def test_rename_evidence_is_bound_to_one_exact_entry(self) -> None:
         """Issued evidence never authorizes renaming a different entry version."""
@@ -1671,7 +1887,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "one.txt").write_text("1", encoding="utf-8")
             (root / "source" / "two.txt").write_text("2", encoding="utf-8")
             impact = service.delete_impact(library_id="source", paths=["one.txt", "two.txt"])
-            outcome = service.execute_delete(
+            outcome = self._run_delete(
+                service,
                 library_id="source",
                 paths=["one.txt", "two.txt"],
                 confirmation_digest=impact.scope_digest,
@@ -1693,7 +1910,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "four.txt").write_text("4", encoding="utf-8")
             impact = service.delete_impact(library_id="source", paths=["three.txt", "four.txt"])
             with patch.object(LocalStorage, "delete", failing_delete):
-                partial = service.execute_delete(
+                partial = self._run_delete(
+                    service,
                     library_id="source",
                     paths=["three.txt", "four.txt"],
                     confirmation_digest=impact.scope_digest,
@@ -1732,7 +1950,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             impact = service.delete_impact(library_id="source", paths=["big-dir"])
             # 201 files + the directory itself.
             self.assertEqual(len(impact.entries), 202)
-            outcome = service.execute_delete(
+            outcome = self._run_delete(
+                service,
                 library_id="source",
                 paths=["big-dir"],
                 confirmation_digest=impact.scope_digest,
@@ -1808,14 +2027,16 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(impact.file_count, 3)
             self.assertEqual(impact.directory_count, 2)
             with self.assertRaises(DirectFileError) as mismatch:
-                service.execute_delete(
+                self._run_delete(
+                    service,
                     library_id="source",
                     paths=["bulk", "single.txt"],
                     confirmation_digest="0" * 64,
                 )
             self.assertEqual(mismatch.exception.category, "stale_confirmation")
             self.assertTrue((root / "source" / "bulk").exists())
-            outcome = service.execute_delete(
+            outcome = self._run_delete(
+                service,
                 library_id="source",
                 paths=["bulk", "single.txt"],
                 confirmation_digest=impact.scope_digest,
@@ -1838,15 +2059,133 @@ class DirectFileOperationsTests(unittest.TestCase):
             service = self._service(api, active)
             (root / "source" / "one.txt").write_text("1", encoding="utf-8")
             impact = service.delete_impact(library_id="source", paths=["one.txt"])
-            outcome = service.execute_delete(
+            outcome = self._run_delete(
+                service,
                 library_id="source",
                 paths=["one.txt"],
                 confirmation_digest=impact.scope_digest,
             )
             self.assertEqual(outcome["succeededItems"], 1)
             task = runtime.get_task(outcome["taskId"])
-            self.assertEqual(task.command, "files_direct_command")
+            self.assertEqual(task.command, "files_delete")
             self.assertFalse((root / "source" / "one.txt").exists())
+
+    def test_delete_admission_is_worker_owned_and_duplicate_confirmations_read_back(self) -> None:
+        """Admission is durable, mutation-free and idempotently readable."""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            api, _objects, _active, runtime = self._activate(root)
+            service = self._service(api, _active)
+            target = root / "source" / "queued.txt"
+            target.write_text("keep until Worker", encoding="utf-8")
+            impact = service.delete_impact(library_id="source", paths=["queued.txt"])
+            admitted = service.execute_delete(
+                library_id="source",
+                paths=["queued.txt"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(admitted["status"], "QUEUED")
+            self.assertFalse(admitted["terminal"])
+            self.assertTrue(target.exists())
+            self.assertEqual(
+                runtime.list_tasks(command="files_delete"), (runtime.get_task(admitted["taskId"]),)
+            )
+            transfer = runtime.get_files_transfer_for_task(admitted["taskId"])
+            authority = json.loads(transfer.authority_json)
+            self.assertEqual(authority["authorityType"], "direct_delete")
+            self.assertEqual(authority["libraryKind"], "resource")
+            self.assertEqual(authority["libraryId"], "source")
+            self.assertEqual(authority["storageId"], "source-storage")
+            self.assertEqual(
+                authority["configurationSnapshotId"],
+                runtime.get_task(admitted["taskId"]).configuration_snapshot_id,
+            )
+
+            duplicate = service.execute_delete(
+                library_id="source",
+                paths=["queued.txt"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(duplicate["taskId"], admitted["taskId"])
+            self.assertEqual(len(runtime.list_tasks(command="files_delete")), 1)
+            readback = request(
+                api,
+                f"/api/v1/resource-libraries/source/files/deletes/{admitted['taskId']}",
+            )
+            self.assertEqual(readback[0], 200, readback[1])
+            self.assertEqual(readback[1]["status"], "QUEUED")
+            self.assertTrue(readback[1]["waitingForWorker"])
+            self.assertTrue(target.exists())
+
+            completed = self._run_admitted_delete(service, admitted)
+            self.assertEqual(completed["status"], "SUCCESS")
+            self.assertFalse(target.exists())
+
+    def test_durable_delete_pause_and_resume_keeps_completed_items_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True)
+            pause_storage = _PauseAfterFirstDeleteStorage("source-storage", root / "source")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"source-storage": pause_storage}
+            )
+            pause_storage.repository = runtime
+            service = self._service(api, active)
+            folder = root / "source" / "season"
+            folder.mkdir()
+            for name in ("01.mkv", "02.mkv", "03.mkv"):
+                (folder / name).write_text(name, encoding="utf-8")
+            impact = service.delete_impact(library_id="source", paths=["season"])
+            admitted = service.execute_delete(
+                library_id="source",
+                paths=["season"],
+                confirmation_digest=impact.scope_digest,
+            )
+            pause_storage.task_id = str(admitted["taskId"])
+            command = str(admitted["taskCommand"])
+            transfer_service = DirectFileTransferService(
+                direct_files=service, executor=service._executor
+            )
+            worker = FilesTransferWorker(
+                None,
+                runtime,
+                service_factory=lambda selected, _transfer: (
+                    transfer_service if selected == command else None
+                ),
+                supported_commands=(command,),
+            )
+            self.assertIsNotNone(worker.run_next())
+            paused = service.delete_projection(str(admitted["taskId"]))
+            self.assertEqual(paused["status"], "PAUSED")
+            self.assertEqual(paused["succeededItems"], 1)
+            self.assertTrue(folder.exists())
+            success_paths = {
+                item.source_display
+                for item in runtime.list_items(str(admitted["taskId"]))
+                if item.status.value == "success"
+            }
+            self.assertEqual(len(success_paths), 1)
+
+            task = runtime.get_task(str(admitted["taskId"]))
+            resumed = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": task.updated_at.isoformat()},
+            )
+            self.assertEqual(resumed[0], 202, resumed[1])
+            self.assertEqual(resumed[1]["taskStatus"], "pending")
+            completed = self._run_admitted_delete(service, admitted)
+            self.assertEqual(completed["status"], "SUCCESS")
+            self.assertFalse(folder.exists())
+            self.assertEqual(
+                sum(
+                    item.source_display in success_paths
+                    for item in runtime.list_items(task.task_id)
+                ),
+                len(success_paths),
+            )
 
     def test_delete_partial_failure_keeps_independent_item_outcomes(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1866,7 +2205,8 @@ class DirectFileOperationsTests(unittest.TestCase):
                 return real_delete(storage_self, path, *args, **kwargs)
 
             with patch.object(LocalStorage, "delete", selective_delete):
-                outcome = service.execute_delete(
+                outcome = self._run_delete(
+                    service,
                     library_id="source",
                     paths=["batch"],
                     confirmation_digest=impact.scope_digest,
@@ -1913,7 +2253,8 @@ class DirectFileOperationsTests(unittest.TestCase):
                 expected=loaded.evidence.document(),
             )
             impact = service.delete_impact(library_id="source", paths=["m.txt"])
-            service.execute_delete(
+            self._run_delete(
+                service,
                 library_id="source",
                 paths=["m.txt"],
                 confirmation_digest=impact.scope_digest,
@@ -2005,7 +2346,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             self.assertEqual(results[0].destination_path, "moved.txt")
 
             impact = service.delete_impact(library_id="source", paths=["moved.txt"])
-            deleted = service.execute_delete(
+            deleted = self._run_delete(
+                service,
                 library_id="source",
                 paths=["moved.txt"],
                 confirmation_digest=impact.scope_digest,
@@ -2350,7 +2692,8 @@ class DirectFileOperationsTests(unittest.TestCase):
             (root / "source" / "trash" / "a.mkv").write_bytes(b"media")
 
             impact = service.delete_impact(library_id="source", paths=["trash"])
-            deleted = service.execute_delete(
+            deleted = self._run_delete(
+                service,
                 library_id="source",
                 paths=["trash"],
                 confirmation_digest=impact.scope_digest,

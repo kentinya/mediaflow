@@ -100,6 +100,7 @@ from mediaflow.domain.scope_continuation import ScopeContinuationError
 from mediaflow.domain.security import ApiPermission, ApiPrincipalDefinition, ApiRole
 from mediaflow.domain.storage import StorageEntryType
 from mediaflow.domain.task_persistence import (
+    FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
     PersistentTask,
@@ -4668,12 +4669,23 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
 
     resource_command = direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=False)
     media_command = direct_command_task_command(FILES_TRANSFER_TASK_COMMAND, media_library=True)
+    resource_delete_command = direct_command_task_command(
+        FILES_DELETE_TASK_COMMAND, media_library=False
+    )
+    media_delete_command = direct_command_task_command(
+        FILES_DELETE_TASK_COMMAND, media_library=True
+    )
 
     def service_for(command: str, transfer):
         """Build one attempt boundary from the claimed transfer's durable pin."""
 
-        media_library = command == media_command
-        if command not in {resource_command, media_command}:
+        media_library = command in {media_command, media_delete_command}
+        if command not in {
+            resource_command,
+            media_command,
+            resource_delete_command,
+            media_delete_command,
+        }:
             return None
         direct = reconstruct(
             transfer.configuration_snapshot_id,
@@ -4692,7 +4704,12 @@ def _files_transfer_worker_context(configuration, configured_path: str | None, r
         None,
         repository,
         service_factory=service_for,
-        supported_commands=(resource_command, media_command),
+        supported_commands=(
+            resource_command,
+            media_command,
+            resource_delete_command,
+            media_delete_command,
+        ),
     )
 
 

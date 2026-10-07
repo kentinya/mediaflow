@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 NO_ACTIVE_TASK_HEADING = "# NO ACTIVE IMPLEMENTATION TASK"
 REQUIRED_RELEASE_QUALITY_COMMANDS = (
-    "python3 scripts/check_governance.py",
+    ".venv/bin/python scripts/check_governance.py",
     "scripts/docker_release_security_smoke_test.py",
     ".venv/bin/ruff format --check .",
     ".venv/bin/ruff check .",

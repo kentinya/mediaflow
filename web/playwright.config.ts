@@ -8,6 +8,7 @@ export default defineConfig({
   // playwright.python.config.ts, which starts the Python harness instead of
   // the Node fake; the fake-path suite must never pick it up.
   testIgnore: [
+    "**/direct-files.python.spec.ts",
     "**/operations-inventory.python.spec.ts",
     "**/operations-principal-identity.python.spec.ts",
   ],

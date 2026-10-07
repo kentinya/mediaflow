@@ -48,6 +48,7 @@ import { TransferDialog } from "./TransferDialog";
 import { RowActionMenu } from "./RowActionMenu";
 import {
   fetchDeleteImpact,
+  fetchDeleteStatus,
   fetchRenameEvidence,
   fetchResourceLibraryRemovalPreview,
   fetchTextFile,
@@ -2281,27 +2282,10 @@ export function StorageFilesPage() {
         result.model.status === "FAILED" ||
         result.model.durableState === "mutation_effect_uncertain";
       if (variables.options.operation === "delete") {
-        // The response names the exact durable effect; refresh the live
-        // listing and prune only the top-level targets the backend confirms
-        // as fully deleted.  The knownEffects list is bounded by the confirmed
-        // selection (never truncated), so a >200-entry directory Delete still
-        // reconciles the selection and the directory tree; partial/failed
-        // targets keep their entries and their own outcomes.
-        void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
-        void queryClient.invalidateQueries({ queryKey: ["system-status"] });
-        const deletedTargets = (result.model.knownEffects ?? [])
-          .filter((effect) => effect.effect === "deleted")
-          .map((effect) => effect.path);
-        pruneAffectedBrowseState(deletedTargets, null);
-        if (knownEffectFailed) {
-          setCommandError(
-            directFileCommandFailure(result.model.errorCategory ?? "", {
-              durableState: result.model.durableState,
-            }),
-          );
-        } else {
-          setCommandError(null);
-        }
+        // Admission is durable but has no Storage effect yet. The status
+        // query owns final refresh/pruning after the Worker records terminal
+        // per-item outcomes.
+        setCommandError(null);
         return;
       }
       if (knownEffectFailed) {
@@ -2425,6 +2409,51 @@ export function StorageFilesPage() {
     enabled: deletePaths !== null && token !== null,
     retry: false,
   });
+  const deleteTaskId =
+    dialog?.kind === "delete" && commandResult?.operation === "delete"
+      ? (commandResult.taskId ?? null)
+      : null;
+  const deleteStatusQuery = useQuery({
+    queryKey: ["files-delete-status", activeLibraryId, deleteTaskId],
+    queryFn: () => {
+      if (deleteTaskId === null) throw new Error("unreachable");
+      return fetchDeleteStatus(token, activeLibraryId, deleteTaskId);
+    },
+    enabled:
+      deleteTaskId !== null &&
+      commandResult?.terminal === false &&
+      token !== null,
+    refetchInterval: (query) =>
+      query.state.data?.ok && query.state.data.model.terminal === true
+        ? false
+        : 1_000,
+    retry: false,
+  });
+  const deleteStatusModel =
+    deleteStatusQuery.data?.ok === true ? deleteStatusQuery.data.model : null;
+  const deleteStatusError =
+    deleteStatusQuery.data !== undefined && !deleteStatusQuery.data.ok
+      ? directFileCommandFailure(deleteStatusQuery.data.code)
+      : null;
+  useEffect(() => {
+    if (deleteStatusModel?.terminal !== true) return;
+    const completion = window.setTimeout(() => {
+      void queryClient.invalidateQueries({ queryKey: ["storage-files"] });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      const deletedTargets = (deleteStatusModel.knownEffects ?? [])
+        .filter((effect) => effect.effect === "deleted")
+        .map((effect) => effect.path);
+      pruneAffectedBrowseState(deletedTargets, null);
+      setCommandResult(deleteStatusModel);
+      setCommandError(
+        (deleteStatusModel.failedItems ?? 0) > 0 ||
+          deleteStatusModel.durableState === "mutation_effect_uncertain"
+          ? "部分项目失败或结果待核实；未自动重试。刷新目录并检查逐项结果后，再明确选择剩余操作。"
+          : null,
+      );
+    }, 0);
+    return () => window.clearTimeout(completion);
+  }, [deleteStatusModel, pruneAffectedBrowseState, queryClient]);
 
   // The Rename command must return the version evidence the backend issues for
   // this exact entry, so the dialog loads it before the operator can submit.
@@ -3146,15 +3175,17 @@ export function StorageFilesPage() {
           }
           loading={impactQuery.isFetching}
           error={
-            impactQuery.data !== undefined && !impactQuery.data.ok
+            deleteStatusError ??
+            (impactQuery.data !== undefined && !impactQuery.data.ok
               ? directFileCommandFailure(impactQuery.data.code)
-              : commandError
+              : commandError)
           }
           confirming={commandMutation.isPending}
           result={
-            commandResult !== null && commandResult.operation === "delete"
+            deleteStatusModel ??
+            (commandResult !== null && commandResult.operation === "delete"
               ? commandResult
-              : null
+              : null)
           }
           onRefreshImpact={() => void impactQuery.refetch()}
           onConfirm={() => {

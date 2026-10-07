@@ -788,6 +788,55 @@ class MediaLibraryTransferTests(unittest.TestCase):
             self.assertIn("destination_verified", checkpoints)
             self.assertIn("source_deleted", checkpoints)
 
+    def test_cross_storage_media_move_without_fingerprint_removes_source_after_verification(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "source").mkdir(parents=True, exist_ok=True)
+            (root / "target").mkdir(parents=True, exist_ok=True)
+            source_provider = _NoFingerprintMediaStorage("source-storage", root / "source")
+            target_provider = LocalStorage("media-target", root / "target")
+            api, active, runtime = self._activate_cross_storage(
+                root,
+                storage_adapters={
+                    "source-storage": source_provider,
+                    "media-target": target_provider,
+                },
+            )
+            source = root / "source" / "incoming" / "a.mkv"
+            source.write_bytes(b"source-a" * 512)
+            transfers = self._media_transfers(api, active)
+            source_library = transfers._direct.library("movies")
+            self.assertIsNone(
+                transfers._direct.open_storage(source_library).stat("incoming/a.mkv").fingerprint
+            )
+
+            impact = transfers.transfer_impact(
+                resource_library_id="movies",
+                paths=["a.mkv"],
+                destination_resource_library_id="tv",
+                destination_directory="",
+                operation="move",
+            )
+            result = self._submit(
+                transfers,
+                runtime,
+                resource_library_id="movies",
+                paths=["a.mkv"],
+                destination_resource_library_id="tv",
+                destination_directory="",
+                operation="move",
+                conflict_mode="fail",
+                manifest_digest=impact.manifest.digest,
+            )
+            self.assertEqual(result["status"], "SUCCESS", result)
+            self.assertFalse(source.exists())
+            self.assertEqual(
+                (root / "target" / "TV Shows" / "a.mkv").read_bytes(), b"source-a" * 512
+            )
+            self.assertIn("source_deleted", result["outcomes"][0]["checkpoints"])
+
     def test_failed_cross_storage_verification_preserves_the_source(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -1984,7 +2033,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
     # Cross-storage fixture
     # ------------------------------------------------------------------
 
-    def _activate_cross_storage(self, root: Path):
+    def _activate_cross_storage(self, root: Path, *, storage_adapters=None):
         """Activate a document whose media source Storage really differs.
 
         ``movies`` is bound to the *source* Storage and ``tv`` to the target
@@ -2008,7 +2057,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
         )
         objects = ConfigurationObjectService(
             service,
-            storage_adapters=None,
+            storage_adapters=storage_adapters,
             storage_browser_cursor_secret="media-transfer-test-secret",
         )
         draft = service.import_draft(document, actor="operator")
@@ -2062,6 +2111,7 @@ class MediaLibraryTransferTests(unittest.TestCase):
             ),
             configuration_service=service,
             bootstrap_document=document,
+            storage_adapters=storage_adapters,
             storage_browser_cursor_secret="media-transfer-test-secret",
         )
         return api, active, runtime_repository
@@ -2098,6 +2148,20 @@ class _GatedMediaStorage(LocalStorage):
     def move(self, *args, **kwargs):
         self._gate()
         return super().move(*args, **kwargs)
+
+
+class _NoFingerprintMediaStorage(LocalStorage):
+    """Local test Storage with the metadata shape published by OpenList/SMB."""
+
+    @staticmethod
+    def _without_fingerprint(entry):
+        return replace(entry, fingerprint=None)
+
+    def stat(self, path: str):
+        return self._without_fingerprint(super().stat(path))
+
+    def list(self, path: str):
+        return tuple(self._without_fingerprint(entry) for entry in super().list(path))
 
 
 def _media_direct(binding, storage) -> DirectFileCommandService:

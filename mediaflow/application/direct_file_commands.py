@@ -24,6 +24,8 @@ import json
 import posixpath
 import time
 from collections.abc import Callable, Mapping
+from datetime import UTC, datetime
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
@@ -60,6 +62,11 @@ from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, St
 from mediaflow.domain.task_persistence import (
     FILES_DELETE_TASK_COMMAND,
     FILES_DIRECT_COMMAND_TASK,
+    FilesTransferStatus,
+    PersistentFilesTransfer,
+    PersistentTask,
+    PersistentTaskItem,
+    PersistentTaskStatus,
     RunDisplayContext,
     TaskItemStatus,
     direct_command_task_command,
@@ -422,9 +429,8 @@ class DirectFileCommandService:
             )
         storage = self._require_writable_storage(library)
         entry = self._stat_entry(library, storage, source)
-        # The same admission rule the evidence route applies: an entry this
-        # provider cannot verify is refused here as well, so the refusal does
-        # not depend on the client having asked for evidence first.
+        # Apply the same metadata observation the evidence route issued. A
+        # provider fingerprint strengthens that observation when available.
         self._require_renamable_entry(library, source, entry)
         if entry.size != expected_size or entry.modified_at.isoformat() != expected_modified:
             raise self._stale_source_error(library, source)
@@ -457,9 +463,8 @@ class DirectFileCommandService:
     def rename_evidence(self, *, library_id: str, path: str) -> RenameEvidence:
         """Issue the version evidence one Rename command must return.
 
-        Zero-mutation and content-free: the entry is observed with one metadata
-        query and nothing is written or read.  An entry whose exact version this
-        provider cannot verify is refused here instead of being renamed later.
+        Zero-mutation and content-free: one metadata observation is bound to
+        this library kind, Storage/root and immutable configuration snapshot.
         """
 
         library = self._library(library_id)
@@ -543,12 +548,30 @@ class DirectFileCommandService:
             directory_count=directory_count,
             total_bytes=self._impact_bytes(entries),
             truncated=False,
-            scope_digest=self._scope_digest(self._kind, library.library_id, entries),
+            scope_digest=self._scope_digest(library, entries),
         )
 
     def execute_delete(
         self, *, library_id: str, paths, confirmation_digest: str
     ) -> dict[str, object]:
+        """Admit a confirmed Delete for the resident Files Worker."""
+
+        return self.submit_delete(
+            library_id=library_id, paths=paths, confirmation_digest=confirmation_digest
+        )
+
+    def submit_delete(
+        self, *, library_id: str, paths, confirmation_digest: str
+    ) -> dict[str, object]:
+        """Persist the exact confirmed Delete scope before any Storage mutation.
+
+        One TaskItem is admitted per confirmed entry, including recursive
+        children. The existing Files transfer claim/lease/fence table and
+        Worker provide durable ownership, pause/cancel, restart and explicit
+        continuation without a second execution queue. The request stack only
+        re-observes metadata and commits the bounded Task/authority atomically.
+        """
+
         library = self._library(library_id)
         targets = self._delete_targets(paths)
         if not isinstance(confirmation_digest, str) or not confirmation_digest:
@@ -562,7 +585,7 @@ class DirectFileCommandService:
             )
         storage = self._open_storage(library)
         entries = self._impact_entries(library, storage, targets)
-        if self._scope_digest(self._kind, library.library_id, entries) != confirmation_digest:
+        if self._scope_digest(library, entries) != confirmation_digest:
             raise DirectFileError(
                 "files_direct_stale_confirmation",
                 "stale_confirmation",
@@ -571,154 +594,140 @@ class DirectFileCommandService:
                 **self._identity(library),
                 next_action="review the refreshed impact summary and confirm again",
             )
-        single = len(entries) == 1 and not entries[0].is_directory
         command = direct_command_task_command(
-            FILES_DIRECT_COMMAND_TASK if single else FILES_DELETE_TASK_COMMAND,
+            FILES_DELETE_TASK_COMMAND,
             media_library=self._kind is LibraryKind.MEDIA,
         )
+        repository = self._tasks.repository
+        find_existing = getattr(repository, "find_files_delete_transfer", None)
+        if callable(find_existing):
+            existing = find_existing(
+                command=command,
+                library_kind=self._kind.value,
+                library_id=library.library_id,
+                configuration_snapshot_id=self._revision.revision_id,
+                scope_digest=confirmation_digest,
+            )
+            if existing is not None and existing.status in {
+                FilesTransferStatus.ADMITTED,
+                FilesTransferStatus.RUNNING,
+                FilesTransferStatus.PAUSED,
+            }:
+                return self.delete_projection(existing.task_id)
+
         scope_parent = posixpath.commonpath(targets) if len(targets) > 1 else targets[0]
-        task = self._tasks.create(
+        now = datetime.now(UTC)
+        task_id = str(uuid4())
+        task = PersistentTask(
+            task_id,
             command,
-            execute_authorized=True,
+            PersistentTaskStatus.PENDING,
+            True,
+            now,
+            now,
             scope_path=scope_parent,
-            item_limit=max(1, len(entries)),
+            item_limit=len(entries),
             configuration_snapshot_id=self._revision.revision_id,
             configuration_snapshot_digest=self._revision.digest,
-            # A Delete removes in place: the confirmed top-level scope it
-            # destroyed is the whole known historical scope, and there is no
-            # destination to invent for it.
+        )
+        authority_entries: list[dict[str, object]] = []
+        items: list[PersistentTaskItem] = []
+        scoped_id = scoped_library_id(self._kind, library.library_id)
+        for entry in entries:
+            top_level = next(
+                target
+                for target in targets
+                if entry.path == target or entry.path.startswith(f"{target}/")
+            )
+            evidence = {
+                "path": entry.path,
+                "isDirectory": entry.is_directory,
+                "size": entry.size,
+                "modifiedAt": entry.modified_at,
+                "fingerprint": entry.fingerprint,
+                "topLevelPath": top_level,
+            }
+            authority_entries.append(evidence)
+            source_path = _join_resource_library_path(library.root_path, entry.path)
+            item_id = str(uuid5(NAMESPACE_URL, f"{task_id}:{library.storage_id}:{source_path}"))
+            progress = json.dumps(
+                {"version": 1, "operation": "delete", "evidence": evidence},
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            items.append(
+                PersistentTaskItem(
+                    item_id,
+                    task_id,
+                    library.storage_id,
+                    scoped_id,
+                    source_path,
+                    entry.path,
+                    TaskItemStatus.PENDING,
+                    "admitted",
+                    0,
+                    now,
+                    now,
+                    destination_storage_id=library.storage_id,
+                    destination_path=entry.path,
+                    progress=progress,
+                )
+            )
+        authority = json.dumps(
+            {
+                "version": 1,
+                "authorityType": "direct_delete",
+                "operation": DirectFileOperation.DELETE.value,
+                "libraryKind": self._kind.value,
+                "libraryId": library.library_id,
+                "storageId": library.storage_id,
+                "rootPath": library.root_path,
+                "configurationSnapshotId": self._revision.revision_id,
+                "configurationSnapshotDigest": self._revision.digest,
+                "scopeDigest": confirmation_digest,
+                "topLevelPaths": list(targets),
+                "entries": authority_entries,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        transfer = PersistentFilesTransfer(
+            transfer_id=task_id,
+            task_id=task_id,
+            status=FilesTransferStatus.ADMITTED,
+            authority_json=authority,
+            configuration_snapshot_id=self._revision.revision_id,
+            configuration_snapshot_digest=self._revision.digest,
+            created_at=now,
+            updated_at=now,
+        )
+        admit = getattr(repository, "admit_files_transfer", None)
+        if not callable(admit):
+            raise DirectFileError(
+                "files_direct_worker_unavailable",
+                "worker_unavailable",
+                "durable Delete admission is unavailable; no file was changed",
+                status=503,
+                **self._identity(library),
+                next_action="restore the runtime Task repository and retry the confirmed Delete",
+            )
+        admit(
+            task,
+            tuple(items),
+            transfer,
             display=self._run_display_context(library, source_scope=scope_parent),
         )
-        outcomes: list[dict[str, object]] = []
-        uncertain = False
-        paused = False
-        cancelled = False
-        ordered = sorted(entries, key=lambda entry: entry.path, reverse=True)
-        for entry in ordered:
-            if self._tasks.cancellation_observed(task.task_id):
-                cancelled = True
-                break
-            full = _join_resource_library_path(library.root_path, entry.path)
-            try:
-                item = self._tasks.begin_item(
-                    task.task_id,
-                    library.storage_id,
-                    scoped_library_id(self._kind, library.library_id),
-                    full,
-                    entry.path,
-                )
-            except TaskPauseRequested:
-                self._tasks.acknowledge_pause(task.task_id)
-                paused = True
-                break
-            except Exception as error:
-                outcomes.append(self._locked_outcome(entry, error))
-                continue
-            # The executor re-verifies the confirmed entry evidence with one
-            # metadata query at the last safe boundary, so an entry replaced
-            # after the impact preview is never destroyed even under a
-            # pre-mutation race — and no selected file is ever read.
-            result = self._executor.execute_direct_delete(
-                storage,
-                full,
-                entry_evidence=DirectEntryEvidence(
-                    size=entry.size,
-                    modified_at=entry.modified_at,
-                    is_directory=entry.is_directory,
-                    fingerprint=entry.fingerprint,
-                ),
-                execute=True,
-            )
-            self._record_item(item, result, target_path=entry.path)
-            if result.effect_certainty is _UNCERTAIN:
-                uncertain = True
-            outcomes.append(
-                {
-                    "path": entry.path,
-                    "status": result.status.value,
-                    "errorCategory": _result_error_category(result),
-                }
-            )
-        if paused or cancelled:
-            final = self._tasks.require(task.task_id)
-        else:
-            final = self._tasks.finish(task.task_id, _empty_batch())
-        items = self._tasks.repository.list_items(task.task_id)
-        succeeded = sum(1 for item in items if item.status is TaskItemStatus.SUCCESS)
-        failed = sum(1 for item in items if item.status in _FAILED_ITEM_STATUSES)
-        # The bounded, never-truncated known-effect contract: for each of the
-        # confirmed top-level targets the response names the exact durable
-        # effect, so the Web can reconcile selection/tree state even when the
-        # per-item diagnostic outcomes list is truncated for very large
-        # directories.
-        outcome_by_path: dict[str, str] = {}
-        for outcome in outcomes:
-            outcome_by_path.setdefault(str(outcome["path"]), str(outcome["status"]))
-        known_effects: list[dict[str, object]] = []
-        for target in targets:
-            # A top-level target is fully deleted only when every confirmed
-            # entry under it (including itself) succeeded.
-            affected = [
-                entry
-                for entry in entries
-                if entry.path == target or entry.path.startswith(f"{target}/")
-            ]
-            statuses = {outcome_by_path.get(entry.path, "FAILED") for entry in affected}
-            if statuses == {"SUCCESS"} and affected:
-                known_effects.append({"path": target, "effect": "deleted", "status": "SUCCESS"})
-            elif "UNCERTAIN" in statuses or uncertain:
-                known_effects.append({"path": target, "effect": "uncertain", "status": "UNCERTAIN"})
-            elif "SUCCESS" in statuses:
-                known_effects.append({"path": target, "effect": "partial", "status": "PARTIAL"})
-            else:
-                known_effects.append({"path": target, "effect": "retained", "status": "FAILED"})
-        document: dict[str, object] = {
-            "operation": DirectFileOperation.DELETE.value,
-            # The stable command result contract: every terminal state names
-            # the known durable effect so the Web result view never has to
-            # guess from taskStatus alone.
-            "status": _delete_command_status(
-                uncertain=uncertain,
-                paused=paused,
-                cancelled=cancelled,
-                succeeded=succeeded,
-                failed=failed,
-                attempted=len(items),
-            ),
-            "taskId": task.task_id,
-            "taskCommand": command,
-            "libraryKind": self._kind.value,
-            "taskStatus": final.status.value,
-            "topLevelPaths": targets,
-            # At most MAX_DELETE_PATHS top-level targets exist by admission, so
-            # this list is bounded by construction and never truncated.
-            "knownEffects": known_effects,
-            "totalItems": len(items),
-            "succeededItems": succeeded,
-            "failedItems": failed,
-            "outcomes": outcomes[: MAX_DELETE_PATHS * 4],
-            "outcomesTruncated": len(outcomes) > MAX_DELETE_PATHS * 4,
-            "sideEffects": "storage_mutations",
-            "retrySafe": False,
-            "nextAction": (
-                "refresh the directory to see the current state"
-                if final.status.value in {"completed", "partial_success"}
-                else "refresh the directory; failed or remaining items keep their own outcome"
-            ),
-        }
-        if paused or cancelled:
-            document["nextAction"] = (
-                "refresh the directory; completed items stay deleted and remaining items "
-                "keep their own outcome"
-            )
-        if uncertain:
-            document["durableState"] = "mutation_effect_uncertain"
-            document["status"] = "UNCERTAIN"
-            document["nextAction"] = (
-                "refresh the directory and inspect the Task before any retry; "
-                "uncertain effects are never replayed automatically"
-            )
-        return document
+        return self.delete_projection(task_id)
+
+    def delete_projection(self, task_id: str) -> dict[str, object]:
+        """Rebuild a bounded Delete outcome from its durable Task state."""
+        return project_direct_delete(
+            self._tasks.repository,
+            task_id,
+            library_kind=self._kind,
+        )
 
     # ------------------------------------------------------------------
     # Admission helpers
@@ -1125,7 +1134,7 @@ class DirectFileCommandService:
 
     def _require_deletable_entry(
         self, library: ResourceLibrary | MediaLibrary, relative: str, entry
-    ) -> str:
+    ) -> str | None:
         if entry.entry_type is StorageEntryType.SYMLINK:
             raise DirectFileError(
                 "files_direct_symlink_not_supported",
@@ -1136,7 +1145,19 @@ class DirectFileCommandService:
                 path=relative,
                 next_action="remove the link through its own provider instead",
             )
-        return self._require_entry_identity(library, relative, entry)
+        if entry.entry_type not in {StorageEntryType.FILE, StorageEntryType.DIRECTORY}:
+            raise DirectFileError(
+                "files_direct_unsupported_entry",
+                "unsupported_entry",
+                "this entry type cannot be included in a confirmed Delete",
+                status=400,
+                **self._identity(library),
+                path=relative,
+                next_action=(
+                    "select only regular files and directories, then review the impact again"
+                ),
+            )
+        return self._entry_identity(entry)
 
     @staticmethod
     def _entry_identity(entry) -> str | None:
@@ -1177,7 +1198,7 @@ class DirectFileCommandService:
 
     def _require_renamable_entry(
         self, library: ResourceLibrary | MediaLibrary, relative: str, entry
-    ) -> str:
+    ) -> str | None:
         """Admission rule for the entry a Rename command may observe."""
 
         if entry.entry_type is StorageEntryType.SYMLINK:
@@ -1190,25 +1211,28 @@ class DirectFileCommandService:
                 path=relative,
                 next_action="rename the link through its own provider instead",
             )
-        return self._require_entry_identity(library, relative, entry)
+        if entry.entry_type not in {StorageEntryType.FILE, StorageEntryType.DIRECTORY}:
+            raise DirectFileError(
+                "files_direct_unsupported_entry",
+                "unsupported_entry",
+                "this entry type cannot be renamed",
+                status=400,
+                **self._identity(library),
+                path=relative,
+                next_action="select a regular file or directory and retry",
+            )
+        return self._entry_identity(entry)
 
     def _observed_entry_evidence(
         self, library: ResourceLibrary | MediaLibrary, relative: str, entry
     ) -> DirectEntryEvidence:
-        """The metadata-only exact-version evidence of one observed entry.
-
-        Every component is provider metadata: the entry type, size, modified
-        time and the provider's verifiable entry identity.  Nothing here reads
-        entry content, so issuing, admitting and last-boundary-verifying a
-        Rename costs one metadata query per step and never depends on the file
-        size.
-        """
+        """The metadata-only observed version of one entry, with optional ID."""
 
         return DirectEntryEvidence(
             size=entry.size,
             modified_at=entry.modified_at.isoformat(),
             is_directory=entry.entry_type is StorageEntryType.DIRECTORY,
-            fingerprint=self._require_entry_identity(library, relative, entry),
+            fingerprint=self._entry_identity(entry),
         )
 
     def _entry_version_token(
@@ -1222,6 +1246,10 @@ class DirectFileCommandService:
             size=evidence.size,
             modified_at=evidence.modified_at,
             fingerprint=evidence.fingerprint,
+            storage_id=library.storage_id,
+            root_path=library.root_path,
+            configuration_snapshot_id=self._revision.revision_id,
+            configuration_snapshot_digest=self._revision.digest,
         )
 
     def _impact_entries(
@@ -1440,19 +1468,22 @@ class DirectFileCommandService:
     def _impact_bytes(entries: list[DirectFileImpactEntry]) -> int:
         return sum(entry.size for entry in entries)
 
-    @staticmethod
     def _scope_digest(
-        kind: LibraryKind,
-        library_id: str,
+        self,
+        library: ResourceLibrary | MediaLibrary,
         entries: list[DirectFileImpactEntry],
     ) -> str:
-        # The digest covers the library *kind* as well as its ID: an identically
-        # named ResourceLibrary selection can never confirm a MediaLibrary
-        # Delete, and a media confirmation can never be replayed as resource work.
+        # Bind confirmation to the exact kind/library/Storage/root and
+        # immutable configuration context as well as every observed entry.
+        # The browser receives only this opaque digest.
         payload = json.dumps(
             {
-                "libraryKind": kind.value,
-                "libraryId": library_id,
+                "libraryKind": self._kind.value,
+                "libraryId": library.library_id,
+                "storageId": library.storage_id,
+                "rootPath": library.root_path,
+                "configurationSnapshotId": self._revision.revision_id,
+                "configurationSnapshotDigest": self._revision.digest,
                 "entries": [
                     [
                         entry.path,
@@ -1495,6 +1526,153 @@ class DirectFileCommandService:
             **self._identity(library),
             next_action="check the Storage configuration and retry",
         )
+
+
+def project_direct_delete(
+    repository,
+    task_id: str,
+    *,
+    library_kind: LibraryKind,
+    library_id: str | None = None,
+) -> dict[str, object]:
+    """Read a direct Delete projection without a runtime or Storage binding."""
+
+    task = repository.get_task(task_id)
+    transfer = repository.get_files_transfer_for_task(task_id)
+    expected_command = direct_command_task_command(
+        FILES_DELETE_TASK_COMMAND, media_library=library_kind is LibraryKind.MEDIA
+    )
+    if task is None or task.command != expected_command or transfer is None:
+        raise DirectFileError(
+            "files_direct_delete_not_found",
+            "not_found",
+            "no Delete Task exists under this library's authority",
+            status=404,
+            next_action="return to Files and refresh the selected library",
+        )
+    try:
+        authority = json.loads(transfer.authority_json)
+    except (TypeError, ValueError):
+        authority = {}
+    if (
+        not isinstance(authority, dict)
+        or authority.get("authorityType") != "direct_delete"
+        or authority.get("libraryKind") != library_kind.value
+        or (library_id is not None and authority.get("libraryId") != library_id)
+    ):
+        raise DirectFileError(
+            "files_direct_delete_not_found",
+            "not_found",
+            "no Delete Task exists under this library's authority",
+            status=404,
+            next_action="return to Files and refresh the selected library",
+        )
+    entries = authority.get("entries")
+    targets = authority.get("topLevelPaths")
+    if not isinstance(entries, list) or not isinstance(targets, list):
+        entries, targets = [], []
+    items = repository.list_items(task_id)
+    results = {record.item_id: record for record in repository.list_results(task_id)}
+    outcome_by_path: dict[str, str] = {}
+    outcomes: list[dict[str, object]] = []
+    succeeded = failed = 0
+    uncertain = task.error == "mutation_outcome"
+    for item in items:
+        result = results.get(item.item_id)
+        if item.status is TaskItemStatus.SUCCESS:
+            state = "SUCCESS"
+            succeeded += 1
+        elif item.status is TaskItemStatus.PARTIAL or (
+            result is not None and result.effect_certainty == _UNCERTAIN.value
+        ):
+            state = "UNCERTAIN"
+            uncertain = True
+            failed += 1
+        elif item.status is TaskItemStatus.FAILED:
+            state = "FAILED"
+            failed += 1
+        elif item.status is TaskItemStatus.CANCELLED:
+            state = "CANCELLED"
+        elif item.status is TaskItemStatus.PAUSED:
+            state = "PAUSED"
+        elif item.status is TaskItemStatus.PROCESSING:
+            state = "RUNNING"
+        else:
+            state = "QUEUED" if task.status is PersistentTaskStatus.PENDING else "PENDING"
+        outcome_by_path[item.source_display] = state
+        if len(outcomes) < MAX_DELETE_PATHS * 4:
+            outcome: dict[str, object] = {"path": item.source_display, "status": state}
+            if item.error and state in {"FAILED", "UNCERTAIN"}:
+                outcome["errorCategory"] = item.error
+            outcomes.append(outcome)
+    known_effects: list[dict[str, object]] = []
+    for target in targets:
+        affected = [
+            entry
+            for entry in entries
+            if isinstance(entry, dict)
+            and (entry.get("path") == target or str(entry.get("path", "")).startswith(f"{target}/"))
+        ]
+        states = {outcome_by_path.get(str(entry.get("path", "")), "PENDING") for entry in affected}
+        if states == {"SUCCESS"} and affected:
+            effect, status = "deleted", "SUCCESS"
+        elif "UNCERTAIN" in states:
+            effect, status = "uncertain", "UNCERTAIN"
+        elif "SUCCESS" in states:
+            effect, status = "partial", "PARTIAL"
+        elif states.intersection({"QUEUED", "PENDING", "RUNNING", "PAUSED"}):
+            effect, status = "in_progress", "RUNNING"
+        else:
+            effect, status = "retained", "FAILED"
+        known_effects.append({"path": target, "effect": effect, "status": status})
+    terminal = task.status in {
+        PersistentTaskStatus.COMPLETED,
+        PersistentTaskStatus.PARTIAL_SUCCESS,
+        PersistentTaskStatus.FAILED,
+        PersistentTaskStatus.CANCELLED,
+    }
+    status = {
+        PersistentTaskStatus.PENDING: "QUEUED",
+        PersistentTaskStatus.RUNNING: "RUNNING",
+        PersistentTaskStatus.PAUSED: "PAUSED",
+        PersistentTaskStatus.CANCELLED: "CANCELLED",
+        PersistentTaskStatus.COMPLETED: "SUCCESS",
+        PersistentTaskStatus.PARTIAL_SUCCESS: "PARTIAL",
+        PersistentTaskStatus.FAILED: "FAILED",
+    }[task.status]
+    if uncertain:
+        status = "UNCERTAIN"
+    document: dict[str, object] = {
+        "operation": DirectFileOperation.DELETE.value,
+        "status": status,
+        "taskId": task.task_id,
+        "taskCommand": task.command,
+        "libraryKind": library_kind.value,
+        **library_identity(library_kind, str(authority.get("libraryId", ""))),
+        "taskStatus": task.status.value,
+        "terminal": terminal,
+        "topLevelPaths": targets,
+        "knownEffects": known_effects,
+        "totalItems": len(items),
+        "succeededItems": succeeded,
+        "failedItems": failed,
+        "outcomes": outcomes,
+        "outcomesTruncated": len(items) > len(outcomes),
+        "sideEffects": "storage_mutations" if succeeded or uncertain else "none",
+        "retrySafe": False,
+        "nextAction": (
+            "open the Task in Operations to follow progress and continue its safe remaining scope"
+            if not terminal
+            else "refresh the directory to see the current state and inspect item outcomes"
+        ),
+    }
+    if uncertain:
+        document["durableState"] = "mutation_effect_uncertain"
+        document["nextAction"] = (
+            "refresh the directory and inspect the Task before any retry; "
+            "uncertain effects are never replayed automatically"
+        )
+    return document
 
 
 def _delete_command_status(

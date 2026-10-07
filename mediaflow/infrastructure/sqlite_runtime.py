@@ -10050,6 +10050,55 @@ class SQLiteTaskRepository:
             ).fetchone()
         return self._files_transfer(row) if row else None
 
+    def find_files_delete_transfer(
+        self,
+        *,
+        command: str,
+        library_kind: str,
+        library_id: str,
+        configuration_snapshot_id: str,
+        scope_digest: str,
+    ) -> PersistentFilesTransfer | None:
+        """Read back an active confirmed Delete after an unknown admission reply.
+
+        The scope digest is bound to the exact kind, library, Storage/root and
+        immutable revision by the admission service. Repeated confirmation of
+        that same still-active scope returns its durable Task instead of
+        creating duplicate queued work. Terminal history remains available to
+        Operations and does not block a deliberate later confirmation.
+        """
+
+        statuses = (
+            FilesTransferStatus.ADMITTED.value,
+            FilesTransferStatus.RUNNING.value,
+            FilesTransferStatus.PAUSED.value,
+        )
+        with self._lock:
+            rows = self._connection.execute(
+                """SELECT files_transfers.* FROM files_transfers
+                JOIN tasks ON tasks.task_id=files_transfers.task_id
+                WHERE tasks.command=? AND files_transfers.status IN (?, ?, ?)
+                ORDER BY files_transfers.updated_at DESC, files_transfers.created_at DESC
+                LIMIT 500""",
+                (command, *statuses),
+            ).fetchall()
+        for row in rows:
+            transfer = self._files_transfer(row)
+            try:
+                authority = json.loads(transfer.authority_json)
+            except (TypeError, ValueError):
+                continue
+            if (
+                isinstance(authority, dict)
+                and authority.get("authorityType") == "direct_delete"
+                and authority.get("libraryKind") == library_kind
+                and authority.get("libraryId") == library_id
+                and authority.get("configurationSnapshotId") == configuration_snapshot_id
+                and authority.get("scopeDigest") == scope_digest
+            ):
+                return transfer
+        return None
+
     def claim_next_files_transfer(
         self,
         now: datetime,

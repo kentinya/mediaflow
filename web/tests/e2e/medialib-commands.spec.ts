@@ -279,7 +279,7 @@ test("a partial delete keeps each item's own outcome visible and un-replayed", a
   const result = page.getByRole("dialog", { name: "删除结果" });
   await expect(result).toBeVisible();
   await expect(result.getByText(/删除已完成 1 项/)).toBeVisible();
-  await expect(result.getByText(/失败 1 项/)).toBeVisible();
+  await expect(result.getByText(/失败或待核实 1 项/)).toBeVisible();
   await expect(result.getByText(/未自动重试/)).toBeVisible();
   // The failed item keeps its own category next to its own path.
   await expect(result.getByText("storage_failure")).toBeVisible();

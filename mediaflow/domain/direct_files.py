@@ -500,24 +500,22 @@ class EntryVersionEvidence:
 
 @dataclass(frozen=True)
 class DirectEntryEvidence:
-    """Metadata-only exact-version evidence of one entry, for Rename and Delete.
+    """Metadata-only observed-version evidence of one entry, for Rename/Delete.
 
     Every component comes from a provider observation (`stat`/`list`):
-    ``fingerprint`` is the provider's own verifiable entry identity (Local:
-    ``inode:…:ctime:…``, S3: the object validator).  There is deliberately no
-    content digest here: the whole point of this type is that Rename and Delete
-    prove the exact observed version from provider metadata alone, so their cost
-    never depends on file size and no media byte is read to fence a mutation.
-
-    A provider that publishes no such identity cannot prove the entry version at
-    all, and the command fails closed before any Task or Storage mutation rather
-    than falling back to size, `mtime` or a content prefix.
+    ``fingerprint`` is the provider's own verifiable entry identity when one is
+    available (Local: ``inode:…:ctime:…``, S3: the object validator). There is
+    deliberately no content digest here: Rename and Delete use metadata only,
+    so their cost never depends on file size and no media byte is read to fence
+    a mutation. A missing fingerprint does not erase the observed type, size
+    and modification time; those observations remain binding. If a fingerprint
+    was observed, it also remains binding and may not disappear or change.
     """
 
     size: int
     modified_at: str
     is_directory: bool
-    fingerprint: str
+    fingerprint: str | None
 
 
 @dataclass(frozen=True)
@@ -563,7 +561,11 @@ def entry_version_token(
     is_directory: bool,
     size: int,
     modified_at: str,
-    fingerprint: str,
+    fingerprint: str | None,
+    storage_id: str = "",
+    root_path: str = "",
+    configuration_snapshot_id: str = "",
+    configuration_snapshot_digest: str = "",
 ) -> str:
     """The opaque, secret-free version token of one observed entry.
 
@@ -583,6 +585,10 @@ def entry_version_token(
         {
             "libraryKind": library_kind,
             "libraryId": library_id,
+            "storageId": storage_id,
+            "rootPath": root_path,
+            "configurationSnapshotId": configuration_snapshot_id,
+            "configurationSnapshotDigest": configuration_snapshot_digest,
             "path": path,
             "isDirectory": is_directory,
             "size": size,
@@ -600,20 +606,19 @@ def entry_version_token(
 class DirectFileImpactEntry:
     """One bounded entry of a Delete impact enumeration.
 
-    ``modified_at`` and ``fingerprint`` participate in the scope digest so a
-    same-size source replacement (or a same-name directory replacement) between
-    the impact preview and the confirmation is rejected as stale instead of
-    deleting the replaced content.  ``fingerprint`` is the provider's verifiable
-    entry identity (Local: inode+ctime, S3: the object validator) and is
-    mandatory: an entry the provider cannot identify never enters a confirmed
-    Delete scope, so no size/`mtime` fallback can authorize a mutation.
+    ``modified_at`` and any observed ``fingerprint`` participate in the scope
+    digest. Files always bind type, size and modification time; a provider
+    fingerprint adds exact provider identity when available. Directories bind
+    their stable identity when available, otherwise their existence and type.
+    Missing fingerprints stay explicit as ``None`` and never authorize a
+    downgrade after a stronger observation.
     """
 
     path: str
     is_directory: bool
     size: int
     modified_at: str
-    fingerprint: str
+    fingerprint: str | None
 
 
 @dataclass(frozen=True)

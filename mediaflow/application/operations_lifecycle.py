@@ -74,6 +74,12 @@ _TRANSFER_TASK_COMMANDS = frozenset(
         f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}{FILES_TRANSFER_TASK_COMMAND}",
     }
 )
+_FILES_WORKER_TASK_COMMANDS = _TRANSFER_TASK_COMMANDS | frozenset(
+    {
+        FILES_DELETE_TASK_COMMAND,
+        f"{MEDIA_LIBRARY_TASK_COMMAND_PREFIX}{FILES_DELETE_TASK_COMMAND}",
+    }
+)
 
 
 def is_files_transfer_task_command(command: object) -> bool:
@@ -84,6 +90,12 @@ def is_files_transfer_task_command(command: object) -> bool:
     """
 
     return command in _TRANSFER_TASK_COMMANDS
+
+
+def is_files_worker_task_command(command: object) -> bool:
+    """Whether a Files transfer or durable Delete is owned by the Files Worker."""
+
+    return command in _FILES_WORKER_TASK_COMMANDS
 
 
 TASK_TERMINAL_STATUSES = frozenset(
@@ -2357,7 +2369,7 @@ class TaskLifecycleService:
             )
         if task.command == MANUAL_ORGANIZE_TASK_COMMAND:
             return TaskExecutionContext(TaskExecutionPath.SYNCHRONOUS_MANUAL_ORGANIZE)
-        if is_files_transfer_task_command(task.command):
+        if is_files_worker_task_command(task.command):
             return TaskExecutionContext(
                 TaskExecutionPath.OPERATOR_WORKFLOW,
                 resumable=task.status is PersistentTaskStatus.PAUSED,
@@ -3010,6 +3022,7 @@ __all__ = [
     "TaskLifecycleService",
     "bounded_failure_document",
     "bounded_identity_path",
+    "is_files_worker_task_command",
     "is_files_transfer_task_command",
     "job_failure_document",
     "job_lifecycle_document",

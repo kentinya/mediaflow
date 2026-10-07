@@ -267,6 +267,12 @@ export interface DirectFileCommandResult {
   readonly errorCategory?: string;
   readonly durableState?: string;
   readonly nextAction?: string;
+  readonly terminal?: boolean;
+  readonly taskCommand?: string;
+  readonly waitingForWorker?: boolean;
+  readonly workerCondition?: string;
+  readonly workerDurableState?: string;
+  readonly workerNextAction?: string;
   readonly topLevelPaths?: readonly string[];
   readonly knownEffects?: readonly DirectFileKnownEffect[];
   readonly totalItems?: number;
@@ -330,6 +336,24 @@ export function normalizeDirectFileCommandResult(
       : {}),
     ...(typeof record.nextAction === "string"
       ? { nextAction: record.nextAction }
+      : {}),
+    ...(typeof record.terminal === "boolean"
+      ? { terminal: record.terminal }
+      : {}),
+    ...(typeof record.taskCommand === "string"
+      ? { taskCommand: record.taskCommand }
+      : {}),
+    ...(typeof record.waitingForWorker === "boolean"
+      ? { waitingForWorker: record.waitingForWorker }
+      : {}),
+    ...(typeof record.workerCondition === "string"
+      ? { workerCondition: record.workerCondition }
+      : {}),
+    ...(typeof record.workerDurableState === "string"
+      ? { workerDurableState: record.workerDurableState }
+      : {}),
+    ...(typeof record.workerNextAction === "string"
+      ? { workerNextAction: record.workerNextAction }
       : {}),
     ...(typeof record.totalItems === "number"
       ? { totalItems: record.totalItems }

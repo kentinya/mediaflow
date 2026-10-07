@@ -48,6 +48,7 @@ import {
 import { systemStatusQueryOptions } from "./system-status-query";
 import {
   fetchMediaLibraryDeleteImpact,
+  fetchMediaLibraryDeleteStatus,
   fetchMediaLibraryRemovalPreview,
   fetchMediaLibraryRenameEvidence,
   fetchMediaLibraryTextFile,
@@ -2351,25 +2352,10 @@ export function MediaLibraryFilesPage() {
         result.model.status === "FAILED" ||
         result.model.durableState === "mutation_effect_uncertain";
       if (variables.options.operation === "delete") {
-        // The response names the exact durable effect; refresh the live
-        // listing and prune only the top-level targets the backend confirms as
-        // fully deleted.  Partial/failed targets keep their entries and their
-        // own outcomes.
-        void queryClient.invalidateQueries({
-          queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
-        });
-        void queryClient.invalidateQueries({ queryKey: ["system-status"] });
-        const deletedTargets = (result.model.knownEffects ?? [])
-          .filter((effect) => effect.effect === "deleted")
-          .map((effect) => effect.path);
-        pruneAffectedBrowseState(deletedTargets, null);
-        setCommandError(
-          knownEffectFailed
-            ? mediaLibraryCommandFailure(result.model.errorCategory ?? "", {
-                durableState: result.model.durableState,
-              })
-            : null,
-        );
+        // Admission is durable but has no Storage effect yet. The status
+        // query owns final refresh/pruning after the Worker records terminal
+        // per-item outcomes.
+        setCommandError(null);
         return;
       }
       if (knownEffectFailed) {
@@ -2573,6 +2559,57 @@ export function MediaLibraryFilesPage() {
     enabled: deletePaths !== null && token !== null,
     retry: false,
   });
+  const deleteTaskId =
+    dialog?.kind === "delete" && commandResult?.operation === "delete"
+      ? (commandResult.taskId ?? null)
+      : null;
+  const deleteStatusQuery = useQuery({
+    queryKey: ["media-library-delete-status", activeLibraryId, deleteTaskId],
+    queryFn: () => {
+      if (deleteTaskId === null) throw new Error("unreachable");
+      return fetchMediaLibraryDeleteStatus(
+        token,
+        activeLibraryId,
+        deleteTaskId,
+      );
+    },
+    enabled:
+      deleteTaskId !== null &&
+      commandResult?.terminal === false &&
+      token !== null,
+    refetchInterval: (query) =>
+      query.state.data?.ok && query.state.data.model.terminal === true
+        ? false
+        : 1_000,
+    retry: false,
+  });
+  const deleteStatusModel =
+    deleteStatusQuery.data?.ok === true ? deleteStatusQuery.data.model : null;
+  const deleteStatusError =
+    deleteStatusQuery.data !== undefined && !deleteStatusQuery.data.ok
+      ? mediaLibraryCommandFailure(deleteStatusQuery.data.code)
+      : null;
+  useEffect(() => {
+    if (deleteStatusModel?.terminal !== true) return;
+    const completion = window.setTimeout(() => {
+      void queryClient.invalidateQueries({
+        queryKey: [MEDIA_LIBRARY_FILES_QUERY_KEY],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["system-status"] });
+      const deletedTargets = (deleteStatusModel.knownEffects ?? [])
+        .filter((effect) => effect.effect === "deleted")
+        .map((effect) => effect.path);
+      pruneAffectedBrowseState(deletedTargets, null);
+      setCommandResult(deleteStatusModel);
+      setCommandError(
+        (deleteStatusModel.failedItems ?? 0) > 0 ||
+          deleteStatusModel.durableState === "mutation_effect_uncertain"
+          ? "部分项目失败或结果待核实；未自动重试。刷新目录并检查逐项结果后，再明确选择剩余操作。"
+          : null,
+      );
+    }, 0);
+    return () => window.clearTimeout(completion);
+  }, [deleteStatusModel, pruneAffectedBrowseState, queryClient]);
 
   // Rename must return the version evidence the backend issued for this exact
   // entry, so the dialog loads it before the operator can submit.
@@ -3071,15 +3108,17 @@ export function MediaLibraryFilesPage() {
           rootLabel="媒体库"
           loading={impactQuery.isFetching}
           error={
-            impactQuery.data !== undefined && !impactQuery.data.ok
+            deleteStatusError ??
+            (impactQuery.data !== undefined && !impactQuery.data.ok
               ? mediaLibraryCommandFailure(impactQuery.data.code)
-              : commandError
+              : commandError)
           }
           confirming={commandMutation.isPending}
           result={
-            commandResult !== null && commandResult.operation === "delete"
+            deleteStatusModel ??
+            (commandResult !== null && commandResult.operation === "delete"
               ? commandResult
-              : null
+              : null)
           }
           onRefreshImpact={() => void impactQuery.refetch()}
           onConfirm={() => {

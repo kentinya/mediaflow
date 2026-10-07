@@ -42,6 +42,7 @@ import {
 } from "../../entities/library/media-library";
 import {
   type DirectCommandLibraryKind,
+  libraryIdField,
   normalizeDeleteImpact,
   normalizeDirectFileCommandResult,
   normalizeRemovalPreview,
@@ -3756,6 +3757,111 @@ export async function fetchMediaLibraryDeleteImpact(
     `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/delete-impact`,
     paths,
     "media",
+    fetchImpl,
+  );
+}
+
+async function readDeleteStatusThrough(
+  token: string | null,
+  url: string,
+  kind: DirectCommandLibraryKind,
+  libraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike,
+): Promise<DirectCommandRead<DirectFileCommandResult>> {
+  let response: Response;
+  try {
+    response = await fetchImpl(url, { headers: directFilesReadHeaders(token) });
+  } catch {
+    return { ok: false, status: 0, code: "transport_unavailable" };
+  }
+  if (!response.ok) {
+    const envelope = await readErrorEnvelope(response);
+    return {
+      ok: false,
+      status: response.status,
+      code:
+        typeof envelope.code === "string" && envelope.code.length > 0
+          ? envelope.code
+          : "request_rejected",
+      ...failureDetailsSpread(envelope.details),
+    };
+  }
+  try {
+    const payload: unknown = await response.json();
+    if (
+      payload === null ||
+      typeof payload !== "object" ||
+      Array.isArray(payload)
+    ) {
+      throw new TypeError("malformed Delete status");
+    }
+    const record = payload as Record<string, unknown>;
+    const identityField = libraryIdField(kind);
+    const foreignIdentityField = libraryIdField(
+      kind === "media" ? "resource" : "media",
+    );
+    if (
+      record.operation !== "delete" ||
+      record.taskId !== taskId ||
+      record[identityField] !== libraryId ||
+      record[foreignIdentityField] !== undefined
+    ) {
+      throw new TypeError("Delete status identity does not match its route");
+    }
+    return {
+      ok: true,
+      model: normalizeDirectFileCommandResult(payload),
+    };
+  } catch {
+    return { ok: false, status: response.status, code: "malformed_response" };
+  }
+}
+
+/** Read the durable Delete result for one ResourceLibrary Task. */
+export function fetchDeleteStatus(
+  token: string | null,
+  resourceLibraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectCommandRead<DirectFileCommandResult>> {
+  if (
+    !directCommandLibraryGuard(resourceLibraryId) ||
+    taskId.trim().length === 0 ||
+    taskId.length > 128
+  ) {
+    return Promise.resolve({ ok: false, status: 400, code: "invalid_request" });
+  }
+  return readDeleteStatusThrough(
+    token,
+    `/api/v1/resource-libraries/${encodeURIComponent(resourceLibraryId)}/files/deletes/${encodeURIComponent(taskId)}`,
+    "resource",
+    resourceLibraryId,
+    taskId,
+    fetchImpl,
+  );
+}
+
+/** The kind-isolated MediaLibrary twin of {@link fetchDeleteStatus}. */
+export function fetchMediaLibraryDeleteStatus(
+  token: string | null,
+  mediaLibraryId: string,
+  taskId: string,
+  fetchImpl: FetchLike = fetch,
+): Promise<DirectCommandRead<DirectFileCommandResult>> {
+  if (
+    !directCommandLibraryGuard(mediaLibraryId) ||
+    taskId.trim().length === 0 ||
+    taskId.length > 128
+  ) {
+    return Promise.resolve({ ok: false, status: 400, code: "invalid_request" });
+  }
+  return readDeleteStatusThrough(
+    token,
+    `/api/v1/media-libraries/${encodeURIComponent(mediaLibraryId)}/files/deletes/${encodeURIComponent(taskId)}`,
+    "media",
+    mediaLibraryId,
+    taskId,
     fetchImpl,
   );
 }

@@ -1813,13 +1813,18 @@ class OrganizerExecutor:
     ) -> str | None:
         if not storage.exists(path):
             return "source does not exist"
-        if entry_evidence is None or not entry_evidence.fingerprint:
+        if entry_evidence is None:
             return "entry version evidence is required before this Storage mutation"
-        return _direct_entry_version_mismatch(
+        mismatch = _direct_entry_version_mismatch(
             storage.stat(path),
             entry_evidence,
             "entry changed since it was confirmed",
         )
+        if mismatch is not None:
+            return mismatch
+        if entry_evidence.is_directory and storage.list(path):
+            return "directory contains entries outside the confirmed Delete effect"
+        return None
 
     @staticmethod
     def _direct_write_preflight(
@@ -1870,7 +1875,7 @@ class OrganizerExecutor:
             return "source does not exist"
         if storage.exists(target):
             return "destination already exists"
-        if source_evidence is None or not source_evidence.fingerprint:
+        if source_evidence is None:
             return "entry version evidence is required before this Storage mutation"
         return _direct_entry_version_mismatch(
             storage.stat(source),
@@ -2640,12 +2645,12 @@ def _direct_entry_version_mismatch(
     if evidence.is_directory != (observed.entry_type is StorageEntryType.DIRECTORY):
         return message
     if evidence.is_directory:
-        if _directory_fingerprint_identity(observed.fingerprint) != (
-            _directory_fingerprint_identity(evidence.fingerprint)
-        ):
+        if evidence.fingerprint and _directory_fingerprint_identity(
+            observed.fingerprint
+        ) != _directory_fingerprint_identity(evidence.fingerprint):
             return message
         return None
-    if observed.fingerprint != evidence.fingerprint:
+    if evidence.fingerprint and observed.fingerprint != evidence.fingerprint:
         return message
     if observed.size != evidence.size or observed.modified_at.isoformat() != evidence.modified_at:
         return message
@@ -2787,15 +2792,13 @@ def _transfer_source_preflight(
     """Revalidate the source immediately before one transfer mutation.
 
     Every transfer re-checks that the source still exists and still has the
-    observed entry type.  When ``require_exact_authority`` is set — the
-    cross-Storage compound Move that will delete the source itself — the
-    provider's verifiable entry identity is mandatory and is re-compared with
-    one metadata query, so the source is deleted only under exact evidence and
-    never under size/``mtime`` alone.  A same-Storage provider-native move does
-    not delete a separately resolved object: it re-checks the observed entry
-    identity when the provider publishes one, and otherwise refuses a changed
-    regular file by its observed size/``modified time`` without pretending that
-    is an exact destructive identity.
+    observed entry type. Cross-Storage Move source removal requires an
+    observation and re-compares available metadata immediately before delete;
+    a fingerprint, when originally observed, remains binding. Without one,
+    regular files use observed size and modification time, while directories
+    use existence and type because confirmed child removal legitimately changes
+    directory timestamps. Same-Storage operations keep their existing optional
+    observation behavior.
     """
 
     if not storage.exists(source):
@@ -2804,24 +2807,15 @@ def _transfer_source_preflight(
     observed_is_directory = observed.entry_type is StorageEntryType.DIRECTORY
     if evidence is None:
         if require_exact_authority:
-            return "entry version evidence is required before this Storage mutation"
+            return "source observation is unavailable before this Storage mutation"
         return None
     if observed_is_directory != evidence.is_directory:
         return "source changed since it was observed"
-    if require_exact_authority:
-        if not evidence.fingerprint:
-            return "entry version evidence is required before this Storage mutation"
-        return _direct_entry_version_mismatch(
-            observed, evidence, "source changed since it was observed"
-        )
     if evidence.fingerprint:
         return _direct_entry_version_mismatch(
             observed, evidence, "source changed since it was observed"
         )
     if observed_is_directory:
-        # A directory Move relocates the whole confirmed directory; its own
-        # deletion time legitimately moves when children change, so only the
-        # observed entry type is authoritative for the provider-native move.
         return None
     if observed.size != evidence.size or observed.modified_at.isoformat() != evidence.modified_at:
         return "source changed since it was observed"

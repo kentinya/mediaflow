@@ -59,7 +59,7 @@ from mediaflow.application.operations_lifecycle import (
     TaskLifecycleService,
     bounded_failure_document,
     bounded_identity_path,
-    is_files_transfer_task_command,
+    is_files_worker_task_command,
     job_lifecycle_document,
     job_operator_document,
     manual_action_matrix_operator_document,
@@ -188,6 +188,7 @@ from mediaflow.domain.system_settings import (
     SystemSettingsEdit,
 )
 from mediaflow.domain.task_persistence import (
+    FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
     ConfirmationStatus,
     PersistentTaskStatus,
@@ -5751,6 +5752,26 @@ class MediaFlowApi:
                 start_response, binding, parts[3], environ, media_library=True
             )
         if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4:6] == ["files", "deletes"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "Files Delete status")
+            return self._files_direct_delete_status(start_response, binding, parts[3], parts[6])
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4:6] == ["files", "deletes"]
+            and method == "GET"
+        ):
+            self._require(principal, ApiPermission.READ)
+            self._require_empty_query(environ, "MediaLibrary Delete status")
+            return self._files_direct_delete_status(
+                start_response, binding, parts[3], parts[6], media_library=True
+            )
+        if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
             and parts[4] == "files"
@@ -7528,31 +7549,35 @@ class MediaFlowApi:
             media_transfer_command = direct_command_task_command(
                 FILES_TRANSFER_TASK_COMMAND, media_library=True
             )
+            media_delete_command = direct_command_task_command(
+                FILES_DELETE_TASK_COMMAND, media_library=True
+            )
             if action == "resume":
                 task = service.require(parts[3])
                 service.require_version(task, expected_version)
-                if is_files_transfer_task_command(task.command):
-                    # The one Task kind with a persisted, bounded continuation
-                    # authority: the resume request only re-queues the durable
-                    # authority — the resident Worker later claims it and
-                    # continues from each item's recorded known-safe
-                    # checkpoint, never by replaying an uncertain mutation.
-                    # The Task's own durable command selects the kind-pinned
-                    # boundary, so a media transfer is never re-queued through
-                    # the ResourceLibrary service (or the reverse).
+                if is_files_worker_task_command(task.command):
+                    is_delete = task.command in {
+                        FILES_DELETE_TASK_COMMAND,
+                        direct_command_task_command(FILES_DELETE_TASK_COMMAND, media_library=True),
+                    }
+                    is_media = task.command in {media_transfer_command, media_delete_command}
                     transfer_service = (
-                        binding.direct_media_transfers
-                        if task.command == media_transfer_command
-                        else binding.direct_transfers
+                        binding.direct_media_transfers if is_media else binding.direct_transfers
                     )
+                    if is_delete and transfer_service is None:
+                        transfer_service = self._durable_transfer_reader(
+                            binding, media_library=is_media
+                        )
                     if transfer_service is not None:
-                        # The accepted continuation answers with the *durable
-                        # transfer projection* (the Files workspace contract)
-                        # and the same Task/lifecycle envelope every other
-                        # accepted control returns, so the Operations client
-                        # reads one truthful accepted state instead of an
-                        # unapplied control (Slice 38 RO-6).
-                        requeued = transfer_service.requeue_transfer(task.task_id)
+                        # The accepted continuation only requeues the persisted
+                        # bounded authority. The resident Worker later claims
+                        # it and continues from terminal per-item evidence;
+                        # uncertain mutation is never replayed.
+                        requeued = (
+                            transfer_service.requeue_delete(task.task_id)
+                            if is_delete
+                            else transfer_service.requeue_transfer(task.task_id)
+                        )
                         current = service.require(task.task_id)
                         lifecycle = self._task_lifecycle(
                             service,
@@ -8990,9 +9015,11 @@ class MediaFlowApi:
 
         if projection.get("terminal") is True:
             return projection
-        command = direct_command_task_command(
-            FILES_TRANSFER_TASK_COMMAND, media_library=media_library
-        )
+        command = projection.get("taskCommand")
+        if not isinstance(command, str) or not command:
+            command = direct_command_task_command(
+                FILES_TRANSFER_TASK_COMMAND, media_library=media_library
+            )
         if self._worker_service is None:
             readiness: dict[str, object] = {
                 "ready": False,
@@ -9007,6 +9034,7 @@ class MediaFlowApi:
         context_blocked = projection.get("durableState") in {
             "files_transfer_snapshot_unavailable",
             "files_transfer_worker_kind_unavailable",
+            "files_delete_snapshot_unavailable",
         }
         waiting = context_blocked or not bool(readiness.get("ready"))
         projection["waitingForWorker"] = waiting
@@ -9771,6 +9799,18 @@ class MediaFlowApi:
             return f"/api/v1/storages/{{id}}/{parts[4]}"
         if len(parts) == 5 and parts[:3] == ["api", "v1", "storages"] and parts[4] == "edit":
             return "/api/v1/storages/{id}/edit"
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "resource-libraries"]
+            and parts[4:6] == ["files", "deletes"]
+        ):
+            return "/api/v1/resource-libraries/{id}/files/deletes/{taskId}"
+        if (
+            len(parts) == 7
+            and parts[:3] == ["api", "v1", "media-libraries"]
+            and parts[4:6] == ["files", "deletes"]
+        ):
+            return "/api/v1/media-libraries/{id}/files/deletes/{taskId}"
         if (
             len(parts) == 6
             and parts[:3] == ["api", "v1", "resource-libraries"]
@@ -11043,14 +11083,37 @@ class MediaFlowApi:
             required = {"operation", "paths", "confirmationDigest"}
             if set(document) != required:
                 raise ValueError("Delete requires only operation, paths, and confirmationDigest")
-            result = service.execute_delete(
+            result = service.submit_delete(
                 library_id=library_id,
                 paths=document["paths"],
                 confirmation_digest=document["confirmationDigest"],
             )
+            result = self._with_transfer_worker_readiness(result, media_library=media_library)
+            return self._response(start_response, 202, result)
         else:
             raise ValueError("the Files direct command operation is not supported")
         return self._response(start_response, 200, result)
+
+    def _files_direct_delete_status(
+        self,
+        start_response: Callable,
+        binding: _ApiRuntimeBinding,
+        library_id: str,
+        task_id: str,
+        *,
+        media_library: bool = False,
+    ):
+        """Read the kind/library-bound durable outcome without Storage access."""
+
+        service = self._durable_transfer_reader(binding, media_library=media_library)
+        if service is None:
+            return self._files_browser_unavailable(start_response)
+        projection = service.delete_projection(task_id, library_id=library_id)
+        return self._response(
+            start_response,
+            200,
+            self._with_transfer_worker_readiness(projection, media_library=media_library),
+        )
 
     @classmethod
     def _files_direct_text_query(cls, environ: dict) -> str:

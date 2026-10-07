@@ -820,7 +820,7 @@ class CrossStorageTransferTests(TransferTestCase):
             self.assertFalse((root / "source" / "a.mkv").exists())
             self.assertEqual((root / "destination" / "a.mkv").read_bytes(), b"media-a" * 100)
 
-    def test_cross_storage_move_without_exact_identity_retains_the_source(self) -> None:
+    def test_cross_storage_move_without_fingerprint_uses_observable_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source_root = root / "source"
@@ -850,15 +850,17 @@ class CrossStorageTransferTests(TransferTestCase):
                 conflict_mode="fail",
                 manifest_digest=impact.manifest.digest,
             )
-            # Verified Copy, source retained: a recoverable partial outcome that
-            # names the surviving source rather than deleting under weak evidence.
-            self.assertEqual(result["status"], "PARTIAL")
+            # The confirmed source observation remains bound by available
+            # metadata; a provider fingerprint is optional for source removal.
+            self.assertEqual(result["status"], "SUCCESS")
             outcome = result["outcomes"][0]
-            self.assertEqual(outcome["checkpoints"], ["copy_written", "destination_verified"])
-            self.assertEqual(outcome["errorCategory"], "entry_identity_unavailable")
-            self.assertTrue((source_root / "a.mkv").exists())
+            self.assertEqual(
+                outcome["checkpoints"],
+                ["copy_written", "destination_verified", "source_deleted"],
+            )
+            self.assertFalse((source_root / "a.mkv").exists())
             self.assertEqual((root / "destination" / "a.mkv").read_bytes(), b"media-a" * 100)
-            self.assertEqual(result["retrySafe"], False)
+            self.assertFalse(result["retrySafe"])
 
 
 class TransferApiTests(TransferTestCase):
@@ -5929,7 +5931,12 @@ class StaleWorkerRevisionTests(TransferTestCase):
             with _files_transfer_worker_context(bootstrap, str(config), runtime) as resident_worker:
                 self.assertEqual(
                     resident_worker.commands,
-                    ("files_transfer", "media_files_transfer"),
+                    (
+                        "files_delete",
+                        "files_transfer",
+                        "media_files_delete",
+                        "media_files_transfer",
+                    ),
                 )
                 _document, service, _objects, active = self._fixture(root)
                 api = MediaFlowApi(

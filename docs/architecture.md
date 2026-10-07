@@ -897,6 +897,25 @@ or Storage mutation instead of falling back to size, `mtime`, a content prefix o
 bounded allowlisted text Read/Write keeps its separate loaded-version digest fence, which is capped
 by the bounded text size limit.
 
+## CURRENT — Slice 44 RO-1 metadata fences and durable Delete
+
+The current ordinary maintenance contract relaxes the older mandatory-provider-identity rule
+above. Rename and confirmed Delete bind the exact library kind/ID, Storage/root, relative path and
+immutable configuration snapshot to server-observed type, size and modification time; the
+provider fingerprint is optional. When observed, a fingerprint remains binding and cannot vanish
+or change. Evidence and confirmation reads use metadata only and never read selected file bytes or
+run FULL Hash. This permits SMB/OpenList-like providers to support these operations while
+acknowledging indistinguishable replacement and external check-to-write windows as limits of the
+available provider observations.
+
+Long and batch Delete persists the exact flattened confirmed scope, one TaskItem per entry and its
+effect certainty in the existing `files_transfers` claim/lease/mutation-fence table. The resident
+Files Worker reconstructs the pinned kind and immutable revision, removes children before
+directories, and invokes mutation only through `OrganizerExecutor`. The existing Task pause,
+cancel, Operations readback and safe-continuation surfaces control this work; an uncertain delete
+is read back and recorded for investigation, never replayed. Existing transfer rows without a
+`direct_delete` authority discriminator remain Copy/Move work and keep their historical format.
+
 ## UI-V2 Files and shared-shell contract update — 2026-09-14
 
 Slice 37 uses [`docs/pics/文件页.png`](pics/文件页.png) as the sole `1536 x 1024` visual reference

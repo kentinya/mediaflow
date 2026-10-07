@@ -337,6 +337,8 @@ function stubCommandSurface(
 ): ReturnType<typeof vi.fn> {
   const queue = [...(options.commandResponses ?? [])];
   let entries: Array<Record<string, unknown>> = ROOT_ENTRIES();
+  const deleteProjections = new Map<string, Record<string, unknown>>();
+  let generatedDeleteTask = 0;
   const textDocument = () =>
     jsonResponse({
       mediaLibraryId: "movies",
@@ -403,6 +405,21 @@ function stubCommandSurface(
         nextAction: "submit the Rename with this exact evidence",
       });
     }
+    if (/\/media-libraries\/[^/]+\/files\/deletes\/[^/]+$/.test(url)) {
+      const taskId = decodeURIComponent(url.split("/files/deletes/")[1] ?? "");
+      const projection = deleteProjections.get(taskId);
+      if (!projection)
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      applyKnownEffect(
+        entries,
+        { operation: "delete", paths: projection.topLevelPaths },
+        projection,
+        (value) => {
+          entries = value;
+        },
+      );
+      return jsonResponse(projection);
+    }
     if (url.endsWith("/files") || url.includes("/files?")) {
       return jsonResponse(filesDocument("movies", queryPath(url), entries));
     }
@@ -414,12 +431,40 @@ function stubCommandSurface(
       const response = scripted
         ? scripted()
         : jsonResponse(defaultCommandResult(submitted));
-      // A known successful result is applied to the simulated live listing; an
-      // error envelope changes nothing.
       const payload = (await response.clone().json()) as Record<
         string,
         unknown
       >;
+      if (submitted.operation === "delete" && response.ok) {
+        generatedDeleteTask += 1;
+        const taskId =
+          typeof payload.taskId === "string"
+            ? payload.taskId
+            : `task-media-delete-${generatedDeleteTask}`;
+        const projection = {
+          ...payload,
+          mediaLibraryId: "movies",
+          taskId,
+          taskStatus: payload.taskStatus ?? "completed",
+          terminal: true,
+        };
+        deleteProjections.set(taskId, projection);
+        // A Delete POST only admits the durable Task. The live listing changes
+        // after the separate terminal Worker readback below.
+        return jsonResponse({
+          ...projection,
+          status: "QUEUED",
+          taskStatus: "pending",
+          terminal: false,
+          succeededItems: 0,
+          failedItems: 0,
+          knownEffects: [],
+          outcomes: [],
+          sideEffects: "none",
+        });
+      }
+      // A known successful short command is applied to the simulated live
+      // listing; an error envelope changes nothing.
       applyKnownEffect(entries, submitted, payload, (value) => {
         entries = value;
       });
@@ -763,7 +808,9 @@ describe("MediaLibrary Files command surface", () => {
       await within(dialog).findByRole("heading", { name: "删除结果" }),
     ).toBeVisible();
     expect(within(dialog).getByText(/已删除/)).toBeVisible();
-    expect(within(dialog).getByText(/可在“操作与任务”中查看/)).toBeVisible();
+    expect(
+      within(dialog).getByRole("link", { name: /在操作与任务中查看和恢复/ }),
+    ).toBeVisible();
     await user.click(within(dialog).getByRole("button", { name: "关闭" }));
   });
 
@@ -819,10 +866,12 @@ describe("MediaLibrary Files command surface", () => {
     // summary is asserted on the composed status/alert text.
     const status = within(dialog).getByRole("status");
     expect(collapse(status.textContent)).toContain("删除已完成2项");
-    expect(collapse(status.textContent)).toContain("失败1项");
-    expect(collapse(status.textContent)).toContain("操作与任务");
-    expect(dialogText(dialog)).toContain("部分项目删除失败且未");
-    expect(dialogText(dialog)).toContain("剩余项目可再次删除");
+    expect(collapse(status.textContent)).toContain("失败或待核实1项");
+    expect(dialogText(dialog)).toContain("在操作与任务中查看和恢复");
+    expect(dialogText(dialog)).toContain(
+      "部分项目失败或结果待核实；未自动重试",
+    );
+    expect(dialogText(dialog)).toContain("明确确认剩余项目");
     // The failed sibling keeps its own category; the shared dialog renders it
     // with full-width punctuation, so the ASCII category is asserted alone.
     expect(dialogText(dialog)).toContain("storage_failure");

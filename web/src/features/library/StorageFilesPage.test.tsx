@@ -526,6 +526,7 @@ describe("Files entry state and ResourceLibrary strip", () => {
     onImpact?: () => Response;
     onFiles?: () => Response;
     onRenameEvidence?: () => Response;
+    onDeleteStatus?: (taskId: string) => Response | undefined;
     onTransferImpact?:
       | ((query: URLSearchParams) => Response)
       | ((query: URLSearchParams) => Promise<Response>);
@@ -535,6 +536,8 @@ describe("Files entry state and ResourceLibrary strip", () => {
     /** The durable projection read for one admitted transfer Task. */
     onTransferProjection?: (taskId: string) => Response;
   }) {
+    const deleteProjections = new Map<string, Record<string, unknown>>();
+    let generatedDeleteTask = 0;
     return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/api/v1/system/status") return jsonResponse(options.status);
@@ -543,17 +546,58 @@ describe("Files entry state and ResourceLibrary strip", () => {
         const libraryId = new URL(url, "http://x").pathname.split("/")[4];
         return jsonResponse(filesPayload(libraryId));
       }
+      if (/\/resource-libraries\/[^/]+\/files\/deletes\/[^/]+$/.test(url)) {
+        const taskId = decodeURIComponent(
+          url.split("/files/deletes/")[1] ?? "",
+        );
+        const configured = options.onDeleteStatus?.(taskId);
+        if (configured) return configured;
+        const projection = deleteProjections.get(taskId);
+        if (projection) return jsonResponse(projection);
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }
       if (url.includes("/files/commands")) {
         const body = JSON.parse(String(init?.body ?? "{}")) as Record<
           string,
           unknown
         >;
-        if (options.onCommand) return options.onCommand(body);
+        const response = options.onCommand
+          ? options.onCommand(body)
+          : jsonResponse({
+              operation: body.operation,
+              status: "SUCCESS",
+              effectCertainty: "verified_complete",
+              sideEffects: "storage_mutations",
+            });
+        if (body.operation !== "delete" || !response.ok) return response;
+        const payload = (await response.clone().json()) as Record<
+          string,
+          unknown
+        >;
+        if (payload.operation !== "delete") return response;
+        generatedDeleteTask += 1;
+        const taskId =
+          typeof payload.taskId === "string"
+            ? payload.taskId
+            : `task-delete-${generatedDeleteTask}`;
+        const projection = {
+          ...payload,
+          resourceLibraryId: "lib-a",
+          taskId,
+          taskStatus: payload.taskStatus ?? "completed",
+          terminal: true,
+        };
+        deleteProjections.set(taskId, projection);
         return jsonResponse({
-          operation: body.operation,
-          status: "SUCCESS",
-          effectCertainty: "verified_complete",
-          sideEffects: "storage_mutations",
+          ...projection,
+          status: "QUEUED",
+          taskStatus: "pending",
+          terminal: false,
+          succeededItems: 0,
+          failedItems: 0,
+          knownEffects: [],
+          outcomes: [],
+          sideEffects: "none",
         });
       }
       if (url.includes("/removal-preview")) {
@@ -1331,9 +1375,9 @@ describe("Files entry state and ResourceLibrary strip", () => {
     });
     expect(within(resultDialog).getByText(/删除已完成 1 项/)).toBeVisible();
     // The partial failure stays visible with its durable per-item outcome.
-    expect(within(resultDialog).getByText(/失败 1 项/)).toBeVisible();
+    expect(within(resultDialog).getByText(/失败或待核实 1 项/)).toBeVisible();
     expect(
-      within(resultDialog).getByText(/部分项目删除失败且未自动重试/),
+      within(resultDialog).getByText(/部分项目失败或结果待核实；未自动重试/),
     ).toBeVisible();
     // A partial target is never pruned: the directory row survives and stays
     // selected so the operator can diagnose and recover it.

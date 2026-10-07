@@ -33,7 +33,11 @@ from datetime import UTC, datetime
 from typing import NoReturn
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
-from mediaflow.application.direct_file_commands import DirectFileCommandService, DirectFileError
+from mediaflow.application.direct_file_commands import (
+    DirectFileCommandService,
+    DirectFileError,
+    project_direct_delete,
+)
 from mediaflow.application.organizer import OrganizerExecutor
 from mediaflow.application.storage_browser import (
     _confined_directory_child,
@@ -51,6 +55,8 @@ from mediaflow.domain.direct_files import (
     MAX_TRANSFER_PATHS,
     MAX_TRANSFER_PROGRESS_ENTRIES,
     DirectEntryEvidence,
+    DirectFileImpactEntry,
+    DirectFileOperation,
     LibraryKind,
     TransferCheckpoint,
     TransferConflict,
@@ -68,6 +74,7 @@ from mediaflow.domain.library import MediaLibrary, ResourceLibrary
 from mediaflow.domain.organizer import ExecutionEffectCertainty
 from mediaflow.domain.storage import Storage, StorageEntryType, StorageError, StorageErrorCode
 from mediaflow.domain.task_persistence import (
+    FILES_DELETE_TASK_COMMAND,
     FILES_TRANSFER_TASK_COMMAND,
     TRANSFER_INTERRUPTED_STAGE,
     FilesTransferStatus,
@@ -842,6 +849,12 @@ class DirectFileTransferService:
             )
         fence = _ClaimFence(transfer.transfer_id, claim_token)
         try:
+            task = repository.get_task(task_id)
+            delete_commands = {
+                direct_command_task_command(FILES_DELETE_TASK_COMMAND, media_library=False),
+                direct_command_task_command(FILES_DELETE_TASK_COMMAND, media_library=True),
+            }
+            is_direct_delete = task is not None and task.command in delete_commands
             if transfer.mutation_state is not None:
                 # This claim exists only to resolve an expired in-flight
                 # mutation: classify the recorded boundary against live Storage
@@ -852,15 +865,59 @@ class DirectFileTransferService:
                 # operation is never invoked again, and the classification runs
                 # under this transfer's own pinned revision, never under
                 # whatever process-local snapshot this Worker started with.
-                if not self._resolve_in_flight_mutation(transfer, fence):
+                if is_direct_delete:
+                    try:
+                        authority = self._parse_pinned_authority(transfer)
+                    except _TransferAuthorityUnreadable:
+                        items = tuple(repository.list_items(task_id))
+                        item = next(
+                            (
+                                value
+                                for value in items
+                                if value.item_id == transfer.in_flight_item_id
+                            ),
+                            None,
+                        )
+                        self._commit_convergence(
+                            fence,
+                            transfer,
+                            items=items,
+                            records={
+                                record.item_id: record
+                                for record in repository.list_results(task_id)
+                            },
+                            code="files_delete_mutation_unresolved",
+                            now=datetime.now(UTC),
+                            forced_uncertain_item_id=transfer.in_flight_item_id,
+                            force_uncertain=item is None,
+                        )
+                        return repository.require_files_transfer(transfer.transfer_id)
+                    resolved = self._resolve_direct_delete_mutation(transfer, authority, fence)
+                else:
+                    # Keep the existing transfer resolver's authority-read
+                    # ordering: the persisted in-flight boundary itself proves
+                    # uncertainty even when the authority was corrupted after
+                    # the provider call began.
+                    resolved = self._resolve_in_flight_mutation(transfer, fence)
+                if not resolved:
                     return repository.require_files_transfer(transfer.transfer_id)
-            self._execute_claimed_transfer(
-                transfer,
-                task_id=task_id,
-                heartbeat=heartbeat,
-                lease_seconds=lease_seconds,
-                fence=fence,
-            )
+            if is_direct_delete:
+                authority = self._parse_pinned_authority(transfer)
+                self._execute_claimed_delete(
+                    transfer,
+                    authority=authority,
+                    task_id=task_id,
+                    heartbeat=heartbeat,
+                    fence=fence,
+                )
+            else:
+                self._execute_claimed_transfer(
+                    transfer,
+                    task_id=task_id,
+                    heartbeat=heartbeat,
+                    lease_seconds=lease_seconds,
+                    fence=fence,
+                )
         except (_TransferClaimLost, TaskClaimLost):
             # The lease was lost mid-flight: stop without publishing a
             # terminal state.  The claim has already expired, so a replacement
@@ -933,6 +990,365 @@ class DirectFileTransferService:
             )
         repository.finish_files_transfer(terminal, claim_token=claim_token, now=datetime.now(UTC))
         return repository.require_files_transfer(transfer.transfer_id)
+
+    def _execute_claimed_delete(
+        self,
+        transfer: PersistentFilesTransfer,
+        *,
+        authority: dict[str, object],
+        task_id: str,
+        heartbeat: Callable[[], bool],
+        fence: _ClaimFence,
+    ) -> None:
+        """Execute one confirmed direct Delete through the resident Worker.
+
+        The authority is the exact flattened impact accepted by the operator;
+        this method never re-enumerates a selected directory. Each persisted
+        entry is independently locked, revalidated by OrganizerExecutor and
+        committed under the same durable claim/mutation fence used by Files
+        transfers. Directories run after their confirmed children, and an
+        uncertain deletion is terminal for that entry while safe siblings may
+        still finish.
+        """
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        expected_command = direct_command_task_command(
+            FILES_DELETE_TASK_COMMAND, media_library=self._is_media
+        )
+        if (
+            task is None
+            or task.command != expected_command
+            or task.configuration_snapshot_id != transfer.configuration_snapshot_id
+            or task.configuration_snapshot_digest != transfer.configuration_snapshot_digest
+            or authority.get("libraryKind") != self._kind.value
+            or authority.get("configurationSnapshotId") != transfer.configuration_snapshot_id
+            or authority.get("configurationSnapshotDigest")
+            != transfer.configuration_snapshot_digest
+        ):
+            raise _TransferAuthorityUnreadable(
+                "the pinned Delete authority does not match its Task"
+            )
+        if task.status is PersistentTaskStatus.CANCELLED:
+            raise _TransferCancelled()
+        if task.status not in {PersistentTaskStatus.PENDING, PersistentTaskStatus.RUNNING}:
+            raise TaskPauseRequested(f"task {task_id!r} is {task.status.value}")
+
+        library_id = authority.get("libraryId")
+        storage_id = authority.get("storageId")
+        root_path = authority.get("rootPath")
+        entries = authority.get("entries")
+        if (
+            not isinstance(library_id, str)
+            or not library_id
+            or not isinstance(storage_id, str)
+            or not storage_id
+            or not isinstance(root_path, str)
+            or not isinstance(entries, list)
+        ):
+            raise _TransferAuthorityUnreadable("the pinned Delete scope is incomplete")
+        library = self._direct.library(library_id)
+        if library.storage_id != storage_id or library.root_path != root_path:
+            raise _TransferAuthorityUnreadable("the pinned Delete binding changed")
+        if len(entries) > MAX_TRANSFER_ENTRIES:
+            raise _TransferAuthorityUnreadable("the pinned Delete scope exceeds its bound")
+        impact_entries: list[DirectFileImpactEntry] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                raise _TransferAuthorityUnreadable("a pinned Delete entry is malformed")
+            path = entry.get("path")
+            is_directory = entry.get("isDirectory")
+            size = entry.get("size")
+            modified_at = entry.get("modifiedAt")
+            fingerprint = entry.get("fingerprint")
+            if (
+                not isinstance(path, str)
+                or not path
+                or not isinstance(is_directory, bool)
+                or isinstance(size, bool)
+                or not isinstance(size, int)
+                or size < 0
+                or not isinstance(modified_at, str)
+                or (fingerprint is not None and not isinstance(fingerprint, str))
+            ):
+                raise _TransferAuthorityUnreadable("a pinned Delete entry is malformed")
+            impact_entries.append(
+                DirectFileImpactEntry(
+                    path=path,
+                    is_directory=is_directory,
+                    size=size,
+                    modified_at=modified_at,
+                    fingerprint=fingerprint,
+                )
+            )
+        if self._direct._scope_digest(library, impact_entries) != authority.get("scopeDigest"):
+            raise _TransferAuthorityUnreadable("the pinned Delete confirmation no longer matches")
+        storage = self._direct.open_storage(library)
+
+        items = repository.list_items(task_id)
+        entries_by_path = {
+            str(entry.get("path")): entry
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+        }
+        item_by_path = {item.source_display: item for item in items}
+        scoped_id = scoped_library_id(self._kind, library_id)
+        if set(entries_by_path) != set(item_by_path) or any(
+            item.storage_id != storage_id
+            or item.resource_library_id != scoped_id
+            or item.source_path != _join_resource_library_path(root_path, item.source_display)
+            for item in items
+        ):
+            raise _TransferAuthorityUnreadable("the pinned Delete items do not match its scope")
+
+        takeover_token = f"{task_id}:{uuid4().hex}"
+        locks = self._direct.tasks.locks
+        rotate = getattr(locks, "rotate_task_locks", None)
+        if callable(rotate):
+            rotate(task_id, takeover_token, transfer_fence=fence.value)
+        else:  # pragma: no cover - every runtime repository carries lock rotation
+            locks.reclaim_task_locks(task_id)
+            takeover_token = ""
+        self._direct.tasks.begin_queued(task_id, transfer_fence=fence.value)
+        try:
+            ordered = sorted(
+                items,
+                key=lambda item: (item.source_display.count("/"), item.source_display),
+                reverse=True,
+            )
+            for original in ordered:
+                if original.status in {
+                    TaskItemStatus.SUCCESS,
+                    TaskItemStatus.SKIPPED,
+                    TaskItemStatus.FAILED,
+                    TaskItemStatus.PARTIAL,
+                    TaskItemStatus.CANCELLED,
+                }:
+                    continue
+                if self._direct.tasks.cancellation_observed(task_id):
+                    raise _TransferCancelled()
+                if self._direct.tasks.pause_requested(task_id):
+                    self._direct.tasks.acknowledge_pause(task_id)
+                    raise TaskPauseRequested(f"task {task_id!r} pause was requested")
+                if not heartbeat():
+                    raise _TransferClaimLost()
+                evidence = entries_by_path.get(original.source_display)
+                if not isinstance(evidence, dict):
+                    raise _TransferAuthorityUnreadable("a confirmed Delete entry is missing")
+                full_path = _join_resource_library_path(root_path, original.source_display)
+                try:
+                    item = self._direct.tasks.begin_item(
+                        task_id,
+                        storage_id,
+                        scoped_id,
+                        full_path,
+                        original.source_display,
+                        transfer_fence=fence.value,
+                        adopt_existing=True,
+                    )
+                except TaskPauseRequested:
+                    self._direct.tasks.acknowledge_pause(task_id)
+                    raise
+                except TaskClaimLost:
+                    raise _TransferClaimLost() from None
+                except Exception:
+                    # The begin boundary persisted the lock conflict as a
+                    # failed item. Preserve that bounded refusal and continue
+                    # independent siblings.
+                    continue
+
+                try:
+                    observed = DirectEntryEvidence(
+                        size=int(evidence["size"]),
+                        modified_at=str(evidence["modifiedAt"]),
+                        is_directory=bool(evidence["isDirectory"]),
+                        fingerprint=(
+                            str(evidence["fingerprint"])
+                            if evidence.get("fingerprint") is not None
+                            else None
+                        ),
+                    )
+                except (KeyError, TypeError, ValueError):
+                    self._direct.tasks.complete_direct_item(
+                        item,
+                        status=TaskItemStatus.FAILED,
+                        operation=DirectFileOperation.DELETE.value,
+                        error="delete_authority_invalid",
+                        transfer_fence=fence.value,
+                    )
+                    continue
+
+                if self._direct.tasks.cancellation_observed(task_id):
+                    self._direct.tasks.release_item_lock(item)
+                    raise _TransferCancelled()
+                if self._direct.tasks.pause_requested(task_id):
+                    self._direct.tasks.release_item_lock(item)
+                    self._direct.tasks.acknowledge_pause(task_id)
+                    raise TaskPauseRequested(f"task {task_id!r} pause was requested")
+                if not heartbeat():
+                    self._direct.tasks.release_item_lock(item)
+                    raise _TransferClaimLost()
+
+                self._open_mutation(
+                    fence,
+                    item,
+                    entry_path=original.source_display,
+                    action="delete",
+                )
+                try:
+                    result = self._executor.execute_direct_delete(
+                        storage,
+                        full_path,
+                        entry_evidence=observed,
+                        execute=True,
+                    )
+                except BaseException:
+                    # Once the durable fence is open, a provider exception
+                    # cannot prove whether the delete crossed the Storage
+                    # boundary. Record investigation-only certainty; never
+                    # retry this item automatically.
+                    published = self._direct.tasks.complete_direct_item(
+                        item,
+                        status=TaskItemStatus.PARTIAL,
+                        operation=DirectFileOperation.DELETE.value,
+                        error="mutation_outcome",
+                        effect_certainty=ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value,
+                        uncertain_effects=("mutation_outcome",),
+                        completed_operations=(f"entry:UNCERTAIN:{original.source_display}",),
+                        transfer_fence=fence.value,
+                    )
+                    if published is False:
+                        raise _TransferClaimLost() from None
+                    self._mark_transfer_uncertain(task_id, fence=fence)
+                    continue
+
+                success = result.status.value == "SUCCESS"
+                uncertain = result.effect_certainty is ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED
+                published = self._direct.tasks.complete_direct_item(
+                    item,
+                    status=(
+                        TaskItemStatus.SUCCESS
+                        if success
+                        else TaskItemStatus.PARTIAL
+                        if uncertain
+                        else TaskItemStatus.FAILED
+                    ),
+                    operation=DirectFileOperation.DELETE.value,
+                    target_path=original.source_display,
+                    error=None if success else "mutation_outcome" if uncertain else "delete_failed",
+                    effect_certainty=(
+                        ExecutionEffectCertainty.VERIFIED_COMPLETE.value
+                        if success
+                        else ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+                        if uncertain
+                        else ExecutionEffectCertainty.NONE.value
+                    ),
+                    uncertain_effects=("mutation_outcome",) if uncertain else (),
+                    completed_operations=(f"delete:{original.source_display}",) if success else (),
+                    transfer_fence=fence.value,
+                )
+                if published is False:
+                    raise _TransferClaimLost()
+                if uncertain:
+                    self._mark_transfer_uncertain(task_id, fence=fence)
+
+            self._publish_terminal_task_aggregate(task_id, fence=fence)
+        finally:
+            if takeover_token:
+                locks.reclaim_task_locks(task_id, owner_token=takeover_token)
+
+    def _resolve_direct_delete_mutation(
+        self,
+        transfer: PersistentFilesTransfer,
+        authority: dict[str, object],
+        fence: _ClaimFence,
+    ) -> bool:
+        """Read back one crashed Delete boundary without ever invoking it again."""
+
+        repository = self._direct.tasks.repository
+        items = repository.list_items(transfer.task_id)
+        item = next((value for value in items if value.item_id == transfer.in_flight_item_id), None)
+        task = repository.get_task(transfer.task_id)
+        library_id = authority.get("libraryId")
+        storage_id = authority.get("storageId")
+        root_path = authority.get("rootPath")
+        authority_entries = authority.get("entries")
+        expected_command = direct_command_task_command(
+            FILES_DELETE_TASK_COMMAND, media_library=self._is_media
+        )
+        if (
+            item is None
+            or task is None
+            or task.command != expected_command
+            or task.configuration_snapshot_id != transfer.configuration_snapshot_id
+            or task.configuration_snapshot_digest != transfer.configuration_snapshot_digest
+            or transfer.in_flight_action != "delete"
+            or transfer.in_flight_entry_path != item.source_display
+            or not isinstance(library_id, str)
+            or not isinstance(storage_id, str)
+            or not isinstance(root_path, str)
+            or not isinstance(authority_entries, list)
+            or not any(
+                isinstance(entry, dict) and entry.get("path") == item.source_display
+                for entry in authority_entries
+            )
+            or item.storage_id != storage_id
+            or item.resource_library_id != scoped_library_id(self._kind, library_id)
+            or item.source_path != _join_resource_library_path(root_path, item.source_display)
+        ):
+            self._commit_convergence(
+                fence,
+                transfer,
+                items=items,
+                records={r.item_id: r for r in repository.list_results(transfer.task_id)},
+                code="files_delete_mutation_unresolved",
+                now=datetime.now(UTC),
+                forced_uncertain_item_id=transfer.in_flight_item_id,
+                force_uncertain=item is None,
+            )
+            return False
+        library = self._direct.library(library_id)
+        if library.storage_id != storage_id or library.root_path != root_path:
+            self._commit_convergence(
+                fence,
+                transfer,
+                items=items,
+                records={r.item_id: r for r in repository.list_results(transfer.task_id)},
+                code="files_delete_mutation_unresolved",
+                now=datetime.now(UTC),
+                forced_uncertain_item_id=item.item_id,
+            )
+            return False
+        storage = self._direct.open_storage(library)
+        full_path = _join_resource_library_path(root_path, item.source_display)
+        try:
+            storage.stat(full_path)
+        except StorageError as error:
+            absent = error.code is StorageErrorCode.NOT_FOUND
+        except OSError:
+            absent = False
+        else:
+            absent = False
+        published = self._direct.tasks.complete_direct_item(
+            item,
+            status=TaskItemStatus.SUCCESS if absent else TaskItemStatus.PARTIAL,
+            operation=DirectFileOperation.DELETE.value,
+            target_path=item.source_display,
+            error=None if absent else "mutation_outcome",
+            effect_certainty=(
+                ExecutionEffectCertainty.VERIFIED_COMPLETE.value
+                if absent
+                else ExecutionEffectCertainty.ATTEMPTED_UNVERIFIED.value
+            ),
+            uncertain_effects=() if absent else ("mutation_outcome",),
+            completed_operations=(f"delete:{item.source_display}",) if absent else (),
+            transfer_fence=fence.value,
+        )
+        if published is False:
+            raise _TransferClaimLost()
+        if not absent:
+            self._mark_transfer_uncertain(transfer.task_id, fence=fence)
+        return True
 
     def converge_worker_failure(
         self, transfer_id: str, claim_token: str, error: BaseException
@@ -2267,6 +2683,83 @@ class DirectFileTransferService:
             transfer.transfer_id, datetime.now(UTC)
         )
         return self.transfer_projection(task_id)
+
+    def requeue_delete(self, task_id: str) -> dict[str, object]:
+        """Requeue only the safe remaining scope of a paused direct Delete."""
+
+        repository = self._direct.tasks.repository
+        task = repository.get_task(task_id)
+        expected = direct_command_task_command(
+            FILES_DELETE_TASK_COMMAND, media_library=self._is_media
+        )
+        transfer = repository.get_files_transfer_for_task(task_id)
+        if task is None or task.command != expected or transfer is None:
+            raise DirectFileTransferError(
+                "files_delete_resume_unavailable",
+                "resume_unavailable",
+                "only a Delete Task owned by this library kind can be continued",
+                status=409,
+                next_action="inspect the Task in Operations",
+            )
+        authority = _parse_authority(transfer.authority_json)
+        if (
+            authority.get("authorityType") != "direct_delete"
+            or authority.get("libraryKind") != self._kind.value
+        ):
+            raise DirectFileTransferError(
+                "files_delete_resume_unavailable",
+                "resume_unavailable",
+                "the Delete Task authority is not readable by this library kind",
+                status=409,
+                next_action="inspect the Task in Operations",
+            )
+        if transfer.mutation_state is not None or task.error == "mutation_outcome":
+            raise DirectFileTransferError(
+                "files_delete_resume_unavailable",
+                "mutation_outcome",
+                "an uncertain Delete effect is investigation-only and cannot be continued",
+                status=409,
+                durable_state="mutation_effect_uncertain",
+                next_action="refresh the directory and inspect item outcomes before acting",
+            )
+        if task.status is not PersistentTaskStatus.PAUSED:
+            raise DirectFileTransferError(
+                "files_delete_resume_unavailable",
+                "resume_unavailable",
+                "only a paused Delete Task can be continued",
+                status=409,
+                next_action="inspect the Task's current state in Operations",
+            )
+        if transfer.status is FilesTransferStatus.ADMITTED:
+            # Pause may have been accepted before the Worker claimed the
+            # admission row. Its exact authority is still queued, so only the
+            # Task status needs to return to pending.
+            self._direct.tasks.requeue(task_id)
+        else:
+            self._direct.tasks.requeue(task_id)
+            try:
+                repository.requeue_files_transfer(transfer.transfer_id, datetime.now(UTC))
+            except (LookupError, ValueError) as error:
+                raise DirectFileTransferError(
+                    "files_delete_resume_unavailable",
+                    "resume_unavailable",
+                    "the Delete is still owned or its remaining scope is not safe to continue",
+                    status=409,
+                    next_action="wait for the Worker or inspect the Task in Operations",
+                ) from error
+        return self.delete_projection(task_id)
+
+    def delete_projection(
+        self, task_id: str, *, library_id: str | None = None
+    ) -> dict[str, object]:
+        """Read one direct Delete without resolving Active or touching Storage."""
+
+        return project_direct_delete(
+            self._direct.tasks.repository,
+            task_id,
+            library_kind=self._kind,
+            library_id=library_id,
+        )
 
     def transfer_projection(self, task_id: str) -> dict[str, object]:
         """The durable, bounded operator projection of one transfer Task.

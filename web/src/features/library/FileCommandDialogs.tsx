@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Link } from "@tanstack/react-router";
 import {
   MAX_TEXT_BYTES,
   isTextFileName,
@@ -412,7 +413,8 @@ export function DeleteImpactDialog({
   readonly onRefreshImpact: () => void;
 }) {
   const done = result !== null;
-  const title = done ? "删除结果" : "删除确认";
+  const terminal = result !== null && result.terminal !== false;
+  const title = done ? (terminal ? "删除结果" : "删除进度") : "删除确认";
   return (
     <ModalDialog
       title={title}
@@ -452,16 +454,41 @@ export function DeleteImpactDialog({
     >
       {done ? (
         <>
-          <p className="mf-dialog-hint" role="status">
-            删除已完成 {result.succeededItems ?? 0} 项
-            {(result.failedItems ?? 0) > 0
-              ? `，失败 ${result.failedItems ?? 0} 项`
-              : ""}
-            ；结果已记录，可在“操作与任务”中查看。
-          </p>
-          {(result.failedItems ?? 0) > 0 && (
+          {terminal ? (
+            <p className="mf-dialog-hint" role="status">
+              删除已完成 {result.succeededItems ?? 0} 项
+              {(result.failedItems ?? 0) > 0
+                ? `；失败或待核实 ${result.failedItems ?? 0} 项`
+                : ""}
+              ；逐项结果已记录。
+            </p>
+          ) : (
+            <p className="mf-dialog-hint" role="status">
+              删除任务已持久化，Worker 正在等待或处理：成功{" "}
+              {result.succeededItems ?? 0} / {result.totalItems ?? 0} 项。
+              {result.waitingForWorker
+                ? ` 当前等待 Worker：${result.workerDurableState ?? "Worker 暂不可用"}。`
+                : " 页面会读取任务进度；刷新或重新连接不会再次提交删除。"}
+            </p>
+          )}
+          {result.taskId && (
+            <p className="mf-dialog-hint">
+              <Link
+                to="/operations/tasks/$taskId"
+                params={{ taskId: result.taskId }}
+              >
+                在操作与任务中查看和恢复
+              </Link>
+            </p>
+          )}
+          {error !== null && (
             <p className="mf-dialog-error" role="alert">
-              部分项目删除失败且未自动重试；请刷新目录查看当前状态，剩余项目可再次删除。
+              {error} 已保存的任务不会重新提交；可前往操作与任务查看状态。
+            </p>
+          )}
+          {terminal && (result.failedItems ?? 0) > 0 && (
+            <p className="mf-dialog-error" role="alert">
+              失败项目保留独立结果且未自动重试；刷新目录核实后，可重新查看影响摘要并明确确认剩余项目。
             </p>
           )}
           {result.durableState === "mutation_effect_uncertain" && (
@@ -478,7 +505,11 @@ export function DeleteImpactDialog({
                     ? "已删除"
                     : outcome.status === "FAILED"
                       ? "失败：" + (outcome.errorCategory ?? "未知原因")
-                      : outcome.status}
+                      : outcome.status === "UNCERTAIN"
+                        ? "结果待核实，未自动重试"
+                        : outcome.status === "RUNNING"
+                          ? "正在处理"
+                          : outcome.status}
                 </span>
               </li>
             ))}

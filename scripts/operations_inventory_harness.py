@@ -215,6 +215,7 @@ def build_api(
     *,
     managed: ManagedHarnessContext | None = None,
     file_index: SQLiteFileIndexRepository | None = None,
+    storage_adapters: dict[str, object] | None = None,
 ) -> MediaFlowApi:
     """One real API object over the runtime repository and optional Active pin.
 
@@ -234,6 +235,7 @@ def build_api(
             "bootstrap_document": managed.bootstrap_document,
             "system_status": build_configuration_snapshot(managed.runtime),
             "file_index": file_index,
+            "storage_adapters": storage_adapters,
             "file_catalog": FileCatalogService(
                 file_index,
                 ("source",),
@@ -253,7 +255,11 @@ def build_api(
 
 
 def build_managed_fixture(
-    database: Path, root: Path
+    database: Path,
+    root: Path,
+    *,
+    include_cross_storage_destinations: bool = False,
+    storage_adapters: dict[str, object] | None = None,
 ) -> tuple[
     SQLiteTaskRepository,
     SQLiteFileIndexRepository,
@@ -286,6 +292,26 @@ def build_managed_fixture(
     document["storages"][1]["rootPath"] = str(destination_root)
     document["resourceLibraries"][0]["storagePath"] = ""
     document["mediaLibraries"][0]["rootPath"] = "Movies"
+    if include_cross_storage_destinations:
+        document["resourceLibraries"].append(
+            {
+                "id": "destination",
+                "name": "Destination",
+                "storageId": "media-target",
+                "storagePath": "",
+                "enabled": True,
+                "extensions": ["mkv", "txt"],
+            }
+        )
+        document["mediaLibraries"].append(
+            {
+                "id": "archive",
+                "name": "Archive",
+                "storageId": "source-storage",
+                "rootPath": "Archive",
+            }
+        )
+        (source_root / "Archive").mkdir(parents=True, exist_ok=True)
 
     configuration_repository = SQLiteConfigurationRepository(database)
     configuration_service = ManagedConfigurationService(
@@ -434,7 +460,12 @@ def build_managed_fixture(
         config_path=config_path,
         metadata_registry=registry,
     )
-    api = build_api(repository, managed=managed, file_index=file_index)
+    api = build_api(
+        repository,
+        managed=managed,
+        file_index=file_index,
+        storage_adapters=storage_adapters,
+    )
     return repository, file_index, managed, api
 
 

@@ -1077,7 +1077,7 @@ test("bounded delete shows the impact summary and requires one confirmation", as
 
   await dialog.getByRole("button", { name: "删除", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "删除结果" })).toBeVisible();
-  await expect(page.getByText(/删除已完成/)).toBeVisible();
+  await expect(page.getByText(/删除已完成 1 项/)).toBeVisible();
   await page
     .getByRole("dialog", { name: "删除结果" })
     .getByRole("button", { name: "关闭", exact: true })

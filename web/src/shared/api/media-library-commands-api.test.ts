@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   fetchMediaLibraryDeleteImpact,
+  fetchMediaLibraryDeleteStatus,
   fetchMediaLibraryRenameEvidence,
   fetchMediaLibraryTextFile,
   submitMediaLibraryDirectCommand,
@@ -425,6 +426,47 @@ describe("fetchMediaLibraryDeleteImpact", () => {
       status: 400,
       code: "files_direct_symlink_not_supported",
     });
+  });
+});
+
+describe("fetchMediaLibraryDeleteStatus", () => {
+  it("reads the durable media-scoped Task without resubmitting the command", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse({
+        operation: "delete",
+        status: "RUNNING",
+        mediaLibraryId: "movies",
+        taskId: "task-1",
+        taskCommand: "media_files_delete",
+        taskStatus: "running",
+        terminal: false,
+        waitingForWorker: true,
+        totalItems: 4,
+        succeededItems: 1,
+        failedItems: 0,
+        outcomes: [{ path: "Show/ep01.mkv", status: "SUCCESS" }],
+        knownEffects: [{ path: "Show", effect: "partial", status: "PARTIAL" }],
+      }),
+    );
+    const result = await fetchMediaLibraryDeleteStatus(
+      TOKEN,
+      "movies",
+      "task-1",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.model).toMatchObject({
+      operation: "delete",
+      status: "RUNNING",
+      taskId: "task-1",
+      terminal: false,
+      waitingForWorker: true,
+      succeededItems: 1,
+    });
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      "/api/v1/media-libraries/movies/files/deletes/task-1",
+    );
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBeUndefined();
   });
 });
 

@@ -31,6 +31,8 @@ from urllib.parse import urlsplit
 from mediaflow.application.configuration_objects import ConfigurationObjectService
 from mediaflow.application.configuration_snapshot import ManagedConfigurationService
 from mediaflow.application.direct_file_commands import DirectFileCommandService
+from mediaflow.application.direct_file_transfers import DirectFileTransferService
+from mediaflow.application.files_transfer_worker import FilesTransferWorker
 from mediaflow.domain.configuration_management import (
     ConfigurationDestinationPrecheckStatus,
     ConfigurationStorageCheckStatus,
@@ -143,6 +145,21 @@ class MutationAuditStorage:
     def soft_link(self, source: str, destination: str):
         self._record("soft_link")
         return self._inner.soft_link(source, destination)
+
+
+class _PauseAfterFirstDeleteStorage(MutationAuditStorage):
+    """Request a durable Delete Task pause after one MediaLibrary effect."""
+
+    def __init__(self, storage_id: str, root: Path) -> None:
+        super().__init__(storage_id, root)
+        self.repository: SQLiteTaskRepository | None = None
+        self.task_id: str | None = None
+
+    def delete(self, path: str) -> None:
+        super().delete(path)
+        if self.task_id is not None and self.repository is not None:
+            self.repository.request_task_pause(self.task_id, datetime.now(UTC))
+            self.task_id = None
 
 
 class MediaLibraryDirectCommandTests(unittest.TestCase):
@@ -279,6 +296,34 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
         self.assertIs(service.library_kind, LibraryKind.MEDIA)
         return service
 
+    def _run_delete(self, service: DirectFileCommandService, **request) -> dict[str, object]:
+        """Drive a confirmed MediaLibrary Delete through the durable Worker."""
+
+        admitted = service.execute_delete(**request)
+        return self._run_admitted_delete(service, admitted)
+
+    def _run_admitted_delete(
+        self, service: DirectFileCommandService, admitted: dict[str, object]
+    ) -> dict[str, object]:
+        """Drive an already admitted Delete through the real durable Worker."""
+
+        if admitted.get("taskId") is None or admitted.get("terminal") is True:
+            return admitted
+        command = str(admitted["taskCommand"])
+        transfer_service = DirectFileTransferService(
+            direct_files=service, executor=service._executor
+        )
+        worker = FilesTransferWorker(
+            None,
+            service._tasks.repository,
+            service_factory=lambda selected, _transfer: (
+                transfer_service if selected == command else None
+            ),
+            supported_commands=(command,),
+        )
+        self.assertIsNotNone(worker.run_next())
+        return service.delete_projection(str(admitted["taskId"]))
+
     def _rename_evidence(self, api, active, library_id: str, path: str, *, media: bool = True):
         service = (
             self._binding(api, active).direct_media_files
@@ -402,7 +447,8 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             # still differs because the library kind is part of the confirmed scope.
             self.assertNotEqual(resource_impact.scope_digest, media_impact.scope_digest)
             with self.assertRaises(Exception) as refused:
-                media.execute_delete(
+                self._run_delete(
+                    media,
                     library_id=SHARED_ID,
                     paths=["same.txt"],
                     confirmation_digest=resource_impact.scope_digest,
@@ -475,8 +521,11 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(saved["status"], "SUCCESS")
             self.assertEqual((vault / "Movies" / "film.nfo").read_text(encoding="utf-8"), "<film/>")
             impact = media.delete_impact(library_id=SHARED_ID, paths=["Movies"])
-            deleted = media.execute_delete(
-                library_id=SHARED_ID, paths=["Movies"], confirmation_digest=impact.scope_digest
+            deleted = self._run_delete(
+                media,
+                library_id=SHARED_ID,
+                paths=["Movies"],
+                confirmation_digest=impact.scope_digest,
             )
             self.assertEqual(deleted["status"], "SUCCESS")
             self.assertEqual(deleted["taskCommand"], "media_files_delete")
@@ -509,6 +558,83 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 ]
             )
             self.assertNotIn(str(root), serialized)
+
+    def test_media_delete_readback_pause_and_resume_preserves_completed_items(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "target").mkdir()
+            storage = _PauseAfterFirstDeleteStorage("media-target", root / "target")
+            api, _objects, active, runtime = self._activate(
+                root, storage_adapters={"media-target": storage}
+            )
+            storage.repository = runtime
+            media = self._media_service(api, active)
+            folder = root / "target" / "media-vault" / "season"
+            folder.mkdir()
+            for name in ("01.mkv", "02.mkv", "03.mkv"):
+                (folder / name).write_text(name, encoding="utf-8")
+
+            impact = media.delete_impact(library_id=SHARED_ID, paths=["season"])
+            admitted = media.execute_delete(
+                library_id=SHARED_ID,
+                paths=["season"],
+                confirmation_digest=impact.scope_digest,
+            )
+            self.assertEqual(admitted["status"], "QUEUED")
+            self.assertTrue(folder.exists())
+            self.assertEqual(admitted["taskCommand"], "media_files_delete")
+            status = request(
+                api,
+                f"/api/v1/media-libraries/{SHARED_ID}/files/deletes/{admitted['taskId']}",
+            )
+            self.assertEqual(status[0], 200, status[1])
+            self.assertEqual(status[1]["libraryKind"], "media")
+            self.assertTrue(status[1]["waitingForWorker"])
+
+            command = str(admitted["taskCommand"])
+            transfer_service = DirectFileTransferService(
+                direct_files=media, executor=media._executor
+            )
+            worker = FilesTransferWorker(
+                None,
+                runtime,
+                service_factory=lambda selected, _transfer: (
+                    transfer_service if selected == command else None
+                ),
+                supported_commands=(command,),
+            )
+            storage.task_id = str(admitted["taskId"])
+            self.assertIsNotNone(worker.run_next())
+            paused = media.delete_projection(str(admitted["taskId"]))
+            self.assertEqual(paused["status"], "PAUSED")
+            self.assertEqual(paused["succeededItems"], 1)
+            successful_before_resume = {
+                item.source_display
+                for item in runtime.list_items(str(admitted["taskId"]))
+                if item.status.value == "success"
+            }
+            self.assertEqual(len(successful_before_resume), 1)
+            self.assertTrue(folder.exists())
+
+            task = runtime.get_task(str(admitted["taskId"]))
+            resumed = request(
+                api,
+                f"/api/v1/tasks/{task.task_id}/resume",
+                method="POST",
+                body={"expectedUpdatedAt": task.updated_at.isoformat()},
+            )
+            self.assertEqual(resumed[0], 202, resumed[1])
+            self.assertEqual(resumed[1]["taskStatus"], "pending")
+            self.assertIsNotNone(worker.run_next())
+            completed = media.delete_projection(str(admitted["taskId"]))
+            self.assertEqual(completed["status"], "SUCCESS")
+            self.assertFalse(folder.exists())
+            successful_after_resume = {
+                item.source_display
+                for item in runtime.list_items(str(admitted["taskId"]))
+                if item.status.value == "success"
+            }
+            self.assertTrue(successful_before_resume.issubset(successful_after_resume))
 
     def test_media_mutation_is_executed_only_by_organizer_executor(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -567,8 +693,8 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                         name="other.srt",
                         expected={"size": 1, "modifiedAt": NOW.isoformat(), "evidence": "v1.fake"},
                     ),
-                    lambda: media.execute_delete(
-                        library_id=SHARED_ID, paths=["sub"], confirmation_digest="stale"
+                    lambda: self._run_delete(
+                        media, library_id=SHARED_ID, paths=["sub"], confirmation_digest="stale"
                     ),
                     lambda: media.save_text(
                         library_id=SHARED_ID,
@@ -719,7 +845,7 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             self.assertEqual(runtime.list_tasks(limit=100), ())
             self.assertFalse((root / "target" / "media-vault" / "blocked").exists())
 
-    def test_provider_without_entry_identity_fails_closed_for_media(self) -> None:
+    def test_media_commands_support_metadata_only_provider_observations(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             api, _objects, active, runtime = self._activate(root)
@@ -755,15 +881,50 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             blind = Fingerprintless("media-target", root / "target")
             with patch.object(DirectFileCommandService, "_open_storage", return_value=blind):
                 media = self._media_service(api, active)
-                with self.assertRaises(Exception) as rename:
-                    media.rename_evidence(library_id=SHARED_ID, path="a.txt")
-                self.assertEqual(rename.exception.code, "files_direct_entry_identity_unavailable")
-                with self.assertRaises(Exception) as delete:
-                    media.delete_impact(library_id=SHARED_ID, paths=["folder"])
-                self.assertEqual(delete.exception.code, "files_direct_entry_identity_unavailable")
-            self.assertTrue((vault / "a.txt").exists())
-            self.assertTrue((vault / "folder").is_dir())
-            self.assertEqual(runtime.list_tasks(limit=100), ())
+                evidence = media.rename_evidence(library_id=SHARED_ID, path="a.txt")
+                renamed = media.rename(
+                    library_id=SHARED_ID,
+                    path="a.txt",
+                    name="renamed.txt",
+                    expected=evidence.document(),
+                )
+                self.assertEqual(renamed["status"], "SUCCESS")
+                impact = media.delete_impact(library_id=SHARED_ID, paths=["folder"])
+                self.assertTrue(all(entry.fingerprint is None for entry in impact.entries))
+                deleted = self._run_delete(
+                    media,
+                    library_id=SHARED_ID,
+                    paths=["folder"],
+                    confirmation_digest=impact.scope_digest,
+                )
+                self.assertEqual(deleted["status"], "SUCCESS")
+                status, api_evidence = request(
+                    api,
+                    f"/api/v1/media-libraries/{SHARED_ID}/files/rename-evidence?path=renamed.txt",
+                )
+                self.assertEqual(status, 200, api_evidence)
+                self.assertNotIn("fingerprint", api_evidence)
+                status, api_rename = request(
+                    api,
+                    f"/api/v1/media-libraries/{SHARED_ID}/files/commands",
+                    method="POST",
+                    body={
+                        "operation": "rename",
+                        "path": "renamed.txt",
+                        "name": "api-renamed.txt",
+                        "expected": {
+                            "size": api_evidence["size"],
+                            "modifiedAt": api_evidence["modifiedAt"],
+                            "evidence": api_evidence["evidence"],
+                        },
+                    },
+                )
+                self.assertEqual(status, 200, api_rename)
+                self.assertEqual(api_rename["status"], "SUCCESS")
+            self.assertFalse((vault / "a.txt").exists())
+            self.assertTrue((vault / "api-renamed.txt").exists())
+            self.assertFalse((vault / "folder").exists())
+            self.assertGreaterEqual(len(runtime.list_tasks(limit=100)), 3)
 
     # ------------------------------------------------------------------
     # Stale evidence and durable per-item outcomes
@@ -800,7 +961,8 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             (vault / "text.txt").unlink()
             (vault / "text.txt").write_text("brand new", encoding="utf-8")
             with self.assertRaises(Exception) as delete:
-                media.execute_delete(
+                self._run_delete(
+                    media,
                     library_id=SHARED_ID,
                     paths=["text.txt"],
                     confirmation_digest=impact.scope_digest,
@@ -826,8 +988,11 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 return real_delete(storage_self, path, *args, **kwargs)
 
             with patch.object(LocalStorage, "delete", refuse_one):
-                outcome = media.execute_delete(
-                    library_id=SHARED_ID, paths=["batch"], confirmation_digest=impact.scope_digest
+                outcome = self._run_delete(
+                    media,
+                    library_id=SHARED_ID,
+                    paths=["batch"],
+                    confirmation_digest=impact.scope_digest,
                 )
             self.assertEqual(outcome["status"], "PARTIAL")
             self.assertEqual(outcome["succeededItems"], 1)
@@ -870,8 +1035,11 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                 "mediaflow.application.direct_file_commands.OrganizerExecutor.execute_direct_delete",
                 return_value=uncertain,
             ):
-                outcome = media.execute_delete(
-                    library_id=SHARED_ID, paths=["u.txt"], confirmation_digest=impact.scope_digest
+                outcome = self._run_delete(
+                    media,
+                    library_id=SHARED_ID,
+                    paths=["u.txt"],
+                    confirmation_digest=impact.scope_digest,
                 )
             self.assertEqual(outcome["status"], "UNCERTAIN")
             self.assertEqual(outcome["durableState"], "mutation_effect_uncertain")
@@ -970,9 +1138,19 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                     "confirmationDigest": impact[1]["scopeDigest"],
                 },
             )
-            self.assertEqual(deleted[0], 200, deleted[1])
+            self.assertEqual(deleted[0], 202, deleted[1])
             self.assertEqual(deleted[1]["taskCommand"], "media_files_delete")
+            self.assertTrue((vault / "Show").exists())
+            media_service = self._media_service(api, active)
+            completed = self._run_admitted_delete(media_service, deleted[1])
+            self.assertEqual(completed["status"], "SUCCESS")
             self.assertFalse((vault / "Show").exists())
+            status = request(
+                api,
+                f"/api/v1/media-libraries/{SHARED_ID}/files/deletes/{deleted[1]['taskId']}",
+            )
+            self.assertEqual(status[0], 200, status[1])
+            self.assertEqual(status[1]["status"], "SUCCESS")
             # Durable per-item outcome stays independently inspectable after reload.
             task = runtime.get_task(deleted[1]["taskId"])
             self.assertEqual(task.command, "media_files_delete")
@@ -1117,7 +1295,11 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
                     "confirmationDigest": impact[1]["scopeDigest"],
                 },
             )
-            self.assertEqual(deleted[0], 200, deleted[1])
+            self.assertEqual(deleted[0], 202, deleted[1])
+            self.assertTrue((root / "source" / "incoming" / "legacy").exists())
+            resource_service = self._binding(api, active).direct_files
+            completed = self._run_admitted_delete(resource_service, deleted[1])
+            self.assertEqual(completed["status"], "SUCCESS")
             self.assertEqual(runtime.get_task(deleted[1]["taskId"]).command, "files_delete")
 
     def test_media_command_routes_fail_closed_without_an_active_runtime(self) -> None:
@@ -1264,8 +1446,11 @@ class MediaLibraryDirectCommandTests(unittest.TestCase):
             media = self._media_service(api, active)
             media.create_directory(library_id=SHARED_ID, parent_path="", name="Quiet")
             impact = media.delete_impact(library_id=SHARED_ID, paths=["Quiet"])
-            media.execute_delete(
-                library_id=SHARED_ID, paths=["Quiet"], confirmation_digest=impact.scope_digest
+            self._run_delete(
+                media,
+                library_id=SHARED_ID,
+                paths=["Quiet"],
+                confirmation_digest=impact.scope_digest,
             )
             commands = {task.command for task in runtime.list_tasks(limit=100)}
             self.assertTrue(commands.issubset({"media_files_direct_command", "media_files_delete"}))
