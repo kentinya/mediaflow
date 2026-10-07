@@ -30,7 +30,7 @@ only in [the development workflow](development-workflow.md).
 | 42 — V2 Operations and Tasks Workspace | Deliver a reference-aligned unified run inventory, authoritative search/counts/progress, task detail/operation records/export, contextual live-file organize entry, cooperative controls, safe Web continuation and task-scoped native decision/failed-item recovery without replaying successful or uncertain effects | PASS / CLOSED | 41 closure and existing Operations/Files/Task/Worker/recovery foundations |
 
 | 43 — V2 Automation Workspace and Engine Settings | Complete reference-aligned definition management with checked Save, exact Preview and scoped scheduled authority, deliberate Run once, truthful statistics and linked history/recovery, and global engine settings verified against actual resident consumers; user-frozen on a preservation branch | PLANNED | 42 closure and existing Automation/managed-configuration/Operations/resident-service foundations |
-| 44 — Existing V2 Pages Functional Improvements | One Slice for functional improvements across multiple previously implemented pages; user content and concrete boundary pending | PLANNED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
+| 44 — Existing V2 Pages Functional Improvements | Improve existing V2 pages; selected outcome aligns ResourceLibrary/MediaLibrary ordinary file operations with observable-metadata checks and optional provider fingerprints, including Rename/Delete and cross-Storage source removal; other page contents pending | PLANNED | Accepted existing V2 pages through 42; explicit user priority change before 43 closure |
 
 ## Current boundary
 
@@ -131,16 +131,17 @@ Task-scoped Recognition/Metadata/Classification/conflict decisions and bounded f
 recovery are included. A global Review inbox, cross-task bulk review, history retention/deletion,
 unbounded whole-library manual organization, MediaLibrary organization, Automation/Notifications
 redesign, universal rollback and automatic uncertain replay remain excluded. Prior closure scopes
-and retired Slice boundaries are unchanged. Slice 44 is only reserved, and no implementation Task
-is active; this Roadmap does not pre-split Tasks.
+and retired Slice boundaries are unchanged. Slice 44 has a selected file-operation outcome but
+remains PLANNED, with no active implementation Task; this Roadmap does not pre-split Tasks.
 
 ## Current planning and suspended boundary
 
 At the user's explicit request on 2026-10-07, Slice 43 is suspended and preserved on
 `frozen/slice-43-2026-10-07`. Its status is PLANNED with a development hold, not accepted or
 cancelled; its original scope, Base and unresolved review state remain recoverable in Git.
-Slice 44 is reserved under root `SLICE.md` for improvements across multiple implemented pages,
-with contents to be supplied later. It is PLANNED, not ACTIVE. The current working branch is
+Slice 44 is planned under root `SLICE.md` for improvements across implemented pages. The user has
+authorized A to include ordinary file-operation consistency on ResourceLibrary and MediaLibrary
+Files; other page contents remain pending. It is PLANNED, not ACTIVE. The current working branch is
 `slice/44-page-improvements`, based on the accepted Slice 42 closure without Slice 43 code.
 Only after A completes and checkpoints an ACTIVE Contract may B plan a Task. Explicit A
 activation is also required before resuming Slice 43; no automatic integration is authorized.

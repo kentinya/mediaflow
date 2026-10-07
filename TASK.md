@@ -3,12 +3,15 @@
 ```text
 Status: NO ACTIVE IMPLEMENTATION TASK
 Parent Slice: 44 — Existing V2 Pages Functional Improvements
-Next Action: USER SUPPLIES CONTENT; A COMPLETES AND ACTIVATES THE CONTRACT
+Next Action: A COMPLETES AND ACTIVATES THE CONTRACT AFTER REMAINING SCOPE IS SET
 ```
 
-Slice 44 is a PLANNED placeholder for functional improvements across multiple implemented pages.
-The user will add its contents later. Neither B Task planning nor Developer implementation is
-currently authorized; A must first complete and checkpoint its ACTIVE Contract.
+Slice 44 is PLANNED for functional improvements across implemented pages. A has incorporated the
+user-authorized RO-1: consistent ordinary file operations on ResourceLibrary and MediaLibrary Files,
+using observable metadata and optional provider fingerprints. Other page contents remain pending.
+Neither B Task planning nor Developer implementation is currently authorized; A must first complete
+and checkpoint its ACTIVE Contract. The operation descriptions in SLICE.md are acceptance behavior,
+not pre-created implementation Tasks.
 
 Slice 43 is frozen on `frozen/slice-43-2026-10-07`, checkpoint
 `8a41e131f3a668388381ab51c8876668108871d8`. The complete Task 43.1 and latest B review remain at

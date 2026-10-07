@@ -9,8 +9,9 @@ workflow authority. Closure rules live only in
 ## Current development pointer
 
 Slice 44 — **Existing V2 Pages Functional Improvements** — is PLANNED under
-[`SLICE.md`](../SLICE.md), with contents pending the user's later input. No Task or implementation
-is authorized. The working branch `slice/44-page-improvements` starts from the accepted Slice 42
+[`SLICE.md`](../SLICE.md), with ordinary file-operation consistency on ResourceLibrary/MediaLibrary
+Files selected and other page contents pending. No Task or implementation is authorized. The
+working branch `slice/44-page-improvements` starts from the accepted Slice 42
 closure and excludes the unaccepted Slice 43 implementation. Slice 43 is user-frozen on
 `frozen/slice-43-2026-10-07`, retaining its original Base, Task review and unresolved blockers.
 Suspension is not closure; Slice 42 and all earlier closure-ledger entries remain unchanged.
