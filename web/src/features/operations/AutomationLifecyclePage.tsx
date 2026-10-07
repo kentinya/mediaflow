@@ -12,15 +12,20 @@
  * is reconciled by reading durable truth rather than by replaying the request.
  *
  * Form state, retained input and the command target are all bound to the
- * current definition route context: navigating between definition routes —
- * including Copy navigation — never applies one definition's unsaved input or
- * observed authority fence to another definition.
+ * current definition route context, and the candidate carries its own observed
+ * authority: navigating between definition routes — including Copy navigation —
+ * never applies one definition's unsaved input or observed authority fence to
+ * another definition. Refresh never silently repins a retained candidate onto a
+ * newer Active identity: the stale candidate must be deliberately re-reviewed
+ * before it can publish again.
  */
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { useAuthToken } from "../../shared/api/auth-context";
+import { useAuthToken, useAuthGeneration } from "../../shared/api/auth-context";
+import { registerPrincipalSessionDataCleaner } from "../../shared/auth/principal-session-data";
+import { principalIdStorageSegment } from "../../shared/auth/principal-identity";
 import {
   copyAutomationDefinitionFocused,
   createAutomationDefinitionFocused,
@@ -29,6 +34,7 @@ import {
   fetchAutomationEditProjection,
   fetchAutomationFormAuthority,
   fetchAutomationRemovalImpact,
+  fetchAuthenticatedPrincipal,
   previewAutomationSchedule,
   removeAutomationDefinitionFocused,
   saveAutomationDefinitionFocused,
@@ -79,6 +85,24 @@ const NEW_FORM: FormState = {
  * letting a Save publish it against the new definition.
  */
 type FormContextKey = string;
+
+/**
+ * The exact Active identity the retained candidate was composed against. The
+ * command fence always comes from this snapshot, never from the latest
+ * authority query: a refresh that observed a newer Active must not silently
+ * give the old candidate a newer publication fence.
+ */
+interface CandidateAuthority {
+  readonly revisionId: string;
+  readonly version: number;
+  readonly digest: string;
+}
+
+interface FormEntry {
+  readonly key: FormContextKey;
+  readonly form: FormState;
+  readonly authority: CandidateAuthority;
+}
 
 /**
  * Typed schedule conveniences. Daily/weekly compile to the exact Cron
@@ -143,8 +167,120 @@ function formIsValid(form: FormState, editing: boolean): boolean {
   );
 }
 
+/**
+ * The submitted-but-unconfirmed Copy intent, bounded to identity and the
+ * observed authority — no token, secret or reusable execution authority is
+ * persisted. It survives a real page reload because a lost Copy response is an
+ * unknown durable outcome: until it is reconciled, no second Copy is offered.
+ * The key is principal-scoped and cleared when the active principal changes,
+ * exactly like the existing recovery-batch session context.
+ */
+interface PendingCopyIntent {
+  readonly sourceId: string;
+  readonly authority: CandidateAuthority;
+}
+
+const COPY_INTENT_SESSION_PREFIX =
+  "mediaflow.operations.automation-copy-intent:";
+
+function copyIntentSessionKey(principalId: string): string {
+  return `${COPY_INTENT_SESSION_PREFIX}${principalIdStorageSegment(principalId)}`;
+}
+
+function readPendingCopyIntent(
+  principalId: string | null,
+): PendingCopyIntent | null {
+  if (principalId === null || typeof window === "undefined") return null;
+  try {
+    const raw = window.sessionStorage.getItem(
+      copyIntentSessionKey(principalId),
+    );
+    if (raw === null) return null;
+    const value = JSON.parse(raw) as unknown;
+    if (
+      value === null ||
+      typeof value !== "object" ||
+      typeof (value as Record<string, unknown>).sourceId !== "string"
+    ) {
+      return null;
+    }
+    const source = value as Record<string, unknown>;
+    const authority = source.authority;
+    if (
+      authority === null ||
+      typeof authority !== "object" ||
+      typeof (authority as Record<string, unknown>).revisionId !== "string" ||
+      typeof (authority as Record<string, unknown>).version !== "number" ||
+      typeof (authority as Record<string, unknown>).digest !== "string"
+    ) {
+      return null;
+    }
+    const boundedAuthority = authority as Record<string, unknown>;
+    return {
+      sourceId: source.sourceId as string,
+      authority: {
+        revisionId: boundedAuthority.revisionId as string,
+        version: boundedAuthority.version as number,
+        digest: boundedAuthority.digest as string,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingCopyIntent(
+  principalId: string | null,
+  intent: PendingCopyIntent | null,
+): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (principalId === null) return;
+    const key = copyIntentSessionKey(principalId);
+    if (intent === null) {
+      window.sessionStorage.removeItem(key);
+    } else {
+      window.sessionStorage.setItem(
+        key,
+        JSON.stringify({
+          sourceId: intent.sourceId,
+          authority: intent.authority,
+        }),
+      );
+    }
+  } catch {
+    // Persisting the reconciliation context is best-effort: the operator can
+    // always reconcile from the durable inventory after a reconnect.
+  }
+}
+
+registerPrincipalSessionDataCleaner(() => {
+  if (typeof window === "undefined") return;
+  const storage = window.sessionStorage;
+  const keys: string[] = [];
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key?.startsWith(COPY_INTENT_SESSION_PREFIX)) keys.push(key);
+  }
+  for (const key of keys) storage.removeItem(key);
+});
+
 export function AutomationLifecyclePage() {
   const token = useAuthToken();
+  const authGeneration = useAuthGeneration();
+  // The principal identity the backend confirms for this token: the pending
+  // Copy intent's session key is scoped to it, so another principal's unknown
+  // outcome can never be reconciled as this one's result.
+  const principalQuery = useQuery({
+    queryKey: ["authenticated-principal", authGeneration],
+    queryFn: () => fetchAuthenticatedPrincipal(token),
+    enabled: token !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    staleTime: Number.POSITIVE_INFINITY,
+  });
+  const principalId = principalQuery.data?.principalId ?? null;
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const params = useParams({ strict: false }) as { definitionId?: string };
@@ -168,24 +304,40 @@ export function AutomationLifecyclePage() {
     refetchOnWindowFocus: false,
   });
 
-  // Form state carries its context key. A retained form whose key does not
-  // match the current route context is invisible stale input, never the
-  // candidate a Save would publish.
-  const [formEntry, setFormEntry] = useState<{
-    readonly key: FormContextKey;
-    readonly form: FormState;
-  } | null>(null);
+  // Form state carries its context key AND the authority snapshot its candidate
+  // was composed against. A retained form whose key does not match the current
+  // route context is invisible stale input, never the candidate a Save would
+  // publish, and its command fence is always its own snapshot.
+  const [formEntry, setFormEntry] = useState<FormEntry | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState(false);
-  // One submitted-but-unconfirmed Copy command per definition: while its
-  // outcome is unknown, no second Copy is offered until it is reconciled
-  // from durable evidence.
-  const [pendingCopyIntent, setPendingCopyIntent] = useState<string | null>(
+  // One submitted-but-unconfirmed Copy command: while its outcome is unknown,
+  // no second Copy is offered until it is reconciled from durable evidence.
+  // The intent survives a real page reload (identity + observed authority
+  // only, no token or secret), scoped to the confirmed principal. The durable
+  // context is read during render from the confirmed principal — an effect
+  // cannot guarantee the storage read happens before the first blocked render.
+  const [pendingCopyIntentOverride, setPendingCopyIntentState] =
+    useState<PendingCopyIntent | null>(null);
+  const pendingCopyIntent =
+    pendingCopyIntentOverride ?? readPendingCopyIntent(principalId);
+  const setPendingCopyIntent = (intent: PendingCopyIntent | null) => {
+    setPendingCopyIntentState(intent);
+    writePendingCopyIntent(principalId, intent);
+  };
+  // The reconciliation read for an unknown Copy outcome. A pending intent from
+  // any context keeps blocking Copy until it is reconciled deliberately; the
+  // stale read key is derived away instead of reset by an effect.
+  const [reconcileCopyForState, setReconcileCopyFor] = useState<string | null>(
     null,
   );
-  // The reconciliation read for an unknown Copy outcome.
-  const [reconcileCopyFor, setReconcileCopyFor] = useState<string | null>(null);
+  const reconcileCopyFor =
+    reconcileCopyForState !== null &&
+    pendingCopyIntent !== null &&
+    reconcileCopyForState === pendingCopyIntent.sourceId
+      ? reconcileCopyForState
+      : null;
 
   const authority = authorityQuery.data;
   const editQueryResult = editQuery.data;
@@ -205,7 +357,7 @@ export function AutomationLifecyclePage() {
       ? loaded
       : null;
 
-  const retainedForm =
+  const retainedForm: FormState | null =
     formEntry !== null && formEntry.key === formContextKey
       ? formEntry.form
       : null;
@@ -235,6 +387,32 @@ export function AutomationLifecyclePage() {
           : NEW_FORM;
 
   const activeIdentity = authorityModel?.active ?? null;
+  const latestAuthority: CandidateAuthority | null =
+    activeIdentity !== null
+      ? {
+          revisionId: activeIdentity.revisionId,
+          version: activeIdentity.revisionSequence,
+          digest: activeIdentity.digest,
+        }
+      : null;
+  // The command fence: exactly the authority snapshot the retained candidate
+  // was composed against. When the operator has not touched the form, the
+  // candidate is the freshly loaded definition and its snapshot is the latest
+  // observed authority. Once input is retained, the snapshot is pinned to that
+  // retained input — a refresh must never silently repin it.
+  const candidateAuthority: CandidateAuthority | null =
+    formEntry !== null && formEntry.key === formContextKey
+      ? formEntry.authority
+      : latestAuthority;
+  // The retained candidate is stale when the Active moved after this input was
+  // observed. It is surfaced truthfully instead of silently repinned: the
+  // operator reviews the current values and re-adopts them deliberately.
+  const candidateIsStale =
+    formEntry !== null &&
+    formEntry.key === formContextKey &&
+    latestAuthority !== null &&
+    (formEntry.authority.revisionId !== latestAuthority.revisionId ||
+      formEntry.authority.digest !== latestAuthority.digest);
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: [automationListQueryKey] });
     void queryClient.invalidateQueries({
@@ -248,9 +426,7 @@ export function AutomationLifecyclePage() {
   const saveMutation = useMutation({
     mutationFn: (input: {
       readonly form: FormState;
-      readonly digest: string;
-      readonly revisionId: string;
-      readonly version: number;
+      readonly authority: CandidateAuthority;
       readonly targetId: string;
     }) =>
       editing
@@ -261,17 +437,17 @@ export function AutomationLifecyclePage() {
             definitionId: input.targetId,
             object: buildCandidate({ ...input.form, id: input.targetId }),
             authority: {
-              expectedRevisionId: input.revisionId,
-              expectedVersion: input.version,
-              expectedDigest: input.digest,
+              expectedRevisionId: input.authority.revisionId,
+              expectedVersion: input.authority.version,
+              expectedDigest: input.authority.digest,
             },
           })
         : createAutomationDefinitionFocused(token, {
             object: buildCandidate(input.form),
             authority: {
-              expectedRevisionId: input.revisionId,
-              expectedVersion: input.version,
-              expectedDigest: input.digest,
+              expectedRevisionId: input.authority.revisionId,
+              expectedVersion: input.authority.version,
+              expectedDigest: input.authority.digest,
             },
           }),
     retry: false,
@@ -307,17 +483,15 @@ export function AutomationLifecyclePage() {
     mutationFn: (input: {
       readonly id: string;
       readonly enabled: boolean;
-      readonly digest: string;
-      readonly revisionId: string;
-      readonly version: number;
+      readonly authority: CandidateAuthority;
     }) =>
       setAutomationDefinitionEnabledFocused(token, {
         definitionId: input.id,
         enabled: input.enabled,
         authority: {
-          expectedRevisionId: input.revisionId,
-          expectedVersion: input.version,
-          expectedDigest: input.digest,
+          expectedRevisionId: input.authority.revisionId,
+          expectedVersion: input.authority.version,
+          expectedDigest: input.authority.digest,
         },
       }),
     retry: false,
@@ -344,16 +518,14 @@ export function AutomationLifecyclePage() {
   const copyMutation = useMutation({
     mutationFn: (input: {
       readonly id: string;
-      readonly digest: string;
-      readonly revisionId: string;
-      readonly version: number;
+      readonly authority: CandidateAuthority;
     }) =>
       copyAutomationDefinitionFocused(token, {
         definitionId: input.id,
         authority: {
-          expectedRevisionId: input.revisionId,
-          expectedVersion: input.version,
-          expectedDigest: input.digest,
+          expectedRevisionId: input.authority.revisionId,
+          expectedVersion: input.authority.version,
+          expectedDigest: input.authority.digest,
         },
       }),
     retry: false,
@@ -361,7 +533,7 @@ export function AutomationLifecyclePage() {
       setError(null);
       setNotice(null);
     },
-    onSuccess: (result) => {
+    onSuccess: (result, input) => {
       if (result.ok) {
         setNotice(
           "The copy was published as a new, disabled definition without authority.",
@@ -379,8 +551,12 @@ export function AutomationLifecyclePage() {
       if (result.status === 0 || result.code === "transport_unavailable") {
         // The response was lost: the command may or may not have committed.
         // This is an unknown outcome, never a rejection. Keep the submitted
-        // intent and require reconciliation before any resubmission.
-        setPendingCopyIntent(routeTargetId || null);
+        // intent — including the exact authority it was submitted against —
+        // and require reconciliation before any resubmission.
+        setPendingCopyIntent({
+          sourceId: input.id,
+          authority: input.authority,
+        });
         setError(
           "Copying the definition returned no confirmed outcome (transport_unavailable). The copy may or may not have been published; reconcile before submitting Copy again.",
         );
@@ -395,7 +571,22 @@ export function AutomationLifecyclePage() {
       "operations.automation-lifecycle-copy-intent",
       reconcileCopyFor ?? "",
     ],
-    queryFn: () => fetchAutomationCopyIntent(token, reconcileCopyFor ?? ""),
+    queryFn: () => {
+      const intent = pendingCopyIntent;
+      const params = new URLSearchParams();
+      if (intent !== null && intent.sourceId === reconcileCopyFor) {
+        params.set("expectedRevisionId", intent.authority.revisionId);
+        params.set("expectedVersion", String(intent.authority.version));
+        params.set("expectedDigest", intent.authority.digest);
+      }
+      const query = params.toString();
+      return fetchAutomationCopyIntent(
+        token,
+        reconcileCopyFor ?? "",
+        fetch,
+        query.length > 0 ? `?${query}` : "",
+      );
+    },
     enabled: token !== null && reconcileCopyFor !== null,
     retry: false,
     refetchOnWindowFocus: false,
@@ -404,16 +595,14 @@ export function AutomationLifecyclePage() {
   const removeMutation = useMutation({
     mutationFn: (input: {
       readonly id: string;
-      readonly digest: string;
-      readonly revisionId: string;
-      readonly version: number;
+      readonly authority: CandidateAuthority;
     }) =>
       removeAutomationDefinitionFocused(token, {
         definitionId: input.id,
         authority: {
-          expectedRevisionId: input.revisionId,
-          expectedVersion: input.version,
-          expectedDigest: input.digest,
+          expectedRevisionId: input.authority.revisionId,
+          expectedVersion: input.authority.version,
+          expectedDigest: input.authority.digest,
         },
       }),
     retry: false,
@@ -467,11 +656,10 @@ export function AutomationLifecyclePage() {
     retry: false,
   });
 
-  const digest = activeIdentity?.digest ?? "";
-  const version = activeIdentity?.revisionSequence ?? 0;
-  const revisionId = activeIdentity?.revisionId ?? "";
   const canManage =
-    authorityModel !== null && activeIdentity !== null && digest.length > 0;
+    authorityModel !== null &&
+    activeIdentity !== null &&
+    activeIdentity.digest.length > 0;
   // The command target for this route's definition-bound commands.
   const routeTargetId = definitionId ?? "";
   const copyBlocked = pendingCopyIntent !== null;
@@ -546,7 +734,51 @@ export function AutomationLifecyclePage() {
           setFormEntry({
             key: formContextKey,
             form: { ...currentForm, ...patch },
+            authority:
+              candidateAuthority ??
+              ({
+                revisionId: "",
+                version: 0,
+                digest: "",
+              } as CandidateAuthority),
           });
+        // Deliberate re-adoption: replace the stale retained candidate with the
+        // current durable values and the current authority. Nothing is
+        // published by this action; it only makes the reviewed current state
+        // the next Save's candidate.
+        const adoptCurrentValues = () => {
+          if (loadedForRoute !== null) {
+            setFormEntry({
+              key: formContextKey,
+              form: {
+                id: loadedForRoute.id,
+                name: loadedForRoute.name,
+                enabled: loadedForRoute.enabled,
+                resourceLibraryId: loadedForRoute.resourceLibraryId,
+                mode: loadedForRoute.mode,
+                sourceScope: loadedForRoute.sourceScope ?? "",
+                itemLimit: String(loadedForRoute.itemLimit),
+                scheduleType: loadedForRoute.scheduleType,
+                intervalSeconds:
+                  loadedForRoute.intervalSeconds !== null
+                    ? String(loadedForRoute.intervalSeconds)
+                    : "",
+                cron: loadedForRoute.cron ?? "",
+                timezone: loadedForRoute.timezone ?? "UTC",
+              },
+              authority: latestAuthority ?? {
+                revisionId: "",
+                version: 0,
+                digest: "",
+              },
+            });
+            return;
+          }
+          // A retained candidate whose definition is no longer resolvable from
+          // the current read: discard the stale input instead of repinning it.
+          setFormEntry(null);
+          setError(null);
+        };
         const preview = previewMutation.data;
         const previewModel =
           preview !== undefined && preview.ok ? preview.model : null;
@@ -586,6 +818,33 @@ export function AutomationLifecyclePage() {
               </div>
               <RefreshControl onRefresh={refresh} refreshing={isFetching} />
             </header>
+            {candidateIsStale && (
+              <StatusBanner
+                variant="error"
+                title="Your unsaved edits are based on an older configuration"
+              >
+                <p>
+                  The Active configuration changed after this form was filled in
+                  (another writer published a change). Saving would use the
+                  older identity and be rejected — the current values are never
+                  silently replaced by this page. Review the current durable
+                  values, then deliberately re-adopt them as your next
+                  candidate, or discard your edits.
+                </p>
+                <div className="mf-actions">
+                  <Button type="button" onClick={adoptCurrentValues}>
+                    Review current values and re-adopt them
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setFormEntry(null)}
+                  >
+                    Discard my unsaved edits
+                  </Button>
+                </div>
+              </StatusBanner>
+            )}
             <section className="mf-count-section">
               <h3>Definition</h3>
               {!editing && (
@@ -818,13 +1077,17 @@ export function AutomationLifecyclePage() {
             <div className="mf-actions">
               <Button
                 type="button"
-                disabled={!valid || !canManage || saveMutation.isPending}
+                disabled={
+                  !valid ||
+                  !canManage ||
+                  saveMutation.isPending ||
+                  candidateIsStale
+                }
                 onClick={() =>
+                  candidateAuthority !== null &&
                   saveMutation.mutate({
                     form: currentForm,
-                    digest,
-                    revisionId,
-                    version,
+                    authority: candidateAuthority,
                     targetId: routeTargetId,
                   })
                 }
@@ -854,12 +1117,11 @@ export function AutomationLifecyclePage() {
                     type="button"
                     disabled={!canManage || toggleMutation.isPending}
                     onClick={() =>
+                      candidateAuthority !== null &&
                       toggleMutation.mutate({
                         id: routeTargetId,
                         enabled: !currentForm.enabled,
-                        digest,
-                        revisionId,
-                        version,
+                        authority: candidateAuthority,
                       })
                     }
                   >
@@ -875,11 +1137,10 @@ export function AutomationLifecyclePage() {
                       !canManage || copyMutation.isPending || copyBlocked
                     }
                     onClick={() =>
+                      candidateAuthority !== null &&
                       copyMutation.mutate({
                         id: routeTargetId,
-                        digest,
-                        revisionId,
-                        version,
+                        authority: candidateAuthority,
                       })
                     }
                   >
@@ -897,16 +1158,19 @@ export function AutomationLifecyclePage() {
                 {copyBlocked && (
                   <StatusBanner variant="error" title="Copy outcome unknown">
                     <p>
-                      The last Copy command for {pendingCopyIntent} returned no
-                      confirmed outcome. It may have been published durably;
-                      reconciling allocates no new copy and replays nothing.
+                      The last Copy command for {pendingCopyIntent?.sourceId}{" "}
+                      returned no confirmed outcome. It may have been published
+                      durably; reconciling allocates no new copy and replays
+                      nothing.
                     </p>
                     <div className="mf-actions">
                       {!reconcileCopyFor && (
                         <Button
                           type="button"
                           onClick={() => {
-                            setReconcileCopyFor(pendingCopyIntent);
+                            setReconcileCopyFor(
+                              pendingCopyIntent?.sourceId ?? null,
+                            );
                           }}
                         >
                           Reconcile the submitted Copy
@@ -953,6 +1217,20 @@ export function AutomationLifecyclePage() {
                         </Button>
                       </div>
                     )}
+                    {copyIntent !== null && copyIntent.committed === false && (
+                      <div className="mf-actions">
+                        <Button
+                          type="button"
+                          onClick={() => {
+                            setPendingCopyIntent(null);
+                            setReconcileCopyFor(null);
+                            setError(null);
+                          }}
+                        >
+                          Reconciled: no copy was published
+                        </Button>
+                      </div>
+                    )}
                   </StatusBanner>
                 )}
                 <h3>Reference-safe removal</h3>
@@ -993,11 +1271,10 @@ export function AutomationLifecyclePage() {
                           removeMutation.isPending
                         }
                         onClick={() =>
+                          candidateAuthority !== null &&
                           removeMutation.mutate({
                             id: routeTargetId,
-                            digest,
-                            revisionId,
-                            version,
+                            authority: candidateAuthority,
                           })
                         }
                       >

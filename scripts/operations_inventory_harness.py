@@ -1950,7 +1950,10 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
     population, so this control route performs a real focused successor
     publication that removes every definition and revokes their unattended
     authority — the same production boundary the browser exercises, not a
-    database edit.
+    database edit. The removed definitions' Scheduler due-state rows are
+    cleared through the runtime repository, so a later journey recreating the
+    same definition ID starts with a fresh due state exactly as a genuinely
+    new definition would.
     """
 
     configuration_service = state.managed.configuration_service
@@ -2004,6 +2007,7 @@ def reset_automation_definitions(state: AppState) -> dict[str, object]:
         expected_version=validated.version,
         actor="harness",
     )
+    state.repository.clear_automation_definition_schedule_states(tuple(definition_ids))
     return {
         "removed": definition_ids,
         "activeRevisionId": activated.revision_id,

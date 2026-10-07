@@ -421,6 +421,197 @@ class AutomationLifecycleApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertFalse(empty_intent["committed"])
 
+    def test_retained_history_ignores_an_unpublished_draft(self) -> None:
+        """P1 regression: a compatible open successor Draft is never
+        substituted for the removed definition's published history. The
+        published name/scope/mode the run used is what the retained-history
+        read returns, and the Draft stays available for explicit correction
+        through its own route."""
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        active = self.managed.active()
+        # A real open successor Draft with an unpublished name.
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = json.loads(json.dumps(draft.document))
+        document["automationTaskDefinitions"][0]["name"] = "NEVER PUBLISHED draft name"
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        status, _removed = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        self.assertEqual(status, 200)
+
+        status, detail = self.request(
+            "GET", "/api/v1/operations/automation/task-definitions/nightly"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(detail["definition"]["definitionState"], "historical")
+        self.assertEqual(detail["definition"]["historicalState"], "removed")
+        # The published configuration — never the Draft candidate.
+        self.assertEqual(detail["definition"]["name"], "Automation nightly")
+        self.assertNotEqual(detail["definition"]["name"], "NEVER PUBLISHED draft name")
+
+        # The V2 typed edit projection also resolves the published history.
+        status, projection = self.request("GET", f"{BASE}/nightly")
+        self.assertEqual(status, 200)
+        self.assertEqual(projection["definitionState"], "historical")
+        self.assertEqual(projection["definition"]["name"], "Automation nightly")
+
+        # The V1 detail surface agrees.
+        status, legacy = self.request("GET", "/api/v1/automation/task-definitions/nightly")
+        self.assertEqual(status, 200)
+        self.assertEqual(legacy["definition"]["name"], "Automation nightly")
+
+    def test_copy_intent_binds_to_the_submitted_intent(self) -> None:
+        """P1 regression: copy-intent reconciliation is bound to the exact
+        submitted intent. A later submission's committed copy is never named
+        as an earlier intent's result, and a fence no observed command was
+        submitted against resolves no committed outcome."""
+
+        self.request("POST", BASE, {**self.authority(), "object": _definition()})
+        first_fence = self.authority()
+        status, first = self.request("POST", f"{BASE}/nightly/copy", self.authority())
+        self.assertEqual(status, 200)
+        first_copy_id = first["definition"]["id"]
+        status, second = self.request("POST", f"{BASE}/nightly/copy", self.authority())
+        self.assertEqual(status, 200)
+        second_copy_id = second["definition"]["id"]
+        self.assertNotEqual(first_copy_id, second_copy_id)
+
+        # The unfenced read resolves the newest source-matching command.
+        status, unfenced = self.request("GET", f"{BASE}/nightly/copy-intent")
+        self.assertEqual(status, 200)
+        self.assertTrue(unfenced["committed"])
+        self.assertEqual(unfenced["committedDefinitionId"], second_copy_id)
+
+        # The read bound to the FIRST intent's fence resolves that submission.
+        status, fenced = self.request(
+            "GET",
+            f"{BASE}/nightly/copy-intent",
+            query=(
+                f"expectedRevisionId={first_fence['expectedRevisionId']}"
+                f"&expectedVersion={first_fence['expectedVersion']}"
+                f"&expectedDigest={first_fence['expectedDigest']}"
+            ),
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(fenced["committed"])
+        self.assertEqual(fenced["committedDefinitionId"], first_copy_id)
+
+        # A fence no observed command was submitted against resolves nothing.
+        status, empty = self.request(
+            "GET",
+            f"{BASE}/nightly/copy-intent",
+            query=(
+                "expectedRevisionId=no-such-revision&expectedVersion=1&expectedDigest=" + "f" * 64
+            ),
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(empty["committed"])
+
+    def test_removal_persistence_failure_reports_preserved_authority(self) -> None:
+        """P1 regression: a known failed removal inside the real publication
+        boundary preserves the live grant and reports the durable truth.
+
+        A second real SQLite writer holds ``BEGIN IMMEDIATE`` between the
+        runtime preparation and the activation — ordinary production write
+        contention — so the removal's activation fails with a database lock.
+        The removal must not leave the definition Active with its grant
+        revoked: the prior live authority is durably restored and reported."""
+
+        from datetime import UTC, datetime
+
+        from mediaflow.domain.automation import AutomationTaskDefinition
+        from mediaflow.domain.unattended_execution import (
+            UnattendedExecutionGrant,
+            UnattendedExecutionGrantAudit,
+            UnattendedExecutionGrantStatus,
+        )
+
+        self.request(
+            "POST",
+            BASE,
+            {**self.authority(), "object": _definition(mode="automatic-organization")},
+        )
+        active = self.managed.active()
+        stored = active.document["automationTaskDefinitions"][0]
+        domain = AutomationTaskDefinition.from_document(stored)
+        grant = UnattendedExecutionGrant(
+            "grant-nightly",
+            "nightly",
+            domain.resource_library_id,
+            domain.source_scope,
+            domain.run_mode,
+            domain.item_limit,
+            UnattendedExecutionGrantStatus.ACTIVE,
+            "admin",
+            datetime.now(UTC),
+            domain.definition_fingerprint,
+            active.revision_id,
+            active.digest,
+            active.version,
+        )
+        self.runtime.create_unattended_execution_grant(
+            grant,
+            UnattendedExecutionGrantAudit(
+                "grant-audit", grant.grant_id, "granted", datetime.now(UTC), "admin", {}
+            ),
+        )
+        # One ordinary production writer holds the configuration write lock
+        # between runtime preparation and activation.
+        holder: list = []
+
+        def contention(_successor):
+            import sqlite3
+            import time
+
+            time.sleep(0.05)
+            connection = sqlite3.connect(str(self.root / "configuration.sqlite3"), timeout=0.05)
+            connection.execute("BEGIN IMMEDIATE")
+            holder.append(connection)
+
+        import mediaflow.application.automation_workspace_commands as workspace_module
+
+        original_remove = workspace_module.AutomationWorkspaceCommandService.remove_object
+
+        def remove_with_contention(self_service, definition_id, **kwargs):
+            kwargs["before_publish"] = contention
+            return original_remove(self_service, definition_id, **kwargs)
+
+        try:
+            with patch.object(
+                workspace_module.AutomationWorkspaceCommandService,
+                "remove_object",
+                remove_with_contention,
+            ):
+                status, body = self.request("DELETE", f"{BASE}/nightly", self.authority())
+        finally:
+            for connection in holder:
+                try:
+                    connection.rollback()
+                    connection.close()
+                except Exception:
+                    pass
+        self.assertEqual(status, 503)
+        error = body["error"]
+        self.assertEqual(error["code"], "automation_definition_removal_not_published")
+        self.assertIn(
+            error["details"]["durableState"],
+            {"active_preserved", "commit_state_unknown"},
+        )
+        # The definition is still published and its authority is live: the
+        # failed removal did not break the admitted work.
+        self.assertEqual(self.ids(), ["nightly"])
+        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
+
     def test_stale_authority_conflicts_without_publishing(self) -> None:
         self.request("POST", BASE, {**self.authority(), "object": _definition()})
         stale = self.authority()

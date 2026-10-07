@@ -177,9 +177,17 @@ async function connect(token = TOKEN) {
   authStore.setToken(token);
 }
 
+/** Stub the authenticated-principal read every lifecycle render now issues. */
+function principalResponse(): Response {
+  return jsonResponse({ principal_id: "lifecycle-operator" });
+}
+
 describe("AutomationLifecyclePage", () => {
   it("publishes one checked create Save with the exact Active authority", async () => {
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -234,6 +242,9 @@ describe("AutomationLifecyclePage", () => {
 
   it("offers enable and a disabled copy for a published definition", async () => {
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -296,6 +307,9 @@ describe("AutomationLifecyclePage", () => {
 
   it("requires an explicit confirmation before the destructive removal", async () => {
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -340,6 +354,9 @@ describe("AutomationLifecyclePage", () => {
 
   it("calculates upcoming times without publishing anything", async () => {
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -387,6 +404,9 @@ describe("AutomationLifecyclePage", () => {
 
   it("renders no control when the authority document is malformed", async () => {
     recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -418,6 +438,9 @@ describe("AutomationLifecyclePage", () => {
     // must publish the route's definition (the copy), never apply the
     // origin's retained input.
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -513,6 +536,9 @@ describe("AutomationLifecyclePage", () => {
     // P1-4 regression: the scope field is always submitted, so clearing it
     // and saving publishes the cleared scope.
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -567,6 +593,9 @@ describe("AutomationLifecyclePage", () => {
   it("accepts a fractional interval value", async () => {
     // P1-4 regression: interval seconds are finite positive numbers.
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -620,6 +649,9 @@ describe("AutomationLifecyclePage", () => {
 
   it("offers daily and weekly schedule conveniences compiled to Cron", async () => {
     const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -676,9 +708,14 @@ describe("AutomationLifecyclePage", () => {
   it("blocks Copy resubmission until an unknown outcome is reconciled", async () => {
     // P1-5 regression: a transport-lost Copy response is an unknown outcome.
     // The page retains the submitted intent, offers reconciliation from
-    // durable evidence, and never allocates a second copy automatically.
+    // durable evidence bound to the exact submitted authority, and never
+    // allocates a second copy automatically.
     let copyCalls = 0;
+    const copyIntentCalls: string[] = [];
     recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
       if (
         call.url.endsWith("/automation/definitions") &&
         call.method === "GET"
@@ -705,7 +742,10 @@ describe("AutomationLifecyclePage", () => {
           publication("copy", definition({ id: "nightly-copy" })),
         );
       }
-      if (call.url.endsWith("/nightly/copy-intent")) {
+      if (call.url.includes("/nightly/copy-intent")) {
+        // The reconciliation read carries the exact submitted intent: the
+        // observed Active identity the lost Copy was submitted against.
+        copyIntentCalls.push(call.url);
         return jsonResponse({
           definitionId: "nightly",
           sourcePresent: true,
@@ -738,9 +778,216 @@ describe("AutomationLifecyclePage", () => {
       screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
     );
     await screen.findByText(/committed durably as nightly-copy/);
+    // The reconciliation read carries the submitted intent's fence.
+    expect(copyIntentCalls[0]).toContain("expectedRevisionId=");
+    expect(copyIntentCalls[0]).toContain(
+      `expectedDigest=${encodeURIComponent(DIGEST)}`,
+    );
     // Opening the committed copy clears the intent.
     await userEvent.click(
       screen.getByRole("button", { name: "Open the committed copy" }),
     );
+  });
+
+  it("does not silently repin a retained candidate after the Active changes", async () => {
+    // P1 regression: open a definition, change only its Name without saving.
+    // Another legitimate writer publishes item limit 9. Refresh. The retained
+    // form still shows the operator's input, but the Save command must use
+    // the authority snapshot belonging to that retained input — never the
+    // refreshed Active identity. The page surfaces the stale candidate and
+    // blocks Save until the operator deliberately re-adopts the current
+    // values, so a concurrent edit can never be silently overwritten.
+    const calls = recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    // Change only the Name; the retained candidate is composed against the
+    // observed Active revision.
+    await userEvent.type(screen.getByLabelText("Name"), " retained");
+    // Another writer publishes; every authority read after the original render
+    // observes the newer revision.
+    let authorityReads = 0;
+    const secondAuthority = jsonResponse({
+      ...formAuthority(),
+      active: {
+        ...ACTIVE,
+        revisionId: "revision-active-2",
+        version: 4,
+        revisionSequence: 3,
+        digest: "b".repeat(64),
+      },
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        const method = init?.method ?? "GET";
+        if (url === "/api/v1/auth/principal") {
+          return principalResponse();
+        }
+        if (url.endsWith("/automation/definitions") && method === "GET") {
+          authorityReads += 1;
+          return secondAuthority.clone();
+        }
+        if (
+          url.endsWith("/automation/definitions/nightly") &&
+          method === "GET"
+        ) {
+          return jsonResponse(editProjection());
+        }
+        if (url.endsWith("/nightly/removal-impact")) {
+          return jsonResponse(removalImpact());
+        }
+        return jsonResponse({ error: { code: "not_found" } }, 404);
+      }),
+    );
+    // Refresh: the page re-reads the current authority.
+    await userEvent.click(
+      screen.getAllByRole("button", { name: "Refresh" })[0],
+    );
+    await waitFor(() => expect(authorityReads).toBeGreaterThanOrEqual(1));
+    // The retained input is still visible (no silent value replacement), but
+    // the page truthfully reports the stale candidate and blocks Save.
+    expect(screen.getByLabelText("Name")).toHaveValue("Nightly retained");
+    await screen.findByText(
+      /unsaved edits are based on an older configuration/i,
+    );
+    const save = screen.getByRole("button", { name: "保存" });
+    expect(save).toBeDisabled();
+    // No command was published behind the operator's back.
+    expect(
+      calls.some((call) => call.method === "PUT" || call.method === "POST"),
+    ).toBe(false);
+    // The deliberate re-adoption replaces the candidate with the current
+    // durable values and the current authority, then Save targets the route's
+    // definition with the fresh fence.
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Review current values and re-adopt them",
+      }),
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Name")).toHaveValue("Nightly"),
+    );
+    const freshSave = screen.getByRole("button", { name: "保存" });
+    expect(freshSave).toBeEnabled();
+  });
+
+  it("keeps an unknown Copy outcome blocking after a real page reload", async () => {
+    // P1 regression: a Copy whose response was lost stays unknown across a
+    // reload. The intent persists in session storage (identity + observed
+    // authority only), Copy stays blocked without any reconciliation, and the
+    // reconciliation read carries the submitted intent's exact fence.
+    sessionStorage.clear();
+    const copyIntentCalls: string[] = [];
+    recordingFetch((call) => {
+      if (call.url === "/api/v1/auth/principal") {
+        return principalResponse();
+      }
+      if (
+        call.url.endsWith("/automation/definitions") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(formAuthority());
+      }
+      if (
+        call.url.endsWith("/automation/definitions/nightly") &&
+        call.method === "GET"
+      ) {
+        return jsonResponse(editProjection());
+      }
+      if (call.url.endsWith("/nightly/removal-impact")) {
+        return jsonResponse(removalImpact());
+      }
+      if (call.url.includes("/nightly/copy-intent")) {
+        copyIntentCalls.push(call.url);
+        return jsonResponse({
+          definitionId: "nightly",
+          sourcePresent: true,
+          committed: false,
+          committedDefinitionId: null,
+          lastObserved: {
+            auditId: "audit-2",
+            action: "copy",
+            occurredAt: "2026-01-01T00:00:00+00:00",
+            candidateId: "nightly-copy",
+            published: false,
+          },
+          observedCommands: 1,
+          active: ACTIVE,
+          sideEffects: "none",
+          nextAction: "no durable publication evidence",
+        });
+      }
+      return undefined;
+    });
+    await connect();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    // Simulate the persisted unknown outcome from a lost response before the
+    // reload, exactly as the page writes it.
+    sessionStorage.setItem(
+      "mediaflow.operations.automation-copy-intent:lifecycle-operator",
+      JSON.stringify({
+        sourceId: "nightly",
+        authority: {
+          revisionId: ACTIVE_REVISION,
+          version: ACTIVE.revisionSequence,
+          digest: DIGEST,
+        },
+      }),
+    );
+    // A real page reload: fresh modules, fresh component state.
+    cleanup();
+    renderApp("/operations/automation/lifecycle/nightly");
+    await screen.findByRole("heading", { name: "Edit Automation definition" });
+    // Copy stays blocked without any reconciliation.
+    const copy = screen.getByRole("button", {
+      name: "Copy as disabled definition",
+    });
+    expect(copy).toBeDisabled();
+    await screen.findByText(/outcome unknown/i);
+    expect(
+      screen.queryByRole("button", { name: "Reconcile the submitted Copy" }),
+    ).toBeEnabled();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Reconcile the submitted Copy" }),
+    );
+    await screen.findByText(/No durable publication evidence/);
+    expect(copyIntentCalls[0]).toContain(
+      `expectedRevisionId=${encodeURIComponent(ACTIVE_REVISION)}`,
+    );
+    // Reconciliation resolved the unknown outcome; the block is lifted.
+    await userEvent.click(
+      screen.getByRole("button", {
+        name: "Reconciled: no copy was published",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Copy as disabled definition" }),
+      ).toBeEnabled(),
+    );
+    sessionStorage.clear();
   });
 });

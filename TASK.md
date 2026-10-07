@@ -597,94 +597,298 @@ Status: READY FOR B REVIEW
 Head SHA: 94e1858b8cf1eb30b432eb11fb1af64a73e29ffc
 ```
 
+## Correction Report — Fix Loop 2 (B Decision: FIX REQUIRED, 79544d9..94e1858)
+
+This correction addresses exactly the four P1 blockers listed in `## B Review Result` and their
+direct root causes. Task ID, Task Base, Goal and Scope are unchanged; no acceptance criterion,
+Contract wording or Task Base was altered.
+
+### Changed Files (fix loop 2)
+
+Modified:
+
+- `mediaflow/application/automation_workspace_commands.py` — the candidate authority binding,
+  the removal persistence/ambiguity boundary, published-evidence historical resolution
+  (`historical_definition` + `definition_was_published` + occurrence-store binding), and the
+  intent-bound `copy_intent` fence.
+- `mediaflow/interfaces/service_api.py` — occurrence-store binding, Draft-before-history
+  resolution gated on published evidence, `copy-intent` query-fence parsing, and the historical
+  helpers passing the retained occurrence.
+- `mediaflow/infrastructure/sqlite_runtime.py` —
+  `clear_automation_definition_schedule_states` (bounded due-state deletion for removed
+  definitions, used by the harness reset).
+- `scripts/operations_inventory_harness.py` — the reset route now clears removed definitions'
+  Scheduler due-state rows so a recreated definition ID starts fresh.
+- `web/src/features/operations/AutomationLifecyclePage.tsx` — candidate-bound command fences,
+  truthful stale-candidate recovery, principal-scoped session-persisted pending Copy intent with
+  one deliberate reconciliation, and the resolved-intent clear.
+- `web/src/shared/api/api-client.ts` — `fetchAutomationCopyIntent` accepts the intent-fence query.
+- `web/src/features/operations/AutomationLifecyclePage.test.tsx` — 2 new component regressions
+  (stale candidate not silently repinned; unknown Copy blocking survives reload) plus the
+  principal-endpoint stubbing every render now performs.
+- `tests/test_automation_definition_publication.py` — 4 new regressions (30 total).
+- `tests/test_v2_automation_lifecycle.py` — 3 new regressions (20 total).
+- `web/tests/e2e/automation-lifecycle.python.spec.ts` — 3 new real-Python journeys (9 total).
+- `TASK.md` — Status and this correction report.
+
+### Implemented (fix loop 2)
+
+- **P1 — Refresh never repins stale input (AC-T2/T6).** The form entry now carries the exact
+  Active identity snapshot the candidate was composed against; every definition-bound command
+  (Save, enable/disable, Copy, Remove) fences with that snapshot, never with the latest authority
+  query. After a concurrent writer publishes, Refresh re-reads authority but the retained
+  candidate keeps its own fence: the page truthfully reports "your unsaved edits are based on an
+  older configuration", disables Save, and offers one deliberate action — re-adopt the current
+  durable values with the current authority, or discard the edits. The old candidate can never
+  silently publish against a newer identity, so a peer's concurrent edit is never overwritten.
+  Proven by a component regression (refresh observes a newer revision → banner, blocked Save,
+  re-adoption loads current values) and the real two-tab browser journey.
+- **P1 — A known failed removal preserves authority (AC-T2/T5/T6).** Two boundaries are now
+  protected. (a) A persistence failure inside the shared managed-authority Draft edit — before
+  any revocation and before any activation — raises
+  `automation_definition_persistence_failed` with `durableState: active_preserved` and the live
+  authority read: the Active definition and its grant are untouched. (b) A persistence failure
+  inside the activation transaction (a foreign writer's `BEGIN IMMEDIATE` write lock, exactly the
+  review's `OperationalError: database is locked` scenario) no longer escapes: the exact prior
+  live grant is durably restored, the Active pointer and live authority are read back, and the
+  bounded error reports `automation_definition_removal_not_published` with
+  `durableState: active_preserved` (`commit_state_unknown` only when the read-back matches the
+  attempted successor). The previously admitted Job's authority survives, verified against the
+  real grant service's own match/snapshot boundary; no automatic regrant/replay is added. Proven
+  by two application regressions, one real-API regression driving the same second-writer lock,
+  and the full Preview→grant→Scheduler-admission→lock reproduction (grant stays `active`, the
+  admitted job's authority still authorizes).
+- **P1 — Retained history resolves from published evidence (AC-T5/T6).** `historical_definition`
+  now only considers revisions with durable activation evidence (`activate` audit rows), and the
+  API layer pins the exact revision from the definition's newest durable occurrence
+  (revision id → digest+version → definition fingerprint). An open successor Draft is never
+  substituted: its candidate was never published. The published configuration is what the V2
+  typed edit projection, the V1/V2 detail routes, the grant-state route and the occurrences route
+  return for a removed definition (`historicalState: "removed"`); the open Draft stays reachable
+  through the draft route for explicit correction, and a fresh draft-only create/copy still
+  resolves draft-only because it has no published evidence. Proven by application and API
+  regressions and a real-API reproduction of the review's exact scenario (real Scheduler
+  emission, `NEVER PUBLISHED draft name` Draft, removal, then both detail routes return the
+  published name).
+- **P1 — Copy reconciliation binds to the submitted intent (AC-T6).** The Copy command's audit
+  context already records the `publishedFromRevisionId` fence it was submitted against;
+  `copy_intent` now accepts that fence (`GET .../copy-intent?expectedRevisionId=…`) and only a
+  command recorded against the exact submitted authority can be reported as that intent's
+  committed result; a fence no observed command was submitted against resolves no committed
+  outcome. Without a fence the read still resolves the newest source-matching command but stops
+  at the first committed evidence instead of overwriting it with an older submission's identity.
+  The pending intent now persists in principal-scoped session storage (identity + observed
+  authority only — no token, secret or reusable execution authority; cleared with the principal
+  session data), so after a real page reload Copy stays blocked without any reconciliation, and
+  the reconciliation read carries the submitted fence; a resolved-unpublished outcome releases
+  the block explicitly. Proven by application regressions (intent binding, unknown-outcome,
+  zero-side-effect), an API regression (fenced read resolves the first submission's copy, an
+  unobserved fence resolves nothing), a component regression (reload keeps Copy blocked until
+  reconciliation with the fence in the request), and the real browser journey (lost response →
+  reload → still blocked → reconcile → open the committed copy → no second copy).
+
+### Tests and Results (fix loop 2)
+
+- PASS — `.venv/bin/python scripts/check_governance.py` (PASS).
+- PASS — `.venv/bin/python -m unittest tests.test_automation_definition_publication
+  tests.test_v2_automation_lifecycle` — 50 tests (30 + 20).
+- PASS — `.venv/bin/python -m unittest tests.test_automation_task_definition
+  tests.test_v2_automation_operations tests.test_configuration_successor_draft
+  tests.test_configuration_management tests.test_configuration_destination_activation
+  tests.test_v2_rules_workspace_commands tests.test_system_settings_management` — 124 tests.
+- PASS — `.venv/bin/python -m unittest tests.test_cron_scheduler
+  tests.test_automation_definition_occurrence tests.test_automation_task_definition_preview
+  tests.test_automation_preview_grant_gate tests.test_automation_unattended_grant
+  tests.test_automation_definition_execution tests.test_automation_authorized_execution_matrix
+  tests.test_automation_admission tests.test_automation_job_fencing` — 117 tests.
+- PASS — `.venv/bin/python -m unittest discover -s tests` — 2,234 tests, 7 skipped (the same
+  pre-existing real OpenList/S3/SMB/Local-endurance external-service gates), 0 failures.
+- PASS — `.venv/bin/python -m unittest tests.test_release_security` — 6 tests.
+- PASS — `.venv/bin/ruff format --check .`; `.venv/bin/ruff check .`.
+- PASS — `.venv/bin/python -m compileall -q mediaflow tests scripts`; `.venv/bin/python -m pip check`.
+- PASS — `.venv/bin/mediaflow --config config/strategy.example.json config validate` and
+  `--config config/mediaflow.phase13.2.example.json config validate`.
+- PASS — `npm --prefix web run test -- run` — 67 files / 1,032 tests.
+- PASS — `npm --prefix web run typecheck`; `npm --prefix web run lint`; `npm --prefix web run
+  format:check`; `npm --prefix web run build`.
+- PASS — `npm --prefix web run test:e2e` — 203 Node-fake tests.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.automation.config.ts
+  tests/e2e/automation-lifecycle.python.spec.ts` — 9/9, including the new two-tab stale-candidate
+  journey, the lost-response Copy reload/reconciliation journey, and the published-history
+  journey (real Scheduler emission + removal + detail route) on the real Python/API/SQLite/
+  browser harness.
+- PASS — `npm --prefix web run test:e2e -- --config=playwright.python.config.ts
+  tests/e2e/operations-inventory.python.spec.ts` — 21/21.
+- PASS — `npm --prefix web run test:e2e --
+  --config=playwright.python.unicode-principal.config.ts
+  tests/e2e/operations-principal-identity.python.spec.ts` — 1/1.
+- PASS — B-reproduction scenarios, re-run against the implemented code:
+  the DB-lock removal scenario (real exact Preview, confirmed grant, real Scheduler admission,
+  second SQLite writer holding `BEGIN IMMEDIATE` at the runtime-preparation/activation seam)
+  now returns the bounded 503 with `durableState: active_preserved` and `authorityState: active`,
+  the definition stays published, the grant stays `active`, and the admitted job's authority
+  still authorizes; the Draft-substitution scenario (real occurrence + open `NEVER PUBLISHED
+  draft name` Draft + removal) now returns the published name through both detail routes and the
+  V2 edit projection.
+- UNAVAILABLE — `.venv/bin/python scripts/docker_release_security_smoke_test.py`: this run
+  reached the four-service stack creation but the daemon rejected the bind mounts
+  (`invalid mount config for type "bind": bind source path does not exist … deployment.env`),
+  the same harness bind-source limitation recorded at the original checkpoint. Not a code
+  failure and not called PASS.
+- PASS — `git diff --check`; `git check-ignore config/alist.json` (ignored) and
+  `git ls-files config/alist.json` (empty).
+- PASS — no `ffprobe`/`ffmpeg` reference under `mediaflow/` and `pyproject.toml`
+  (`grep -rni`, exit 1 with no matches; `rg` is not installed in this environment).
+- PASS — `sha256sum docs/pics/自动化.png docs/pics/自动化-全局设置.png` match SLICE.md exactly.
+- Schema unchanged: no migration rehearsal required.
+
+### Decisions (fix loop 2)
+
+- **Candidate-bound fences over latest-authority fences.** The retained form carries the exact
+  Active identity snapshot it was composed against, and every definition-bound command submits
+  that snapshot. Refresh re-reads authority for display but never mutates a retained candidate's
+  fence, so a stale candidate is rejected by the existing optimistic-concurrency boundary instead
+  of silently republished against a newer Active. This preserves the single-page architecture
+  and reuses the backend conflict semantics; the new recovery actions only replace the local
+  candidate, never publish anything.
+- **Restore-on-known-failure at the activation boundary.** The activation pointer swap is one
+  SQLite transaction in the repository, so a failure there (a foreign `BEGIN IMMEDIATE` writer,
+  a storage fault) is a known failed removal whose prior Active and live authority survive. The
+  removal durably restores the exact prior grant on that path (same mechanism the rejected-
+  publication path already uses) and reports the live authority read after the fact. The
+  read-back distinguishes `active_preserved` from `commit_state_unknown` when the persisted
+  pointer already matches the attempted successor; no automatic regrant/replay is added, exactly
+  as the blocker requires.
+- **Published-evidence historical resolution with occurrence pinning.** `historical_definition`
+  only trusts revisions with durable activation evidence, and the API binds the definition's
+  newest durable occurrence so the exact published revision that emitted the run resolves first
+  (revision id, then digest+version, then definition fingerprint). The resolution order is
+  Active → published history (only when the definition was ever published) → open Draft, so a
+  removed definition's history is never replaced by an unpublished Draft candidate while a
+  fresh draft-only create/copy keeps resolving draft-only. The Draft stays available for
+  explicit correction through the draft route.
+- **Intent-bound copy reconciliation.** The copy command's audit context already recorded the
+  `publishedFromRevisionId` fence; the reconciliation read now accepts that fence and only
+  reports commands recorded against the exact submitted authority, and without a fence it stops
+  at the newest committed evidence. The pending intent persists in principal-scoped session
+  storage bounded to identity and observed authority (no token, secret or reusable execution
+  authority), following the existing recovery-batch session-context precedent, and is cleared
+  with the principal session data when the active principal changes.
+- **Harness reset clears removed due-state rows.** The reset route removes definitions through
+  the real publication boundary; the removed definitions' Scheduler due-state rows are then
+  cleared through a new bounded repository method, so a journey recreating the same definition
+  ID starts with a fresh due state exactly as a genuinely new definition would. This is test
+  infrastructure for the browser harness only; production removal intentionally retains
+  occurrences/Jobs/Tasks and never deletes history.
+
+### Remaining In-Slice Work
+
+Unchanged from the checkpoint: definition-bound Run once/manual-origin admission, consolidated
+metrics/reporting and full server inventory/search/paging/reference tabs, and global settings
+plus resident adoption. `AutomationTaskDefinitionService`, the Draft-based `AutomationNewPage`/
+`AutomationEditorPage` routes and the existing `/activate-draft` path remain in place and
+working alongside the native focused surface.
+
+### Risks / Deviations (fix loop 2)
+
+- UNAVAILABLE — the Docker release-security smoke gate (see Tests; the harness bind-source
+  mount limitation, same as the original checkpoint). Reported honestly for B to assess.
+- The 7 full-regression skips are pre-existing external-service gates, unrelated to this Task.
+- The copy-intent reconciliation's evidence window remains bounded to the 200 most recent
+  audited commands; a fence beyond that window resolves no committed outcome, which the page
+  presents as genuinely unpublished before deliberate resubmission.
+- The principal-scoped pending-Copy session key is written on Copy submission and read during
+  render; a browser that blocks session storage still reconciles from the durable inventory
+  (the write is best-effort and never carries credentials).
+- `web/tests/e2e/operations-principal-identity.python.spec.ts` still requires its dedicated
+  `playwright.python.unicode-principal.config.ts` (pre-existing, unchanged from the checkpoint).
+- No schema change; no migration rehearsal required.
+
+### Checkpoint (fix loop 2)
+
+```text
+Status: READY FOR B REVIEW
+Head SHA: PENDING_COMMIT
+```
+
 ## B Review Result
 
 ```text
-Reviewed: 79544d9aba697036405b06054c0c56a740281bab..4380c15b100d362bc057f7527ce34e4b840b0581
+Reviewed: 79544d9aba697036405b06054c0c56a740281bab..94e1858b8cf1eb30b432eb11fb1af64a73e29ffc
 Decision: FIX REQUIRED
 Slice Required Outcomes all satisfied: NO
 Next: SAME TASK FIX LOOP
 ```
 
-- **P1 — Copy navigation can make Save modify the original definition (AC-T1/T2/T6;
-  RO-2 focused publication).** In the real Python harness and built native Web, open
-  `proof-origin`, change its Name without saving, then use Copy. The browser navigates to
-  `/ui-v2/operations/automation/lifecycle/proof-origin-copy` but retains the original form.
-  Save sends `PUT /api/v1/operations/automation/definitions/proof-origin`: the original's
-  durable name changes to the unsaved value while the copy remains unchanged. Reproduction
-  uses `npm --prefix web run build` and the actual temporary-data harness
-  `.venv/bin/python scripts/operations_inventory_harness.py --port 4190`. Evidence:
-  `node /tmp/mediaflow-b-review-43-1-browser.mjs`, case
-  `copy-navigation-keeps-original-form`, logged in
-  `/tmp/mediaflow-b-review-43-1-browser.log`. `AutomationLifecyclePage.tsx` retains an
-  unkeyed form across definition routes and uses that form's ID for commands. Bind loaded
-  state, retained input, command target and its observed authority to the current definition
-  context; navigation must never silently apply another definition's input or fence. Cover
-  the actual copy-navigation-and-Save journey through Python/Web.
+- **P1 — Refresh silently repins retained stale input and overwrites a concurrent edit
+  (AC-T2/T6; Shared publication and lifecycle 1; RO-2 stale/focused publication).**
+  In the actual built Web/Python journey, open `r2-stale` with item limit 5 and change only
+  Name. A second legitimate API writer publishes item limit 9. Press Refresh, then Save:
+  the retained form still contains 5, but the command uses the refreshed Active identity,
+  succeeds with HTTP 200 and durably changes the peer's limit back to 5. Evidence:
+  `refresh-repins-stale-form` in `/tmp/mediaflow-b-review-43-1-r2-browser.log`, produced by
+  `node /tmp/mediaflow-b-review-43-1-r2-browser.mjs`. That script uses the real built Web
+  and `.venv/bin/python scripts/operations_inventory_harness.py --port 4190` on temporary
+  data. `AutomationLifecyclePage.tsx` now keys input by route, but still derives its command
+  fence from the latest authority query rather than the snapshot belonging to that retained
+  input. Preserve the candidate's observed authority, reject stale intent, and make refresh
+  or reconciliation expose the current values before a deliberately reviewed resubmission;
+  do not silently give an old candidate a newer publication fence. Verify concurrent edits
+  on the same definition and retained-input recovery through the real Web/API journey.
 
-- **P1 — Removal does not preserve authority on rejection or fence concurrent regrant
-  (AC-T2/T5/T6; Implementation Scope, Shared publication and lifecycle 5; RO-2 removal).**
-  `.venv/bin/python /tmp/mediaflow-b-review-43-1-python.py` uses real services, exact
-  Preview/confirmed API grant and the same SQLite file for configuration and runtime, as
-  production does. A legitimate concurrent focused Save interleaved at the existing
-  `before_publish` seam makes removal lose publication: the target remains Active, but
-  its grant is already `revoked`, and `AutomationDefinitionSaveError` construction raises
-  `TypeError` for unsupported `current_revision_id` instead of returning bounded recovery.
-  A legitimate confirmed API regrant between revocation and publication returns 201;
-  removal then succeeds with the definition absent and its latest grant still `active`.
-  Both results are in `/tmp/mediaflow-b-review-43-1-python.log`. This interrupts the
-  operator's live automation after a rejected removal and leaves a successful removal's
-  authority outcome contrary to the promised revocation. No media mutation is claimed by
-  this reproduction. `automation_workspace_commands.py:542` commits revocation before
-  activation without fencing the intervening grant/publication operations. Use the actual
-  production persistence/concurrency boundary to preserve existing authority on known
-  rejection and serialize removal against grant/Scheduler/Worker/publication boundaries;
-  report conflict/unknown durable state without an unhandled exception. Do not weaken the
-  existing grants or mutation guards. Two repository connections to the same production
-  SQLite file are not evidence that the stores are necessarily separate databases.
+- **P1 — A known failed removal still revokes live authority and breaks admitted work
+  (AC-T2/T5/T6; Shared publication and lifecycle 5; RO-2 removal/failure recovery).**
+  `.venv/bin/python /tmp/mediaflow-b-review-43-1-r2-python.py` runs real exact Preview,
+  confirmed API grant, Scheduler admission, runtime preparation and Worker against the
+  production arrangement of configuration/runtime repositories in one SQLite file. A
+  second real SQLite writer holds `BEGIN IMMEDIATE` between runtime preparation and
+  activation, exercising ordinary production write contention without replacing a guard
+  or adapter. Removal raises `OperationalError: database is locked`; its prior Active is
+  unchanged, but the grant remains `revoked`. The previously authorized admitted Job then
+  fails in the real Worker with `unattended_execution_grant_revoked`, before any Task or
+  media effect. Evidence: `known-activation-write-lock-failure` in
+  `/tmp/mediaflow-b-review-43-1-r2-python-confirmed.log`. `remove_object` commits revocation
+  first and restores only two conflict exception types; the persistence failure escapes
+  without preserving authority or explaining that durable change. Protect checked removal
+  at the actual shared persistence/concurrency boundary so known publication failures leave
+  existing authority and admitted work intact. Include persistence/runtime failure and live
+  Worker boundaries, and distinguish genuinely unknown commit state with truthful readback.
+  A best-effort replacement grant after an admitted Job has already failed does not undo
+  that user-visible failure; do not add another automatic grant/replay workaround.
 
-- **P1 — Retained history becomes inaccessible after successful removal (AC-T5/T6;
-  Implementation Scope, Shared publication and lifecycle 6; RO-2 retained history).**
-  The same Python reproduction emits an occurrence with the real Scheduler, reads
-  `/api/v1/operations/automation/task-definitions/auto-task/occurrences` successfully (200),
-  removes the definition successfully (200), then reads that identical history entry and
-  receives 404 `automationTaskDefinitions 'auto-task' was not found`; one occurrence
-  remains durable. Evidence: `removed-history` in
-  `/tmp/mediaflow-b-review-43-1-python.log`. The operator's existing history route resolves
-  only Active/open-Draft definitions through `_automation_definition_resolution`.
-  `historical_definition` is not connected to the production API history path. Make retained
-  API/Web history and linked outcomes readable through durable occurrence/pin context after
-  removal and restart, with truthful historical labeling and no substitution of current
-  configuration or revived authority. Verify the existing operator entry end to end.
+- **P1 — Retained history substitutes an unpublished Draft for the removed definition
+  (AC-T5/T6; Shared publication and lifecycle 6; RO-2 usable retained history).**
+  Publish and enable `r2-history` named `Published historical name`, emit an occurrence
+  with the real Scheduler, and keep a compatible open successor Draft whose name is
+  `NEVER PUBLISHED draft name`. Remove the published definition without activating that
+  unrelated Draft. Both detail APIs now return the unpublished name: V1 labels it
+  `historical`, while V2 labels it `draft-only`; the existing native definition/history
+  entry renders `Automation definition NEVER PUBLISHED draft name`. Evidence:
+  `node /tmp/mediaflow-b-review-43-1-r2-history.mjs` and
+  `/tmp/mediaflow-b-review-43-1-r2-history.log` against the same real harness. The Python
+  reproduction independently confirms the V2 substitution in
+  `/tmp/mediaflow-b-review-43-1-r2-python-confirmed.log`. `_automation_definition_resolution`
+  prefers any open Draft, and `historical_definition` accepts the newest non-Active
+  revision without proving it was ever published or belonged to the retained occurrence.
+  Resolve removed history from durable admission/published-pin evidence and label missing
+  legacy evidence honestly. Keep the unrelated Draft available for explicit correction,
+  but never use its candidate as the removed run's historical name/scope/mode or authority.
+  Verify API/Web agreement and the retained context after reopening the repositories.
 
-- **P1 — Typed scope/schedule management does not complete the promised round trip
-  (AC-T3; RO-2 scope and daily/weekly scheduling).** The real browser reproduction clears
-  `Relative source scope` from `incoming` to empty and receives a successful Save, but the
-  durable scope is still `incoming` (`clear-source-scope` in the browser log):
-  `buildCandidate` omits empty scope, and backend merge preserves the old value. Separately,
-  the current production API accepts and reads `intervalSeconds: 1.5` with HTTP 200, within
-  its declared bounds; opening that definition in native Web remains on `Loading the
-  definition`. The frontend integer-only definition normalization rejects this supported
-  value and the page hides the failed edit read; its form validation is also integer-only.
-  The real schedule selector exposes only interval and advanced Cron, with no required
-  daily/weekly convenience controls. Evidence:
-  `node /tmp/mediaflow-b-review-43-1-form.mjs`, recorded in
-  `/tmp/mediaflow-b-review-43-1-form-confirmed.log`, plus the scope case above. Represent an
-  explicit scope clear, align Web normalization/validation with supported backend numeric
-  rules, show actionable failed-read recovery, and implement daily/weekly controls compiled
-  to the existing Cron/timezone calculation. Cover persisted round trips and backend
-  upcoming-times/DST behavior without emitting work.
-
-- **P1 — Unknown Copy is called rejected and can duplicate a committed copy after Refresh
-  (AC-T6; RO-2 unknown-submission readback).** In the actual browser/Python journey, the
-  first Copy request is executed by the real backend and returns 200; Playwright then drops
-  only its response to simulate transport loss. Web displays `Copying the definition was
-  rejected (transport_unavailable).` Refresh followed by the available Copy action publishes
-  both `proof-unknown-copy` and `proof-unknown-copy-2`. Evidence: `unknown-copy-submission`
-  in `/tmp/mediaflow-b-review-43-1-browser.log`; the reproduction does not fabricate the
-  backend result or remove any capability. The operator cannot determine which copy was
-  committed, and refreshing authority alone is not reconciliation of that submitted intent.
-  Retain the submitted intent/context, label transport loss as unknown, and reconcile its
-  exact publication outcome before allowing deliberate resubmission. Do not silently repin
-  and allocate another copy or automatically replay the command. Prove committed-response
-  loss and genuinely unpublished/unknown outcomes through the real Python/Web surface.
+- **P1 — Copy reconciliation identifies the latest copy rather than the submitted intent,
+  and reload bypasses reconciliation (AC-T6; RO-2 unknown submission; Task API/Web boundary).**
+  In the real browser journey, Copy commits `r2-reconcile-copy` with HTTP 200 and only its
+  response is dropped. A second legitimate submission then commits `r2-reconcile-copy-2`.
+  The first page's Reconcile/Open action opens the second submission's copy, falsely
+  identifying it as its own result. Separately, after a committed Copy loses its response,
+  reload and reconnect: Copy is enabled without any reconciliation and publishes
+  `r2-reload-copy-2` beside the first committed copy. Evidence:
+  `wrong-exact-copy-reconciliation` and `reload-loses-copy-intent` in
+  `/tmp/mediaflow-b-review-43-1-r2-browser.log`; both requests run through the actual Python
+  backend and only transport delivery is interrupted. `copy_intent` searches the latest
+  source-matching audit/current Active membership, without binding the submitted authority
+  or command identity; `pendingCopyIntent` survives only in component memory. Bind readback
+  to the exact submitted intent and observed authority, distinguish committed/unpublished/
+  unknown evidence, and retain bounded reconciliation context across reload/reconnect
+  without persisting credentials. Prevent deliberate duplicate submission until that intent
+  is reconciled; never substitute another tab's result or replay the command automatically.

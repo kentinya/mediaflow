@@ -574,6 +574,14 @@ class MediaFlowApi:
             if self._configuration_objects is not None
             else None
         )
+        if self._automation_workspace is not None:
+            # The workspace's historical definition resolution reads the
+            # definition's newest durable occurrence through this bounded
+            # reader so a retained occurrence pins the exact published
+            # revision its run used.  It is a read-only dependency.
+            self._automation_workspace.bind_occurrence_store(
+                lambda definition_id: self._automation_occurrences.latest(definition_id)
+            )
         self._recovery_admission = RecoveryAdmissionService(
             repository,
             snapshot_validator=snapshot_validator,
@@ -2774,10 +2782,15 @@ class MediaFlowApi:
             historical = False
             if item is None:
                 # Retained history: resolve a removed definition from its newest
-                # non-Active revision so the durable detail read stays truthful
-                # after removal and restart.
+                # published non-Active revision backed by durable activation
+                # evidence (pinned by the retained occurrence when one exists),
+                # so the durable detail read stays truthful after removal and
+                # restart and never substitutes an unpublished Draft candidate.
                 projection = (
-                    self._automation_workspace.historical_definition(parts[4])
+                    self._automation_workspace.historical_definition(
+                        parts[4],
+                        occurrence=self._automation_occurrences.latest(parts[4]),
+                    )
                     if self._automation_workspace is not None
                     else None
                 )
@@ -2825,9 +2838,13 @@ class MediaFlowApi:
             )
             if definition is None:
                 # Retained history: a removed definition's occurrence history
-                # stays readable from durable evidence.
+                # stays readable from durable published evidence, never from an
+                # unpublished Draft candidate.
                 projection = (
-                    self._automation_workspace.historical_definition(parts[4])
+                    self._automation_workspace.historical_definition(
+                        parts[4],
+                        occurrence=self._automation_occurrences.latest(parts[4]),
+                    )
                     if self._automation_workspace is not None
                     else None
                 )
@@ -11779,8 +11796,11 @@ class MediaFlowApi:
     def _automation_definition_context_historical(self, environ: dict, definition_id: str):
         """Read context plus durable historical evidence for retained history.
 
-        Resolution order is Active, then open Draft, then the newest non-Active
-        revision that still contains the definition.  Returns
+        Resolution order is Active, then the newest published non-Active
+        revision backed by durable activation evidence (pinned by the
+        definition's latest occurrence when one exists).  An unpublished Draft
+        candidate is never substituted: it was never the published
+        configuration the removed run used.  Returns
         ``(active, raw, definition, historical)``; grants no authority and
         creates nothing.  Mutating journeys must not use this helper: granting
         or previewing a removed definition stays impossible.
@@ -11793,7 +11813,9 @@ class MediaFlowApi:
             pass
         if self._automation_workspace is None:
             raise LookupError(f"automationTaskDefinitions {definition_id!r} was not found")
-        historical_projection = self._automation_workspace.historical_definition(definition_id)
+        historical_projection = self._automation_workspace.historical_definition(
+            definition_id, occurrence=self._automation_occurrences.latest(definition_id)
+        )
         if historical_projection is None:
             raise LookupError(f"automationTaskDefinitions {definition_id!r} was not found")
         active = self._automation_revision({**environ, "QUERY_STRING": ""})
@@ -11809,16 +11831,20 @@ class MediaFlowApi:
         return active, raw, definition, True
 
     def _automation_definition_resolution(self, definition_id: str, start_response: Callable):
-        """Resolve a definition from the Active revision, then the open Draft, then history.
+        """Resolve a definition from the Active revision, then durable history.
 
         Returns ``(active, raw, definition, draft, in_active, historical)``.
         Newly created or copied definitions exist only inside an open successor
-        Draft until activation, so Draft-only resolution keeps them reachable
-        and editable without presenting them as Active.  A removed definition
-        resolves last from its newest non-Active revision through the same
-        durable configuration store, so retained occurrence/history links stay
-        readable after removal and restart — always labelled historical and
-        never substituted for today's configuration or revived as authority.
+        Draft until activation, so the Draft document remains available for
+        explicit correction through the draft route; it is never presented as
+        the Active configuration and — for a removed definition's retained
+        history — its unpublished candidate is never substituted as the run's
+        historical context.  A removed definition resolves last from the newest
+        published non-Active revision backed by durable activation evidence
+        (pinned by the retained occurrence when one exists), so retained
+        occurrence/history links stay readable after removal and restart —
+        always labelled historical and never substituted for today's
+        configuration or revived as authority.
         Returns the bounded 503 response when the configuration or Draft read
         fails (callers must return it unchanged); a definition found in no
         source raises ``LookupError`` exactly as the Active-only context did.
@@ -11870,7 +11896,7 @@ class MediaFlowApi:
                 if isinstance(draft.document, dict)
                 else []
             )
-            raw = next(
+            draft_candidate = next(
                 (
                     item
                     for item in section
@@ -11878,15 +11904,29 @@ class MediaFlowApi:
                 ),
                 None,
             )
+            if draft_candidate is not None and not (
+                self._automation_workspace is not None
+                and self._automation_workspace.definition_was_published(definition_id)
+            ):
+                # A definition that exists only inside an open Draft is a
+                # draft-only candidate for explicit correction.  A definition
+                # that was once published and is no longer Active is removed:
+                # its retained history resolves from published evidence below
+                # and the Draft candidate is never substituted for it.
+                raw = draft_candidate
         if raw is None:
             # Last resort: the durable historical evidence.  A removed
-            # definition's newest non-Active revision keeps its exact name,
+            # definition's newest published revision keeps its exact name,
             # scope, mode and schedule readable so retained occurrences and
             # linked results resolve without substituting current
-            # configuration.  This is a bounded read-only fallback; it grants
-            # no authority and creates nothing.
+            # configuration or an unpublished Draft candidate.  This is a
+            # bounded read-only fallback; it grants no authority and creates
+            # nothing.
             historical_projection = (
-                self._automation_workspace.historical_definition(definition_id)
+                self._automation_workspace.historical_definition(
+                    definition_id,
+                    occurrence=self._automation_occurrences.latest(definition_id),
+                )
                 if self._automation_workspace is not None
                 else None
             )
@@ -14179,11 +14219,37 @@ class MediaFlowApi:
                     "method_not_allowed",
                     "GET required for copy-intent reconciliation",
                 )
-            self._require_empty_query(environ, "automation definition copy intent")
             self._require(principal, ApiPermission.READ)
+            # The reconciliation binds to the exact submitted intent: the
+            # observed Active identity the lost Copy was submitted against.
+            # Without the fence the read still resolves durable evidence, but a
+            # later submission's copy is never named as this intent's result.
+            query = parse_qs(str(environ.get("QUERY_STRING", "")), keep_blank_values=True)
+            if set(query).difference(
+                {"expectedRevisionId", "expectedVersion", "expectedDigest"}
+            ) or any(len(value) != 1 for value in query.values()):
+                raise ValueError(
+                    "automation definition copy intent accepts the observed Active identity "
+                    "query fields at most once each"
+                )
+            expected_revision_id = query.get("expectedRevisionId", [None])[0]
+            expected_version = query.get("expectedVersion", [None])[0]
+            expected_digest = query.get("expectedDigest", [None])[0]
+            if expected_version is not None:
+                try:
+                    expected_version = int(expected_version)
+                except ValueError as error:
+                    raise ValueError(
+                        "automation definition copy intent expectedVersion must be an integer"
+                    ) from error
             return self._automation_definition_document(
                 start_response,
-                lambda: self._automation_workspace.copy_intent(definition_id),
+                lambda: self._automation_workspace.copy_intent(
+                    definition_id,
+                    expected_revision_id=expected_revision_id,
+                    expected_version=expected_version,
+                    expected_digest=expected_digest,
+                ),
             )
         if len(parts) == 7 and parts[6] == "removal-impact":
             if method != "GET":

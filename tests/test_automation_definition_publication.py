@@ -749,6 +749,186 @@ class AutomationPublicationTests(unittest.TestCase):
         for section in set(before.document) - {AUTOMATION_DEFINITION_SECTION}:
             self.assertEqual(revision.document[section], before.document[section], section)
 
+    def test_removal_persistence_failure_preserves_authority(self) -> None:
+        """P1 regression: a persistence/concurrency failure inside the removal
+        publication boundary is a known failed removal — the Active definition
+        and its live unattended authority are preserved and reported, so an
+        already-admitted Job is not failed by the removal command itself.
+
+        The review reproduced this with a real second SQLite writer holding
+        ``BEGIN IMMEDIATE`` between runtime preparation and activation: the
+        prior removal implementation let ``OperationalError: database is
+        locked`` escape after its revocation had already committed, so the
+        definition stayed Active but its grant was revoked and the admitted
+        Job then failed in the real Worker with
+        ``unattended_execution_grant_revoked``. The corrected removal restores
+        the exact prior live grant on that path and reports the durable truth.
+        """
+
+        self.save(definition("nightly", mode="automatic-organization"))
+        self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
+        self._seed_active_grant("nightly")
+        admitted = self._definition_value("nightly")
+        writer: list = []
+
+        def contention(_successor):
+            """One ordinary production writer holds the write lock meanwhile."""
+
+            import sqlite3
+            import time
+
+            time.sleep(0.05)
+            connection = sqlite3.connect(str(self.root / "configuration.sqlite3"), timeout=0.05)
+            connection.execute("BEGIN IMMEDIATE")
+            writer.append(connection)
+
+        authority = self.authority()
+        authority["before_publish"] = contention
+        try:
+            with self.assertRaises(AutomationDefinitionSaveError) as caught:
+                self.commands.remove_object("nightly", actor=ADMIN, **authority)
+        finally:
+            for connection in writer:
+                try:
+                    connection.rollback()
+                    connection.close()
+                except Exception:
+                    pass
+        self.assertEqual(caught.exception.code, "automation_definition_removal_not_published")
+        self.assertIn(
+            caught.exception.details["durableState"],
+            {"active_preserved", "commit_state_unknown"},
+        )
+        # The definition is still published...
+        self.assertEqual(self.ids(), ["nightly"])
+        # ...and its live authority survived the failed removal, so the
+        # already-admitted Job is not failed by this command.
+        current = self.grants.get_for_definition("nightly")
+        self.assertIsNotNone(current)
+        self.assertEqual(current.status.value, "active")
+        # The live authority state is reported in the recovery document.
+        self.assertIn(
+            caught.exception.details.get("authorityState"),
+            {"active", "none", "unavailable"},
+        )
+        # The admitted definition still authorizes against the live grant: a
+        # job carrying its identity, bounds, scope and the granted snapshot
+        # authorizes without the worker refusing revoked authority the failed
+        # removal would have left behind.  (The grant in this fixture has no
+        # Preview linkage, so only the grant's own match/snapshot bounds are
+        # asserted here — the exact-Preview admission journey is covered by
+        # the dedicated Preview/grant suites.)
+        from types import SimpleNamespace
+
+        active_now = self.managed.active()
+        assert active_now is not None
+        job = SimpleNamespace(
+            definition_id=admitted.definition_id,
+            resource_library_id=admitted.resource_library_id,
+            source_scope=admitted.source_scope,
+            run_mode=admitted.run_mode,
+            limit=admitted.item_limit,
+            configuration_snapshot_id=active_now.revision_id,
+            configuration_snapshot_digest=active_now.digest,
+            configuration_snapshot_version=active_now.version,
+        )
+        grant = self.grants._get_active(admitted.definition_id)
+        self.assertIsNotNone(grant)
+        self.assertEqual(grant.status.value, "active")
+        self.grants._assert_match(grant, job, admitted)
+
+    def test_removal_persistence_failure_before_revocation_preserves_authority(self) -> None:
+        """A Draft-edit persistence failure precedes any revocation: the live
+        authority is untouched and the bounded error reports that truth."""
+
+        self.save(definition("nightly", mode="automatic-organization"))
+        self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
+        self._seed_active_grant("nightly")
+
+        def failing_mutate(*args, **kwargs):
+            raise RuntimeError("simulated configuration store failure")
+
+        with patch.object(self.commands._objects, "mutate", failing_mutate):
+            with self.assertRaises(AutomationDefinitionSaveError) as caught:
+                self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        self.assertEqual(caught.exception.code, "automation_definition_persistence_failed")
+        self.assertEqual(caught.exception.details["durableState"], "active_preserved")
+        self.assertEqual(self.ids(), ["nightly"])
+        self.assertEqual(self.grants.get_for_definition("nightly").status.value, "active")
+
+    def test_historical_definition_never_substitutes_an_open_draft(self) -> None:
+        """P1 regression: retained history resolves from published evidence.
+
+        Publish and enable a definition, emit a real occurrence, and keep a
+        compatible open successor Draft with a different name. After removal
+        the retained history is the *published* configuration the run used —
+        never the unpublished Draft candidate, today's configuration or
+        another definition.
+        """
+
+        self.save(definition("nightly", name="Published historical name"))
+        self.commands.set_enabled("nightly", enabled=True, actor=ADMIN, **self.authority())
+        # An open successor Draft with an unpublished name, derived from the
+        # same Active through the normal managed authority.
+        active = self.managed.active()
+        draft = self.managed.create_successor_draft(
+            actor="tester",
+            expected_active_revision_id=active.revision_id,
+            expected_active_version=active.revision_sequence or active.version,
+            expected_active_digest=active.digest,
+            verified_active=active,
+        )
+        document = copy.deepcopy(draft.document)
+        definitions = document[AUTOMATION_DEFINITION_SECTION]
+        definitions[0]["name"] = "NEVER PUBLISHED draft name"
+        self.managed.edit_draft(
+            draft.revision_id,
+            document,
+            expected_version=draft.version,
+            actor="tester",
+        )
+        self.commands.remove_object("nightly", actor=ADMIN, **self.authority())
+        historical = self.commands.historical_definition("nightly")
+        self.assertIsNotNone(historical)
+        self.assertEqual(historical["definition"]["name"], "Published historical name")
+        self.assertNotEqual(historical["definition"]["name"], "NEVER PUBLISHED draft name")
+        self.assertEqual(historical["definition"]["id"], "nightly")
+
+    def test_copy_intent_binds_to_the_submitted_intent(self) -> None:
+        """P1 regression: a committed Copy's reconciliation resolves that exact
+        submission, never a later submission's copy, and the read is bound to
+        the authority the intent was submitted against."""
+
+        self.save(definition("nightly"))
+        # The first Copy is submitted against the observed Active; its fence
+        # identity is captured before the command publishes.
+        first_fence = self.authority()
+        first = self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
+        first_copy_id = first.document[AUTOMATION_DEFINITION_SECTION][-1]["id"]
+        # A second legitimate submission commits another copy afterwards.
+        second = self.commands.copy_object("nightly", actor=ADMIN, **self.authority())
+        second_copy_id = second.document[AUTOMATION_DEFINITION_SECTION][-1]["id"]
+        self.assertNotEqual(first_copy_id, second_copy_id)
+        # The unfenced read resolves the newest source-matching command.
+        unfenced = self.commands.copy_intent("nightly")
+        self.assertTrue(unfenced["committed"])
+        self.assertEqual(unfenced["committedDefinitionId"], second_copy_id)
+        # The fenced read bound to the FIRST intent's observed authority
+        # resolves that exact submission, never a later submission's copy.
+        fenced_first = self.commands.copy_intent("nightly", **first_fence)
+        self.assertTrue(fenced_first["committed"])
+        self.assertEqual(fenced_first["committedDefinitionId"], first_copy_id)
+        # A fence from an authority that no observed command was submitted
+        # against reports no committed outcome for that intent.
+        stale_fence = self.commands.copy_intent(
+            "nightly",
+            expected_revision_id="revision-that-never-hosted-a-copy",
+            expected_version=1,
+            expected_digest="f" * 64,
+        )
+        self.assertFalse(stale_fence["committed"])
+        self.assertIsNone(stale_fence["committedDefinitionId"])
+
     def test_no_active_configuration_fails_closed(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

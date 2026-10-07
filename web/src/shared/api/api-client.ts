@@ -6977,12 +6977,17 @@ export async function fetchAutomationCopyIntent(
   token: string | null,
   definitionId: string,
   fetchImpl: FetchLike = fetch,
+  query = "",
 ): Promise<AutomationMutationResult<AutomationCopyIntentModel>> {
   if (!isSafeIdentifier(definitionId))
     return { ok: false, status: 400, code: "invalid_request" };
+  // The optional query binds the reconciliation to the exact submitted intent:
+  // the observed Active identity the lost Copy command was submitted against.
+  // Without it the read still resolves durable evidence, but a later
+  // submission's copy is never named as this intent's result.
   return fetchAutomationDocument(
     token,
-    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/copy-intent`,
+    `${AUTOMATION_DEFINITIONS_BASE}/${encodeURIComponent(definitionId)}/copy-intent${query}`,
     normalizeAutomationCopyIntent,
     fetchImpl,
   );
